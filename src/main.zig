@@ -1,8 +1,7 @@
 const std = @import("std");
 
 pub fn main() !void {
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("openclaw-zig bootstrap ready\n", .{});
+    std.debug.print("openclaw-zig bootstrap ready\n", .{});
 }
 
 test "bootstrap string is non-empty" {

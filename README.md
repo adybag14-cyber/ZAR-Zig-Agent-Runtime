@@ -18,6 +18,7 @@ Bootstrap repository for the next OpenClaw runtime port in Zig.
 
 - Plan: [`docs/zig-port/PORT_PLAN.md`](docs/zig-port/PORT_PLAN.md)
 - Checklist: [`docs/zig-port/PHASE_CHECKLIST.md`](docs/zig-port/PHASE_CHECKLIST.md)
+- Local Zig setup: [`docs/zig-port/ZIG_TOOLCHAIN_LOCAL.md`](docs/zig-port/ZIG_TOOLCHAIN_LOCAL.md)
 
 ## Initial Milestone
 
@@ -32,4 +33,10 @@ Bootstrap repository for the next OpenClaw runtime port in Zig.
 zig build
 zig build run
 zig build test
+```
+
+Or run the workspace checker with local Zig master:
+
+```powershell
+./scripts/zig-syntax-check.ps1
 ```
