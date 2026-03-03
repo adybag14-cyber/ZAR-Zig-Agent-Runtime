@@ -44,6 +44,10 @@ Phase 6 progress notes:
 - Added wasm/runtime contract depth slice: `config.get` now exposes wasm module + policy snapshot and `tools.catalog` advertises wasm/runtime tool families; `edge.wasm.marketplace.list` now includes `witPackages` and `builderHints` parity fields.
 - Added explicit wasm lifecycle contracts: `edge.wasm.install`, `edge.wasm.execute`, and `edge.wasm.remove` with custom module state tracking and sandbox limit/capability enforcement.
 - Added OAuth + runtime aliases needed by Go parity callers: `auth.oauth.providers|start|wait|complete|logout|import`, `browser.open`, `chat.send`, and `sessions.send`.
+- Added compat observability/session slice:
+  - usage + heartbeat + presence methods: `usage.status`, `usage.cost`, `last-heartbeat`, `set-heartbeats`, `system-presence`, `system-event`, `wake`
+  - session/log methods: `sessions.list`, `sessions.preview`, `session.status`, `sessions.reset`, `sessions.delete`, `sessions.compact`, `sessions.usage`, `sessions.usage.timeseries`, `sessions.usage.logs`, `logs.tail`
+  - memory store now supports `count`, `removeSession`, and `trim` to back these contracts with real state mutations.
 - Remaining: expand edge depth to full Go parity set.
 
 ## Phase 7 - Validation + Release

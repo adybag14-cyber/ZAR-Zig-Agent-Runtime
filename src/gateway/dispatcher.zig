@@ -23,6 +23,7 @@ var login_manager: ?web_login.LoginManager = null;
 var telegram_runtime_instance: ?telegram_runtime.TelegramRuntime = null;
 var memory_store_instance: ?memory_store.Store = null;
 var edge_state_instance: ?EdgeState = null;
+var compat_state_instance: ?CompatState = null;
 
 const WasmMarketplaceModule = struct {
     id: []const u8,
@@ -36,6 +37,139 @@ const WasmSandbox = struct {
     maxDurationMs: u32,
     maxMemoryMb: u32,
     allowNetworkFetch: bool,
+};
+
+const CompatEvent = struct {
+    id: u64,
+    kind: []u8,
+    created_at_ms: i64,
+
+    fn deinit(self: *CompatEvent, allocator: std.mem.Allocator) void {
+        allocator.free(self.kind);
+    }
+};
+
+const CompatState = struct {
+    const HeartbeatSnapshot = struct {
+        enabled: bool,
+        intervalMs: u32,
+        lastAtMs: i64,
+    };
+
+    allocator: std.mem.Allocator,
+    heartbeat_enabled: bool,
+    heartbeat_interval_ms: u32,
+    last_heartbeat_ms: i64,
+    presence_mode: []u8,
+    presence_source: []u8,
+    presence_updated_ms: i64,
+    events: std.ArrayList(CompatEvent),
+    next_event_id: u64,
+    session_tombstones: std.StringHashMap(void),
+
+    fn init(allocator: std.mem.Allocator) !CompatState {
+        const now = time_util.nowMs();
+        return .{
+            .allocator = allocator,
+            .heartbeat_enabled = true,
+            .heartbeat_interval_ms = 15_000,
+            .last_heartbeat_ms = now,
+            .presence_mode = try allocator.dupe(u8, "ready"),
+            .presence_source = try allocator.dupe(u8, "openclaw-zig"),
+            .presence_updated_ms = now,
+            .events = .empty,
+            .next_event_id = 1,
+            .session_tombstones = std.StringHashMap(void).init(allocator),
+        };
+    }
+
+    fn deinit(self: *CompatState) void {
+        self.allocator.free(self.presence_mode);
+        self.allocator.free(self.presence_source);
+        for (self.events.items) |*event| event.deinit(self.allocator);
+        self.events.deinit(self.allocator);
+
+        var tombstones = self.session_tombstones.iterator();
+        while (tombstones.next()) |entry| self.allocator.free(entry.key_ptr.*);
+        self.session_tombstones.deinit();
+    }
+
+    fn heartbeatSnapshot(self: *const CompatState) HeartbeatSnapshot {
+        return .{
+            .enabled = self.heartbeat_enabled,
+            .intervalMs = self.heartbeat_interval_ms,
+            .lastAtMs = self.last_heartbeat_ms,
+        };
+    }
+
+    fn touchHeartbeat(self: *CompatState, enabled: bool, interval_ms: i64) HeartbeatSnapshot {
+        self.heartbeat_enabled = enabled;
+        const normalized_interval = std.math.clamp(interval_ms, 1, std.math.maxInt(i64));
+        self.heartbeat_interval_ms = @as(u32, @intCast(@min(normalized_interval, std.math.maxInt(u32))));
+        if (enabled) self.last_heartbeat_ms = time_util.nowMs();
+        return self.heartbeatSnapshot();
+    }
+
+    fn setPresence(self: *CompatState, mode: []const u8, source: []const u8) !void {
+        if (mode.len > 0) {
+            self.allocator.free(self.presence_mode);
+            self.presence_mode = try self.allocator.dupe(u8, mode);
+        }
+        if (source.len > 0) {
+            self.allocator.free(self.presence_source);
+            self.presence_source = try self.allocator.dupe(u8, source);
+        }
+        self.presence_updated_ms = time_util.nowMs();
+    }
+
+    fn presenceView(self: *const CompatState) struct {
+        mode: []const u8,
+        source: []const u8,
+        updatedAtMs: i64,
+    } {
+        return .{
+            .mode = self.presence_mode,
+            .source = self.presence_source,
+            .updatedAtMs = self.presence_updated_ms,
+        };
+    }
+
+    fn addEvent(self: *CompatState, kind: []const u8) !CompatEvent {
+        const event = CompatEvent{
+            .id = self.next_event_id,
+            .kind = try self.allocator.dupe(u8, kind),
+            .created_at_ms = time_util.nowMs(),
+        };
+        self.next_event_id += 1;
+        try self.events.append(self.allocator, event);
+        if (self.events.items.len > 256) {
+            var removed = self.events.orderedRemove(0);
+            removed.deinit(self.allocator);
+        }
+        return self.events.items[self.events.items.len - 1];
+    }
+
+    fn markSessionDeleted(self: *CompatState, session_id: []const u8) !void {
+        const key = std.mem.trim(u8, session_id, " \t\r\n");
+        if (key.len == 0) return;
+        if (self.session_tombstones.contains(key)) return;
+        const owned = try self.allocator.dupe(u8, key);
+        try self.session_tombstones.put(owned, {});
+    }
+
+    fn clearSessionDeleted(self: *CompatState, session_id: []const u8) void {
+        const key = std.mem.trim(u8, session_id, " \t\r\n");
+        if (key.len == 0) return;
+        if (self.session_tombstones.fetchRemove(key)) |removed| {
+            self.allocator.free(removed.key);
+        }
+    }
+
+    fn isSessionDeleted(self: *const CompatState, session_id: []const u8) bool {
+        const key = std.mem.trim(u8, session_id, " \t\r\n");
+        if (key.len == 0) return false;
+        return self.session_tombstones.contains(key);
+    }
 };
 
 const EnclaveProof = struct {
@@ -239,6 +373,10 @@ pub fn setConfig(cfg: config.Config) void {
         edge_state_instance.?.deinit();
         edge_state_instance = null;
     }
+    if (compat_state_instance != null) {
+        compat_state_instance.?.deinit();
+        compat_state_instance = null;
+    }
 }
 
 pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
@@ -293,6 +431,106 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             .authenticated = true,
             .authMode = "none",
             .supportedMethods = registry.supported_methods,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "usage.status")) {
+        const memory = try getMemoryStore();
+        const stats = memory.stats();
+        var history = try memory.historyBySession(allocator, "", stats.maxEntries);
+        defer history.deinit(allocator);
+
+        var token_estimate: usize = 0;
+        for (history.items) |entry| token_estimate += countWords(entry.text);
+
+        const compat = try getCompatState();
+        const sessions = try collectSessionSummaries(allocator, memory, compat, 0);
+        defer allocator.free(sessions);
+        return protocol.encodeResult(allocator, req.id, .{
+            .window = .{
+                .messages = history.count,
+                .tokens = token_estimate,
+            },
+            .sessions = sessions.len,
+            .updatedAtMs = time_util.nowMs(),
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "usage.cost")) {
+        const memory = try getMemoryStore();
+        const stats = memory.stats();
+        var history = try memory.historyBySession(allocator, "", stats.maxEntries);
+        defer history.deinit(allocator);
+
+        var tokens: usize = 0;
+        for (history.items) |entry| tokens += countWords(entry.text);
+        const cost: f64 = @as(f64, @floatFromInt(tokens)) * 0.000002;
+        return protocol.encodeResult(allocator, req.id, .{
+            .currency = "USD",
+            .tokens = tokens,
+            .cost = cost,
+            .window = .{
+                .messages = history.count,
+                .tokens = tokens,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "last-heartbeat")) {
+        const compat = try getCompatState();
+        return protocol.encodeResult(allocator, req.id, compat.heartbeatSnapshot());
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "set-heartbeats")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const enabled = firstParamBool(params, "enabled", true);
+        const interval_ms = firstParamInt(params, "intervalMs", firstParamInt(params, "interval_ms", 15_000));
+        const compat = try getCompatState();
+        return protocol.encodeResult(allocator, req.id, compat.touchHeartbeat(enabled, interval_ms));
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "system-presence")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const mode = firstParamString(params, "mode", "");
+        const source = firstParamString(params, "source", "");
+        const compat = try getCompatState();
+        try compat.setPresence(mode, source);
+        return protocol.encodeResult(allocator, req.id, .{
+            .presence = compat.presenceView(),
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "system-event")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const kind = firstParamString(params, "type", "system");
+        const compat = try getCompatState();
+        const event = try compat.addEvent(kind);
+        return protocol.encodeResult(allocator, req.id, .{
+            .event = .{
+                .id = event.id,
+                .type = event.kind,
+                .createdAtMs = event.created_at_ms,
+                .count = compat.events.items.len,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "wake")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const interval_ms = firstParamInt(params, "intervalMs", 15_000);
+        const compat = try getCompatState();
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .awakened = true,
+            .heartbeat = compat.touchHeartbeat(true, interval_ms),
         });
     }
 
@@ -645,6 +883,212 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         };
         defer poll_result.deinit(allocator);
         return protocol.encodeResult(allocator, req.id, poll_result);
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "logs.tail")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        var limit_i64 = firstParamInt(params, "limit", 50);
+        if (limit_i64 <= 0) limit_i64 = 50;
+        const limit: usize = @intCast(limit_i64);
+
+        const memory = try getMemoryStore();
+        var history = try memory.historyBySession(allocator, "", limit);
+        defer history.deinit(allocator);
+        return protocol.encodeResult(allocator, req.id, .{
+            .count = history.count,
+            .lines = history.items,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "sessions.list") or std.ascii.eqlIgnoreCase(req.method, "sessions.preview")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        var limit_i64 = firstParamInt(params, "limit", 50);
+        if (limit_i64 <= 0) limit_i64 = 50;
+        const limit: usize = @intCast(limit_i64);
+
+        const memory = try getMemoryStore();
+        const compat = try getCompatState();
+        const sessions = try collectSessionSummaries(allocator, memory, compat, limit);
+        defer allocator.free(sessions);
+        return protocol.encodeResult(allocator, req.id, .{
+            .count = sessions.len,
+            .items = sessions,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "session.status")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const session_id = resolveSessionId(params);
+        if (session_id.len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing sessionId",
+            });
+        }
+        const memory = try getMemoryStore();
+        const compat = try getCompatState();
+        const summary = (try findSessionSummary(allocator, memory, compat, session_id)) orelse {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32004,
+                .message = "session not found",
+            });
+        };
+        return protocol.encodeResult(allocator, req.id, .{
+            .session = summary,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "sessions.reset")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const session_id = resolveSessionId(params);
+        if (session_id.len == 0) {
+            return protocol.encodeResult(allocator, req.id, .{
+                .ok = false,
+                .reason = "missing sessionId",
+            });
+        }
+        const memory = try getMemoryStore();
+        const removed = memory.removeSession(session_id) catch |err| {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32000,
+                .message = @errorName(err),
+            });
+        };
+        const compat = try getCompatState();
+        compat.clearSessionDeleted(session_id);
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .sessionId = session_id,
+            .removedMessages = removed,
+            .clearedState = true,
+            .resetAtMs = time_util.nowMs(),
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "sessions.delete")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const session_id = resolveSessionId(params);
+        if (session_id.len == 0) {
+            return protocol.encodeResult(allocator, req.id, .{
+                .ok = false,
+                .reason = "missing sessionId",
+            });
+        }
+        const memory = try getMemoryStore();
+        const removed = memory.removeSession(session_id) catch |err| {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32000,
+                .message = @errorName(err),
+            });
+        };
+        const compat = try getCompatState();
+        try compat.markSessionDeleted(session_id);
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .sessionId = session_id,
+            .removedMessages = removed,
+            .removedState = true,
+            .removedSession = true,
+            .deletedAtMs = time_util.nowMs(),
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "sessions.compact")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        var limit_i64 = firstParamInt(params, "limit", 1000);
+        if (limit_i64 <= 0) limit_i64 = 1000;
+        const limit: usize = @intCast(limit_i64);
+
+        const memory = try getMemoryStore();
+        const before = memory.count();
+        const compacted = memory.trim(limit) catch |err| {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32000,
+                .message = @errorName(err),
+            });
+        };
+        const after = memory.count();
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .limit = limit,
+            .before = before,
+            .after = after,
+            .count = after,
+            .compacted = compacted,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "sessions.usage")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const session_id = resolveSessionId(params);
+        var limit_i64 = firstParamInt(params, "limit", 5000);
+        if (limit_i64 <= 0) limit_i64 = 5000;
+        const limit: usize = @intCast(limit_i64);
+
+        const memory = try getMemoryStore();
+        var history = try memory.historyBySession(allocator, session_id, limit);
+        defer history.deinit(allocator);
+        var tokens: usize = 0;
+        for (history.items) |entry| tokens += countWords(entry.text);
+        return protocol.encodeResult(allocator, req.id, .{
+            .sessionId = session_id,
+            .messages = history.count,
+            .tokens = tokens,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "sessions.usage.timeseries")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const session_id = resolveSessionId(params);
+        var limit_i64 = firstParamInt(params, "limit", 500);
+        if (limit_i64 <= 0) limit_i64 = 500;
+        const limit: usize = @intCast(limit_i64);
+
+        const memory = try getMemoryStore();
+        var history = try memory.historyBySession(allocator, session_id, limit);
+        defer history.deinit(allocator);
+        const buckets = try collectUsageTimeseries(allocator, history.items);
+        defer allocator.free(buckets);
+        return protocol.encodeResult(allocator, req.id, .{
+            .sessionId = session_id,
+            .count = buckets.len,
+            .items = buckets,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "sessions.usage.logs")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const session_id = resolveSessionId(params);
+        var limit_i64 = firstParamInt(params, "limit", 100);
+        if (limit_i64 <= 0) limit_i64 = 100;
+        const limit: usize = @intCast(limit_i64);
+
+        const memory = try getMemoryStore();
+        var history = try memory.historyBySession(allocator, session_id, limit);
+        defer history.deinit(allocator);
+        return protocol.encodeResult(allocator, req.id, .{
+            .sessionId = session_id,
+            .count = history.count,
+            .items = history.items,
+        });
     }
 
     if (std.ascii.eqlIgnoreCase(req.method, "sessions.history")) {
@@ -1980,6 +2424,13 @@ fn getEdgeState() *EdgeState {
     return &edge_state_instance.?;
 }
 
+fn getCompatState() !*CompatState {
+    if (compat_state_instance == null) {
+        compat_state_instance = try CompatState.init(std.heap.page_allocator);
+    }
+    return &compat_state_instance.?;
+}
+
 fn getRuntimeIo() std.Io {
     if (!runtime_io_ready) {
         runtime_io_threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
@@ -1993,10 +2444,27 @@ fn shouldEnforceGuard(method: []const u8) bool {
     if (std.ascii.eqlIgnoreCase(method, "health")) return false;
     if (std.ascii.eqlIgnoreCase(method, "status")) return false;
     if (std.ascii.eqlIgnoreCase(method, "shutdown")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "usage.status")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "usage.cost")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "last-heartbeat")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "set-heartbeats")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "system-presence")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "system-event")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "wake")) return false;
     if (std.ascii.eqlIgnoreCase(method, "config.get")) return false;
     if (std.ascii.eqlIgnoreCase(method, "tools.catalog")) return false;
     if (std.ascii.eqlIgnoreCase(method, "channels.status")) return false;
     if (std.ascii.eqlIgnoreCase(method, "channels.logout")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "logs.tail")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "sessions.list")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "sessions.preview")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "session.status")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "sessions.reset")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "sessions.delete")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "sessions.compact")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "sessions.usage")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "sessions.usage.timeseries")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "sessions.usage.logs")) return false;
     if (std.ascii.eqlIgnoreCase(method, "security.audit")) return false;
     if (std.ascii.eqlIgnoreCase(method, "doctor")) return false;
     if (std.ascii.eqlIgnoreCase(method, "doctor.memory.status")) return false;
@@ -2146,6 +2614,18 @@ const SendMemoryEntry = struct {
     }
 };
 
+const SessionSummary = struct {
+    sessionId: []const u8,
+    channel: []const u8,
+    lastSeenAtMs: i64,
+    authenticated: bool,
+};
+
+const UsageBucket = struct {
+    bucketMs: i64,
+    messages: usize,
+};
+
 fn parseHistoryParams(allocator: std.mem.Allocator, frame_json: []const u8) !HistoryParams {
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
     defer parsed.deinit();
@@ -2218,6 +2698,147 @@ fn parseSendMemoryFromFrame(allocator: std.mem.Allocator, frame_json: []const u8
         .channel = try allocator.dupe(u8, channel),
         .message = try allocator.dupe(u8, message),
     };
+}
+
+fn resolveSessionId(params: ?std.json.ObjectMap) []const u8 {
+    const from_session = firstParamString(params, "sessionId", "");
+    if (from_session.len > 0) return from_session;
+    return firstParamString(params, "id", "");
+}
+
+fn countWords(text: []const u8) usize {
+    const trimmed = std.mem.trim(u8, text, " \t\r\n");
+    if (trimmed.len == 0) return 0;
+    var count: usize = 0;
+    var iter = std.mem.tokenizeAny(u8, trimmed, " \t\r\n");
+    while (iter.next() != null) count += 1;
+    return count;
+}
+
+fn collectSessionSummaries(
+    allocator: std.mem.Allocator,
+    memory: *memory_store.Store,
+    compat: *CompatState,
+    limit: usize,
+) ![]SessionSummary {
+    const stats = memory.stats();
+    var history = try memory.historyBySession(allocator, "", stats.maxEntries);
+    defer history.deinit(allocator);
+
+    var summary_map = std.StringHashMap(SessionSummary).init(allocator);
+    defer summary_map.deinit();
+
+    for (history.items) |entry| {
+        const sid = std.mem.trim(u8, entry.sessionId, " \t\r\n");
+        if (sid.len == 0) continue;
+        if (compat.isSessionDeleted(sid)) continue;
+        if (summary_map.getPtr(sid)) |existing| {
+            if (entry.createdAtMs > existing.lastSeenAtMs) {
+                existing.lastSeenAtMs = entry.createdAtMs;
+                if (entry.channel.len > 0) existing.channel = entry.channel;
+            }
+            continue;
+        }
+        try summary_map.put(sid, .{
+            .sessionId = sid,
+            .channel = entry.channel,
+            .lastSeenAtMs = entry.createdAtMs,
+            .authenticated = true,
+        });
+    }
+
+    var tmp: std.ArrayList(SessionSummary) = .empty;
+    defer tmp.deinit(allocator);
+    var it = summary_map.iterator();
+    while (it.next()) |entry| try tmp.append(allocator, entry.value_ptr.*);
+
+    var items = try tmp.toOwnedSlice(allocator);
+    sortSessionSummariesByLastSeenDesc(items);
+    if (limit > 0 and items.len > limit) {
+        const trimmed = try allocator.alloc(SessionSummary, limit);
+        @memcpy(trimmed, items[0..limit]);
+        allocator.free(items);
+        items = trimmed;
+    }
+    return items;
+}
+
+fn findSessionSummary(
+    allocator: std.mem.Allocator,
+    memory: *memory_store.Store,
+    compat: *CompatState,
+    session_id: []const u8,
+) !?SessionSummary {
+    const needle = std.mem.trim(u8, session_id, " \t\r\n");
+    if (needle.len == 0) return null;
+    if (compat.isSessionDeleted(needle)) return null;
+
+    const stats = memory.stats();
+    var history = try memory.historyBySession(allocator, needle, stats.maxEntries);
+    defer history.deinit(allocator);
+    if (history.count == 0) return null;
+    const latest = history.items[history.count - 1];
+    return SessionSummary{
+        .sessionId = needle,
+        .channel = latest.channel,
+        .lastSeenAtMs = latest.createdAtMs,
+        .authenticated = true,
+    };
+}
+
+fn collectUsageTimeseries(
+    allocator: std.mem.Allocator,
+    items: []memory_store.MessageView,
+) ![]UsageBucket {
+    var buckets = std.AutoHashMap(i64, usize).init(allocator);
+    defer buckets.deinit();
+
+    for (items) |entry| {
+        const bucket_ms: i64 = @divTrunc(entry.createdAtMs, @as(i64, 3_600_000)) * @as(i64, 3_600_000);
+        const current = buckets.get(bucket_ms) orelse 0;
+        try buckets.put(bucket_ms, current + 1);
+    }
+
+    var out: std.ArrayList(UsageBucket) = .empty;
+    defer out.deinit(allocator);
+    var it = buckets.iterator();
+    while (it.next()) |entry| {
+        try out.append(allocator, .{
+            .bucketMs = entry.key_ptr.*,
+            .messages = entry.value_ptr.*,
+        });
+    }
+    const owned = try out.toOwnedSlice(allocator);
+    sortUsageBucketsAsc(owned);
+    return owned;
+}
+
+fn sortSessionSummariesByLastSeenDesc(items: []SessionSummary) void {
+    var i: usize = 0;
+    while (i < items.len) : (i += 1) {
+        var j: usize = i + 1;
+        while (j < items.len) : (j += 1) {
+            if (items[j].lastSeenAtMs > items[i].lastSeenAtMs) {
+                const tmp = items[i];
+                items[i] = items[j];
+                items[j] = tmp;
+            }
+        }
+    }
+}
+
+fn sortUsageBucketsAsc(items: []UsageBucket) void {
+    var i: usize = 0;
+    while (i < items.len) : (i += 1) {
+        var j: usize = i + 1;
+        while (j < items.len) : (j += 1) {
+            if (items[j].bucketMs < items[i].bucketMs) {
+                const tmp = items[i];
+                items[i] = items[j];
+                items[j] = tmp;
+            }
+        }
+    }
 }
 
 fn getParamsObjectOrNull(frame: std.json.Value) ?std.json.ObjectMap {
@@ -2847,6 +3468,77 @@ test "dispatch memory history handlers return persisted send activity" {
     defer allocator.free(memory_status);
     try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"entries\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"statePath\"") != null);
+}
+
+test "dispatch compat usage and session lifecycle methods return contracts" {
+    const allocator = std.testing.allocator;
+
+    const send = try dispatch(allocator, "{\"id\":\"compat-send\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"compat-room\",\"sessionId\":\"compat-s1\",\"message\":\"compat lifecycle hello\"}}");
+    defer allocator.free(send);
+    try std.testing.expect(std.mem.indexOf(u8, send, "\"accepted\":true") != null);
+
+    const sessions_list = try dispatch(allocator, "{\"id\":\"compat-sessions-list\",\"method\":\"sessions.list\",\"params\":{}}");
+    defer allocator.free(sessions_list);
+    try std.testing.expect(std.mem.indexOf(u8, sessions_list, "\"items\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sessions_list, "\"compat-s1\"") != null);
+
+    const session_status = try dispatch(allocator, "{\"id\":\"compat-session-status\",\"method\":\"session.status\",\"params\":{\"sessionId\":\"compat-s1\"}}");
+    defer allocator.free(session_status);
+    try std.testing.expect(std.mem.indexOf(u8, session_status, "\"session\"") != null);
+
+    const sessions_usage = try dispatch(allocator, "{\"id\":\"compat-sessions-usage\",\"method\":\"sessions.usage\",\"params\":{\"sessionId\":\"compat-s1\"}}");
+    defer allocator.free(sessions_usage);
+    try std.testing.expect(std.mem.indexOf(u8, sessions_usage, "\"messages\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sessions_usage, "\"tokens\"") != null);
+
+    const usage_status = try dispatch(allocator, "{\"id\":\"compat-usage-status\",\"method\":\"usage.status\",\"params\":{}}");
+    defer allocator.free(usage_status);
+    try std.testing.expect(std.mem.indexOf(u8, usage_status, "\"window\"") != null);
+
+    const usage_cost = try dispatch(allocator, "{\"id\":\"compat-usage-cost\",\"method\":\"usage.cost\",\"params\":{}}");
+    defer allocator.free(usage_cost);
+    try std.testing.expect(std.mem.indexOf(u8, usage_cost, "\"currency\":\"USD\"") != null);
+
+    const set_heartbeats = try dispatch(allocator, "{\"id\":\"compat-heartbeat-set\",\"method\":\"set-heartbeats\",\"params\":{\"enabled\":true,\"intervalMs\":4200}}");
+    defer allocator.free(set_heartbeats);
+    try std.testing.expect(std.mem.indexOf(u8, set_heartbeats, "\"intervalMs\":4200") != null);
+
+    const last_heartbeat = try dispatch(allocator, "{\"id\":\"compat-heartbeat-last\",\"method\":\"last-heartbeat\",\"params\":{}}");
+    defer allocator.free(last_heartbeat);
+    try std.testing.expect(std.mem.indexOf(u8, last_heartbeat, "\"enabled\":true") != null);
+
+    const presence = try dispatch(allocator, "{\"id\":\"compat-presence\",\"method\":\"system-presence\",\"params\":{\"mode\":\"active\",\"source\":\"tests\"}}");
+    defer allocator.free(presence);
+    try std.testing.expect(std.mem.indexOf(u8, presence, "\"presence\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, presence, "\"mode\":\"active\"") != null);
+
+    const event = try dispatch(allocator, "{\"id\":\"compat-event\",\"method\":\"system-event\",\"params\":{\"type\":\"diagnostic\"}}");
+    defer allocator.free(event);
+    try std.testing.expect(std.mem.indexOf(u8, event, "\"event\"") != null);
+
+    const logs_tail = try dispatch(allocator, "{\"id\":\"compat-logs\",\"method\":\"logs.tail\",\"params\":{\"limit\":10}}");
+    defer allocator.free(logs_tail);
+    try std.testing.expect(std.mem.indexOf(u8, logs_tail, "\"lines\"") != null);
+
+    const usage_timeseries = try dispatch(allocator, "{\"id\":\"compat-timeseries\",\"method\":\"sessions.usage.timeseries\",\"params\":{\"sessionId\":\"compat-s1\"}}");
+    defer allocator.free(usage_timeseries);
+    try std.testing.expect(std.mem.indexOf(u8, usage_timeseries, "\"items\"") != null);
+
+    const usage_logs = try dispatch(allocator, "{\"id\":\"compat-usage-logs\",\"method\":\"sessions.usage.logs\",\"params\":{\"sessionId\":\"compat-s1\"}}");
+    defer allocator.free(usage_logs);
+    try std.testing.expect(std.mem.indexOf(u8, usage_logs, "\"items\"") != null);
+
+    const compact = try dispatch(allocator, "{\"id\":\"compat-compact\",\"method\":\"sessions.compact\",\"params\":{\"limit\":1}}");
+    defer allocator.free(compact);
+    try std.testing.expect(std.mem.indexOf(u8, compact, "\"compacted\"") != null);
+
+    const delete = try dispatch(allocator, "{\"id\":\"compat-delete\",\"method\":\"sessions.delete\",\"params\":{\"sessionId\":\"compat-s1\"}}");
+    defer allocator.free(delete);
+    try std.testing.expect(std.mem.indexOf(u8, delete, "\"ok\":true") != null);
+
+    const status_missing = try dispatch(allocator, "{\"id\":\"compat-session-missing\",\"method\":\"session.status\",\"params\":{\"sessionId\":\"compat-s1\"}}");
+    defer allocator.free(status_missing);
+    try std.testing.expect(std.mem.indexOf(u8, status_missing, "\"code\":-32004") != null);
 }
 
 test "dispatch edge parity slice methods return contracts" {

@@ -145,28 +145,64 @@ pub const Store = struct {
         };
     }
 
+    pub fn count(self: *const Store) usize {
+        return self.entries.items.len;
+    }
+
+    pub fn removeSession(self: *Store, session_id: []const u8) !usize {
+        const needle = std.mem.trim(u8, session_id, " \t\r\n");
+        if (needle.len == 0) return 0;
+
+        var removed: usize = 0;
+        var idx: usize = 0;
+        while (idx < self.entries.items.len) {
+            if (std.mem.eql(u8, self.entries.items[idx].session_id, needle)) {
+                var entry = self.entries.orderedRemove(idx);
+                entry.deinit(self.allocator);
+                removed += 1;
+                continue;
+            }
+            idx += 1;
+        }
+
+        if (removed > 0 and self.persistent) try self.persist();
+        return removed;
+    }
+
+    pub fn trim(self: *Store, limit: usize) !usize {
+        if (self.entries.items.len <= limit) return 0;
+        const to_remove = self.entries.items.len - limit;
+        var removed: usize = 0;
+        while (removed < to_remove) : (removed += 1) {
+            var entry = self.entries.orderedRemove(0);
+            entry.deinit(self.allocator);
+        }
+        if (removed > 0 and self.persistent) try self.persist();
+        return removed;
+    }
+
     fn historyByKey(self: *Store, allocator: std.mem.Allocator, key: []const u8, value: []const u8, limit: usize) !HistoryResult {
         const cap = if (limit == 0) 50 else limit;
         const max_matches = @min(cap, self.entries.items.len);
         var views = try allocator.alloc(MessageView, max_matches);
-        var count: usize = 0;
+        var matched: usize = 0;
         const needle = std.mem.trim(u8, value, " \t\r\n");
         var index = self.entries.items.len;
-        while (index > 0 and count < views.len) : (index -= 1) {
+        while (index > 0 and matched < views.len) : (index -= 1) {
             const entry = self.entries.items[index - 1];
             if (needle.len > 0) {
                 if (std.ascii.eqlIgnoreCase(key, "session") and !std.mem.eql(u8, entry.session_id, needle)) continue;
                 if (std.ascii.eqlIgnoreCase(key, "channel") and !std.ascii.eqlIgnoreCase(entry.channel, needle)) continue;
             }
-            views[count] = entry.view();
-            count += 1;
+            views[matched] = entry.view();
+            matched += 1;
         }
-        std.mem.reverse(MessageView, views[0..count]);
-        const result_items = try allocator.alloc(MessageView, count);
-        @memcpy(result_items, views[0..count]);
+        std.mem.reverse(MessageView, views[0..matched]);
+        const result_items = try allocator.alloc(MessageView, matched);
+        @memcpy(result_items, views[0..matched]);
         allocator.free(views);
         return .{
-            .count = count,
+            .count = matched,
             .items = result_items,
         };
     }
