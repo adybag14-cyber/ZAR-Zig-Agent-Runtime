@@ -24,6 +24,20 @@ var telegram_runtime_instance: ?telegram_runtime.TelegramRuntime = null;
 var memory_store_instance: ?memory_store.Store = null;
 var edge_state_instance: ?EdgeState = null;
 
+const WasmMarketplaceModule = struct {
+    id: []const u8,
+    version: []const u8,
+    description: []const u8,
+    capabilities: []const []const u8,
+};
+
+const WasmSandbox = struct {
+    runtime: []const u8,
+    maxDurationMs: u32,
+    maxMemoryMb: u32,
+    allowNetworkFetch: bool,
+};
+
 const EnclaveProof = struct {
     statement: []u8,
     proof: []u8,
@@ -199,6 +213,84 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         });
     }
 
+    if (std.ascii.eqlIgnoreCase(req.method, "connect")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const role = firstParamString(params, "role", "client");
+        const channel = firstParamString(params, "channel", "webchat");
+        const session_id = firstParamString(params, "sessionId", "session-zig-local");
+        return protocol.encodeResult(allocator, req.id, .{
+            .sessionId = session_id,
+            .role = role,
+            .channel = channel,
+            .authenticated = true,
+            .authMode = "none",
+            .supportedMethods = registry.supported_methods,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "config.get")) {
+        const cfg = currentConfig();
+        const runtime = getRuntime();
+        const guard = try getGuard();
+        const memory = try getMemoryStore();
+        const modules = wasmMarketplaceModules();
+        const sandbox = wasmSandboxPolicy();
+        return protocol.encodeResult(allocator, req.id, .{
+            .gateway = .{
+                .bind = cfg.http_bind,
+                .port = cfg.http_port,
+                .authMode = "none",
+            },
+            .runtime = .{
+                .queueDepth = runtime.queueDepth(),
+                .sessions = runtime.sessionCount(),
+                .profile = "edge",
+            },
+            .browserBridge = .{
+                .enabled = true,
+                .engine = "lightpanda",
+                .endpoint = cfg.lightpanda_endpoint,
+                .requestTimeoutMs = cfg.lightpanda_timeout_ms,
+            },
+            .channels = .{
+                .telegramConfigured = true,
+            },
+            .memory = memory.stats(),
+            .security = guard.snapshot(),
+            .wasm = .{
+                .count = modules.len,
+                .modules = modules,
+                .policy = sandbox,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "tools.catalog")) {
+        const tools = [_]struct {
+            tool: []const u8,
+            provider: []const u8,
+            description: []const u8,
+        }{
+            .{ .tool = "browser", .provider = "lightpanda", .description = "Browser tool family with open/request actions" },
+            .{ .tool = "browser.open", .provider = "lightpanda", .description = "Open browser URL through bridge runtime" },
+            .{ .tool = "browser.request", .provider = "lightpanda", .description = "Send browser bridge request or completion payload" },
+            .{ .tool = "exec", .provider = "builtin-runtime", .description = "Exec tool family alias for command execution" },
+            .{ .tool = "exec.run", .provider = "builtin-runtime", .description = "Execute local process command with timeout" },
+            .{ .tool = "file.read", .provider = "builtin-runtime", .description = "Read local file content" },
+            .{ .tool = "file.write", .provider = "builtin-runtime", .description = "Write local file content" },
+            .{ .tool = "message", .provider = "telegram-runtime", .description = "Message tool family (send/poll)" },
+            .{ .tool = "message.send", .provider = "telegram-runtime", .description = "Send message through runtime bridge" },
+            .{ .tool = "sessions", .provider = "builtin-runtime", .description = "Sessions tool family (history/status)" },
+            .{ .tool = "wasm", .provider = "builtin-runtime", .description = "WASM tool family (inspect/list/execute)" },
+        };
+        return protocol.encodeResult(allocator, req.id, .{
+            .tools = tools,
+            .count = tools.len,
+        });
+    }
+
     if (std.ascii.eqlIgnoreCase(req.method, "shutdown")) {
         return protocol.encodeResult(allocator, req.id, .{
             .status = "shutting_down",
@@ -206,7 +298,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         });
     }
 
-    if (std.ascii.eqlIgnoreCase(req.method, "web.login.start")) {
+    if (std.ascii.eqlIgnoreCase(req.method, "web.login.start") or std.ascii.eqlIgnoreCase(req.method, "auth.oauth.start")) {
         var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
         defer parsed.deinit();
 
@@ -233,7 +325,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         });
     }
 
-    if (std.ascii.eqlIgnoreCase(req.method, "web.login.wait")) {
+    if (std.ascii.eqlIgnoreCase(req.method, "web.login.wait") or std.ascii.eqlIgnoreCase(req.method, "auth.oauth.wait")) {
         var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
         defer parsed.deinit();
 
@@ -274,7 +366,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         });
     }
 
-    if (std.ascii.eqlIgnoreCase(req.method, "web.login.complete")) {
+    if (std.ascii.eqlIgnoreCase(req.method, "web.login.complete") or std.ascii.eqlIgnoreCase(req.method, "auth.oauth.complete")) {
         var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
         defer parsed.deinit();
 
@@ -360,6 +452,67 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         });
     }
 
+    if (std.ascii.eqlIgnoreCase(req.method, "auth.oauth.providers")) {
+        const providers = [_]struct {
+            id: []const u8,
+            name: []const u8,
+            verificationUri: []const u8,
+            supportsBrowserSession: bool,
+            defaultModel: []const u8,
+        }{
+            .{ .id = "chatgpt", .name = "ChatGPT", .verificationUri = "https://chatgpt.com/", .supportsBrowserSession = true, .defaultModel = "gpt-5.2" },
+            .{ .id = "claude", .name = "Claude", .verificationUri = "https://claude.ai/", .supportsBrowserSession = true, .defaultModel = "claude-opus-4" },
+            .{ .id = "gemini", .name = "Gemini", .verificationUri = "https://aistudio.google.com/", .supportsBrowserSession = true, .defaultModel = "gemini-2.5-pro" },
+            .{ .id = "qwen", .name = "Qwen", .verificationUri = "https://chat.qwen.ai/", .supportsBrowserSession = true, .defaultModel = "qwen-max" },
+            .{ .id = "zai", .name = "ZAI", .verificationUri = "https://chat.z.ai/", .supportsBrowserSession = true, .defaultModel = "glm-5" },
+            .{ .id = "inception", .name = "Mercury", .verificationUri = "https://chat.inceptionlabs.ai/", .supportsBrowserSession = true, .defaultModel = "mercury-2" },
+            .{ .id = "openrouter", .name = "OpenRouter", .verificationUri = "https://openrouter.ai/", .supportsBrowserSession = false, .defaultModel = "openai/gpt-5.2-mini" },
+        };
+        return protocol.encodeResult(allocator, req.id, .{
+            .providers = providers,
+            .count = providers.len,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "auth.oauth.logout")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const provider = firstParamString(params, "provider", "chatgpt");
+        const session_id = firstParamString(params, "loginSessionId", "");
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .status = "logged_out",
+            .provider = provider,
+            .loginSessionId = session_id,
+            .revoked = session_id.len > 0,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "auth.oauth.import")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const provider = firstParamString(params, "provider", "chatgpt");
+        const model = firstParamString(params, "model", "gpt-5.2");
+
+        const manager = try getLoginManager();
+        const pending = try manager.start(provider, model);
+        const completed = manager.complete(pending.loginSessionId, pending.code) catch |err| {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32004,
+                .message = @errorName(err),
+            });
+        };
+        return protocol.encodeResult(allocator, req.id, .{
+            .status = "authorized",
+            .imported = true,
+            .login = completed,
+            .provider = completed.provider,
+            .model = completed.model,
+        });
+    }
+
     if (std.ascii.eqlIgnoreCase(req.method, "channels.status")) {
         const summary = (try getLoginManager()).status();
         const telegram_status = (try getTelegramRuntime()).status();
@@ -378,7 +531,25 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         });
     }
 
-    if (std.ascii.eqlIgnoreCase(req.method, "send")) {
+    if (std.ascii.eqlIgnoreCase(req.method, "channels.logout")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const channel = firstParamString(params, "channel", "telegram");
+        if (!std.ascii.eqlIgnoreCase(channel, "telegram")) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "only telegram channel is supported",
+            });
+        }
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .status = "logged_out",
+            .channel = "telegram",
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "send") or std.ascii.eqlIgnoreCase(req.method, "chat.send") or std.ascii.eqlIgnoreCase(req.method, "sessions.send")) {
         const runtime = try getTelegramRuntime();
         var send_result = runtime.sendFromFrame(allocator, frame_json) catch |err| {
             return encodeTelegramRuntimeError(allocator, req.id, err);
@@ -441,31 +612,8 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
     }
 
     if (std.ascii.eqlIgnoreCase(req.method, "edge.wasm.marketplace.list")) {
-        const modules = [_]struct {
-            id: []const u8,
-            version: []const u8,
-            description: []const u8,
-            capabilities: []const []const u8,
-        }{
-            .{
-                .id = "wasm.echo",
-                .version = "1.0.0",
-                .description = "Echo and transform short text payloads.",
-                .capabilities = &.{"workspace.read"},
-            },
-            .{
-                .id = "wasm.vector.search",
-                .version = "1.2.0",
-                .description = "Vector recall helper for memory-adjacent lookups.",
-                .capabilities = &.{"memory.read"},
-            },
-            .{
-                .id = "wasm.vision.inspect",
-                .version = "0.9.0",
-                .description = "Basic multimodal metadata inspection helpers.",
-                .capabilities = &.{ "workspace.read", "network.fetch" },
-            },
-        };
+        const modules = wasmMarketplaceModules();
+        const sandbox = wasmSandboxPolicy();
         return protocol.encodeResult(allocator, req.id, .{
             .runtimeProfile = "edge",
             .moduleRoot = ".openclaw-zig/wasm/modules",
@@ -473,16 +621,16 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             .moduleCount = modules.len,
             .count = modules.len,
             .modules = modules,
-            .sandbox = .{
-                .runtime = "wazero",
-                .maxDurationMs = 15_000,
-                .maxMemoryMb = 128,
-                .allowNetworkFetch = false,
-            },
+            .witPackages = [_]struct { id: []const u8, version: []const u8 }{},
+            .sandbox = sandbox,
             .builder = .{
                 .mode = "visual-ai-builder",
                 .supported = true,
                 .templates = [_][]const u8{ "tool.execute", "tool.fetch", "tool.workflow" },
+                .builderHints = .{
+                    .fields = [_][]const u8{ "name", "description", "inputs", "outputs", "capabilities" },
+                    .defaultCapability = "workspace.read",
+                },
             },
         });
     }
@@ -1542,7 +1690,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         return protocol.encodeResult(allocator, req.id, report);
     }
 
-    if (std.ascii.eqlIgnoreCase(req.method, "browser.request")) {
+    if (std.ascii.eqlIgnoreCase(req.method, "browser.request") or std.ascii.eqlIgnoreCase(req.method, "browser.open")) {
         const provider_resolved = try parseProviderFromFrame(allocator, frame_json);
         defer if (provider_resolved.owned) |owned| allocator.free(owned);
 
@@ -1655,7 +1803,10 @@ fn shouldEnforceGuard(method: []const u8) bool {
     if (std.ascii.eqlIgnoreCase(method, "health")) return false;
     if (std.ascii.eqlIgnoreCase(method, "status")) return false;
     if (std.ascii.eqlIgnoreCase(method, "shutdown")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "config.get")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "tools.catalog")) return false;
     if (std.ascii.eqlIgnoreCase(method, "channels.status")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "channels.logout")) return false;
     if (std.ascii.eqlIgnoreCase(method, "security.audit")) return false;
     if (std.ascii.eqlIgnoreCase(method, "doctor")) return false;
     if (std.ascii.eqlIgnoreCase(method, "doctor.memory.status")) return false;
@@ -1663,7 +1814,16 @@ fn shouldEnforceGuard(method: []const u8) bool {
     if (std.ascii.eqlIgnoreCase(method, "web.login.wait")) return false;
     if (std.ascii.eqlIgnoreCase(method, "web.login.complete")) return false;
     if (std.ascii.eqlIgnoreCase(method, "web.login.status")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "auth.oauth.providers")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "auth.oauth.start")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "auth.oauth.wait")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "auth.oauth.complete")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "auth.oauth.logout")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "auth.oauth.import")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "browser.open")) return false;
     if (std.ascii.eqlIgnoreCase(method, "send")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "chat.send")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "sessions.send")) return false;
     if (std.ascii.eqlIgnoreCase(method, "poll")) return false;
     if (std.ascii.eqlIgnoreCase(method, "sessions.history")) return false;
     if (std.ascii.eqlIgnoreCase(method, "chat.history")) return false;
@@ -2111,6 +2271,38 @@ fn buildMultimodalSummary(
     );
 }
 
+fn wasmMarketplaceModules() []const WasmMarketplaceModule {
+    return &[_]WasmMarketplaceModule{
+        .{
+            .id = "wasm.echo",
+            .version = "1.0.0",
+            .description = "Echo and transform short text payloads.",
+            .capabilities = &.{"workspace.read"},
+        },
+        .{
+            .id = "wasm.vector.search",
+            .version = "1.2.0",
+            .description = "Vector recall helper for memory-adjacent lookups.",
+            .capabilities = &.{"memory.read"},
+        },
+        .{
+            .id = "wasm.vision.inspect",
+            .version = "0.9.0",
+            .description = "Basic multimodal metadata inspection helpers.",
+            .capabilities = &.{ "workspace.read", "network.fetch" },
+        },
+    };
+}
+
+fn wasmSandboxPolicy() WasmSandbox {
+    return .{
+        .runtime = "wazero",
+        .maxDurationMs = 15_000,
+        .maxMemoryMb = 128,
+        .allowNetworkFetch = false,
+    };
+}
+
 fn parseProviderFromFrame(allocator: std.mem.Allocator, frame_json: []const u8) !ProviderResult {
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
     defer parsed.deinit();
@@ -2142,6 +2334,88 @@ test "dispatch accepts lightpanda provider" {
     const out = try dispatch(allocator, "{\"id\":\"3\",\"method\":\"browser.request\",\"params\":{\"provider\":\"lightpanda\"}}");
     defer allocator.free(out);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"engine\":\"lightpanda\"") != null);
+}
+
+test "dispatch config.get and tools.catalog expose runtime + wasm contracts" {
+    const allocator = std.testing.allocator;
+
+    const config_out = try dispatch(allocator, "{\"id\":\"cfg-1\",\"method\":\"config.get\",\"params\":{}}");
+    defer allocator.free(config_out);
+    try std.testing.expect(std.mem.indexOf(u8, config_out, "\"gateway\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, config_out, "\"browserBridge\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, config_out, "\"wasm\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, config_out, "\"policy\"") != null);
+
+    const catalog_out = try dispatch(allocator, "{\"id\":\"tools-1\",\"method\":\"tools.catalog\",\"params\":{}}");
+    defer allocator.free(catalog_out);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"tools\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"wasm\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"browser.open\"") != null);
+}
+
+test "dispatch auth oauth alias lifecycle providers start wait complete logout import" {
+    const allocator = std.testing.allocator;
+
+    const providers = try dispatch(allocator, "{\"id\":\"oauth-providers\",\"method\":\"auth.oauth.providers\",\"params\":{}}");
+    defer allocator.free(providers);
+    try std.testing.expect(std.mem.indexOf(u8, providers, "\"providers\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, providers, "\"chatgpt\"") != null);
+
+    const start = try dispatch(allocator, "{\"id\":\"oauth-start\",\"method\":\"auth.oauth.start\",\"params\":{\"provider\":\"chatgpt\",\"model\":\"gpt-5.2\"}}");
+    defer allocator.free(start);
+    try std.testing.expect(std.mem.indexOf(u8, start, "\"status\":\"pending\"") != null);
+    const session_id = try extractLoginStringField(allocator, start, "loginSessionId");
+    defer allocator.free(session_id);
+    const code = try extractLoginStringField(allocator, start, "code");
+    defer allocator.free(code);
+
+    const wait_frame = try encodeFrame(allocator, "oauth-wait", "auth.oauth.wait", .{
+        .loginSessionId = session_id,
+        .timeoutMs = 20,
+    });
+    defer allocator.free(wait_frame);
+    const wait = try dispatch(allocator, wait_frame);
+    defer allocator.free(wait);
+    try std.testing.expect(std.mem.indexOf(u8, wait, "\"status\":\"pending\"") != null);
+
+    const complete_frame = try encodeFrame(allocator, "oauth-complete", "auth.oauth.complete", .{
+        .loginSessionId = session_id,
+        .code = code,
+    });
+    defer allocator.free(complete_frame);
+    const complete = try dispatch(allocator, complete_frame);
+    defer allocator.free(complete);
+    try std.testing.expect(std.mem.indexOf(u8, complete, "\"status\":\"authorized\"") != null);
+
+    const logout_frame = try encodeFrame(allocator, "oauth-logout", "auth.oauth.logout", .{
+        .provider = "chatgpt",
+        .loginSessionId = session_id,
+    });
+    defer allocator.free(logout_frame);
+    const logout = try dispatch(allocator, logout_frame);
+    defer allocator.free(logout);
+    try std.testing.expect(std.mem.indexOf(u8, logout, "\"status\":\"logged_out\"") != null);
+
+    const imported = try dispatch(allocator, "{\"id\":\"oauth-import\",\"method\":\"auth.oauth.import\",\"params\":{\"provider\":\"chatgpt\",\"model\":\"gpt-5.2\"}}");
+    defer allocator.free(imported);
+    try std.testing.expect(std.mem.indexOf(u8, imported, "\"imported\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, imported, "\"status\":\"authorized\"") != null);
+}
+
+test "dispatch browser.open and send aliases follow existing runtime paths" {
+    const allocator = std.testing.allocator;
+
+    const browser_open = try dispatch(allocator, "{\"id\":\"browser-open\",\"method\":\"browser.open\",\"params\":{\"provider\":\"lightpanda\"}}");
+    defer allocator.free(browser_open);
+    try std.testing.expect(std.mem.indexOf(u8, browser_open, "\"engine\":\"lightpanda\"") != null);
+
+    const chat_send = try dispatch(allocator, "{\"id\":\"chat-send\",\"method\":\"chat.send\",\"params\":{\"channel\":\"telegram\",\"to\":\"alias-room\",\"sessionId\":\"alias-1\",\"message\":\"/auth start chatgpt\"}}");
+    defer allocator.free(chat_send);
+    try std.testing.expect(std.mem.indexOf(u8, chat_send, "\"accepted\":true") != null);
+
+    const sessions_send = try dispatch(allocator, "{\"id\":\"sessions-send\",\"method\":\"sessions.send\",\"params\":{\"channel\":\"telegram\",\"to\":\"alias-room\",\"sessionId\":\"alias-1\",\"message\":\"hello alias\"}}");
+    defer allocator.free(sessions_send);
+    try std.testing.expect(std.mem.indexOf(u8, sessions_send, "\"accepted\":true") != null);
 }
 
 test "dispatch file.write and file.read lifecycle updates status counters" {

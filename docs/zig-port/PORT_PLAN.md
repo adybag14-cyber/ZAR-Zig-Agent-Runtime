@@ -74,9 +74,17 @@ Port OpenClaw Go runtime behavior from baseline commit `65c974b528e2` into a pro
   - Edge handler parity slice shipped: `edge.wasm.marketplace.list`, `edge.router.plan`, `edge.swarm.plan`, `edge.multimodal.inspect`, and `edge.voice.transcribe`.
   - Advanced edge handler parity slice shipped: `edge.enclave.status`, `edge.enclave.prove`, `edge.mesh.status`, `edge.homomorphic.compute`, `edge.finetune.status`, `edge.finetune.run`, `edge.identity.trust.status`, `edge.personality.profile`, `edge.handoff.plan`, `edge.marketplace.revenue.preview`, `edge.finetune.cluster.plan`, `edge.alignment.evaluate`, `edge.quantum.status`, and `edge.collaboration.plan`.
   - Added `edge.acceleration.status` parity contract and test coverage.
+  - Added runtime/wasm contract depth slice:
+    - `config.get` now returns gateway/runtime/browser/channel/memory/security/wasm snapshots with sandbox policy.
+    - `tools.catalog` now exposes wasm/runtime/browser/message tool families and counts.
+    - `edge.wasm.marketplace.list` now includes `witPackages` + `builderHints` parity metadata.
+  - Added Go-compat alias surfaces for auth/runtime callers:
+    - `auth.oauth.providers|start|wait|complete|logout|import`
+    - `browser.open`, `chat.send`, and `sessions.send`
   - Added dispatcher contract tests for new edge methods and memory flows.
 - Toolchain/runtime notes (local Windows Zig master):
-  - Local Zig pinned to Codeberg `master` commit `0a412853aae9815eb663a88a8a2d37b91c614317` (`0.16.0-dev.2703+0a412853a`).
+  - Codeberg `master` is currently `2d88a5a10334bddf3bd0b8bc98744ea6f239ce3a`.
+  - Local Zig toolchain remains `0.16.0-dev.2703+0a412853a` (hash `0a412853a`) and is behind current Codeberg `master` (acknowledged).
   - Added Windows build workaround in `build.zig`:
     - use `-fstrip` for executable to avoid missing `.pdb` install failure on this master toolchain.
     - route `zig build test` through `zig test src/main.zig` on Windows to avoid build-runner `--listen` regression.

@@ -41,7 +41,9 @@ Phase 6 progress notes:
 - Implemented edge contract slice in dispatcher: `edge.wasm.marketplace.list`, `edge.router.plan`, `edge.swarm.plan`, `edge.multimodal.inspect`, and `edge.voice.transcribe`.
 - Implemented advanced edge contract slice in dispatcher: `edge.enclave.status`, `edge.enclave.prove`, `edge.mesh.status`, `edge.homomorphic.compute`, `edge.finetune.status`, `edge.finetune.run`, `edge.identity.trust.status`, `edge.personality.profile`, `edge.handoff.plan`, `edge.marketplace.revenue.preview`, `edge.finetune.cluster.plan`, `edge.alignment.evaluate`, `edge.quantum.status`, and `edge.collaboration.plan`.
 - Added `edge.acceleration.status` parity handler with contract coverage.
-- Remaining: expand edge depth to full Go parity set and add explicit wasm execute/sandbox lifecycle contract paths (beyond marketplace listing).
+- Added wasm/runtime contract depth slice: `config.get` now exposes wasm module + policy snapshot and `tools.catalog` advertises wasm/runtime tool families; `edge.wasm.marketplace.list` now includes `witPackages` and `builderHints` parity fields.
+- Added OAuth + runtime aliases needed by Go parity callers: `auth.oauth.providers|start|wait|complete|logout|import`, `browser.open`, `chat.send`, and `sessions.send`.
+- Remaining: expand edge depth to full Go parity set and add explicit wasm execute/install/remove contract paths (beyond marketplace/config/catalog surfaces).
 
 ## Phase 7 - Validation + Release
 - [ ] Run full parity diff against Go baseline
@@ -58,6 +60,7 @@ Phase 6 progress notes:
 - [x] `scripts/docker-smoke-check.ps1` (host + Docker HTTP 200 checks on `/health` and `/rpc`)
 - [x] `scripts/web-login-smoke-check.ps1` (`web.login.start -> wait -> complete -> status` all HTTP 200 with authorized completion)
 - [x] `scripts/telegram-reply-loop-smoke-check.ps1` (`send /auth start -> send /auth complete -> send chat -> poll` all HTTP 200 with non-empty queued replies)
+- [x] Freshness check: Codeberg Zig `master`=`2d88a5a10334bddf3bd0b8bc98744ea6f239ce3a`; local toolchain=`0.16.0-dev.2703+0a412853a` (hash mismatch acknowledged)
 - [x] Serve smoke: `GET /health` and `POST /rpc` (`shutdown`) both returned HTTP 200
 - [x] Serve smoke: `POST /rpc` `file.write`, `file.read`, and `exec.run` returned HTTP 200 with real payloads
 - [x] Serve smoke: `POST /rpc` `security.audit` and `doctor` return structured diagnostics payloads
