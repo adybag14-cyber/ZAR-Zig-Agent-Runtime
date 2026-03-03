@@ -516,6 +516,57 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         });
     }
 
+    if (std.ascii.eqlIgnoreCase(req.method, "edge.acceleration.status")) {
+        const cpu_cores = std.Thread.getCpuCount() catch 1;
+        const gpu_active = envTruthy("OPENCLAW_ZIG_GPU_AVAILABLE");
+        const npu_active = envTruthy("OPENCLAW_ZIG_NPU_AVAILABLE");
+        const mode = if (gpu_active and npu_active) "heterogeneous" else if (gpu_active) "gpu-hybrid" else if (npu_active) "npu-hybrid" else "cpu";
+        const available_engines: []const []const u8 = if (gpu_active and npu_active)
+            &[_][]const u8{ "cpu", "gpu", "npu" }
+        else if (gpu_active)
+            &[_][]const u8{ "cpu", "gpu" }
+        else if (npu_active)
+            &[_][]const u8{ "cpu", "npu" }
+        else
+            &[_][]const u8{"cpu"};
+        const features: []const []const u8 = if (gpu_active)
+            &[_][]const u8{ "request-batching", "cache-warmup", "prefetch-routing", "gpu-offload" }
+        else
+            &[_][]const u8{ "request-batching", "cache-warmup", "prefetch-routing" };
+        const capabilities: []const []const u8 = if (gpu_active and npu_active)
+            &[_][]const u8{ "cpu", "gpu", "tpu" }
+        else if (gpu_active)
+            &[_][]const u8{ "cpu", "gpu" }
+        else if (npu_active)
+            &[_][]const u8{ "cpu", "tpu" }
+        else
+            &[_][]const u8{"cpu"};
+        return protocol.encodeResult(allocator, req.id, .{
+            .enabled = true,
+            .mode = mode,
+            .gpuActive = gpu_active,
+            .npuActive = npu_active,
+            .recommendedMode = mode,
+            .availableEngines = available_engines,
+            .hints = .{
+                .cuda = gpu_active,
+                .rocm = envTruthy("OPENCLAW_ZIG_ROCM_AVAILABLE"),
+                .metal = envTruthy("OPENCLAW_ZIG_METAL_AVAILABLE"),
+                .directml = envTruthy("OPENCLAW_ZIG_DIRECTML_AVAILABLE"),
+                .openvinoNpu = npu_active,
+            },
+            .tooling = .{
+                .nvidiaSmi = gpu_active,
+                .rocmSmi = envTruthy("OPENCLAW_ZIG_ROCM_SMI"),
+            },
+            .cpuCores = cpu_cores,
+            .features = features,
+            .capabilities = capabilities,
+            .throughputClass = if (cpu_cores <= 2 and !gpu_active and !npu_active) "low" else if (cpu_cores >= 8 or gpu_active or npu_active) "high" else "standard",
+            .runtimeProfile = "edge",
+        });
+    }
+
     if (std.ascii.eqlIgnoreCase(req.method, "edge.swarm.plan")) {
         var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
         defer parsed.deinit();
@@ -1618,6 +1669,7 @@ fn shouldEnforceGuard(method: []const u8) bool {
     if (std.ascii.eqlIgnoreCase(method, "chat.history")) return false;
     if (std.ascii.eqlIgnoreCase(method, "edge.wasm.marketplace.list")) return false;
     if (std.ascii.eqlIgnoreCase(method, "edge.router.plan")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "edge.acceleration.status")) return false;
     if (std.ascii.eqlIgnoreCase(method, "edge.swarm.plan")) return false;
     if (std.ascii.eqlIgnoreCase(method, "edge.multimodal.inspect")) return false;
     if (std.ascii.eqlIgnoreCase(method, "edge.voice.transcribe")) return false;
@@ -2265,6 +2317,10 @@ test "dispatch edge parity slice methods return contracts" {
     defer allocator.free(router);
     try std.testing.expect(std.mem.indexOf(u8, router, "\"selected\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, router, "\"provider\":\"chatgpt\"") != null);
+
+    const acceleration = try dispatch(allocator, "{\"id\":\"edge-accel\",\"method\":\"edge.acceleration.status\",\"params\":{}}");
+    defer allocator.free(acceleration);
+    try std.testing.expect(std.mem.indexOf(u8, acceleration, "\"availableEngines\"") != null);
 
     const swarm_err = try dispatch(allocator, "{\"id\":\"edge-swarm-bad\",\"method\":\"edge.swarm.plan\",\"params\":{}}");
     defer allocator.free(swarm_err);

@@ -18,6 +18,7 @@ pub const supported_methods = [_][]const u8{
     "doctor.memory.status",
     "edge.wasm.marketplace.list",
     "edge.router.plan",
+    "edge.acceleration.status",
     "edge.swarm.plan",
     "edge.multimodal.inspect",
     "edge.voice.transcribe",
