@@ -90,7 +90,11 @@ Port OpenClaw Go runtime behavior from baseline commit `65c974b528e2` into a pro
     - `talk.config`, `talk.mode`, `voicewake.get`, `voicewake.set`
     - `tts.status`, `tts.enable`, `tts.disable`, `tts.providers`, `tts.setProvider`, `tts.convert`
     - `models.list`, `chat.abort`, `chat.inject`, `push.test`, `canvas.present`, `update.run`
-  - Method surface moved to `88` Zig methods (from `72`) while preserving Lightpanda-only browser policy and green validation gates.
+  - Added config/wizard/session-mutation compat surfaces:
+    - `config.set`, `config.patch`, `config.apply`, `config.schema`
+    - `wizard.start`, `wizard.next`, `wizard.cancel`, `wizard.status`
+    - `sessions.patch`, `sessions.resolve`, `secrets.reload`
+  - Method surface moved to `99` Zig methods (from `88`) while preserving Lightpanda-only browser policy and green validation gates.
   - Added dispatcher contract tests for new edge methods and memory flows.
 - Toolchain/runtime notes (local Windows Zig master):
   - Codeberg `master` is currently `2d88a5a10334bddf3bd0b8bc98744ea6f239ce3a`.

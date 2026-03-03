@@ -68,6 +68,11 @@ const CompatUpdateJob = struct {
     }
 };
 
+const ConfigOverlayEntry = struct {
+    key: []const u8,
+    value: []const u8,
+};
+
 const CompatState = struct {
     const HeartbeatSnapshot = struct {
         enabled: bool,
@@ -88,8 +93,12 @@ const CompatState = struct {
     tts_provider: []u8,
     voicewake_enabled: bool,
     voicewake_phrase: []u8,
+    wizard_active: bool,
+    wizard_step: u32,
+    wizard_flow: []u8,
     events: std.ArrayList(CompatEvent),
     update_jobs: std.ArrayList(CompatUpdateJob),
+    config_overlay: std.StringHashMap([]u8),
     next_event_id: u64,
     next_update_id: u64,
     session_tombstones: std.StringHashMap(void),
@@ -110,8 +119,12 @@ const CompatState = struct {
             .tts_provider = try allocator.dupe(u8, "native"),
             .voicewake_enabled = false,
             .voicewake_phrase = try allocator.dupe(u8, "hey openclaw"),
+            .wizard_active = false,
+            .wizard_step = 0,
+            .wizard_flow = try allocator.dupe(u8, "onboarding"),
             .events = .empty,
             .update_jobs = .empty,
+            .config_overlay = std.StringHashMap([]u8).init(allocator),
             .next_event_id = 1,
             .next_update_id = 1,
             .session_tombstones = std.StringHashMap(void).init(allocator),
@@ -125,10 +138,17 @@ const CompatState = struct {
         self.allocator.free(self.talk_voice);
         self.allocator.free(self.tts_provider);
         self.allocator.free(self.voicewake_phrase);
+        self.allocator.free(self.wizard_flow);
         for (self.events.items) |*event| event.deinit(self.allocator);
         self.events.deinit(self.allocator);
         for (self.update_jobs.items) |*job| job.deinit(self.allocator);
         self.update_jobs.deinit(self.allocator);
+        var overlay_it = self.config_overlay.iterator();
+        while (overlay_it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.config_overlay.deinit();
 
         var tombstones = self.session_tombstones.iterator();
         while (tombstones.next()) |entry| self.allocator.free(entry.key_ptr.*);
@@ -199,6 +219,56 @@ const CompatState = struct {
             self.allocator.free(self.voicewake_phrase);
             self.voicewake_phrase = try self.allocator.dupe(u8, phrase);
         }
+    }
+
+    fn mergeConfigEntry(self: *CompatState, key: []const u8, value: []const u8) !void {
+        const normalized_key = std.mem.trim(u8, key, " \t\r\n");
+        if (normalized_key.len == 0) return;
+        if (self.config_overlay.getPtr(normalized_key)) |existing| {
+            self.allocator.free(existing.*);
+            existing.* = try self.allocator.dupe(u8, value);
+            return;
+        }
+        const owned_key = try self.allocator.dupe(u8, normalized_key);
+        errdefer self.allocator.free(owned_key);
+        const owned_value = try self.allocator.dupe(u8, value);
+        errdefer self.allocator.free(owned_value);
+        try self.config_overlay.put(owned_key, owned_value);
+    }
+
+    fn configOverlayEntries(self: *CompatState, allocator: std.mem.Allocator) ![]ConfigOverlayEntry {
+        var out: std.ArrayList(ConfigOverlayEntry) = .empty;
+        defer out.deinit(allocator);
+        var it = self.config_overlay.iterator();
+        while (it.next()) |entry| {
+            try out.append(allocator, .{
+                .key = entry.key_ptr.*,
+                .value = entry.value_ptr.*,
+            });
+        }
+        return out.toOwnedSlice(allocator);
+    }
+
+    fn configOverlayCount(self: *const CompatState) usize {
+        return self.config_overlay.count();
+    }
+
+    fn wizardStart(self: *CompatState, flow: []const u8) !void {
+        self.wizard_active = true;
+        self.wizard_step = 1;
+        if (flow.len > 0) {
+            self.allocator.free(self.wizard_flow);
+            self.wizard_flow = try self.allocator.dupe(u8, flow);
+        }
+    }
+
+    fn wizardNext(self: *CompatState) void {
+        if (!self.wizard_active) return;
+        self.wizard_step += 1;
+    }
+
+    fn wizardCancel(self: *CompatState) void {
+        self.wizard_active = false;
     }
 
     fn presenceView(self: *const CompatState) struct {
@@ -882,6 +952,173 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             .channel = channel,
             .message = message,
             .injectedAtMs = time_util.nowMs(),
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "secrets.reload")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const key_count: usize = if (params) |obj|
+            if (obj.get("keys")) |value|
+                if (value == .array) value.array.items.len else 0
+            else
+                0
+        else
+            0;
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .warningCount = key_count,
+            .reloadedAtMs = time_util.nowMs(),
+            .count = key_count,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "config.set") or std.ascii.eqlIgnoreCase(req.method, "config.patch")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const compat = try getCompatState();
+        try mergeConfigFromParams(allocator, compat, params);
+        const entries = try compat.configOverlayEntries(allocator);
+        defer allocator.free(entries);
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .overlay = entries,
+            .count = compat.configOverlayCount(),
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "config.apply")) {
+        const compat = try getCompatState();
+        const entries = try compat.configOverlayEntries(allocator);
+        defer allocator.free(entries);
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .applied = true,
+            .overlay = entries,
+            .count = compat.configOverlayCount(),
+            .appliedAtMs = time_util.nowMs(),
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "config.schema")) {
+        return protocol.encodeResult(allocator, req.id, .{
+            .type = "object",
+            .properties = .{
+                .gateway = .{ .type = "object" },
+                .runtime = .{ .type = "object" },
+                .channels = .{ .type = "object" },
+                .security = .{ .type = "object" },
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "wizard.start")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const flow = firstParamString(params, "flow", "onboarding");
+        const compat = try getCompatState();
+        try compat.wizardStart(flow);
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .active = compat.wizard_active,
+            .step = compat.wizard_step,
+            .flow = compat.wizard_flow,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "wizard.next")) {
+        const compat = try getCompatState();
+        if (!compat.wizard_active) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32004,
+                .message = "wizard not active",
+            });
+        }
+        compat.wizardNext();
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .active = compat.wizard_active,
+            .step = compat.wizard_step,
+            .flow = compat.wizard_flow,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "wizard.cancel")) {
+        const compat = try getCompatState();
+        compat.wizardCancel();
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .active = compat.wizard_active,
+            .step = compat.wizard_step,
+            .flow = compat.wizard_flow,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "wizard.status")) {
+        const compat = try getCompatState();
+        return protocol.encodeResult(allocator, req.id, .{
+            .active = compat.wizard_active,
+            .step = compat.wizard_step,
+            .flow = compat.wizard_flow,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "sessions.patch")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const session_id = resolveSessionId(params);
+        if (session_id.len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing sessionId",
+            });
+        }
+        const channel = firstParamString(params, "channel", "webchat");
+        const memory = try getMemoryStore();
+        try memory.append(session_id, channel, "sessions.patch", "system", "session patched");
+        const compat = try getCompatState();
+        compat.clearSessionDeleted(session_id);
+        const summary = (try findSessionSummary(allocator, memory, compat, session_id)) orelse {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32004,
+                .message = "session not found",
+            });
+        };
+        return protocol.encodeResult(allocator, req.id, .{
+            .session = summary,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "sessions.resolve")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const session_id = resolveSessionId(params);
+        if (session_id.len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing sessionId",
+            });
+        }
+        const memory = try getMemoryStore();
+        const compat = try getCompatState();
+        const summary = (try findSessionSummary(allocator, memory, compat, session_id)) orelse {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32004,
+                .message = "session not found",
+            });
+        };
+        return protocol.encodeResult(allocator, req.id, .{
+            .session = summary,
+            .state = .{
+                .resolved = true,
+                .lastSeenAtMs = summary.lastSeenAtMs,
+            },
+            .stateFound = true,
         });
     }
 
@@ -2813,11 +3050,20 @@ fn shouldEnforceGuard(method: []const u8) bool {
     if (std.ascii.eqlIgnoreCase(method, "voicewake.get")) return false;
     if (std.ascii.eqlIgnoreCase(method, "voicewake.set")) return false;
     if (std.ascii.eqlIgnoreCase(method, "models.list")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "secrets.reload")) return false;
     if (std.ascii.eqlIgnoreCase(method, "config.get")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "config.set")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "config.patch")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "config.apply")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "config.schema")) return false;
     if (std.ascii.eqlIgnoreCase(method, "tools.catalog")) return false;
     if (std.ascii.eqlIgnoreCase(method, "channels.status")) return false;
     if (std.ascii.eqlIgnoreCase(method, "channels.logout")) return false;
     if (std.ascii.eqlIgnoreCase(method, "update.run")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "wizard.start")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "wizard.next")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "wizard.cancel")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "wizard.status")) return false;
     if (std.ascii.eqlIgnoreCase(method, "push.test")) return false;
     if (std.ascii.eqlIgnoreCase(method, "logs.tail")) return false;
     if (std.ascii.eqlIgnoreCase(method, "canvas.present")) return false;
@@ -2830,6 +3076,8 @@ fn shouldEnforceGuard(method: []const u8) bool {
     if (std.ascii.eqlIgnoreCase(method, "sessions.usage")) return false;
     if (std.ascii.eqlIgnoreCase(method, "sessions.usage.timeseries")) return false;
     if (std.ascii.eqlIgnoreCase(method, "sessions.usage.logs")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "sessions.patch")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "sessions.resolve")) return false;
     if (std.ascii.eqlIgnoreCase(method, "security.audit")) return false;
     if (std.ascii.eqlIgnoreCase(method, "doctor")) return false;
     if (std.ascii.eqlIgnoreCase(method, "doctor.memory.status")) return false;
@@ -3065,6 +3313,41 @@ fn parseSendMemoryFromFrame(allocator: std.mem.Allocator, frame_json: []const u8
         .channel = try allocator.dupe(u8, channel),
         .message = try allocator.dupe(u8, message),
     };
+}
+
+fn stringifyJsonValue(allocator: std.mem.Allocator, value: std.json.Value) ![]u8 {
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    errdefer out.deinit();
+    try std.json.Stringify.value(value, .{}, &out.writer);
+    return out.toOwnedSlice();
+}
+
+fn mergeConfigFromParams(
+    allocator: std.mem.Allocator,
+    compat: *CompatState,
+    params: ?std.json.ObjectMap,
+) !void {
+    const object = if (params) |obj|
+        if (obj.get("config")) |cfg|
+            if (cfg == .object) cfg.object else obj
+        else
+            obj
+    else
+        return;
+
+    var it = object.iterator();
+    while (it.next()) |entry| {
+        const key = std.mem.trim(u8, entry.key_ptr.*, " \t\r\n");
+        if (key.len == 0) continue;
+        if (std.ascii.eqlIgnoreCase(key, "sessionId") or std.ascii.eqlIgnoreCase(key, "id")) continue;
+
+        const rendered = switch (entry.value_ptr.*) {
+            .string => |raw| try allocator.dupe(u8, std.mem.trim(u8, raw, " \t\r\n")),
+            else => try stringifyJsonValue(allocator, entry.value_ptr.*),
+        };
+        defer allocator.free(rendered);
+        try compat.mergeConfigEntry(key, rendered);
+    }
 }
 
 fn resolveSessionId(params: ?std.json.ObjectMap) []const u8 {
@@ -4030,6 +4313,59 @@ test "dispatch compat talk tts models and control methods return contracts" {
     const chat_abort = try dispatch(allocator, "{\"id\":\"compat-chat-abort\",\"method\":\"chat.abort\",\"params\":{\"jobId\":\"job-1\"}}");
     defer allocator.free(chat_abort);
     try std.testing.expect(std.mem.indexOf(u8, chat_abort, "\"aborted\":true") != null);
+}
+
+test "dispatch compat config wizard and sessions patch resolve methods return contracts" {
+    const allocator = std.testing.allocator;
+
+    const config_set = try dispatch(allocator, "{\"id\":\"compat-config-set\",\"method\":\"config.set\",\"params\":{\"gateway\":\"local\",\"securityLevel\":2}}");
+    defer allocator.free(config_set);
+    try std.testing.expect(std.mem.indexOf(u8, config_set, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, config_set, "\"overlay\"") != null);
+
+    const config_patch = try dispatch(allocator, "{\"id\":\"compat-config-patch\",\"method\":\"config.patch\",\"params\":{\"config\":{\"runtime\":\"edge\",\"channels\":\"telegram\"}}}");
+    defer allocator.free(config_patch);
+    try std.testing.expect(std.mem.indexOf(u8, config_patch, "\"count\"") != null);
+
+    const config_apply = try dispatch(allocator, "{\"id\":\"compat-config-apply\",\"method\":\"config.apply\",\"params\":{}}");
+    defer allocator.free(config_apply);
+    try std.testing.expect(std.mem.indexOf(u8, config_apply, "\"applied\":true") != null);
+
+    const config_schema = try dispatch(allocator, "{\"id\":\"compat-config-schema\",\"method\":\"config.schema\",\"params\":{}}");
+    defer allocator.free(config_schema);
+    try std.testing.expect(std.mem.indexOf(u8, config_schema, "\"properties\"") != null);
+
+    const secrets_reload = try dispatch(allocator, "{\"id\":\"compat-secrets\",\"method\":\"secrets.reload\",\"params\":{\"keys\":[\"A\",\"B\"]}}");
+    defer allocator.free(secrets_reload);
+    try std.testing.expect(std.mem.indexOf(u8, secrets_reload, "\"count\":2") != null);
+
+    const wizard_status_initial = try dispatch(allocator, "{\"id\":\"compat-wizard-status0\",\"method\":\"wizard.status\",\"params\":{}}");
+    defer allocator.free(wizard_status_initial);
+    try std.testing.expect(std.mem.indexOf(u8, wizard_status_initial, "\"active\":false") != null);
+
+    const wizard_start = try dispatch(allocator, "{\"id\":\"compat-wizard-start\",\"method\":\"wizard.start\",\"params\":{\"flow\":\"setup\"}}");
+    defer allocator.free(wizard_start);
+    try std.testing.expect(std.mem.indexOf(u8, wizard_start, "\"active\":true") != null);
+
+    const wizard_next = try dispatch(allocator, "{\"id\":\"compat-wizard-next\",\"method\":\"wizard.next\",\"params\":{}}");
+    defer allocator.free(wizard_next);
+    try std.testing.expect(std.mem.indexOf(u8, wizard_next, "\"step\":2") != null);
+
+    const wizard_cancel = try dispatch(allocator, "{\"id\":\"compat-wizard-cancel\",\"method\":\"wizard.cancel\",\"params\":{}}");
+    defer allocator.free(wizard_cancel);
+    try std.testing.expect(std.mem.indexOf(u8, wizard_cancel, "\"active\":false") != null);
+
+    const session_patch = try dispatch(allocator, "{\"id\":\"compat-session-patch\",\"method\":\"sessions.patch\",\"params\":{\"sessionId\":\"patch-s1\",\"channel\":\"telegram\"}}");
+    defer allocator.free(session_patch);
+    try std.testing.expect(std.mem.indexOf(u8, session_patch, "\"session\"") != null);
+
+    const session_resolve = try dispatch(allocator, "{\"id\":\"compat-session-resolve\",\"method\":\"sessions.resolve\",\"params\":{\"sessionId\":\"patch-s1\"}}");
+    defer allocator.free(session_resolve);
+    try std.testing.expect(std.mem.indexOf(u8, session_resolve, "\"stateFound\":true") != null);
+
+    const session_resolve_missing = try dispatch(allocator, "{\"id\":\"compat-session-resolve-missing\",\"method\":\"sessions.resolve\",\"params\":{\"sessionId\":\"missing-s1\"}}");
+    defer allocator.free(session_resolve_missing);
+    try std.testing.expect(std.mem.indexOf(u8, session_resolve_missing, "\"code\":-32004") != null);
 }
 
 test "dispatch edge parity slice methods return contracts" {

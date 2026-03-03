@@ -53,6 +53,11 @@ Phase 6 progress notes:
   - TTS methods: `tts.status`, `tts.enable`, `tts.disable`, `tts.providers`, `tts.setProvider`, `tts.convert`
   - model/control methods: `models.list`, `chat.abort`, `chat.inject`, `push.test`, `canvas.present`, `update.run`
   - stateful compat runtime now tracks talk mode/voice, TTS provider/enabled, voicewake phrase, and update jobs.
+- Added compat config/wizard/session-mutation slice:
+  - config methods: `config.set`, `config.patch`, `config.apply`, `config.schema`
+  - wizard methods: `wizard.start`, `wizard.next`, `wizard.cancel`, `wizard.status`
+  - session mutation methods: `sessions.patch`, `sessions.resolve`
+  - `secrets.reload` contract method added for key reload reporting.
 - Remaining: expand edge depth to full Go parity set.
 
 ## Phase 7 - Validation + Release
