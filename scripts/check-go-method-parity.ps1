@@ -1,6 +1,6 @@
 param(
     [string] $GoRegistryPath = "",
-    [string] $GoRegistryUrl = "https://raw.githubusercontent.com/adybag14-cyber/openclaw-go-port/main/go-agent/internal/rpc/registry.go",
+    [string] $GoRegistryUrl = "https://raw.githubusercontent.com/adybag14-cyber/openclaw-go-port/65c974b528e2a960b171e3110e8e4e4dbb6fda63/go-agent/internal/rpc/registry.go",
     [string] $ZigRegistryPath = ""
 )
 

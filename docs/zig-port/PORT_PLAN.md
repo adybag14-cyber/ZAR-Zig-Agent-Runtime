@@ -109,10 +109,10 @@ Port OpenClaw Go runtime behavior from baseline commit `65c974b528e2` into a pro
     - approvals: `exec.approvals.get|set|node.get|node.set`, `exec.approval.request|waitdecision|resolve`
   - Method surface moved to `145` Zig methods (from `126`) while preserving Lightpanda-only browser policy and green validation gates.
   - Added dispatcher contract tests for new edge methods and memory flows.
-  - Go method-set parity is now complete (`134/134` covered in Zig), with `11` intentional Zig-only extras retained for edge/runtime depth.
+  - Go baseline method-set parity is now complete (`133/133` covered in Zig for commit `65c974b528e2a960b171e3110e8e4e4dbb6fda63`), with `12` intentional Zig-only extras retained for edge/runtime depth.
   - Hardened smoke scripts to avoid flaky `zig build run` startup timing by prebuilding and launching the binary directly (`zig-out/bin/openclaw-zig.exe`) with explicit readiness and exit diagnostics.
 - Toolchain/runtime notes (local Windows Zig master):
-  - Codeberg `master` is currently `852c5d2824afdf3a0997b20923eac15f7569f56a`.
+  - Codeberg `master` is currently `96a19d3a6b867e6e8dc9ddc9c3fdc675521dd41b`.
   - Local Zig toolchain remains `0.16.0-dev.2703+0a412853a` (hash `0a412853a`) and is behind current Codeberg `master` (acknowledged).
   - Added Windows build workaround in `build.zig`:
     - use `-fstrip` for executable to avoid missing `.pdb` install failure on this master toolchain.
@@ -133,3 +133,5 @@ Port OpenClaw Go runtime behavior from baseline commit `65c974b528e2` into a pro
   - added release automation workflow `.github/workflows/release-preview.yml` so preview tags can be built + published from Linux runners with full `x86_64` + `aarch64` target coverage.
   - release workflow smoke run `22645353103` succeeded and published `v0.1.0-zig-preview.ci-smoke` with `x86_64-windows`, `x86_64-linux`, `x86_64-macos`, `aarch64-linux`, `aarch64-macos`, and `SHA256SUMS.txt`.
   - added `scripts/check-go-method-parity.ps1` and wired it into both CI workflows, enforcing that every Go registry method is present in Zig before merge/release.
+  - parity gate now uses pinned Go baseline commit `65c974b528e2a960b171e3110e8e4e4dbb6fda63` by default, avoiding nondeterministic drift from moving `main`.
+  - release workflow now runs an explicit `validate` job (parity + `zig build` + `zig build test`) before matrix artifact builds, and fails early if the requested release tag already exists.

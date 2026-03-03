@@ -93,6 +93,10 @@ Run Go-to-Zig method parity gate locally:
 ./scripts/check-go-method-parity.ps1
 ```
 
+Default parity baseline source:
+- `openclaw-go-port` pinned baseline commit `65c974b528e2a960b171e3110e8e4e4dbb6fda63`
+- Override with `-GoRegistryPath` (local file) or `-GoRegistryUrl` (alternate ref) when needed.
+
 Run host + Docker smoke/system checks:
 
 ```powershell
@@ -133,6 +137,8 @@ Automated preview release workflow:
   - `x86_64-macos`
   - `aarch64-linux`
   - `aarch64-macos`
+- validates parity + full Zig build/test once up front before matrix builds
+- rejects duplicate release tags early with a clear error
 - Trigger with GitHub CLI:
 
 ```powershell

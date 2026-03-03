@@ -73,7 +73,7 @@ Phase 6 progress notes:
   - node methods: `node.pair.request`, `node.pair.list`, `node.pair.approve`, `node.pair.reject`, `node.pair.verify`, `node.rename`, `node.list`, `node.describe`, `node.invoke`, `node.invoke.result`, `node.event`, `node.canvas.capability.refresh`
   - exec approval methods: `exec.approvals.get`, `exec.approvals.set`, `exec.approvals.node.get`, `exec.approvals.node.set`, `exec.approval.request`, `exec.approval.waitdecision`, `exec.approval.resolve`
   - stateful backing added for node pairs/nodes/events and approval policies/pending approval lifecycle.
-- Method surface now at `145` Zig methods; Go method-set parity is complete at `134/134` with `11` Zig-only extras retained (`shutdown`, `doctor`, `security.audit`, `exec.run`, `file.read`, `file.write`, `web.login.complete`, `web.login.status`, `edge.wasm.install`, `edge.wasm.execute`, `edge.wasm.remove`).
+- Method surface now at `145` Zig methods; Go baseline method-set parity is complete at `133/133` (baseline commit `65c974b528e2a960b171e3110e8e4e4dbb6fda63`) with `12` Zig-only extras retained (`shutdown`, `doctor`, `security.audit`, `exec.run`, `file.read`, `file.write`, `web.login.complete`, `web.login.status`, `edge.wasm.install`, `edge.wasm.execute`, `edge.wasm.remove`, `node.canvas.capability.refresh`).
 
 ## Phase 7 - Validation + Release
 - [x] Run full parity diff against Go baseline
@@ -87,7 +87,7 @@ Phase 6 progress notes:
 - [x] `zig test src/main.zig`
 - [x] `scripts/zig-syntax-check.ps1`
 - [x] `scripts/zig-codeberg-master-check.ps1` (reports local vs remote master hash)
-- [x] Go-vs-Zig method diff check: `Go=134`, `Zig=145`, `missing_in_zig=0`, `zig_extras=11`
+- [x] Go-vs-Zig method diff check (pinned baseline): `Go=133`, `Zig=145`, `missing_in_zig=0`, `zig_extras=12`
 - [x] Smoke scripts now run against built binary (`zig-out/bin/openclaw-zig.exe`) with readiness loops + early-exit diagnostics:
   - `scripts/docker-smoke-check.ps1` -> host+docker HTTP 200
   - `scripts/web-login-smoke-check.ps1` -> start/wait/complete/status HTTP 200
@@ -95,7 +95,7 @@ Phase 6 progress notes:
 - [x] `scripts/docker-smoke-check.ps1` (host + Docker HTTP 200 checks on `/health` and `/rpc`)
 - [x] `scripts/web-login-smoke-check.ps1` (`web.login.start -> wait -> complete -> status` all HTTP 200 with authorized completion)
 - [x] `scripts/telegram-reply-loop-smoke-check.ps1` (`send /auth start -> send /auth complete -> send chat -> poll` all HTTP 200 with non-empty queued replies)
-- [x] Freshness check: Codeberg Zig `master`=`852c5d2824afdf3a0997b20923eac15f7569f56a`; local toolchain=`0.16.0-dev.2703+0a412853a` (hash mismatch acknowledged)
+- [x] Freshness check: Codeberg Zig `master`=`96a19d3a6b867e6e8dc9ddc9c3fdc675521dd41b`; local toolchain=`0.16.0-dev.2703+0a412853a` (hash mismatch acknowledged)
 - [x] Serve smoke: `GET /health` and `POST /rpc` (`shutdown`) both returned HTTP 200
 - [x] Serve smoke: `POST /rpc` `file.write`, `file.read`, and `exec.run` returned HTTP 200 with real payloads
 - [x] Serve smoke: `POST /rpc` `security.audit` and `doctor` return structured diagnostics payloads
@@ -117,3 +117,5 @@ Phase 6 progress notes:
 - [x] Added CI release workflow (`.github/workflows/release-preview.yml`) to publish full preview artifact matrix from Linux runners, including arm64 targets.
 - [x] Release workflow smoke validated: Actions run `22645353103` published `v0.1.0-zig-preview.ci-smoke` with full 5-target artifact set + `SHA256SUMS.txt`.
 - [x] Added cross-repo method parity gate script (`scripts/check-go-method-parity.ps1`) and wired it into CI + release workflows as a blocking check.
+- [x] Parity gate baseline pinned to Go commit `65c974b528e2a960b171e3110e8e4e4dbb6fda63` for deterministic CI behavior.
+- [x] Release workflow hardened with upfront validate job (`build` + `test` + parity gate) and duplicate-tag guard before publish.
