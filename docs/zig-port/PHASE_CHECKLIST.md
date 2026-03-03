@@ -69,10 +69,14 @@ Phase 6 progress notes:
 - Added compat device slice:
   - device methods: `device.pair.list`, `device.pair.approve`, `device.pair.reject`, `device.pair.remove`, `device.token.rotate`, `device.token.revoke`
   - stateful backing added for device pairs and token rotate/revoke lifecycle.
-- Method surface now at `126/134`; remaining Go parity families are `node.*` and `exec.approvals*` / `exec.approval.*`.
+- Added compat node + exec-approval slice:
+  - node methods: `node.pair.request`, `node.pair.list`, `node.pair.approve`, `node.pair.reject`, `node.pair.verify`, `node.rename`, `node.list`, `node.describe`, `node.invoke`, `node.invoke.result`, `node.event`, `node.canvas.capability.refresh`
+  - exec approval methods: `exec.approvals.get`, `exec.approvals.set`, `exec.approvals.node.get`, `exec.approvals.node.set`, `exec.approval.request`, `exec.approval.waitdecision`, `exec.approval.resolve`
+  - stateful backing added for node pairs/nodes/events and approval policies/pending approval lifecycle.
+- Method surface now at `145` Zig methods; Go method-set parity is complete at `134/134` with `11` Zig-only extras retained (`shutdown`, `doctor`, `security.audit`, `exec.run`, `file.read`, `file.write`, `web.login.complete`, `web.login.status`, `edge.wasm.install`, `edge.wasm.execute`, `edge.wasm.remove`).
 
 ## Phase 7 - Validation + Release
-- [ ] Run full parity diff against Go baseline
+- [x] Run full parity diff against Go baseline
 - [ ] Run full test matrix and smoke checks
 - [ ] Build release binaries + checksums
 - [ ] Publish first Zig preview release
@@ -83,6 +87,7 @@ Phase 6 progress notes:
 - [x] `zig test src/main.zig`
 - [x] `scripts/zig-syntax-check.ps1`
 - [x] `scripts/zig-codeberg-master-check.ps1` (reports local vs remote master hash)
+- [x] Go-vs-Zig method diff check: `Go=134`, `Zig=145`, `missing_in_zig=0`, `zig_extras=11`
 - [x] `scripts/docker-smoke-check.ps1` (host + Docker HTTP 200 checks on `/health` and `/rpc`)
 - [x] `scripts/web-login-smoke-check.ps1` (`web.login.start -> wait -> complete -> status` all HTTP 200 with authorized completion)
 - [x] `scripts/telegram-reply-loop-smoke-check.ps1` (`send /auth start -> send /auth complete -> send chat -> poll` all HTTP 200 with non-empty queued replies)

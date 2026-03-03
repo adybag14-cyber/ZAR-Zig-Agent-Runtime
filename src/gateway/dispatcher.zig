@@ -201,6 +201,85 @@ const CompatDeviceToken = struct {
     }
 };
 
+const CompatNodePair = struct {
+    pair_id: []u8,
+    node_id: []u8,
+    status: []u8,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+
+    fn deinit(self: *CompatNodePair, allocator: std.mem.Allocator) void {
+        allocator.free(self.pair_id);
+        allocator.free(self.node_id);
+        allocator.free(self.status);
+    }
+};
+
+const CompatNode = struct {
+    node_id: []u8,
+    name: []u8,
+    status: []u8,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+    canvas_capability: []u8,
+    canvas_capability_expires_at_ms: i64,
+    canvas_host_url: []u8,
+    canvas_base_host_url: []u8,
+
+    fn deinit(self: *CompatNode, allocator: std.mem.Allocator) void {
+        allocator.free(self.node_id);
+        allocator.free(self.name);
+        allocator.free(self.status);
+        allocator.free(self.canvas_capability);
+        allocator.free(self.canvas_host_url);
+        allocator.free(self.canvas_base_host_url);
+    }
+};
+
+const CompatNodeEvent = struct {
+    event_id: []u8,
+    node_id: []u8,
+    kind: []u8,
+    payload_json: []u8,
+    result_id: []u8,
+    created_at_ms: i64,
+
+    fn deinit(self: *CompatNodeEvent, allocator: std.mem.Allocator) void {
+        allocator.free(self.event_id);
+        allocator.free(self.node_id);
+        allocator.free(self.kind);
+        allocator.free(self.payload_json);
+        allocator.free(self.result_id);
+    }
+};
+
+const CompatNodeApproval = struct {
+    node_id: []u8,
+    mode: []u8,
+    updated_at_ms: i64,
+
+    fn deinit(self: *CompatNodeApproval, allocator: std.mem.Allocator) void {
+        allocator.free(self.node_id);
+        allocator.free(self.mode);
+    }
+};
+
+const CompatPendingApproval = struct {
+    approval_id: []u8,
+    status: []u8,
+    method: []u8,
+    reason: []u8,
+    created_at_ms: i64,
+    resolved_at_ms: i64,
+
+    fn deinit(self: *CompatPendingApproval, allocator: std.mem.Allocator) void {
+        allocator.free(self.approval_id);
+        allocator.free(self.status);
+        allocator.free(self.method);
+        allocator.free(self.reason);
+    }
+};
+
 const ConfigOverlayEntry = struct {
     key: []const u8,
     value: []const u8,
@@ -244,6 +323,15 @@ const CompatState = struct {
     device_pairs: std.ArrayList(CompatDevicePair),
     next_device_token_id: u64,
     device_tokens: std.ArrayList(CompatDeviceToken),
+    next_node_pair_id: u64,
+    node_pairs: std.ArrayList(CompatNodePair),
+    nodes: std.ArrayList(CompatNode),
+    node_events: std.ArrayList(CompatNodeEvent),
+    next_approval_id: u64,
+    global_approval_mode: []u8,
+    global_approval_updated_at_ms: i64,
+    node_approvals: std.ArrayList(CompatNodeApproval),
+    pending_approvals: std.ArrayList(CompatPendingApproval),
     events: std.ArrayList(CompatEvent),
     update_jobs: std.ArrayList(CompatUpdateJob),
     config_overlay: std.StringHashMap([]u8),
@@ -285,6 +373,15 @@ const CompatState = struct {
             .device_pairs = .empty,
             .next_device_token_id = 1,
             .device_tokens = .empty,
+            .next_node_pair_id = 1,
+            .node_pairs = .empty,
+            .nodes = .empty,
+            .node_events = .empty,
+            .next_approval_id = 1,
+            .global_approval_mode = try allocator.dupe(u8, "prompt"),
+            .global_approval_updated_at_ms = now,
+            .node_approvals = .empty,
+            .pending_approvals = .empty,
             .events = .empty,
             .update_jobs = .empty,
             .config_overlay = std.StringHashMap([]u8).init(allocator),
@@ -318,6 +415,17 @@ const CompatState = struct {
         self.device_pairs.deinit(self.allocator);
         for (self.device_tokens.items) |*entry| entry.deinit(self.allocator);
         self.device_tokens.deinit(self.allocator);
+        for (self.node_pairs.items) |*entry| entry.deinit(self.allocator);
+        self.node_pairs.deinit(self.allocator);
+        for (self.nodes.items) |*entry| entry.deinit(self.allocator);
+        self.nodes.deinit(self.allocator);
+        for (self.node_events.items) |*entry| entry.deinit(self.allocator);
+        self.node_events.deinit(self.allocator);
+        self.allocator.free(self.global_approval_mode);
+        for (self.node_approvals.items) |*entry| entry.deinit(self.allocator);
+        self.node_approvals.deinit(self.allocator);
+        for (self.pending_approvals.items) |*entry| entry.deinit(self.allocator);
+        self.pending_approvals.deinit(self.allocator);
         for (self.events.items) |*event| event.deinit(self.allocator);
         self.events.deinit(self.allocator);
         for (self.update_jobs.items) |*job| job.deinit(self.allocator);
@@ -910,6 +1018,169 @@ const CompatState = struct {
             }
         }
         return revoked;
+    }
+
+    fn findNodePairIndex(self: *const CompatState, pair_id: []const u8) ?usize {
+        const normalized = std.mem.trim(u8, pair_id, " \t\r\n");
+        if (normalized.len == 0) return null;
+        for (self.node_pairs.items, 0..) |entry, idx| {
+            if (std.ascii.eqlIgnoreCase(entry.pair_id, normalized)) return idx;
+        }
+        return null;
+    }
+
+    fn findNodeIndex(self: *const CompatState, node_id: []const u8) ?usize {
+        const normalized = std.mem.trim(u8, node_id, " \t\r\n");
+        if (normalized.len == 0) return null;
+        for (self.nodes.items, 0..) |entry, idx| {
+            if (std.ascii.eqlIgnoreCase(entry.node_id, normalized)) return idx;
+        }
+        return null;
+    }
+
+    fn ensureLocalNode(self: *CompatState) !void {
+        if (self.findNodeIndex("node-local") != null) return;
+        const now = time_util.nowMs();
+        try self.nodes.append(self.allocator, .{
+            .node_id = try self.allocator.dupe(u8, "node-local"),
+            .name = try self.allocator.dupe(u8, "local"),
+            .status = try self.allocator.dupe(u8, "online"),
+            .created_at_ms = now,
+            .updated_at_ms = now,
+            .canvas_capability = try self.allocator.dupe(u8, ""),
+            .canvas_capability_expires_at_ms = 0,
+            .canvas_host_url = try self.allocator.dupe(u8, ""),
+            .canvas_base_host_url = try self.allocator.dupe(u8, ""),
+        });
+    }
+
+    fn createNodePairRequest(self: *CompatState, node_id: []const u8, name: []const u8) !CompatNodePair {
+        const normalized_node_id = std.mem.trim(u8, node_id, " \t\r\n");
+        const now = time_util.nowMs();
+        const pair_id = try std.fmt.allocPrint(self.allocator, "node-pair-{d:0>4}", .{self.next_node_pair_id});
+        self.next_node_pair_id += 1;
+        try self.node_pairs.append(self.allocator, .{
+            .pair_id = pair_id,
+            .node_id = try self.allocator.dupe(u8, normalized_node_id),
+            .status = try self.allocator.dupe(u8, "pending"),
+            .created_at_ms = now,
+            .updated_at_ms = now,
+        });
+        if (self.findNodeIndex(normalized_node_id) == null) {
+            try self.nodes.append(self.allocator, .{
+                .node_id = try self.allocator.dupe(u8, normalized_node_id),
+                .name = try self.allocator.dupe(u8, if (std.mem.trim(u8, name, " \t\r\n").len > 0) name else normalized_node_id),
+                .status = try self.allocator.dupe(u8, "pairing"),
+                .created_at_ms = now,
+                .updated_at_ms = now,
+                .canvas_capability = try self.allocator.dupe(u8, ""),
+                .canvas_capability_expires_at_ms = 0,
+                .canvas_host_url = try self.allocator.dupe(u8, ""),
+                .canvas_base_host_url = try self.allocator.dupe(u8, ""),
+            });
+        }
+        return self.node_pairs.items[self.node_pairs.items.len - 1];
+    }
+
+    fn updateNodePairStatus(self: *CompatState, pair_id: []const u8, status: []const u8) ?CompatNodePair {
+        const idx = self.findNodePairIndex(pair_id) orelse return null;
+        var pair = &self.node_pairs.items[idx];
+        self.allocator.free(pair.status);
+        pair.status = self.allocator.dupe(u8, status) catch return null;
+        pair.updated_at_ms = time_util.nowMs();
+        if (std.ascii.eqlIgnoreCase(status, "approved")) {
+            if (self.findNodeIndex(pair.node_id)) |node_idx| {
+                var node = &self.nodes.items[node_idx];
+                self.allocator.free(node.status);
+                node.status = self.allocator.dupe(u8, "online") catch return null;
+                node.updated_at_ms = time_util.nowMs();
+            }
+        }
+        return pair.*;
+    }
+
+    fn renameNode(self: *CompatState, node_id: []const u8, name: []const u8) ?CompatNode {
+        const idx = self.findNodeIndex(node_id) orelse return null;
+        var node = &self.nodes.items[idx];
+        self.allocator.free(node.name);
+        node.name = self.allocator.dupe(u8, name) catch return null;
+        node.updated_at_ms = time_util.nowMs();
+        return node.*;
+    }
+
+    fn appendNodeEvent(
+        self: *CompatState,
+        node_id: []const u8,
+        kind: []const u8,
+        payload_json: []const u8,
+        result_id: []const u8,
+    ) !CompatNodeEvent {
+        const now = time_util.nowMs();
+        const event_id = try std.fmt.allocPrint(self.allocator, "node-event-{d}", .{now});
+        try self.node_events.append(self.allocator, .{
+            .event_id = event_id,
+            .node_id = try self.allocator.dupe(u8, node_id),
+            .kind = try self.allocator.dupe(u8, kind),
+            .payload_json = try self.allocator.dupe(u8, payload_json),
+            .result_id = try self.allocator.dupe(u8, result_id),
+            .created_at_ms = now,
+        });
+        if (self.node_events.items.len > 256) {
+            var removed = self.node_events.orderedRemove(0);
+            removed.deinit(self.allocator);
+        }
+        return self.node_events.items[self.node_events.items.len - 1];
+    }
+
+    fn findNodeApprovalIndex(self: *const CompatState, node_id: []const u8) ?usize {
+        const normalized = std.mem.trim(u8, node_id, " \t\r\n");
+        if (normalized.len == 0) return null;
+        for (self.node_approvals.items, 0..) |entry, idx| {
+            if (std.ascii.eqlIgnoreCase(entry.node_id, normalized)) return idx;
+        }
+        return null;
+    }
+
+    fn upsertNodeApproval(self: *CompatState, node_id: []const u8, mode: []const u8) !CompatNodeApproval {
+        const normalized_node_id = std.mem.trim(u8, node_id, " \t\r\n");
+        const normalized_mode = std.mem.trim(u8, mode, " \t\r\n");
+        if (self.findNodeApprovalIndex(normalized_node_id)) |idx| {
+            var entry = &self.node_approvals.items[idx];
+            self.allocator.free(entry.mode);
+            entry.mode = try self.allocator.dupe(u8, if (normalized_mode.len > 0) normalized_mode else self.global_approval_mode);
+            entry.updated_at_ms = time_util.nowMs();
+            return entry.*;
+        }
+        try self.node_approvals.append(self.allocator, .{
+            .node_id = try self.allocator.dupe(u8, normalized_node_id),
+            .mode = try self.allocator.dupe(u8, if (normalized_mode.len > 0) normalized_mode else self.global_approval_mode),
+            .updated_at_ms = time_util.nowMs(),
+        });
+        return self.node_approvals.items[self.node_approvals.items.len - 1];
+    }
+
+    fn findPendingApprovalIndex(self: *const CompatState, approval_id: []const u8) ?usize {
+        const normalized = std.mem.trim(u8, approval_id, " \t\r\n");
+        if (normalized.len == 0) return null;
+        for (self.pending_approvals.items, 0..) |entry, idx| {
+            if (std.ascii.eqlIgnoreCase(entry.approval_id, normalized)) return idx;
+        }
+        return null;
+    }
+
+    fn createPendingApproval(self: *CompatState, method: []const u8, reason: []const u8) !CompatPendingApproval {
+        const now = time_util.nowMs();
+        const approval_id = try std.fmt.allocPrint(self.allocator, "approval-{d:0>6}", .{self.next_approval_id});
+        self.next_approval_id += 1;
+        try self.pending_approvals.append(self.allocator, .{
+            .approval_id = approval_id,
+            .status = try self.allocator.dupe(u8, "pending"),
+            .method = try self.allocator.dupe(u8, method),
+            .reason = try self.allocator.dupe(u8, reason),
+            .created_at_ms = now,
+            .resolved_at_ms = 0,
+        });
+        return self.pending_approvals.items[self.pending_approvals.items.len - 1];
     }
 
     fn markSessionDeleted(self: *CompatState, session_id: []const u8) !void {
@@ -2022,6 +2293,481 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         return protocol.encodeResult(allocator, req.id, .{
             .ok = revoked > 0,
             .revoked = revoked,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "node.pair.request")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        var node_id = firstParamString(params, "nodeId", "");
+        var generated_node_id: ?[]u8 = null;
+        defer if (generated_node_id) |entry| allocator.free(entry);
+        if (node_id.len == 0) {
+            generated_node_id = try std.fmt.allocPrint(allocator, "node-{d}", .{time_util.nowMs()});
+            node_id = generated_node_id.?;
+        }
+        const name = firstParamString(params, "name", node_id);
+        const compat = try getCompatState();
+        const pair = try compat.createNodePairRequest(node_id, name);
+        return protocol.encodeResult(allocator, req.id, .{
+            .pair = .{
+                .pairId = pair.pair_id,
+                .nodeId = pair.node_id,
+                .status = pair.status,
+                .createdAtMs = pair.created_at_ms,
+                .updatedAtMs = pair.updated_at_ms,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "node.pair.list")) {
+        const compat = try getCompatState();
+        const NodePairView = struct {
+            pairId: []const u8,
+            nodeId: []const u8,
+            status: []const u8,
+            createdAtMs: i64,
+            updatedAtMs: i64,
+        };
+        var items: std.ArrayList(NodePairView) = .empty;
+        defer items.deinit(allocator);
+        for (compat.node_pairs.items) |entry| {
+            try items.append(allocator, .{
+                .pairId = entry.pair_id,
+                .nodeId = entry.node_id,
+                .status = entry.status,
+                .createdAtMs = entry.created_at_ms,
+                .updatedAtMs = entry.updated_at_ms,
+            });
+        }
+        return protocol.encodeResult(allocator, req.id, .{
+            .count = items.items.len,
+            .items = items.items,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "node.pair.approve") or std.ascii.eqlIgnoreCase(req.method, "node.pair.reject") or std.ascii.eqlIgnoreCase(req.method, "node.pair.verify")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const pair_id = firstParamString(params, "pairId", "");
+        if (pair_id.len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing pairId",
+            });
+        }
+        const status: []const u8 = if (std.ascii.eqlIgnoreCase(req.method, "node.pair.approve"))
+            "approved"
+        else if (std.ascii.eqlIgnoreCase(req.method, "node.pair.reject"))
+            "rejected"
+        else
+            "verified";
+        const compat = try getCompatState();
+        const pair = compat.updateNodePairStatus(pair_id, status) orelse {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32004,
+                .message = "node pair not found",
+            });
+        };
+        return protocol.encodeResult(allocator, req.id, .{
+            .pair = .{
+                .pairId = pair.pair_id,
+                .nodeId = pair.node_id,
+                .status = pair.status,
+                .createdAtMs = pair.created_at_ms,
+                .updatedAtMs = pair.updated_at_ms,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "node.rename")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const node_id = firstParamString(params, "nodeId", "");
+        const name = firstParamString(params, "name", "");
+        if (node_id.len == 0 or name.len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing nodeId or name",
+            });
+        }
+        const compat = try getCompatState();
+        const node = compat.renameNode(node_id, name) orelse {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32004,
+                .message = "node not found",
+            });
+        };
+        return protocol.encodeResult(allocator, req.id, .{
+            .node = .{
+                .nodeId = node.node_id,
+                .name = node.name,
+                .status = node.status,
+                .createdAtMs = node.created_at_ms,
+                .updatedAtMs = node.updated_at_ms,
+                .canvasHostUrl = node.canvas_host_url,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "node.list")) {
+        const compat = try getCompatState();
+        try compat.ensureLocalNode();
+        const NodeView = struct {
+            nodeId: []const u8,
+            name: []const u8,
+            status: []const u8,
+            createdAtMs: i64,
+            updatedAtMs: i64,
+            canvasHostUrl: []const u8,
+        };
+        var items: std.ArrayList(NodeView) = .empty;
+        defer items.deinit(allocator);
+        for (compat.nodes.items) |entry| {
+            try items.append(allocator, .{
+                .nodeId = entry.node_id,
+                .name = entry.name,
+                .status = entry.status,
+                .createdAtMs = entry.created_at_ms,
+                .updatedAtMs = entry.updated_at_ms,
+                .canvasHostUrl = entry.canvas_host_url,
+            });
+        }
+        return protocol.encodeResult(allocator, req.id, .{
+            .count = items.items.len,
+            .items = items.items,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "node.describe")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const node_id = firstParamString(params, "nodeId", "");
+        if (node_id.len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing nodeId",
+            });
+        }
+        const compat = try getCompatState();
+        const idx = compat.findNodeIndex(node_id) orelse {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32004,
+                .message = "node not found",
+            });
+        };
+        const node = compat.nodes.items[idx];
+        return protocol.encodeResult(allocator, req.id, .{
+            .node = .{
+                .nodeId = node.node_id,
+                .name = node.name,
+                .status = node.status,
+                .createdAtMs = node.created_at_ms,
+                .updatedAtMs = node.updated_at_ms,
+                .canvasCapability = node.canvas_capability,
+                .canvasCapabilityExpiresAtMs = node.canvas_capability_expires_at_ms,
+                .canvasHostUrl = node.canvas_host_url,
+                .canvasBaseHostUrl = node.canvas_base_host_url,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "node.invoke")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const node_id = firstParamString(params, "nodeId", "node-local");
+        const result_id = try std.fmt.allocPrint(allocator, "invoke-{d}", .{time_util.nowMs()});
+        defer allocator.free(result_id);
+        const payload_json = try stringifyParamsObject(allocator, params);
+        defer allocator.free(payload_json);
+        const compat = try getCompatState();
+        const event = try compat.appendNodeEvent(node_id, "invoke", payload_json, result_id);
+        return protocol.encodeResult(allocator, req.id, .{
+            .accepted = true,
+            .nodeId = node_id,
+            .resultId = result_id,
+            .eventId = event.event_id,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "node.invoke.result")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const result_id = firstParamString(params, "resultId", "");
+        return protocol.encodeResult(allocator, req.id, .{
+            .resultId = result_id,
+            .status = "completed",
+            .output = .{
+                .paramsEchoed = params != null,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "node.event")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const node_id = firstParamString(params, "nodeId", "node-local");
+        const kind = firstParamString(params, "type", "custom");
+        const payload_json = try stringifyParamsObject(allocator, params);
+        defer allocator.free(payload_json);
+        const compat = try getCompatState();
+        const event = try compat.appendNodeEvent(node_id, kind, payload_json, "");
+        return protocol.encodeResult(allocator, req.id, .{
+            .event = .{
+                .eventId = event.event_id,
+                .nodeId = event.node_id,
+                .type = event.kind,
+                .payloadJson = event.payload_json,
+                .createdAtMs = event.created_at_ms,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "node.canvas.capability.refresh")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const node_id = firstParamString(params, "nodeId", "");
+        var base_canvas_url = firstParamString(params, "canvasHostUrl", firstParamString(params, "canvas_host_url", ""));
+        const compat = try getCompatState();
+        if (base_canvas_url.len == 0 and node_id.len > 0) {
+            if (compat.findNodeIndex(node_id)) |idx| {
+                const node = compat.nodes.items[idx];
+                if (node.canvas_base_host_url.len > 0)
+                    base_canvas_url = node.canvas_base_host_url
+                else
+                    base_canvas_url = node.canvas_host_url;
+            }
+        }
+        if (base_canvas_url.len == 0 or !(std.mem.startsWith(u8, base_canvas_url, "http://") or std.mem.startsWith(u8, base_canvas_url, "https://"))) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32040,
+                .message = "canvas host unavailable for this node session",
+            });
+        }
+        const canvas_capability = try mintCanvasCapabilityToken(allocator);
+        defer allocator.free(canvas_capability);
+        const scoped_url = try buildScopedCanvasHostUrl(allocator, base_canvas_url, canvas_capability);
+        defer allocator.free(scoped_url);
+        const expires_at_ms = time_util.nowMs() + 600_000;
+
+        if (node_id.len > 0) {
+            if (compat.findNodeIndex(node_id)) |idx| {
+                var node = &compat.nodes.items[idx];
+                compat.allocator.free(node.canvas_capability);
+                compat.allocator.free(node.canvas_host_url);
+                compat.allocator.free(node.canvas_base_host_url);
+                node.canvas_capability = try compat.allocator.dupe(u8, canvas_capability);
+                node.canvas_capability_expires_at_ms = expires_at_ms;
+                node.canvas_host_url = try compat.allocator.dupe(u8, scoped_url);
+                node.canvas_base_host_url = try compat.allocator.dupe(u8, base_canvas_url);
+                node.updated_at_ms = time_util.nowMs();
+            }
+        }
+
+        return protocol.encodeResult(allocator, req.id, .{
+            .canvasCapability = canvas_capability,
+            .canvasCapabilityExpiresAtMs = expires_at_ms,
+            .canvasHostUrl = scoped_url,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "exec.approvals.get")) {
+        const compat = try getCompatState();
+        return protocol.encodeResult(allocator, req.id, .{
+            .approvals = .{
+                .mode = compat.global_approval_mode,
+                .updatedAtMs = compat.global_approval_updated_at_ms,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "exec.approvals.set")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        var mode = firstParamString(params, "mode", "");
+        if (params) |obj| {
+            if (obj.get("approvals")) |value| {
+                if (value == .object) {
+                    if (value.object.get("mode")) |mode_value| {
+                        if (mode_value == .string) mode = std.mem.trim(u8, mode_value.string, " \t\r\n");
+                    }
+                }
+            }
+        }
+        const compat = try getCompatState();
+        if (mode.len > 0) {
+            compat.allocator.free(compat.global_approval_mode);
+            compat.global_approval_mode = try compat.allocator.dupe(u8, mode);
+        }
+        compat.global_approval_updated_at_ms = time_util.nowMs();
+        return protocol.encodeResult(allocator, req.id, .{
+            .approvals = .{
+                .mode = compat.global_approval_mode,
+                .updatedAtMs = compat.global_approval_updated_at_ms,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "exec.approvals.node.get")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const node_id = firstParamString(params, "nodeId", "node-local");
+        const compat = try getCompatState();
+        if (compat.findNodeApprovalIndex(node_id)) |idx| {
+            const entry = compat.node_approvals.items[idx];
+            return protocol.encodeResult(allocator, req.id, .{
+                .approvals = .{
+                    .nodeId = entry.node_id,
+                    .mode = entry.mode,
+                    .updatedAtMs = entry.updated_at_ms,
+                },
+            });
+        }
+        return protocol.encodeResult(allocator, req.id, .{
+            .approvals = .{
+                .nodeId = node_id,
+                .mode = compat.global_approval_mode,
+                .updatedAtMs = compat.global_approval_updated_at_ms,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "exec.approvals.node.set")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const node_id = firstParamString(params, "nodeId", "node-local");
+        var mode = firstParamString(params, "mode", "");
+        if (params) |obj| {
+            if (obj.get("approvals")) |value| {
+                if (value == .object) {
+                    if (value.object.get("mode")) |mode_value| {
+                        if (mode_value == .string) mode = std.mem.trim(u8, mode_value.string, " \t\r\n");
+                    }
+                }
+            }
+        }
+        const compat = try getCompatState();
+        const approval = try compat.upsertNodeApproval(node_id, mode);
+        return protocol.encodeResult(allocator, req.id, .{
+            .approvals = .{
+                .nodeId = approval.node_id,
+                .mode = approval.mode,
+                .updatedAtMs = approval.updated_at_ms,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "exec.approval.request")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const method = firstParamString(params, "method", "");
+        const reason = firstParamString(params, "reason", "");
+        const compat = try getCompatState();
+        const approval = try compat.createPendingApproval(method, reason);
+        return protocol.encodeResult(allocator, req.id, .{
+            .approval = .{
+                .approvalId = approval.approval_id,
+                .status = approval.status,
+                .method = approval.method,
+                .reason = approval.reason,
+                .createdAtMs = approval.created_at_ms,
+                .resolvedAtMs = approval.resolved_at_ms,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "exec.approval.waitDecision")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const approval_id = firstParamString(params, "approvalId", "");
+        if (approval_id.len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing approvalId",
+            });
+        }
+        const compat = try getCompatState();
+        const idx = compat.findPendingApprovalIndex(approval_id) orelse {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32004,
+                .message = "approval not found",
+            });
+        };
+        const approval = compat.pending_approvals.items[idx];
+        return protocol.encodeResult(allocator, req.id, .{
+            .approval = .{
+                .approvalId = approval.approval_id,
+                .status = approval.status,
+                .method = approval.method,
+                .reason = approval.reason,
+                .createdAtMs = approval.created_at_ms,
+                .resolvedAtMs = approval.resolved_at_ms,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "exec.approval.resolve")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        var approval_id = firstParamString(params, "approvalId", "");
+        var generated_approval_id: ?[]u8 = null;
+        defer if (generated_approval_id) |entry| allocator.free(entry);
+        if (approval_id.len == 0) {
+            generated_approval_id = try std.fmt.allocPrint(allocator, "approval-{d}", .{time_util.nowMs()});
+            approval_id = generated_approval_id.?;
+        }
+        var status = firstParamString(params, "status", "approved");
+        if (!std.ascii.eqlIgnoreCase(status, "approved") and !std.ascii.eqlIgnoreCase(status, "rejected")) {
+            status = "approved";
+        }
+        const compat = try getCompatState();
+        if (compat.findPendingApprovalIndex(approval_id)) |idx| {
+            var entry = &compat.pending_approvals.items[idx];
+            compat.allocator.free(entry.status);
+            entry.status = try compat.allocator.dupe(u8, status);
+            entry.resolved_at_ms = time_util.nowMs();
+            return protocol.encodeResult(allocator, req.id, .{
+                .approval = .{
+                    .approvalId = entry.approval_id,
+                    .status = entry.status,
+                    .method = entry.method,
+                    .reason = entry.reason,
+                    .createdAtMs = entry.created_at_ms,
+                    .resolvedAtMs = entry.resolved_at_ms,
+                },
+            });
+        }
+        const created = try compat.createPendingApproval("", "");
+        const idx = compat.findPendingApprovalIndex(created.approval_id).?;
+        var entry = &compat.pending_approvals.items[idx];
+        compat.allocator.free(entry.approval_id);
+        entry.approval_id = try compat.allocator.dupe(u8, approval_id);
+        compat.allocator.free(entry.status);
+        entry.status = try compat.allocator.dupe(u8, status);
+        entry.resolved_at_ms = time_util.nowMs();
+        return protocol.encodeResult(allocator, req.id, .{
+            .approval = .{
+                .approvalId = entry.approval_id,
+                .status = entry.status,
+                .method = entry.method,
+                .reason = entry.reason,
+                .createdAtMs = entry.created_at_ms,
+                .resolvedAtMs = entry.resolved_at_ms,
+            },
         });
     }
 
@@ -4288,6 +5034,25 @@ fn shouldEnforceGuard(method: []const u8) bool {
     if (std.ascii.eqlIgnoreCase(method, "device.pair.remove")) return false;
     if (std.ascii.eqlIgnoreCase(method, "device.token.rotate")) return false;
     if (std.ascii.eqlIgnoreCase(method, "device.token.revoke")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "node.pair.request")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "node.pair.list")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "node.pair.approve")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "node.pair.reject")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "node.pair.verify")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "node.rename")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "node.list")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "node.describe")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "node.invoke")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "node.invoke.result")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "node.event")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "node.canvas.capability.refresh")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "exec.approvals.get")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "exec.approvals.set")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "exec.approvals.node.get")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "exec.approvals.node.set")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "exec.approval.request")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "exec.approval.waitdecision")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "exec.approval.resolve")) return false;
     if (std.ascii.eqlIgnoreCase(method, "secrets.reload")) return false;
     if (std.ascii.eqlIgnoreCase(method, "config.get")) return false;
     if (std.ascii.eqlIgnoreCase(method, "config.set")) return false;
@@ -4558,6 +5323,35 @@ fn stringifyJsonValue(allocator: std.mem.Allocator, value: std.json.Value) ![]u8
     errdefer out.deinit();
     try std.json.Stringify.value(value, .{}, &out.writer);
     return out.toOwnedSlice();
+}
+
+fn stringifyParamsObject(allocator: std.mem.Allocator, params: ?std.json.ObjectMap) ![]u8 {
+    if (params) |obj| {
+        return stringifyJsonValue(allocator, .{ .object = obj });
+    }
+    return allocator.dupe(u8, "{}");
+}
+
+fn mintCanvasCapabilityToken(allocator: std.mem.Allocator) ![]u8 {
+    const now: u64 = @intCast(@max(time_util.nowMs(), 0));
+    var raw: [8]u8 = undefined;
+    std.mem.writeInt(u64, &raw, now, .little);
+    var hasher = std.hash.Wyhash.init(0xA11CE);
+    hasher.update(&raw);
+    const mixed = hasher.final();
+    return std.fmt.allocPrint(allocator, "cap-{x}-{x}", .{ now, mixed });
+}
+
+fn buildScopedCanvasHostUrl(
+    allocator: std.mem.Allocator,
+    base_url: []const u8,
+    capability: []const u8,
+) ![]u8 {
+    var trimmed = std.mem.trim(u8, base_url, " \t\r\n");
+    while (trimmed.len > 0 and trimmed[trimmed.len - 1] == '/') {
+        trimmed = trimmed[0 .. trimmed.len - 1];
+    }
+    return std.fmt.allocPrint(allocator, "{s}/__openclaw__/cap/{s}", .{ trimmed, capability });
 }
 
 fn mergeConfigFromParams(
@@ -5827,6 +6621,133 @@ test "dispatch compat device methods return contracts" {
     const token_revoke = try dispatch(allocator, token_revoke_frame);
     defer allocator.free(token_revoke);
     try std.testing.expect(std.mem.indexOf(u8, token_revoke, "\"revoked\":1") != null);
+}
+
+test "dispatch compat node methods return contracts" {
+    const allocator = std.testing.allocator;
+
+    const node_list_initial = try dispatch(allocator, "{\"id\":\"compat-node-list0\",\"method\":\"node.list\",\"params\":{}}");
+    defer allocator.free(node_list_initial);
+    try std.testing.expect(std.mem.indexOf(u8, node_list_initial, "\"node-local\"") != null);
+
+    const pair_request = try dispatch(allocator, "{\"id\":\"compat-node-pair-request\",\"method\":\"node.pair.request\",\"params\":{\"name\":\"edge-node\"}}");
+    defer allocator.free(pair_request);
+    const pair_id = try extractResultObjectStringField(allocator, pair_request, "pair", "pairId");
+    defer allocator.free(pair_id);
+    const node_id = try extractResultObjectStringField(allocator, pair_request, "pair", "nodeId");
+    defer allocator.free(node_id);
+    try std.testing.expect(std.mem.indexOf(u8, pair_request, "\"status\":\"pending\"") != null);
+
+    const pair_approve_frame = try encodeFrame(allocator, "compat-node-pair-approve", "node.pair.approve", .{
+        .pairId = pair_id,
+    });
+    defer allocator.free(pair_approve_frame);
+    const pair_approve = try dispatch(allocator, pair_approve_frame);
+    defer allocator.free(pair_approve);
+    try std.testing.expect(std.mem.indexOf(u8, pair_approve, "\"status\":\"approved\"") != null);
+
+    const pair_list = try dispatch(allocator, "{\"id\":\"compat-node-pair-list\",\"method\":\"node.pair.list\",\"params\":{}}");
+    defer allocator.free(pair_list);
+    try std.testing.expect(std.mem.indexOf(u8, pair_list, pair_id) != null);
+
+    const rename_frame = try encodeFrame(allocator, "compat-node-rename", "node.rename", .{
+        .nodeId = node_id,
+        .name = "edge-node-renamed",
+    });
+    defer allocator.free(rename_frame);
+    const renamed = try dispatch(allocator, rename_frame);
+    defer allocator.free(renamed);
+    try std.testing.expect(std.mem.indexOf(u8, renamed, "\"edge-node-renamed\"") != null);
+
+    const describe_frame = try encodeFrame(allocator, "compat-node-describe", "node.describe", .{
+        .nodeId = node_id,
+    });
+    defer allocator.free(describe_frame);
+    const described = try dispatch(allocator, describe_frame);
+    defer allocator.free(described);
+    try std.testing.expect(std.mem.indexOf(u8, described, "\"node\"") != null);
+
+    const invoke_frame = try encodeFrame(allocator, "compat-node-invoke", "node.invoke", .{
+        .nodeId = node_id,
+        .method = "agent",
+    });
+    defer allocator.free(invoke_frame);
+    const invoke = try dispatch(allocator, invoke_frame);
+    defer allocator.free(invoke);
+    const result_id = try extractResultStringField(allocator, invoke, "resultId");
+    defer allocator.free(result_id);
+    try std.testing.expect(std.mem.indexOf(u8, invoke, "\"accepted\":true") != null);
+
+    const invoke_result_frame = try encodeFrame(allocator, "compat-node-invoke-result", "node.invoke.result", .{
+        .resultId = result_id,
+    });
+    defer allocator.free(invoke_result_frame);
+    const invoke_result = try dispatch(allocator, invoke_result_frame);
+    defer allocator.free(invoke_result);
+    try std.testing.expect(std.mem.indexOf(u8, invoke_result, "\"status\":\"completed\"") != null);
+
+    const node_event_frame = try encodeFrame(allocator, "compat-node-event", "node.event", .{
+        .nodeId = node_id,
+        .type = "heartbeat",
+    });
+    defer allocator.free(node_event_frame);
+    const node_event = try dispatch(allocator, node_event_frame);
+    defer allocator.free(node_event);
+    try std.testing.expect(std.mem.indexOf(u8, node_event, "\"event\"") != null);
+
+    const refresh_frame = try encodeFrame(allocator, "compat-node-canvas-refresh", "node.canvas.capability.refresh", .{
+        .nodeId = node_id,
+        .canvasHostUrl = "https://canvas.example.com/root",
+    });
+    defer allocator.free(refresh_frame);
+    const refreshed = try dispatch(allocator, refresh_frame);
+    defer allocator.free(refreshed);
+    try std.testing.expect(std.mem.indexOf(u8, refreshed, "\"canvasCapability\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, refreshed, "/__openclaw__/cap/") != null);
+}
+
+test "dispatch compat exec approvals methods return contracts" {
+    const allocator = std.testing.allocator;
+
+    const approvals_get = try dispatch(allocator, "{\"id\":\"compat-approvals-get\",\"method\":\"exec.approvals.get\",\"params\":{}}");
+    defer allocator.free(approvals_get);
+    try std.testing.expect(std.mem.indexOf(u8, approvals_get, "\"approvals\"") != null);
+
+    const approvals_set = try dispatch(allocator, "{\"id\":\"compat-approvals-set\",\"method\":\"exec.approvals.set\",\"params\":{\"mode\":\"allow\"}}");
+    defer allocator.free(approvals_set);
+    try std.testing.expect(std.mem.indexOf(u8, approvals_set, "\"mode\":\"allow\"") != null);
+
+    const node_approval_get = try dispatch(allocator, "{\"id\":\"compat-node-approvals-get\",\"method\":\"exec.approvals.node.get\",\"params\":{\"nodeId\":\"node-local\"}}");
+    defer allocator.free(node_approval_get);
+    try std.testing.expect(std.mem.indexOf(u8, node_approval_get, "\"nodeId\":\"node-local\"") != null);
+
+    const node_approval_set = try dispatch(allocator, "{\"id\":\"compat-node-approvals-set\",\"method\":\"exec.approvals.node.set\",\"params\":{\"nodeId\":\"node-local\",\"mode\":\"prompt\"}}");
+    defer allocator.free(node_approval_set);
+    try std.testing.expect(std.mem.indexOf(u8, node_approval_set, "\"mode\":\"prompt\"") != null);
+
+    const approval_request = try dispatch(allocator, "{\"id\":\"compat-approval-request\",\"method\":\"exec.approval.request\",\"params\":{\"method\":\"exec.run\",\"reason\":\"confirm command\"}}");
+    defer allocator.free(approval_request);
+    const approval_id = try extractResultObjectStringField(allocator, approval_request, "approval", "approvalId");
+    defer allocator.free(approval_id);
+    try std.testing.expect(std.mem.indexOf(u8, approval_request, "\"status\":\"pending\"") != null);
+
+    const approval_wait_frame = try encodeFrame(allocator, "compat-approval-wait", "exec.approval.waitDecision", .{
+        .approvalId = approval_id,
+        .timeoutMs = 10,
+    });
+    defer allocator.free(approval_wait_frame);
+    const approval_wait = try dispatch(allocator, approval_wait_frame);
+    defer allocator.free(approval_wait);
+    try std.testing.expect(std.mem.indexOf(u8, approval_wait, "\"approval\"") != null);
+
+    const approval_resolve_frame = try encodeFrame(allocator, "compat-approval-resolve", "exec.approval.resolve", .{
+        .approvalId = approval_id,
+        .status = "approved",
+    });
+    defer allocator.free(approval_resolve_frame);
+    const approval_resolve = try dispatch(allocator, approval_resolve_frame);
+    defer allocator.free(approval_resolve);
+    try std.testing.expect(std.mem.indexOf(u8, approval_resolve, "\"status\":\"approved\"") != null);
 }
 
 test "dispatch edge parity slice methods return contracts" {
