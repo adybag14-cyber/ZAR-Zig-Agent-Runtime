@@ -8,6 +8,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    if (target.result.os.tag == .windows) {
+        // Zig master on Windows currently fails to emit a PDB reliably for this project.
+        // Strip debug symbols here so install doesn't attempt to copy a missing .pdb.
+        root_module.strip = true;
+    }
 
     const exe = b.addExecutable(.{
         .name = "openclaw-zig",
@@ -24,10 +29,20 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the OpenClaw Zig bootstrap binary");
     run_step.dependOn(&run_cmd.step);
 
-    const tests = b.addTest(.{
-        .root_module = root_module,
-    });
-    const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_tests.step);
+    if (target.result.os.tag == .windows) {
+        // Work around a Zig master Windows build-runner regression around `--listen`.
+        const test_cmd = b.addSystemCommand(&.{
+            b.graph.zig_exe,
+            "test",
+            "src/main.zig",
+        });
+        test_step.dependOn(&test_cmd.step);
+    } else {
+        const tests = b.addTest(.{
+            .root_module = root_module,
+        });
+        const run_tests = b.addRunArtifact(tests);
+        test_step.dependOn(&run_tests.step);
+    }
 }

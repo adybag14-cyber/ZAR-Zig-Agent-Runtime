@@ -1,5 +1,6 @@
 const std = @import("std");
 const web_login = @import("../bridge/web_login.zig");
+const time_util = @import("../util/time.zig");
 
 pub const RuntimeError = error{
     InvalidParamsFrame,
@@ -657,7 +658,7 @@ pub const TelegramRuntime = struct {
             .role = try self.allocator.dupe(u8, role),
             .kind = try self.allocator.dupe(u8, kind),
             .message = try self.allocator.dupe(u8, message),
-            .created_at_ms = std.Io.Clock.real.now(std.Io.Threaded.global_single_threaded.io()).toMilliseconds(),
+            .created_at_ms = time_util.nowMs(),
         });
     }
 

@@ -32,9 +32,14 @@ Release lock: no release tag is allowed until all phases are complete and parity
 - [x] Add smoke coverage for auth + reply loops (`scripts/web-login-smoke-check.ps1` + `scripts/telegram-reply-loop-smoke-check.ps1`)
 
 ## Phase 6 - Memory + Edge
-- [ ] Port memory persistence primitives
+- [x] Port memory persistence primitives
 - [ ] Port edge handler contracts
 - [ ] Port wasm runtime/sandbox lifecycle contracts
+
+Phase 6 progress notes:
+- Implemented persistent memory store (`src/memory/store.zig`) with session/channel history handlers: `sessions.history`, `chat.history`, and `doctor.memory.status`.
+- Implemented edge contract slice in dispatcher: `edge.wasm.marketplace.list`, `edge.router.plan`, `edge.swarm.plan`, `edge.multimodal.inspect`, and `edge.voice.transcribe`.
+- Remaining: expand edge depth to full Go parity set and add explicit wasm execute/sandbox lifecycle contract paths (beyond marketplace listing).
 
 ## Phase 7 - Validation + Release
 - [ ] Run full parity diff against Go baseline
@@ -45,6 +50,7 @@ Release lock: no release tag is allowed until all phases are complete and parity
 ## Latest Validation Snapshot
 - [x] `zig build`
 - [x] `zig build test`
+- [x] `zig test src/main.zig`
 - [x] `scripts/zig-syntax-check.ps1`
 - [x] `scripts/zig-codeberg-master-check.ps1` (reports local vs remote master hash)
 - [x] `scripts/docker-smoke-check.ps1` (host + Docker HTTP 200 checks on `/health` and `/rpc`)

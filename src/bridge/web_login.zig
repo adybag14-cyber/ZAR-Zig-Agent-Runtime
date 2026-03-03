@@ -1,4 +1,5 @@
 const std = @import("std");
+const time_util = @import("../util/time.zig");
 
 pub const LoginStatus = enum {
     pending,
@@ -226,7 +227,7 @@ fn normalizeProviderAlias(provider: []const u8) []const u8 {
 }
 
 fn nowMs() i64 {
-    return std.Io.Clock.real.now(std.Io.Threaded.global_single_threaded.io()).toMilliseconds();
+    return time_util.nowMs();
 }
 
 test "web login start wait complete lifecycle" {

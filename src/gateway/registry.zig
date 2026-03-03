@@ -15,9 +15,17 @@ pub const supported_methods = [_][]const u8{
     "browser.request",
     "security.audit",
     "doctor",
+    "doctor.memory.status",
+    "edge.wasm.marketplace.list",
+    "edge.router.plan",
+    "edge.swarm.plan",
+    "edge.multimodal.inspect",
+    "edge.voice.transcribe",
     "channels.status",
     "send",
     "poll",
+    "sessions.history",
+    "chat.history",
 };
 
 pub fn supports(method: []const u8) bool {

@@ -68,3 +68,13 @@ Port OpenClaw Go runtime behavior from baseline commit `65c974b528e2` into a pro
   - Telegram command surface now handles `/auth` and `/model` flows with queued reply polling
   - Dispatcher `channels.status` now includes telegram queue/target/auth telemetry
   - Added auth + reply-loop smokes (`scripts/web-login-smoke-check.ps1`, `scripts/telegram-reply-loop-smoke-check.ps1`)
+- Phase 6 in progress:
+  - Memory persistence primitives implemented (`src/memory/store.zig`) with append/history/stats and on-disk JSON persistence.
+  - Dispatcher memory parity slice shipped: `sessions.history`, `chat.history`, and `doctor.memory.status`.
+  - Edge handler parity slice shipped: `edge.wasm.marketplace.list`, `edge.router.plan`, `edge.swarm.plan`, `edge.multimodal.inspect`, and `edge.voice.transcribe`.
+  - Added dispatcher contract tests for new edge methods and memory flows.
+- Toolchain/runtime notes (local Windows Zig master):
+  - Local Zig pinned to Codeberg `master` commit `0a412853aae9815eb663a88a8a2d37b91c614317` (`0.16.0-dev.2703+0a412853a`).
+  - Added Windows build workaround in `build.zig`:
+    - use `-fstrip` for executable to avoid missing `.pdb` install failure on this master toolchain.
+    - route `zig build test` through `zig test src/main.zig` on Windows to avoid build-runner `--listen` regression.

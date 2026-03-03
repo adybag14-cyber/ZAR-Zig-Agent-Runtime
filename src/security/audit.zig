@@ -1,6 +1,8 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const config = @import("../config.zig");
 const guard = @import("guard.zig");
+const time_util = @import("../util/time.zig");
 
 pub const Finding = struct {
     checkId: []const u8,
@@ -212,7 +214,7 @@ pub fn run(
 
     const owned_findings = try findings.toOwnedSlice(allocator);
     return .{
-        .ts = std.Io.Clock.real.now(std.Io.Threaded.global_single_threaded.io()).toMilliseconds(),
+        .ts = time_util.nowMs(),
         .summary = summarize(owned_findings),
         .findings = owned_findings,
         .deep = deep_result,
@@ -460,16 +462,20 @@ fn isLoopbackBind(bind: []const u8) bool {
 fn commandAvailable(allocator: std.mem.Allocator, command: []const u8) bool {
     const io = std.Io.Threaded.global_single_threaded.io();
     _ = allocator;
-    const result = std.process.run(std.heap.page_allocator, io, .{
-        .argv = &[_][]const u8{ command, "--version" },
-        .stdout_limit = .limited(1024),
-        .stderr_limit = .limited(1024),
-        .timeout = .{
+    const timeout: std.Io.Timeout = switch (builtin.os.tag) {
+        .windows => .none,
+        else => .{
             .duration = .{
                 .clock = .awake,
                 .raw = std.Io.Duration.fromMilliseconds(2_000),
             },
         },
+    };
+    const result = std.process.run(std.heap.page_allocator, io, .{
+        .argv = &[_][]const u8{ command, "--version" },
+        .stdout_limit = .limited(1024),
+        .stderr_limit = .limited(1024),
+        .timeout = timeout,
     }) catch return false;
     defer std.heap.page_allocator.free(result.stdout);
     defer std.heap.page_allocator.free(result.stderr);

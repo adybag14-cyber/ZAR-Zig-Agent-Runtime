@@ -1,6 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const state = @import("state.zig");
+const time_util = @import("../util/time.zig");
 
 pub const InputError = error{
     InvalidParamsFrame,
@@ -150,10 +151,13 @@ pub const ToolRuntime = struct {
             .windows => [_][]const u8{ "C:\\Windows\\System32\\cmd.exe", "/C", command },
             else => [_][]const u8{ "/bin/sh", "-lc", command },
         };
-        const timeout: std.Io.Timeout = .{
-            .duration = std.Io.Clock.Duration{
-                .clock = .awake,
-                .raw = std.Io.Duration.fromMilliseconds(timeout_ms),
+        const timeout: std.Io.Timeout = switch (builtin.os.tag) {
+            .windows => .none,
+            else => .{
+                .duration = std.Io.Clock.Duration{
+                    .clock = .awake,
+                    .raw = std.Io.Duration.fromMilliseconds(timeout_ms),
+                },
             },
         };
 
@@ -341,7 +345,8 @@ fn getOptionalU32(
 }
 
 fn nowUnixMilliseconds(io: std.Io) i64 {
-    return std.Io.Clock.real.now(io).toMilliseconds();
+    _ = io;
+    return time_util.nowMs();
 }
 
 test "tool runtime file write/read lifecycle with session state" {

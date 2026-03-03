@@ -1,4 +1,5 @@
 const std = @import("std");
+const time_util = @import("../util/time.zig");
 
 pub const TriggerResult = struct {
     triggered: bool,
@@ -55,7 +56,7 @@ pub const LoopGuard = struct {
         });
         defer self.allocator.free(key);
 
-        const now = std.Io.Clock.real.now(std.Io.Threaded.global_single_threaded.io()).toMilliseconds();
+        const now = time_util.nowMs();
         const threshold = now - self.window_ms;
 
         var list_ptr: *std.ArrayList(i64) = blk: {
