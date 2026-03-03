@@ -106,6 +106,12 @@ Run host + Docker smoke/system checks:
 ./scripts/docker-smoke-check.ps1
 ```
 
+Run cross-platform runtime smoke (serve + RPC + auth + telegram loop simulation):
+
+```powershell
+./scripts/runtime-smoke-check.ps1
+```
+
 Run web login lifecycle smoke check:
 
 ```powershell
@@ -131,6 +137,7 @@ CI workflow:
 - validates build/test gates
 - enforces Go->Zig method-set parity (`scripts/check-go-method-parity.ps1`)
 - publishes parity report artifacts (`parity-go-zig.json`, `parity-go-zig.md`)
+- runs runtime smoke gate (`scripts/runtime-smoke-check.ps1 -SkipBuild`)
 - attempts cross-target release builds (x86_64-macos required, aarch64-linux/aarch64-macos optional)
 - supports manual dispatch (`workflow_dispatch`) for on-demand verification
 
