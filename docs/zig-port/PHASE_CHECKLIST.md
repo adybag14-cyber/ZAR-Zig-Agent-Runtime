@@ -77,7 +77,7 @@ Phase 6 progress notes:
 
 ## Phase 7 - Validation + Release
 - [x] Run full parity diff against Go baseline
-- [ ] Run full test matrix and smoke checks
+- [x] Run full test matrix and smoke checks
 - [ ] Build release binaries + checksums
 - [ ] Publish first Zig preview release
 
@@ -88,6 +88,10 @@ Phase 6 progress notes:
 - [x] `scripts/zig-syntax-check.ps1`
 - [x] `scripts/zig-codeberg-master-check.ps1` (reports local vs remote master hash)
 - [x] Go-vs-Zig method diff check: `Go=134`, `Zig=145`, `missing_in_zig=0`, `zig_extras=11`
+- [x] Smoke scripts now run against built binary (`zig-out/bin/openclaw-zig.exe`) with readiness loops + early-exit diagnostics:
+  - `scripts/docker-smoke-check.ps1` -> host+docker HTTP 200
+  - `scripts/web-login-smoke-check.ps1` -> start/wait/complete/status HTTP 200
+  - `scripts/telegram-reply-loop-smoke-check.ps1` -> send/poll/auth lifecycle HTTP 200
 - [x] `scripts/docker-smoke-check.ps1` (host + Docker HTTP 200 checks on `/health` and `/rpc`)
 - [x] `scripts/web-login-smoke-check.ps1` (`web.login.start -> wait -> complete -> status` all HTTP 200 with authorized completion)
 - [x] `scripts/telegram-reply-loop-smoke-check.ps1` (`send /auth start -> send /auth complete -> send chat -> poll` all HTTP 200 with non-empty queued replies)

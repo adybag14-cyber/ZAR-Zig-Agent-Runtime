@@ -110,6 +110,7 @@ Port OpenClaw Go runtime behavior from baseline commit `65c974b528e2` into a pro
   - Method surface moved to `145` Zig methods (from `126`) while preserving Lightpanda-only browser policy and green validation gates.
   - Added dispatcher contract tests for new edge methods and memory flows.
   - Go method-set parity is now complete (`134/134` covered in Zig), with `11` intentional Zig-only extras retained for edge/runtime depth.
+  - Hardened smoke scripts to avoid flaky `zig build run` startup timing by prebuilding and launching the binary directly (`zig-out/bin/openclaw-zig.exe`) with explicit readiness and exit diagnostics.
 - Toolchain/runtime notes (local Windows Zig master):
   - Codeberg `master` is currently `d2db1d45f1651d25c779651378b002b027e5f8e4`.
   - Local Zig toolchain remains `0.16.0-dev.2703+0a412853a` (hash `0a412853a`) and is behind current Codeberg `master` (acknowledged).

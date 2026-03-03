@@ -5,13 +5,24 @@ $zig = if ($env:OPENCLAW_ZIG_BIN -and $env:OPENCLAW_ZIG_BIN.Trim().Length -gt 0)
 if (-not (Test-Path $zig)) {
   throw "Zig binary not found at '$zig'. Set OPENCLAW_ZIG_BIN to a valid zig executable path."
 }
+$null = & $zig build --summary all
+$exe = Join-Path $repo "zig-out\bin\openclaw-zig.exe"
+if (-not (Test-Path $exe)) {
+  throw "openclaw-zig executable not found at '$exe' after build."
+}
 
 $port = 8092
 $env:OPENCLAW_ZIG_HTTP_PORT = "$port"
-$proc = Start-Process -FilePath $zig -ArgumentList @("build","run","--","--serve") -WorkingDirectory $repo -PassThru -WindowStyle Hidden
+$stdoutLog = Join-Path $repo "tmp_smoke_weblogin_stdout.log"
+$stderrLog = Join-Path $repo "tmp_smoke_weblogin_stderr.log"
+Remove-Item $stdoutLog,$stderrLog -ErrorAction SilentlyContinue
+$proc = Start-Process -FilePath $exe -ArgumentList @("--serve") -WorkingDirectory $repo -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
 
 $ready = $false
-for ($i = 0; $i -lt 30; $i++) {
+for ($i = 0; $i -lt 60; $i++) {
+  if ($proc.HasExited) {
+    break
+  }
   try {
     $health = Invoke-WebRequest -Uri "http://127.0.0.1:$port/health" -UseBasicParsing -TimeoutSec 2
     if ($health.StatusCode -eq 200) {
@@ -23,7 +34,10 @@ for ($i = 0; $i -lt 30; $i++) {
   }
 }
 if (-not $ready) {
-  throw "openclaw-zig server did not become ready on port $port"
+  $stderrTail = if (Test-Path $stderrLog) { (Get-Content $stderrLog -Tail 120 -ErrorAction SilentlyContinue) -join "`n" } else { "" }
+  $stdoutTail = if (Test-Path $stdoutLog) { (Get-Content $stdoutLog -Tail 60 -ErrorAction SilentlyContinue) -join "`n" } else { "" }
+  $exitCode = if ($proc.HasExited) { $proc.ExitCode } else { "running" }
+  throw "openclaw-zig server did not become ready on port $port (exit=$exitCode)`nSTDERR:`n$stderrTail`nSTDOUT:`n$stdoutTail"
 }
 
 try {
@@ -78,5 +92,6 @@ finally {
   if ($null -ne $proc -and -not $proc.HasExited) {
     Stop-Process -Id $proc.Id -Force
   }
+  Remove-Item $stdoutLog,$stderrLog -ErrorAction SilentlyContinue
   Remove-Item Env:OPENCLAW_ZIG_HTTP_PORT -ErrorAction SilentlyContinue
 }
