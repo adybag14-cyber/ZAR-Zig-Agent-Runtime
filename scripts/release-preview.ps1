@@ -49,6 +49,24 @@ New-Item -ItemType Directory -Force -Path $releaseRoot | Out-Null
 $assets = New-Object System.Collections.Generic.List[string]
 $optionalFailures = New-Object System.Collections.Generic.List[string]
 
+$parityScript = Join-Path $repoRoot "scripts\check-go-method-parity.ps1"
+$parityJsonPath = Join-Path $releaseRoot "parity-go-zig.json"
+$parityMdPath = Join-Path $releaseRoot "parity-go-zig.md"
+if (-not (Test-Path $parityScript)) {
+    throw "Parity script not found: $parityScript"
+}
+try {
+    & $parityScript -OutputJsonPath $parityJsonPath -OutputMarkdownPath $parityMdPath
+    if (-not $?) {
+        throw "Go->Zig parity gate failed in release-preview flow."
+    }
+}
+catch {
+    throw "Go->Zig parity gate failed in release-preview flow. $($_.Exception.Message)"
+}
+$assets.Add($parityJsonPath) | Out-Null
+$assets.Add($parityMdPath) | Out-Null
+
 foreach ($target in $targets) {
     Write-Output "Building target: $($target.Triple)"
     try {

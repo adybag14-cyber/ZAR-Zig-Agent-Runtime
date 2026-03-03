@@ -121,3 +121,4 @@ Phase 6 progress notes:
 - [x] Release workflow hardened with upfront validate job (`build` + `test` + parity gate) and duplicate-tag guard before publish.
 - [x] Parity gate now emits machine-readable report (`parity-go-zig.json`) and CI/release workflows publish it as audit evidence.
 - [x] Release workflow evidence update: run `22646343174` published `v0.1.0-zig-preview.ci-parityjson` including `parity-go-zig.json` alongside all target zips + `SHA256SUMS.txt`.
+- [x] Parity reporting now includes reviewer-friendly markdown (`parity-go-zig.md`) in CI artifacts and release assets.

@@ -3,6 +3,7 @@ param(
     [string] $GoRegistryUrl = "https://raw.githubusercontent.com/adybag14-cyber/openclaw-go-port/65c974b528e2a960b171e3110e8e4e4dbb6fda63/go-agent/internal/rpc/registry.go",
     [string] $ZigRegistryPath = "",
     [string] $OutputJsonPath = "",
+    [string] $OutputMarkdownPath = "",
     [switch] $FailOnExtra
 )
 
@@ -155,6 +156,59 @@ if (-not [string]::IsNullOrWhiteSpace($OutputJsonPath)) {
     $reportJson = $report | ConvertTo-Json -Depth 8
     Set-Content -Path $OutputJsonPath -Value $reportJson -Encoding utf8
     Write-Output "PARITY_REPORT_JSON=$OutputJsonPath"
+}
+
+if (-not [string]::IsNullOrWhiteSpace($OutputMarkdownPath)) {
+    $outputDir = Split-Path -Parent $OutputMarkdownPath
+    if (-not [string]::IsNullOrWhiteSpace($outputDir)) {
+        New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+    }
+
+    $md = New-Object System.Collections.Generic.List[string]
+    $tick = [string][char]96
+    $md.Add("# Go-to-Zig Method Parity Report") | Out-Null
+    $md.Add("") | Out-Null
+    $md.Add("Generated: $(Get-Date -Format 'yyyy-MM-ddTHH:mm:ssK')") | Out-Null
+    $md.Add("") | Out-Null
+    $md.Add("## Baseline") | Out-Null
+    if (-not [string]::IsNullOrWhiteSpace($GoRegistryPath)) {
+        $md.Add("- Go registry path: $tick$GoRegistryPath$tick") | Out-Null
+    }
+    else {
+        $md.Add("- Go registry URL: $tick$GoRegistryUrl$tick") | Out-Null
+    }
+    $md.Add("- Zig registry path: $tick$ZigRegistryPath$tick") | Out-Null
+    $md.Add("") | Out-Null
+    $md.Add("## Counts") | Out-Null
+    $md.Add("| Metric | Value |") | Out-Null
+    $md.Add("| --- | ---: |") | Out-Null
+    $md.Add("| Go methods | $($goMethods.Count) |") | Out-Null
+    $md.Add("| Zig methods | $($zigMethods.Count) |") | Out-Null
+    $md.Add("| Missing in Zig | $($missingInZig.Count) |") | Out-Null
+    $md.Add("| Extra in Zig | $($extraInZig.Count) |") | Out-Null
+    $md.Add("") | Out-Null
+    $md.Add("## Missing In Zig") | Out-Null
+    if ($missingInZig.Count -eq 0) {
+        $md.Add("- None") | Out-Null
+    }
+    else {
+        foreach ($m in ($missingInZig | Sort-Object)) {
+            $md.Add("- $tick$m$tick") | Out-Null
+        }
+    }
+    $md.Add("") | Out-Null
+    $md.Add("## Extra In Zig") | Out-Null
+    if ($extraInZig.Count -eq 0) {
+        $md.Add("- None") | Out-Null
+    }
+    else {
+        foreach ($m in ($extraInZig | Sort-Object)) {
+            $md.Add("- $tick$m$tick") | Out-Null
+        }
+    }
+
+    Set-Content -Path $OutputMarkdownPath -Value $md -Encoding utf8
+    Write-Output "PARITY_REPORT_MD=$OutputMarkdownPath"
 }
 
 if ($missingInZig.Count -gt 0) {

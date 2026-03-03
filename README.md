@@ -92,6 +92,7 @@ Run Go-to-Zig method parity gate locally:
 ```powershell
 ./scripts/check-go-method-parity.ps1
 ./scripts/check-go-method-parity.ps1 -OutputJsonPath .\release\parity-go-zig.json
+./scripts/check-go-method-parity.ps1 -OutputJsonPath .\release\parity-go-zig.json -OutputMarkdownPath .\release\parity-go-zig.md
 ```
 
 Default parity baseline source:
@@ -129,7 +130,7 @@ CI workflow:
 - `.github/workflows/zig-ci.yml` runs on push/PR with Zig `master`
 - validates build/test gates
 - enforces Go->Zig method-set parity (`scripts/check-go-method-parity.ps1`)
-- publishes parity report artifact (`parity-go-zig.json`)
+- publishes parity report artifacts (`parity-go-zig.json`, `parity-go-zig.md`)
 - attempts cross-target release builds (x86_64-macos required, aarch64-linux/aarch64-macos optional)
 - supports manual dispatch (`workflow_dispatch`) for on-demand verification
 
@@ -142,7 +143,7 @@ Automated preview release workflow:
   - `aarch64-macos`
 - validates parity + full Zig build/test once up front before matrix builds
 - rejects duplicate release tags early with a clear error
-- includes parity evidence file (`parity-go-zig.json`) in release assets
+- includes parity evidence files (`parity-go-zig.json`, `parity-go-zig.md`) in release assets
 - Trigger with GitHub CLI:
 
 ```powershell

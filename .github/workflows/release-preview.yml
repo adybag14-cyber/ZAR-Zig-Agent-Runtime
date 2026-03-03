@@ -32,13 +32,15 @@ jobs:
 
       - name: Go-to-Zig method parity gate
         shell: pwsh
-        run: ./scripts/check-go-method-parity.ps1 -OutputJsonPath parity-go-zig.json
+        run: ./scripts/check-go-method-parity.ps1 -OutputJsonPath parity-go-zig.json -OutputMarkdownPath parity-go-zig.md
 
       - name: Upload parity report
         uses: actions/upload-artifact@v4
         with:
           name: parity-go-zig
-          path: parity-go-zig.json
+          path: |
+            parity-go-zig.json
+            parity-go-zig.md
 
       - name: Build and test baseline
         run: |
@@ -154,6 +156,9 @@ jobs:
           ASSETS=(dist/*.zip dist/SHA256SUMS.txt)
           if [ -f dist/parity-go-zig.json ]; then
             ASSETS+=(dist/parity-go-zig.json)
+          fi
+          if [ -f dist/parity-go-zig.md ]; then
+            ASSETS+=(dist/parity-go-zig.md)
           fi
 
           gh release create "${{ inputs.version }}" \
