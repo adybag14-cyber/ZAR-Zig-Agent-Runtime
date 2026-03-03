@@ -68,6 +68,77 @@ const CompatUpdateJob = struct {
     }
 };
 
+const CompatAgent = struct {
+    agent_id: []u8,
+    name: []u8,
+    description: []u8,
+    model: []u8,
+    status: []u8,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+
+    fn deinit(self: *CompatAgent, allocator: std.mem.Allocator) void {
+        allocator.free(self.agent_id);
+        allocator.free(self.name);
+        allocator.free(self.description);
+        allocator.free(self.model);
+        allocator.free(self.status);
+    }
+};
+
+const CompatAgentFile = struct {
+    agent_id: []u8,
+    file_id: []u8,
+    path: []u8,
+    content: []u8,
+    updated_at_ms: i64,
+
+    fn deinit(self: *CompatAgentFile, allocator: std.mem.Allocator) void {
+        allocator.free(self.agent_id);
+        allocator.free(self.file_id);
+        allocator.free(self.path);
+        allocator.free(self.content);
+    }
+};
+
+const CompatSkill = struct {
+    skill_id: []u8,
+    name: []u8,
+    source: []u8,
+    version: []u8,
+    updated_at_ms: i64,
+    installed: bool,
+
+    fn deinit(self: *CompatSkill, allocator: std.mem.Allocator) void {
+        allocator.free(self.skill_id);
+        allocator.free(self.name);
+        allocator.free(self.source);
+        allocator.free(self.version);
+    }
+};
+
+const CompatAgentJob = struct {
+    job_id: []u8,
+    method: []u8,
+    state: []u8,
+    session_id: []u8,
+    message: []u8,
+    prompt: []u8,
+    model: []u8,
+    done: bool,
+    updated_at_ms: i64,
+
+    fn deinit(self: *CompatAgentJob, allocator: std.mem.Allocator) void {
+        allocator.free(self.job_id);
+        allocator.free(self.method);
+        allocator.free(self.state);
+        allocator.free(self.session_id);
+        allocator.free(self.message);
+        allocator.free(self.prompt);
+        allocator.free(self.model);
+    }
+};
+
 const ConfigOverlayEntry = struct {
     key: []const u8,
     value: []const u8,
@@ -96,6 +167,14 @@ const CompatState = struct {
     wizard_active: bool,
     wizard_step: u32,
     wizard_flow: []u8,
+    next_agent_id: u64,
+    agents: std.ArrayList(CompatAgent),
+    next_agent_file_id: u64,
+    agent_files: std.ArrayList(CompatAgentFile),
+    next_skill_id: u64,
+    skills: std.ArrayList(CompatSkill),
+    next_agent_job_id: u64,
+    agent_jobs: std.ArrayList(CompatAgentJob),
     events: std.ArrayList(CompatEvent),
     update_jobs: std.ArrayList(CompatUpdateJob),
     config_overlay: std.StringHashMap([]u8),
@@ -122,6 +201,14 @@ const CompatState = struct {
             .wizard_active = false,
             .wizard_step = 0,
             .wizard_flow = try allocator.dupe(u8, "onboarding"),
+            .next_agent_id = 1,
+            .agents = .empty,
+            .next_agent_file_id = 1,
+            .agent_files = .empty,
+            .next_skill_id = 1,
+            .skills = .empty,
+            .next_agent_job_id = 1,
+            .agent_jobs = .empty,
             .events = .empty,
             .update_jobs = .empty,
             .config_overlay = std.StringHashMap([]u8).init(allocator),
@@ -139,6 +226,14 @@ const CompatState = struct {
         self.allocator.free(self.tts_provider);
         self.allocator.free(self.voicewake_phrase);
         self.allocator.free(self.wizard_flow);
+        for (self.agents.items) |*entry| entry.deinit(self.allocator);
+        self.agents.deinit(self.allocator);
+        for (self.agent_files.items) |*entry| entry.deinit(self.allocator);
+        self.agent_files.deinit(self.allocator);
+        for (self.skills.items) |*entry| entry.deinit(self.allocator);
+        self.skills.deinit(self.allocator);
+        for (self.agent_jobs.items) |*entry| entry.deinit(self.allocator);
+        self.agent_jobs.deinit(self.allocator);
         for (self.events.items) |*event| event.deinit(self.allocator);
         self.events.deinit(self.allocator);
         for (self.update_jobs.items) |*job| job.deinit(self.allocator);
@@ -326,6 +421,228 @@ const CompatState = struct {
             removed.deinit(self.allocator);
         }
         return self.update_jobs.items[self.update_jobs.items.len - 1];
+    }
+
+    fn findAgentIndex(self: *const CompatState, agent_id: []const u8) ?usize {
+        const normalized = std.mem.trim(u8, agent_id, " \t\r\n");
+        if (normalized.len == 0) return null;
+        for (self.agents.items, 0..) |entry, idx| {
+            if (std.ascii.eqlIgnoreCase(entry.agent_id, normalized)) return idx;
+        }
+        return null;
+    }
+
+    fn createAgent(
+        self: *CompatState,
+        name: []const u8,
+        description: []const u8,
+        model: []const u8,
+    ) !CompatAgent {
+        const now = time_util.nowMs();
+        const agent_id = try std.fmt.allocPrint(self.allocator, "agent-{d:0>4}", .{self.next_agent_id});
+        self.next_agent_id += 1;
+        try self.agents.append(self.allocator, .{
+            .agent_id = agent_id,
+            .name = try self.allocator.dupe(u8, if (std.mem.trim(u8, name, " \t\r\n").len > 0) name else agent_id),
+            .description = try self.allocator.dupe(u8, description),
+            .model = try self.allocator.dupe(u8, if (std.mem.trim(u8, model, " \t\r\n").len > 0) model else "gpt-5.2"),
+            .status = try self.allocator.dupe(u8, "ready"),
+            .created_at_ms = now,
+            .updated_at_ms = now,
+        });
+        return self.agents.items[self.agents.items.len - 1];
+    }
+
+    fn updateAgent(
+        self: *CompatState,
+        agent_id: []const u8,
+        name: []const u8,
+        description: []const u8,
+        model: []const u8,
+        status: []const u8,
+    ) ?CompatAgent {
+        const idx = self.findAgentIndex(agent_id) orelse return null;
+        var entry = &self.agents.items[idx];
+        if (name.len > 0) {
+            self.allocator.free(entry.name);
+            entry.name = self.allocator.dupe(u8, name) catch return null;
+        }
+        if (description.len > 0) {
+            self.allocator.free(entry.description);
+            entry.description = self.allocator.dupe(u8, description) catch return null;
+        }
+        if (model.len > 0) {
+            self.allocator.free(entry.model);
+            entry.model = self.allocator.dupe(u8, model) catch return null;
+        }
+        if (status.len > 0) {
+            self.allocator.free(entry.status);
+            entry.status = self.allocator.dupe(u8, status) catch return null;
+        }
+        entry.updated_at_ms = time_util.nowMs();
+        return entry.*;
+    }
+
+    fn deleteAgent(self: *CompatState, agent_id: []const u8) bool {
+        const idx = self.findAgentIndex(agent_id) orelse return false;
+        var removed = self.agents.orderedRemove(idx);
+        removed.deinit(self.allocator);
+
+        var i: usize = 0;
+        while (i < self.agent_files.items.len) {
+            if (std.ascii.eqlIgnoreCase(self.agent_files.items[i].agent_id, agent_id)) {
+                var removed_file = self.agent_files.orderedRemove(i);
+                removed_file.deinit(self.allocator);
+                continue;
+            }
+            i += 1;
+        }
+        return true;
+    }
+
+    fn findAgentFileIndex(self: *const CompatState, agent_id: []const u8, file_id: []const u8) ?usize {
+        const normalized_agent = std.mem.trim(u8, agent_id, " \t\r\n");
+        const normalized_file = std.mem.trim(u8, file_id, " \t\r\n");
+        if (normalized_agent.len == 0 or normalized_file.len == 0) return null;
+        for (self.agent_files.items, 0..) |entry, idx| {
+            if (std.ascii.eqlIgnoreCase(entry.agent_id, normalized_agent) and std.ascii.eqlIgnoreCase(entry.file_id, normalized_file)) {
+                return idx;
+            }
+        }
+        return null;
+    }
+
+    fn upsertAgentFile(
+        self: *CompatState,
+        agent_id: []const u8,
+        file_id: []const u8,
+        path: []const u8,
+        content: []const u8,
+    ) !CompatAgentFile {
+        const normalized_agent = std.mem.trim(u8, agent_id, " \t\r\n");
+        if (normalized_agent.len == 0) return error.InvalidParamsFrame;
+
+        var owned_file_id: []u8 = undefined;
+        const normalized_file_id = std.mem.trim(u8, file_id, " \t\r\n");
+        if (normalized_file_id.len > 0) {
+            owned_file_id = try self.allocator.dupe(u8, normalized_file_id);
+        } else {
+            owned_file_id = try std.fmt.allocPrint(self.allocator, "file-{d}", .{self.next_agent_file_id});
+            self.next_agent_file_id += 1;
+        }
+        errdefer self.allocator.free(owned_file_id);
+
+        if (self.findAgentFileIndex(normalized_agent, owned_file_id)) |idx| {
+            var entry = &self.agent_files.items[idx];
+            self.allocator.free(entry.path);
+            self.allocator.free(entry.content);
+            entry.path = try self.allocator.dupe(u8, path);
+            entry.content = try self.allocator.dupe(u8, content);
+            entry.updated_at_ms = time_util.nowMs();
+            self.allocator.free(owned_file_id);
+            return entry.*;
+        }
+
+        const now = time_util.nowMs();
+        try self.agent_files.append(self.allocator, .{
+            .agent_id = try self.allocator.dupe(u8, normalized_agent),
+            .file_id = owned_file_id,
+            .path = try self.allocator.dupe(u8, path),
+            .content = try self.allocator.dupe(u8, content),
+            .updated_at_ms = now,
+        });
+        return self.agent_files.items[self.agent_files.items.len - 1];
+    }
+
+    fn findSkillIndex(self: *const CompatState, name: []const u8) ?usize {
+        const normalized = std.mem.trim(u8, name, " \t\r\n");
+        if (normalized.len == 0) return null;
+        for (self.skills.items, 0..) |entry, idx| {
+            if (std.ascii.eqlIgnoreCase(entry.name, normalized)) return idx;
+        }
+        return null;
+    }
+
+    fn installSkill(self: *CompatState, name: []const u8, source: []const u8, version: []const u8) !CompatSkill {
+        const normalized_name = std.mem.trim(u8, name, " \t\r\n");
+        const normalized_source = std.mem.trim(u8, source, " \t\r\n");
+        const normalized_version = std.mem.trim(u8, version, " \t\r\n");
+        const now = time_util.nowMs();
+
+        if (self.findSkillIndex(normalized_name)) |idx| {
+            var entry = &self.skills.items[idx];
+            self.allocator.free(entry.source);
+            self.allocator.free(entry.version);
+            entry.source = try self.allocator.dupe(u8, if (normalized_source.len > 0) normalized_source else "local");
+            entry.version = try self.allocator.dupe(u8, if (normalized_version.len > 0) normalized_version else "latest");
+            entry.updated_at_ms = now;
+            entry.installed = true;
+            return entry.*;
+        }
+
+        const skill_id = try std.fmt.allocPrint(self.allocator, "skill-{d:0>4}", .{self.next_skill_id});
+        self.next_skill_id += 1;
+        try self.skills.append(self.allocator, .{
+            .skill_id = skill_id,
+            .name = try self.allocator.dupe(u8, normalized_name),
+            .source = try self.allocator.dupe(u8, if (normalized_source.len > 0) normalized_source else "local"),
+            .version = try self.allocator.dupe(u8, if (normalized_version.len > 0) normalized_version else "latest"),
+            .updated_at_ms = now,
+            .installed = true,
+        });
+        return self.skills.items[self.skills.items.len - 1];
+    }
+
+    fn updateSkill(self: *CompatState, name: []const u8, version: []const u8) !CompatSkill {
+        const normalized_name = std.mem.trim(u8, name, " \t\r\n");
+        const normalized_version = std.mem.trim(u8, version, " \t\r\n");
+        if (self.findSkillIndex(normalized_name)) |idx| {
+            var entry = &self.skills.items[idx];
+            self.allocator.free(entry.version);
+            entry.version = try self.allocator.dupe(u8, if (normalized_version.len > 0) normalized_version else "latest");
+            entry.updated_at_ms = time_util.nowMs();
+            entry.installed = true;
+            return entry.*;
+        }
+        return self.installSkill(normalized_name, "local", normalized_version);
+    }
+
+    fn createAgentJob(
+        self: *CompatState,
+        method: []const u8,
+        session_id: []const u8,
+        message: []const u8,
+        prompt: []const u8,
+        model: []const u8,
+    ) !CompatAgentJob {
+        const now = time_util.nowMs();
+        const job_id = try std.fmt.allocPrint(self.allocator, "job-{d}", .{self.next_agent_job_id});
+        self.next_agent_job_id += 1;
+        try self.agent_jobs.append(self.allocator, .{
+            .job_id = job_id,
+            .method = try self.allocator.dupe(u8, method),
+            .state = try self.allocator.dupe(u8, "succeeded"),
+            .session_id = try self.allocator.dupe(u8, session_id),
+            .message = try self.allocator.dupe(u8, message),
+            .prompt = try self.allocator.dupe(u8, prompt),
+            .model = try self.allocator.dupe(u8, if (std.mem.trim(u8, model, " \t\r\n").len > 0) model else "gpt-5.2"),
+            .done = true,
+            .updated_at_ms = now,
+        });
+        if (self.agent_jobs.items.len > 1024) {
+            var removed = self.agent_jobs.orderedRemove(0);
+            removed.deinit(self.allocator);
+        }
+        return self.agent_jobs.items[self.agent_jobs.items.len - 1];
+    }
+
+    fn findAgentJob(self: *const CompatState, job_id: []const u8) ?CompatAgentJob {
+        const normalized = std.mem.trim(u8, job_id, " \t\r\n");
+        if (normalized.len == 0) return null;
+        for (self.agent_jobs.items) |entry| {
+            if (std.ascii.eqlIgnoreCase(entry.job_id, normalized)) return entry;
+        }
+        return null;
     }
 
     fn markSessionDeleted(self: *CompatState, session_id: []const u8) !void {
@@ -868,6 +1185,331 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         return protocol.encodeResult(allocator, req.id, .{
             .count = models.len,
             .items = models,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "agent.identity.get")) {
+        const runtime = getRuntime();
+        return protocol.encodeResult(allocator, req.id, .{
+            .id = "openclaw-zig",
+            .service = "openclaw-zig-port",
+            .version = "dev",
+            .runtime = .{
+                .queueDepth = runtime.queueDepth(),
+                .sessions = runtime.sessionCount(),
+            },
+            .authMode = "keyless",
+            .startedAtMs = time_util.nowMs(),
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "agents.list")) {
+        const compat = try getCompatState();
+        return protocol.encodeResult(allocator, req.id, .{
+            .count = compat.agents.items.len,
+            .items = compat.agents.items,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "agents.create")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const name = firstParamString(params, "name", "");
+        const description = firstParamString(params, "description", "");
+        const model = firstParamString(params, "model", "gpt-5.2");
+        const compat = try getCompatState();
+        const agent = try compat.createAgent(name, description, model);
+        return protocol.encodeResult(allocator, req.id, .{
+            .agent = .{
+                .agentId = agent.agent_id,
+                .name = agent.name,
+                .description = agent.description,
+                .model = agent.model,
+                .createdAtMs = agent.created_at_ms,
+                .updatedAtMs = agent.updated_at_ms,
+                .status = agent.status,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "agents.update")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const agent_id = firstParamString(params, "agentId", firstParamString(params, "id", ""));
+        if (agent_id.len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing agentId",
+            });
+        }
+        const compat = try getCompatState();
+        const updated = compat.updateAgent(
+            agent_id,
+            firstParamString(params, "name", ""),
+            firstParamString(params, "description", ""),
+            firstParamString(params, "model", ""),
+            firstParamString(params, "status", ""),
+        ) orelse {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32004,
+                .message = "agent not found",
+            });
+        };
+        return protocol.encodeResult(allocator, req.id, .{
+            .agent = .{
+                .agentId = updated.agent_id,
+                .name = updated.name,
+                .description = updated.description,
+                .model = updated.model,
+                .createdAtMs = updated.created_at_ms,
+                .updatedAtMs = updated.updated_at_ms,
+                .status = updated.status,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "agents.delete")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const agent_id = firstParamString(params, "agentId", firstParamString(params, "id", ""));
+        if (agent_id.len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing agentId",
+            });
+        }
+        const compat = try getCompatState();
+        const ok = compat.deleteAgent(agent_id);
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = ok,
+            .agentId = agent_id,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "agents.files.list")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const agent_id = firstParamString(params, "agentId", "");
+        if (agent_id.len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing agentId",
+            });
+        }
+        const compat = try getCompatState();
+        var files: std.ArrayList(CompatAgentFile) = .empty;
+        defer files.deinit(allocator);
+        for (compat.agent_files.items) |entry| {
+            if (!std.ascii.eqlIgnoreCase(entry.agent_id, agent_id)) continue;
+            try files.append(allocator, entry);
+        }
+        return protocol.encodeResult(allocator, req.id, .{
+            .count = files.items.len,
+            .items = files.items,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "agents.files.get")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const agent_id = firstParamString(params, "agentId", "");
+        const file_id = firstParamString(params, "fileId", firstParamString(params, "id", ""));
+        if (agent_id.len == 0 or file_id.len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing agentId or fileId",
+            });
+        }
+        const compat = try getCompatState();
+        const idx = compat.findAgentFileIndex(agent_id, file_id) orelse {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32004,
+                .message = "file not found",
+            });
+        };
+        const file = compat.agent_files.items[idx];
+        return protocol.encodeResult(allocator, req.id, .{
+            .file = .{
+                .agentId = file.agent_id,
+                .fileId = file.file_id,
+                .path = file.path,
+                .content = file.content,
+                .updatedAtMs = file.updated_at_ms,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "agents.files.set")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const agent_id = firstParamString(params, "agentId", "");
+        if (agent_id.len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing agentId",
+            });
+        }
+        const file_id = firstParamString(params, "fileId", "");
+        const path = firstParamString(params, "path", "");
+        const content = firstParamString(params, "content", "");
+        const compat = try getCompatState();
+        const file = compat.upsertAgentFile(agent_id, file_id, path, content) catch {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "invalid agents.files.set params",
+            });
+        };
+        return protocol.encodeResult(allocator, req.id, .{
+            .file = .{
+                .agentId = file.agent_id,
+                .fileId = file.file_id,
+                .path = file.path,
+                .content = file.content,
+                .updatedAtMs = file.updated_at_ms,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "skills.status")) {
+        const compat = try getCompatState();
+        return protocol.encodeResult(allocator, req.id, .{
+            .count = compat.skills.items.len,
+            .items = compat.skills.items,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "skills.bins")) {
+        const compat = try getCompatState();
+        var bins: std.ArrayList([]u8) = .empty;
+        defer {
+            for (bins.items) |item| allocator.free(item);
+            bins.deinit(allocator);
+        }
+        for (compat.skills.items) |entry| {
+            try bins.append(allocator, try std.fmt.allocPrint(allocator, "bin/{s}", .{entry.name}));
+        }
+        sortOwnedStringsAsc(bins.items);
+        return protocol.encodeResult(allocator, req.id, .{
+            .count = bins.items.len,
+            .bins = bins.items,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "skills.install")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        var name = firstParamString(params, "name", firstParamString(params, "skill", ""));
+        var generated_name: ?[]u8 = null;
+        defer if (generated_name) |entry| allocator.free(entry);
+        if (name.len == 0) {
+            generated_name = try std.fmt.allocPrint(allocator, "skill-{d}", .{time_util.nowMs()});
+            name = generated_name.?;
+        }
+        const source = firstParamString(params, "source", "local");
+        const version = firstParamString(params, "version", "latest");
+        const compat = try getCompatState();
+        const skill = try compat.installSkill(name, source, version);
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .skill = .{
+                .id = skill.skill_id,
+                .name = skill.name,
+                .source = skill.source,
+                .version = skill.version,
+                .updatedAtMs = skill.updated_at_ms,
+                .installed = skill.installed,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "skills.update")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        var name = firstParamString(params, "name", firstParamString(params, "skill", ""));
+        var generated_name: ?[]u8 = null;
+        defer if (generated_name) |entry| allocator.free(entry);
+        if (name.len == 0) {
+            generated_name = try std.fmt.allocPrint(allocator, "skill-{d}", .{time_util.nowMs()});
+            name = generated_name.?;
+        }
+        const version = firstParamString(params, "version", "latest");
+        const compat = try getCompatState();
+        const skill = try compat.updateSkill(name, version);
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .skill = .{
+                .id = skill.skill_id,
+                .name = skill.name,
+                .source = skill.source,
+                .version = skill.version,
+                .updatedAtMs = skill.updated_at_ms,
+                .installed = skill.installed,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "agent")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const session_id = resolveSessionId(params);
+        const message = firstParamString(params, "message", firstParamString(params, "prompt", "agent request"));
+        const prompt = firstParamString(params, "prompt", message);
+        const model = firstParamString(params, "model", "gpt-5.2");
+        const compat = try getCompatState();
+        const job = try compat.createAgentJob("agent", session_id, message, prompt, model);
+        const memory = try getMemoryStore();
+        if (message.len > 0) try memory.append(session_id, "webchat", "agent", "user", message);
+        return protocol.encodeResult(allocator, req.id, .{
+            .accepted = true,
+            .jobId = job.job_id,
+            .state = job.state,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "agent.wait")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const job_id = firstParamString(params, "jobId", "");
+        if (job_id.len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing jobId",
+            });
+        }
+        const compat = try getCompatState();
+        const job = compat.findAgentJob(job_id) orelse {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32004,
+                .message = "job not found",
+            });
+        };
+        return protocol.encodeResult(allocator, req.id, .{
+            .jobId = job.job_id,
+            .done = job.done,
+            .state = job.state,
+            .result = .{
+                .status = "accepted",
+                .method = job.method,
+                .echo = .{
+                    .message = job.message,
+                    .prompt = job.prompt,
+                    .model = job.model,
+                    .sessionId = job.session_id,
+                },
+            },
+            .method = job.method,
+            .session = job.session_id,
+            .updatedAtMs = job.updated_at_ms,
         });
     }
 
@@ -3050,6 +3692,20 @@ fn shouldEnforceGuard(method: []const u8) bool {
     if (std.ascii.eqlIgnoreCase(method, "voicewake.get")) return false;
     if (std.ascii.eqlIgnoreCase(method, "voicewake.set")) return false;
     if (std.ascii.eqlIgnoreCase(method, "models.list")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "agent.identity.get")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "agents.list")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "agents.create")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "agents.update")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "agents.delete")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "agents.files.list")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "agents.files.get")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "agents.files.set")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "agent")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "agent.wait")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "skills.status")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "skills.bins")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "skills.install")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "skills.update")) return false;
     if (std.ascii.eqlIgnoreCase(method, "secrets.reload")) return false;
     if (std.ascii.eqlIgnoreCase(method, "config.get")) return false;
     if (std.ascii.eqlIgnoreCase(method, "config.set")) return false;
@@ -3483,6 +4139,20 @@ fn sortUsageBucketsAsc(items: []UsageBucket) void {
         var j: usize = i + 1;
         while (j < items.len) : (j += 1) {
             if (items[j].bucketMs < items[i].bucketMs) {
+                const tmp = items[i];
+                items[i] = items[j];
+                items[j] = tmp;
+            }
+        }
+    }
+}
+
+fn sortOwnedStringsAsc(items: [][]u8) void {
+    var i: usize = 0;
+    while (i < items.len) : (i += 1) {
+        var j: usize = i + 1;
+        while (j < items.len) : (j += 1) {
+            if (std.mem.order(u8, items[j], items[i]) == .lt) {
                 const tmp = items[i];
                 items[i] = items[j];
                 items[j] = tmp;
@@ -4368,6 +5038,109 @@ test "dispatch compat config wizard and sessions patch resolve methods return co
     try std.testing.expect(std.mem.indexOf(u8, session_resolve_missing, "\"code\":-32004") != null);
 }
 
+test "dispatch compat agent and skills methods return contracts" {
+    const allocator = std.testing.allocator;
+
+    const identity = try dispatch(allocator, "{\"id\":\"compat-agent-identity\",\"method\":\"agent.identity.get\",\"params\":{}}");
+    defer allocator.free(identity);
+    try std.testing.expect(std.mem.indexOf(u8, identity, "\"id\":\"openclaw-zig\"") != null);
+
+    const created = try dispatch(allocator, "{\"id\":\"compat-agent-create\",\"method\":\"agents.create\",\"params\":{\"name\":\"zig-agent\",\"description\":\"parity test\",\"model\":\"gpt-5.2\"}}");
+    defer allocator.free(created);
+    const agent_id = try extractResultObjectStringField(allocator, created, "agent", "agentId");
+    defer allocator.free(agent_id);
+    try std.testing.expect(std.mem.indexOf(u8, created, "\"status\":\"ready\"") != null);
+
+    const listed = try dispatch(allocator, "{\"id\":\"compat-agents-list\",\"method\":\"agents.list\",\"params\":{}}");
+    defer allocator.free(listed);
+    try std.testing.expect(std.mem.indexOf(u8, listed, agent_id) != null);
+
+    const updated_frame = try encodeFrame(allocator, "compat-agent-update", "agents.update", .{
+        .agentId = agent_id,
+        .status = "busy",
+        .name = "zig-agent-updated",
+    });
+    defer allocator.free(updated_frame);
+    const updated = try dispatch(allocator, updated_frame);
+    defer allocator.free(updated);
+    try std.testing.expect(std.mem.indexOf(u8, updated, "\"status\":\"busy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, updated, "\"name\":\"zig-agent-updated\"") != null);
+
+    const file_set_frame = try encodeFrame(allocator, "compat-agent-file-set", "agents.files.set", .{
+        .agentId = agent_id,
+        .path = "notes/agent.txt",
+        .content = "hello-agent-file",
+    });
+    defer allocator.free(file_set_frame);
+    const file_set = try dispatch(allocator, file_set_frame);
+    defer allocator.free(file_set);
+    const file_id = try extractResultObjectStringField(allocator, file_set, "file", "fileId");
+    defer allocator.free(file_id);
+    try std.testing.expect(std.mem.indexOf(u8, file_set, "\"hello-agent-file\"") != null);
+
+    const file_list_frame = try encodeFrame(allocator, "compat-agent-file-list", "agents.files.list", .{
+        .agentId = agent_id,
+    });
+    defer allocator.free(file_list_frame);
+    const file_list = try dispatch(allocator, file_list_frame);
+    defer allocator.free(file_list);
+    try std.testing.expect(std.mem.indexOf(u8, file_list, file_id) != null);
+
+    const file_get_frame = try encodeFrame(allocator, "compat-agent-file-get", "agents.files.get", .{
+        .agentId = agent_id,
+        .fileId = file_id,
+    });
+    defer allocator.free(file_get_frame);
+    const file_get = try dispatch(allocator, file_get_frame);
+    defer allocator.free(file_get);
+    try std.testing.expect(std.mem.indexOf(u8, file_get, "\"notes/agent.txt\"") != null);
+
+    const skills_install = try dispatch(allocator, "{\"id\":\"compat-skills-install\",\"method\":\"skills.install\",\"params\":{\"name\":\"zig-parity-skill\",\"source\":\"local\",\"version\":\"1.0.0\"}}");
+    defer allocator.free(skills_install);
+    try std.testing.expect(std.mem.indexOf(u8, skills_install, "\"ok\":true") != null);
+
+    const skills_status = try dispatch(allocator, "{\"id\":\"compat-skills-status\",\"method\":\"skills.status\",\"params\":{}}");
+    defer allocator.free(skills_status);
+    try std.testing.expect(std.mem.indexOf(u8, skills_status, "\"zig-parity-skill\"") != null);
+
+    const skills_bins = try dispatch(allocator, "{\"id\":\"compat-skills-bins\",\"method\":\"skills.bins\",\"params\":{}}");
+    defer allocator.free(skills_bins);
+    try std.testing.expect(std.mem.indexOf(u8, skills_bins, "\"bin/zig-parity-skill\"") != null);
+
+    const skills_update = try dispatch(allocator, "{\"id\":\"compat-skills-update\",\"method\":\"skills.update\",\"params\":{\"name\":\"zig-parity-skill\",\"version\":\"1.2.3\"}}");
+    defer allocator.free(skills_update);
+    try std.testing.expect(std.mem.indexOf(u8, skills_update, "\"version\":\"1.2.3\"") != null);
+
+    const agent_submit = try dispatch(allocator, "{\"id\":\"compat-agent-submit\",\"method\":\"agent\",\"params\":{\"sessionId\":\"agent-s1\",\"message\":\"hello agent wait\",\"model\":\"gpt-5.2\"}}");
+    defer allocator.free(agent_submit);
+    const job_id = try extractResultStringField(allocator, agent_submit, "jobId");
+    defer allocator.free(job_id);
+    try std.testing.expect(std.mem.indexOf(u8, agent_submit, "\"accepted\":true") != null);
+
+    const agent_wait_frame = try encodeFrame(allocator, "compat-agent-wait", "agent.wait", .{
+        .jobId = job_id,
+        .timeoutMs = 1000,
+    });
+    defer allocator.free(agent_wait_frame);
+    const agent_wait = try dispatch(allocator, agent_wait_frame);
+    defer allocator.free(agent_wait);
+    try std.testing.expect(std.mem.indexOf(u8, agent_wait, "\"done\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, agent_wait, "\"method\":\"agent\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, agent_wait, "\"hello agent wait\"") != null);
+
+    const agent_wait_missing = try dispatch(allocator, "{\"id\":\"compat-agent-wait-missing\",\"method\":\"agent.wait\",\"params\":{\"jobId\":\"missing-job\"}}");
+    defer allocator.free(agent_wait_missing);
+    try std.testing.expect(std.mem.indexOf(u8, agent_wait_missing, "\"code\":-32004") != null);
+
+    const deleted_frame = try encodeFrame(allocator, "compat-agent-delete", "agents.delete", .{
+        .agentId = agent_id,
+    });
+    defer allocator.free(deleted_frame);
+    const deleted = try dispatch(allocator, deleted_frame);
+    defer allocator.free(deleted);
+    try std.testing.expect(std.mem.indexOf(u8, deleted, "\"ok\":true") != null);
+}
+
 test "dispatch edge parity slice methods return contracts" {
     const allocator = std.testing.allocator;
 
@@ -4535,6 +5308,24 @@ fn extractResultStringField(
     const result = parsed.value.object.get("result") orelse return error.InvalidParamsFrame;
     if (result != .object) return error.InvalidParamsFrame;
     const value = result.object.get(field) orelse return error.InvalidParamsFrame;
+    if (value != .string) return error.InvalidParamsFrame;
+    return allocator.dupe(u8, value.string);
+}
+
+fn extractResultObjectStringField(
+    allocator: std.mem.Allocator,
+    payload: []const u8,
+    object_field: []const u8,
+    field: []const u8,
+) ![]u8 {
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, payload, .{});
+    defer parsed.deinit();
+    if (parsed.value != .object) return error.InvalidParamsFrame;
+    const result = parsed.value.object.get("result") orelse return error.InvalidParamsFrame;
+    if (result != .object) return error.InvalidParamsFrame;
+    const object_value = result.object.get(object_field) orelse return error.InvalidParamsFrame;
+    if (object_value != .object) return error.InvalidParamsFrame;
+    const value = object_value.object.get(field) orelse return error.InvalidParamsFrame;
     if (value != .string) return error.InvalidParamsFrame;
     return allocator.dupe(u8, value.string);
 }

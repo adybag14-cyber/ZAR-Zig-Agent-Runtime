@@ -94,10 +94,15 @@ Port OpenClaw Go runtime behavior from baseline commit `65c974b528e2` into a pro
     - `config.set`, `config.patch`, `config.apply`, `config.schema`
     - `wizard.start`, `wizard.next`, `wizard.cancel`, `wizard.status`
     - `sessions.patch`, `sessions.resolve`, `secrets.reload`
-  - Method surface moved to `99` Zig methods (from `88`) while preserving Lightpanda-only browser policy and green validation gates.
+  - Added compat agent/skills surfaces with stateful behavior:
+    - `agent`, `agent.identity.get`, `agent.wait`
+    - `agents.list`, `agents.create`, `agents.update`, `agents.delete`, `agents.files.list`, `agents.files.get`, `agents.files.set`
+    - `skills.status`, `skills.bins`, `skills.install`, `skills.update`
+  - Method surface moved to `113` Zig methods (from `99`) while preserving Lightpanda-only browser policy and green validation gates.
   - Added dispatcher contract tests for new edge methods and memory flows.
+  - Remaining Go parity families are now narrowed to: `cron.*`, `device.*`, `node.*`, and `exec.approvals*` / `exec.approval.*`.
 - Toolchain/runtime notes (local Windows Zig master):
-  - Codeberg `master` is currently `2d88a5a10334bddf3bd0b8bc98744ea6f239ce3a`.
+  - Codeberg `master` is currently `d2db1d45f1651d25c779651378b002b027e5f8e4`.
   - Local Zig toolchain remains `0.16.0-dev.2703+0a412853a` (hash `0a412853a`) and is behind current Codeberg `master` (acknowledged).
   - Added Windows build workaround in `build.zig`:
     - use `-fstrip` for executable to avoid missing `.pdb` install failure on this master toolchain.

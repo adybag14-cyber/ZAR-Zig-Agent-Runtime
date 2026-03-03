@@ -58,7 +58,12 @@ Phase 6 progress notes:
   - wizard methods: `wizard.start`, `wizard.next`, `wizard.cancel`, `wizard.status`
   - session mutation methods: `sessions.patch`, `sessions.resolve`
   - `secrets.reload` contract method added for key reload reporting.
-- Remaining: expand edge depth to full Go parity set.
+- Added compat agent/skills slice:
+  - agent methods: `agent`, `agent.identity.get`, `agent.wait`
+  - agents methods: `agents.list`, `agents.create`, `agents.update`, `agents.delete`, `agents.files.list`, `agents.files.get`, `agents.files.set`
+  - skills methods: `skills.status`, `skills.bins`, `skills.install`, `skills.update`
+  - stateful backing added for agents, agent files, installed skills, and async-compatible agent jobs.
+- Method surface now at `113/134`; remaining Go parity families are `cron.*`, `device.*`, `node.*`, and `exec.approvals*` / `exec.approval.*`.
 
 ## Phase 7 - Validation + Release
 - [ ] Run full parity diff against Go baseline
@@ -75,7 +80,7 @@ Phase 6 progress notes:
 - [x] `scripts/docker-smoke-check.ps1` (host + Docker HTTP 200 checks on `/health` and `/rpc`)
 - [x] `scripts/web-login-smoke-check.ps1` (`web.login.start -> wait -> complete -> status` all HTTP 200 with authorized completion)
 - [x] `scripts/telegram-reply-loop-smoke-check.ps1` (`send /auth start -> send /auth complete -> send chat -> poll` all HTTP 200 with non-empty queued replies)
-- [x] Freshness check: Codeberg Zig `master`=`2d88a5a10334bddf3bd0b8bc98744ea6f239ce3a`; local toolchain=`0.16.0-dev.2703+0a412853a` (hash mismatch acknowledged)
+- [x] Freshness check: Codeberg Zig `master`=`d2db1d45f1651d25c779651378b002b027e5f8e4`; local toolchain=`0.16.0-dev.2703+0a412853a` (hash mismatch acknowledged)
 - [x] Serve smoke: `GET /health` and `POST /rpc` (`shutdown`) both returned HTTP 200
 - [x] Serve smoke: `POST /rpc` `file.write`, `file.read`, and `exec.run` returned HTTP 200 with real payloads
 - [x] Serve smoke: `POST /rpc` `security.audit` and `doctor` return structured diagnostics payloads
