@@ -230,13 +230,15 @@ pub const TelegramRuntime = struct {
         const model_sel = self.getTargetModel(target);
         const provider = model_sel.provider;
         const model = model_sel.model;
-        const key = try authBindingKey(allocator, target, provider);
-        defer allocator.free(key);
-
         var login_session: []const u8 = "";
         var auth_status: []const u8 = "pending";
         var authorized = false;
-        if (self.auth_bindings.get(key)) |session| {
+        var bound_session = try self.getAuthBinding(allocator, target, provider, "default");
+        if (bound_session.len == 0) {
+            bound_session = try self.getAnyAuthBindingForProvider(allocator, target, provider);
+        }
+        if (bound_session.len > 0) {
+            const session = bound_session;
             login_session = session;
             if (self.login_manager.get(session)) |view| {
                 auth_status = view.status;
@@ -404,7 +406,7 @@ pub const TelegramRuntime = struct {
             return .{
                 .is_command = true,
                 .command_name = "auth",
-                .reply = try allocator.dupe(u8, "Usage: /auth [start|status|wait|complete|guest|cancel|providers|bridge]"),
+                .reply = try allocator.dupe(u8, "Usage: /auth [start|status|wait|complete|guest|cancel|providers|bridge]\nExamples:\n/auth start qwen mobile --force\n/auth wait qwen mobile --timeout 45\n/auth complete qwen <callback_url_or_code> <session_id> mobile"),
                 .provider = default_provider,
                 .model = default_model,
                 .login_session_id = "",
@@ -437,14 +439,94 @@ pub const TelegramRuntime = struct {
             };
         }
         if (std.ascii.eqlIgnoreCase(action, "start")) {
-            const provider = if (rest.len > 0 and isKnownProvider(rest[0])) normalizeProvider(rest[0]) else default_provider;
+            var provider = default_provider;
+            var account: []const u8 = "default";
+            var force = false;
+            var index: usize = 0;
+            if (rest.len > 0 and isKnownProvider(rest[0])) {
+                provider = normalizeProvider(rest[0]);
+                index = 1;
+            }
+            while (index < rest.len) : (index += 1) {
+                const token = std.mem.trim(u8, rest[index], " \t\r\n");
+                if (token.len == 0) continue;
+                if (std.ascii.eqlIgnoreCase(token, "--force")) {
+                    force = true;
+                    continue;
+                }
+                if (std.ascii.startsWithIgnoreCase(token, "--")) {
+                    return .{
+                        .is_command = true,
+                        .command_name = "auth",
+                        .reply = try std.fmt.allocPrint(allocator, "Unknown option `{s}`. Usage: /auth start <provider> [account] [--force]", .{token}),
+                        .provider = provider,
+                        .model = defaultModelForProvider(provider),
+                        .login_session_id = "",
+                        .login_code = "",
+                        .auth_status = "invalid",
+                    };
+                }
+                if (std.mem.eql(u8, account, "default")) {
+                    account = token;
+                    continue;
+                }
+                return .{
+                    .is_command = true,
+                    .command_name = "auth",
+                    .reply = try allocator.dupe(u8, "Usage: /auth start <provider> [account] [--force]"),
+                    .provider = provider,
+                    .model = defaultModelForProvider(provider),
+                    .login_session_id = "",
+                    .login_code = "",
+                    .auth_status = "invalid",
+                };
+            }
+
             const model = if (std.ascii.eqlIgnoreCase(provider, default_provider)) default_model else defaultModelForProvider(provider);
+            const existing_session = try self.getAuthBinding(allocator, target, provider, account);
+            if (!force and existing_session.len > 0) {
+                if (self.login_manager.get(existing_session)) |existing| {
+                    if (std.ascii.eqlIgnoreCase(existing.status, "pending") or std.ascii.eqlIgnoreCase(existing.status, "authorized")) {
+                        const account_norm = normalizeAccount(account);
+                        const account_is_default = std.mem.eql(u8, account_norm, "default");
+                        const reply = if (existing.guestBypassSupported)
+                            (if (account_is_default)
+                                try std.fmt.allocPrint(allocator, "Auth already {s} for `{s}`.\nOpen: {s}\nThen run `/auth guest {s}` or `/auth complete {s} <callback_url_or_code>`.\nUse `--force` to replace session.", .{ existing.status, provider, existing.verificationUriComplete, provider, provider })
+                            else
+                                try std.fmt.allocPrint(allocator, "Auth already {s} for `{s}` account `{s}`.\nOpen: {s}\nThen run `/auth guest {s} {s}` or `/auth complete {s} <callback_url_or_code> {s}`.\nUse `--force` to replace session.", .{ existing.status, provider, account_norm, existing.verificationUriComplete, provider, account_norm, provider, account_norm }))
+                        else
+                            (if (account_is_default)
+                                try std.fmt.allocPrint(allocator, "Auth already {s} for `{s}`.\nOpen: {s}\nThen run `/auth complete {s} <callback_url_or_code>`.\nUse `--force` to replace session.", .{ existing.status, provider, existing.verificationUriComplete, provider })
+                            else
+                                try std.fmt.allocPrint(allocator, "Auth already {s} for `{s}` account `{s}`.\nOpen: {s}\nThen run `/auth complete {s} <callback_url_or_code> {s}`.\nUse `--force` to replace session.", .{ existing.status, provider, account_norm, existing.verificationUriComplete, provider, account_norm }));
+                        return .{
+                            .is_command = true,
+                            .command_name = "auth",
+                            .reply = reply,
+                            .provider = provider,
+                            .model = existing.model,
+                            .login_session_id = existing.loginSessionId,
+                            .login_code = existing.code,
+                            .auth_status = existing.status,
+                        };
+                    }
+                }
+            }
+
             const started = try self.login_manager.start(provider, model);
-            try self.setAuthBinding(target, provider, started.loginSessionId);
+            try self.setAuthBinding(target, provider, account, started.loginSessionId);
+            const account_norm = normalizeAccount(account);
+            const account_is_default = std.mem.eql(u8, account_norm, "default");
             const reply = if (started.guestBypassSupported)
-                try std.fmt.allocPrint(allocator, "Auth started for `{s}`.\nOpen: {s}\n{s}\nThen run `/auth guest {s}` (or `/auth complete {s} guest`).", .{ provider, started.verificationUriComplete, started.guestBypassHint, provider, provider })
+                (if (account_is_default)
+                    try std.fmt.allocPrint(allocator, "Auth started for `{s}`.\nOpen: {s}\n{s}\nThen run `/auth guest {s}` (or `/auth complete {s} <callback_url_or_code>`).", .{ provider, started.verificationUriComplete, started.guestBypassHint, provider, provider })
+                else
+                    try std.fmt.allocPrint(allocator, "Auth started for `{s}` account `{s}`.\nOpen: {s}\n{s}\nThen run `/auth guest {s} {s}` (or `/auth complete {s} <callback_url_or_code> {s}`).", .{ provider, account_norm, started.verificationUriComplete, started.guestBypassHint, provider, account_norm, provider, account_norm }))
             else
-                try std.fmt.allocPrint(allocator, "Auth started for `{s}`.\nOpen: {s}\nThen run `/auth complete {s} <code_or_url>`", .{ provider, started.verificationUriComplete, provider });
+                (if (account_is_default)
+                    try std.fmt.allocPrint(allocator, "Auth started for `{s}`.\nOpen: {s}\nThen run `/auth complete {s} <callback_url_or_code>`", .{ provider, started.verificationUriComplete, provider })
+                else
+                    try std.fmt.allocPrint(allocator, "Auth started for `{s}` account `{s}`.\nOpen: {s}\nThen run `/auth complete {s} <callback_url_or_code> {s}`", .{ provider, account_norm, started.verificationUriComplete, provider, account_norm }));
             return .{
                 .is_command = true,
                 .command_name = "auth",
@@ -457,16 +539,53 @@ pub const TelegramRuntime = struct {
             };
         }
         if (std.ascii.eqlIgnoreCase(action, "status") or std.ascii.eqlIgnoreCase(action, "wait")) {
-            const provider = if (rest.len > 0 and isKnownProvider(rest[0])) normalizeProvider(rest[0]) else default_provider;
-            const maybe_session = if (rest.len > 1) rest[1] else "";
-            const key = try authBindingKey(allocator, target, provider);
-            defer allocator.free(key);
-            const login_session = if (std.mem.trim(u8, maybe_session, " \t\r\n").len > 0) maybe_session else (self.auth_bindings.get(key) orelse "");
+            var provider = default_provider;
+            var account: []const u8 = "default";
+            var session_token: []const u8 = "";
+            var timeout_secs: u32 = 30;
+            var index: usize = 0;
+            if (rest.len > 0 and isKnownProvider(rest[0])) {
+                provider = normalizeProvider(rest[0]);
+                index = 1;
+            }
+            while (index < rest.len) : (index += 1) {
+                const token = std.mem.trim(u8, rest[index], " \t\r\n");
+                if (token.len == 0) continue;
+                if (std.ascii.eqlIgnoreCase(token, "--timeout")) {
+                    if (index + 1 >= rest.len) {
+                        return .{
+                            .is_command = true,
+                            .command_name = "auth",
+                            .reply = try allocator.dupe(u8, "Missing value for --timeout."),
+                            .provider = provider,
+                            .model = defaultModelForProvider(provider),
+                            .login_session_id = "",
+                            .login_code = "",
+                            .auth_status = "invalid",
+                        };
+                    }
+                    timeout_secs = std.fmt.parseInt(u32, std.mem.trim(u8, rest[index + 1], " \t\r\n"), 10) catch 30;
+                    index += 1;
+                    continue;
+                }
+                if (std.ascii.startsWithIgnoreCase(token, "--")) continue;
+                if (session_token.len == 0 and looksLikeLoginSessionID(token)) {
+                    session_token = token;
+                    continue;
+                }
+                if (std.mem.eql(u8, normalizeAccount(account), "default")) {
+                    account = token;
+                    continue;
+                }
+            }
+
+            const bound_session = try self.getAuthBinding(allocator, target, provider, account);
+            const login_session = if (std.mem.trim(u8, session_token, " \t\r\n").len > 0) session_token else bound_session;
             if (std.mem.trim(u8, login_session, " \t\r\n").len == 0) {
                 return .{
                     .is_command = true,
                     .command_name = "auth",
-                    .reply = try std.fmt.allocPrint(allocator, "No active auth session for `{s}`.", .{provider}),
+                    .reply = try std.fmt.allocPrint(allocator, "No active auth session for `{s}` account `{s}`.", .{ provider, normalizeAccount(account) }),
                     .provider = provider,
                     .model = defaultModelForProvider(provider),
                     .login_session_id = "",
@@ -476,13 +595,7 @@ pub const TelegramRuntime = struct {
             }
 
             if (std.ascii.eqlIgnoreCase(action, "wait")) {
-                const maybe_timeout = if (rest.len > 2) rest[2] else "";
-                const timeout_ms: u32 = blk: {
-                    const trimmed = std.mem.trim(u8, maybe_timeout, " \t\r\n");
-                    if (trimmed.len == 0) break :blk 30_000;
-                    const secs = std.fmt.parseInt(u32, trimmed, 10) catch 30;
-                    break :blk secs * 1000;
-                };
+                const timeout_ms: u32 = timeout_secs * 1000;
                 const waited = self.login_manager.wait(login_session, timeout_ms) catch |err| switch (err) {
                     error.SessionNotFound => return .{
                         .is_command = true,
@@ -540,16 +653,30 @@ pub const TelegramRuntime = struct {
             };
         }
         if (std.ascii.eqlIgnoreCase(action, "guest")) {
-            const provider = if (rest.len > 0 and isKnownProvider(rest[0])) normalizeProvider(rest[0]) else default_provider;
-            const maybe_session = if (rest.len > 1) rest[1] else "";
-            const key = try authBindingKey(allocator, target, provider);
-            defer allocator.free(key);
-            const login_session = if (std.mem.trim(u8, maybe_session, " \t\r\n").len > 0) maybe_session else (self.auth_bindings.get(key) orelse "");
+            var provider = default_provider;
+            var account: []const u8 = "default";
+            var session_token: []const u8 = "";
+            var index: usize = 0;
+            if (rest.len > 0 and isKnownProvider(rest[0])) {
+                provider = normalizeProvider(rest[0]);
+                index = 1;
+            }
+            while (index < rest.len) : (index += 1) {
+                const token = std.mem.trim(u8, rest[index], " \t\r\n");
+                if (token.len == 0) continue;
+                if (session_token.len == 0 and looksLikeLoginSessionID(token)) {
+                    session_token = token;
+                    continue;
+                }
+                if (std.mem.eql(u8, normalizeAccount(account), "default")) account = token;
+            }
+            const bound_session = try self.getAuthBinding(allocator, target, provider, account);
+            const login_session = if (std.mem.trim(u8, session_token, " \t\r\n").len > 0) session_token else bound_session;
             if (std.mem.trim(u8, login_session, " \t\r\n").len == 0) {
                 return .{
                     .is_command = true,
                     .command_name = "auth",
-                    .reply = try std.fmt.allocPrint(allocator, "No pending auth session for `{s}`. Start with `/auth start {s}`.", .{ provider, provider }),
+                    .reply = try std.fmt.allocPrint(allocator, "No pending auth session for `{s}` account `{s}`. Start with `/auth start {s} {s}`.", .{ provider, normalizeAccount(account), provider, normalizeAccount(account) }),
                     .provider = provider,
                     .model = defaultModelForProvider(provider),
                     .login_session_id = "",
@@ -589,11 +716,11 @@ pub const TelegramRuntime = struct {
                     .auth_status = "missing",
                 },
             };
-            try self.setAuthBinding(target, provider, completed.loginSessionId);
+            try self.setAuthBinding(target, provider, account, completed.loginSessionId);
             return .{
                 .is_command = true,
                 .command_name = "auth",
-                .reply = try std.fmt.allocPrint(allocator, "Guest auth completed for `{s}`. Session `{s}` is `{s}`.", .{ provider, completed.loginSessionId, completed.status }),
+                .reply = try std.fmt.allocPrint(allocator, "Guest auth completed for `{s}` account `{s}`. Session `{s}` is `{s}`.", .{ provider, normalizeAccount(account), completed.loginSessionId, completed.status }),
                 .provider = provider,
                 .model = completed.model,
                 .login_session_id = completed.loginSessionId,
@@ -606,7 +733,7 @@ pub const TelegramRuntime = struct {
                 return .{
                     .is_command = true,
                     .command_name = "auth",
-                    .reply = try allocator.dupe(u8, "Missing code. Usage: /auth complete <provider> <callback_url_or_code> [session_id]"),
+                    .reply = try allocator.dupe(u8, "Missing code. Usage: /auth complete <provider> <callback_url_or_code> [session_id] [account]"),
                     .provider = default_provider,
                     .model = default_model,
                     .login_session_id = "",
@@ -616,28 +743,59 @@ pub const TelegramRuntime = struct {
             }
 
             var provider = default_provider;
-            var code_token = rest[0];
+            var code_token: []const u8 = "";
             var session_token: []const u8 = "";
-            if (isKnownProvider(rest[0]) and rest.len >= 2) {
+            var account: []const u8 = "default";
+            var index: usize = 0;
+
+            if (rest.len > 0 and isKnownProvider(rest[0])) {
                 provider = normalizeProvider(rest[0]);
-                code_token = rest[1];
-                if (rest.len > 2) session_token = rest[2];
-            } else if (rest.len > 1) {
-                session_token = rest[1];
+                index = 1;
+            }
+
+            while (index < rest.len) : (index += 1) {
+                const token = std.mem.trim(u8, rest[index], " \t\r\n");
+                if (token.len == 0) continue;
+                if (code_token.len == 0) {
+                    code_token = token;
+                    continue;
+                }
+                if (session_token.len == 0 and looksLikeLoginSessionID(token)) {
+                    session_token = token;
+                    continue;
+                }
+                if (std.mem.eql(u8, normalizeAccount(account), "default")) {
+                    account = token;
+                    continue;
+                }
+            }
+
+            if (code_token.len == 0) {
+                return .{
+                    .is_command = true,
+                    .command_name = "auth",
+                    .reply = try allocator.dupe(u8, "Missing code. Usage: /auth complete <provider> <callback_url_or_code> [session_id] [account]"),
+                    .provider = default_provider,
+                    .model = default_model,
+                    .login_session_id = "",
+                    .login_code = "",
+                    .auth_status = "pending",
+                };
             }
 
             if (!isKnownProvider(rest[0])) {
-                if (inferProviderFromAuthInput(code_token)) |inferred| provider = inferred;
+                if (inferProviderFromAuthInput(code_token)) |inferred| {
+                    provider = inferred;
+                }
             }
 
-            const key = try authBindingKey(allocator, target, provider);
-            defer allocator.free(key);
-            const login_session = if (std.mem.trim(u8, session_token, " \t\r\n").len > 0) session_token else (self.auth_bindings.get(key) orelse "");
+            const bound_session = try self.getAuthBinding(allocator, target, provider, account);
+            const login_session = if (std.mem.trim(u8, session_token, " \t\r\n").len > 0) session_token else bound_session;
             if (std.mem.trim(u8, login_session, " \t\r\n").len == 0) {
                 return .{
                     .is_command = true,
                     .command_name = "auth",
-                    .reply = try std.fmt.allocPrint(allocator, "No pending auth session for `{s}`. Start with `/auth start {s}`.", .{ provider, provider }),
+                    .reply = try std.fmt.allocPrint(allocator, "No pending auth session for `{s}` account `{s}`. Start with `/auth start {s} {s}`.", .{ provider, normalizeAccount(account), provider, normalizeAccount(account) }),
                     .provider = provider,
                     .model = defaultModelForProvider(provider),
                     .login_session_id = "",
@@ -682,11 +840,11 @@ pub const TelegramRuntime = struct {
                     .auth_status = "missing",
                 },
             };
-            try self.setAuthBinding(target, provider, completed.loginSessionId);
+            try self.setAuthBinding(target, provider, account, completed.loginSessionId);
             return .{
                 .is_command = true,
                 .command_name = "auth",
-                .reply = try std.fmt.allocPrint(allocator, "Auth completed. Session `{s}` is `{s}`.", .{ completed.loginSessionId, completed.status }),
+                .reply = try std.fmt.allocPrint(allocator, "Auth completed for `{s}` account `{s}`. Session `{s}` is `{s}`.", .{ provider, normalizeAccount(account), completed.loginSessionId, completed.status }),
                 .provider = provider,
                 .model = completed.model,
                 .login_session_id = completed.loginSessionId,
@@ -695,14 +853,19 @@ pub const TelegramRuntime = struct {
             };
         }
         if (std.ascii.eqlIgnoreCase(action, "cancel") or std.ascii.eqlIgnoreCase(action, "logout")) {
-            const provider = if (rest.len > 0 and isKnownProvider(rest[0])) normalizeProvider(rest[0]) else default_provider;
-            const key = try authBindingKey(allocator, target, provider);
-            defer allocator.free(key);
-            try self.setOrClearAuthBinding(key, "");
+            var provider = default_provider;
+            var account: []const u8 = "default";
+            var index: usize = 0;
+            if (rest.len > 0 and isKnownProvider(rest[0])) {
+                provider = normalizeProvider(rest[0]);
+                index = 1;
+            }
+            if (index < rest.len) account = rest[index];
+            try self.clearAuthBinding(allocator, target, provider, account);
             return .{
                 .is_command = true,
                 .command_name = "auth",
-                .reply = try std.fmt.allocPrint(allocator, "Auth binding cleared for `{s}`.", .{provider}),
+                .reply = try std.fmt.allocPrint(allocator, "Auth binding cleared for `{s}` account `{s}`.", .{ provider, normalizeAccount(account) }),
                 .provider = provider,
                 .model = defaultModelForProvider(provider),
                 .login_session_id = "",
@@ -755,16 +918,70 @@ pub const TelegramRuntime = struct {
         return .{ .provider = "chatgpt", .model = "gpt-5.2" };
     }
 
-    fn setAuthBinding(self: *TelegramRuntime, target: []const u8, provider: []const u8, login_session_id: []const u8) !void {
-        const key = try authBindingKey(self.allocator, target, provider);
+    fn setAuthBinding(self: *TelegramRuntime, target: []const u8, provider: []const u8, account: []const u8, login_session_id: []const u8) !void {
+        const key = try authBindingKey(self.allocator, target, provider, account);
         errdefer self.allocator.free(key);
+        const account_is_default = std.mem.eql(u8, normalizeAccount(account), "default");
         if (std.mem.trim(u8, login_session_id, " \t\r\n").len == 0) {
             try self.setOrClearAuthBinding(key, "");
+            if (account_is_default) {
+                const legacy_key = try authBindingLegacyKey(self.allocator, target, provider);
+                defer self.allocator.free(legacy_key);
+                try self.setOrClearAuthBinding(legacy_key, "");
+            }
             return;
         }
         const value = try self.allocator.dupe(u8, login_session_id);
         errdefer self.allocator.free(value);
         try self.setOrReplaceMapEntry(&self.auth_bindings, key, value);
+        if (account_is_default) {
+            const legacy_key = try authBindingLegacyKey(self.allocator, target, provider);
+            const legacy_value = try self.allocator.dupe(u8, login_session_id);
+            errdefer self.allocator.free(legacy_value);
+            try self.setOrReplaceMapEntry(&self.auth_bindings, legacy_key, legacy_value);
+        }
+    }
+
+    fn getAuthBinding(self: *TelegramRuntime, allocator: std.mem.Allocator, target: []const u8, provider: []const u8, account: []const u8) ![]const u8 {
+        const key = try authBindingKey(allocator, target, provider, account);
+        defer allocator.free(key);
+        if (self.auth_bindings.get(key)) |session| return session;
+
+        const legacy_key = try authBindingLegacyKey(allocator, target, provider);
+        defer allocator.free(legacy_key);
+        if (self.auth_bindings.get(legacy_key)) |session| return session;
+        return "";
+    }
+
+    fn clearAuthBinding(self: *TelegramRuntime, allocator: std.mem.Allocator, target: []const u8, provider: []const u8, account: []const u8) !void {
+        const key = try authBindingKey(allocator, target, provider, account);
+        defer allocator.free(key);
+        try self.setOrClearAuthBinding(key, "");
+
+        if (std.mem.eql(u8, normalizeAccount(account), "default")) {
+            const legacy_key = try authBindingLegacyKey(allocator, target, provider);
+            defer allocator.free(legacy_key);
+            try self.setOrClearAuthBinding(legacy_key, "");
+        }
+    }
+
+    fn getAnyAuthBindingForProvider(self: *TelegramRuntime, allocator: std.mem.Allocator, target: []const u8, provider: []const u8) ![]const u8 {
+        const prefix = try std.fmt.allocPrint(allocator, "{s}::{s}::", .{
+            std.mem.trim(u8, target, " \t\r\n"),
+            normalizeProvider(provider),
+        });
+        defer allocator.free(prefix);
+        var fallback: []const u8 = "";
+        var it = self.auth_bindings.iterator();
+        while (it.next()) |entry| {
+            if (!std.ascii.startsWithIgnoreCase(entry.key_ptr.*, prefix)) continue;
+            const session = entry.value_ptr.*;
+            if (self.login_manager.get(session)) |view| {
+                if (std.ascii.eqlIgnoreCase(view.status, "authorized")) return session;
+            }
+            if (fallback.len == 0) fallback = session;
+        }
+        return fallback;
     }
 
     fn setOrClearAuthBinding(self: *TelegramRuntime, key: []const u8, value: []const u8) !void {
@@ -833,8 +1050,27 @@ fn getOptionalUsize(params: std.json.Value, key: []const u8, fallback: usize) us
     return fallback;
 }
 
-fn authBindingKey(allocator: std.mem.Allocator, target: []const u8, provider: []const u8) ![]u8 {
+fn authBindingLegacyKey(allocator: std.mem.Allocator, target: []const u8, provider: []const u8) ![]u8 {
     return std.fmt.allocPrint(allocator, "{s}::{s}", .{ std.mem.trim(u8, target, " \t\r\n"), normalizeProvider(provider) });
+}
+
+fn authBindingKey(allocator: std.mem.Allocator, target: []const u8, provider: []const u8, account: []const u8) ![]u8 {
+    return std.fmt.allocPrint(allocator, "{s}::{s}::{s}", .{
+        std.mem.trim(u8, target, " \t\r\n"),
+        normalizeProvider(provider),
+        normalizeAccount(account),
+    });
+}
+
+fn normalizeAccount(account_raw: []const u8) []const u8 {
+    const trimmed = std.mem.trim(u8, account_raw, " \t\r\n");
+    return if (trimmed.len == 0) "default" else trimmed;
+}
+
+fn looksLikeLoginSessionID(token_raw: []const u8) bool {
+    const token = std.mem.trim(u8, token_raw, " \t\r\n");
+    if (token.len == 0) return false;
+    return std.ascii.startsWithIgnoreCase(token, "web-login-");
 }
 
 fn normalizeProvider(provider_raw: []const u8) []const u8 {
@@ -1028,4 +1264,46 @@ test "telegram runtime normalizes additional provider aliases" {
     try std.testing.expect(std.mem.eql(u8, normalizeProvider("bigmodel"), "zhipuai"));
     try std.testing.expect(std.mem.eql(u8, defaultModelForProvider("zhipu-ai"), "glm-4.6"));
     try std.testing.expect(isKnownProvider("zhipuai-coding"));
+}
+
+test "telegram runtime auth supports account scope and force restart" {
+    var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
+    defer login.deinit();
+    var runtime = TelegramRuntime.init(std.testing.allocator, &login);
+    defer runtime.deinit();
+
+    const allocator = std.testing.allocator;
+    var model_set = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-model-qwen-acc\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-acc\",\"sessionId\":\"sess-acc\",\"message\":\"/model qwen/qwen-max\"}}");
+    defer model_set.deinit(allocator);
+
+    var start_mobile = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-start-mobile\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-acc\",\"sessionId\":\"sess-acc\",\"message\":\"/auth start qwen mobile\"}}");
+    defer start_mobile.deinit(allocator);
+    try std.testing.expect(start_mobile.loginSessionId.len > 0);
+    const mobile_session_1 = try allocator.dupe(u8, start_mobile.loginSessionId);
+    defer allocator.free(mobile_session_1);
+
+    var start_mobile_repeat = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-start-mobile-repeat\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-acc\",\"sessionId\":\"sess-acc\",\"message\":\"/auth start qwen mobile\"}}");
+    defer start_mobile_repeat.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, start_mobile_repeat.loginSessionId, mobile_session_1));
+    try std.testing.expect(std.mem.indexOf(u8, start_mobile_repeat.reply, "Auth already") != null);
+
+    var start_mobile_force = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-start-mobile-force\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-acc\",\"sessionId\":\"sess-acc\",\"message\":\"/auth start qwen mobile --force\"}}");
+    defer start_mobile_force.deinit(allocator);
+    try std.testing.expect(!std.mem.eql(u8, start_mobile_force.loginSessionId, mobile_session_1));
+
+    var status_mobile = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-status-mobile\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-acc\",\"sessionId\":\"sess-acc\",\"message\":\"/auth status qwen mobile\"}}");
+    defer status_mobile.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, status_mobile.loginSessionId, start_mobile_force.loginSessionId));
+
+    var start_desktop = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-start-desktop\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-acc\",\"sessionId\":\"sess-acc\",\"message\":\"/auth start qwen desktop\"}}");
+    defer start_desktop.deinit(allocator);
+    try std.testing.expect(!std.mem.eql(u8, start_desktop.loginSessionId, start_mobile_force.loginSessionId));
+
+    var guest_mobile = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-guest-mobile\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-acc\",\"sessionId\":\"sess-acc\",\"message\":\"/auth guest qwen mobile\"}}");
+    defer guest_mobile.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, guest_mobile.authStatus, "authorized"));
+
+    var chat_mobile = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-chat-mobile\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-acc\",\"sessionId\":\"sess-acc\",\"message\":\"hello after mobile auth\"}}");
+    defer chat_mobile.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, chat_mobile.reply, "OpenClaw Zig (qwen/") != null);
 }

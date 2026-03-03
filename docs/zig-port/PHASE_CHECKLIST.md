@@ -36,6 +36,10 @@ Phase 5 enhancement notes:
 - Added guest bypass metadata and action hints (`stay_logged_out`) to browser completion and OAuth provider catalog payloads.
 - Added Telegram `/auth guest <provider>` flow plus callback URL provider inference and shared callback code extraction (`query/fragment/path`) via `web_login.extractAuthCode`.
 - Expanded auth provider breadth in Telegram + OAuth catalog: `minimax`, `kimi`, and `zhipuai` (with alias normalization + default model coverage).
+- Added account-scoped Telegram auth bindings with force replacement semantics:
+  - `/auth start <provider> [account] [--force]`
+  - `/auth status|wait|guest|complete|cancel <provider> [session_id] [account]`
+  - provider-level authorized fallback for chat replies when any account scope is authorized.
 
 ## Phase 6 - Memory + Edge
 - [x] Port memory persistence primitives
@@ -95,6 +99,8 @@ Phase 6 progress notes:
   - `channels.telegram_runtime.test.telegram runtime qwen guest auth lifecycle`
   - `channels.telegram_runtime.test.telegram runtime auth complete infers provider from callback URL`
   - `bridge.web_login.test.guest providers can complete auth with guest token`
+- [x] Account-scoped auth tests:
+  - `channels.telegram_runtime.test.telegram runtime auth supports account scope and force restart`
 - [x] `scripts/zig-syntax-check.ps1`
 - [x] `scripts/zig-codeberg-master-check.ps1` (reports local vs remote master hash)
 - [x] Go-vs-Zig method diff check (pinned baseline): `Go=133`, `Zig=145`, `missing_in_zig=0`, `zig_extras=12`
