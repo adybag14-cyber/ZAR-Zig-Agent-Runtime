@@ -246,8 +246,10 @@ pub const TelegramRuntime = struct {
 
         const reply = if (authorized)
             try std.fmt.allocPrint(allocator, "OpenClaw Zig ({s}/{s}) assistant: {s}", .{ provider, model, message })
+        else if (web_login.supportsGuestBypass(provider))
+            try std.fmt.allocPrint(allocator, "Auth required for `{s}/{s}`. Run `/auth start {s}`, choose 'Stay logged out' in browser popup, then run `/auth guest {s}` (or `/auth complete {s} guest`).", .{ provider, model, provider, provider, provider })
         else
-            try std.fmt.allocPrint(allocator, "Auth required for `{s}/{s}`. Run `/auth start {s}` then `/auth complete {s} <code>`.", .{ provider, model, provider, provider });
+            try std.fmt.allocPrint(allocator, "Auth required for `{s}/{s}`. Run `/auth start {s}` then `/auth complete {s} <code_or_url>`.", .{ provider, model, provider, provider });
 
         try self.enqueue(target, session_id, "assistant", "assistant_reply", reply);
         return .{
@@ -402,7 +404,7 @@ pub const TelegramRuntime = struct {
             return .{
                 .is_command = true,
                 .command_name = "auth",
-                .reply = try allocator.dupe(u8, "Usage: /auth [start|status|wait|complete|cancel|providers|bridge]"),
+                .reply = try allocator.dupe(u8, "Usage: /auth [start|status|wait|complete|guest|cancel|providers|bridge]"),
                 .provider = default_provider,
                 .model = default_model,
                 .login_session_id = "",
@@ -414,7 +416,7 @@ pub const TelegramRuntime = struct {
             return .{
                 .is_command = true,
                 .command_name = "auth",
-                .reply = try allocator.dupe(u8, "Auth providers: chatgpt, codex, claude, gemini, openrouter, opencode, qwen, zai, inception"),
+                .reply = try allocator.dupe(u8, "Auth providers: chatgpt, codex, claude, gemini, openrouter, opencode, qwen, zai(glm-5), inception(mercury-2)"),
                 .provider = default_provider,
                 .model = default_model,
                 .login_session_id = "",
@@ -439,10 +441,14 @@ pub const TelegramRuntime = struct {
             const model = if (std.ascii.eqlIgnoreCase(provider, default_provider)) default_model else defaultModelForProvider(provider);
             const started = try self.login_manager.start(provider, model);
             try self.setAuthBinding(target, provider, started.loginSessionId);
+            const reply = if (started.guestBypassSupported)
+                try std.fmt.allocPrint(allocator, "Auth started for `{s}`.\nOpen: {s}\n{s}\nThen run `/auth guest {s}` (or `/auth complete {s} guest`).", .{ provider, started.verificationUriComplete, started.guestBypassHint, provider, provider })
+            else
+                try std.fmt.allocPrint(allocator, "Auth started for `{s}`.\nOpen: {s}\nThen run `/auth complete {s} <code_or_url>`", .{ provider, started.verificationUriComplete, provider });
             return .{
                 .is_command = true,
                 .command_name = "auth",
-                .reply = try std.fmt.allocPrint(allocator, "Auth started for `{s}`.\nOpen: {s}\nThen run `/auth complete {s} <code>`", .{ provider, started.verificationUriComplete, provider }),
+                .reply = reply,
                 .provider = provider,
                 .model = model,
                 .login_session_id = started.loginSessionId,
@@ -533,12 +539,74 @@ pub const TelegramRuntime = struct {
                 .auth_status = view.status,
             };
         }
+        if (std.ascii.eqlIgnoreCase(action, "guest")) {
+            const provider = if (rest.len > 0 and isKnownProvider(rest[0])) normalizeProvider(rest[0]) else default_provider;
+            const maybe_session = if (rest.len > 1) rest[1] else "";
+            const key = try authBindingKey(allocator, target, provider);
+            defer allocator.free(key);
+            const login_session = if (std.mem.trim(u8, maybe_session, " \t\r\n").len > 0) maybe_session else (self.auth_bindings.get(key) orelse "");
+            if (std.mem.trim(u8, login_session, " \t\r\n").len == 0) {
+                return .{
+                    .is_command = true,
+                    .command_name = "auth",
+                    .reply = try std.fmt.allocPrint(allocator, "No pending auth session for `{s}`. Start with `/auth start {s}`.", .{ provider, provider }),
+                    .provider = provider,
+                    .model = defaultModelForProvider(provider),
+                    .login_session_id = "",
+                    .login_code = "",
+                    .auth_status = "pending",
+                };
+            }
+            const completed = self.login_manager.complete(login_session, "") catch |err| switch (err) {
+                error.InvalidCode => return .{
+                    .is_command = true,
+                    .command_name = "auth",
+                    .reply = try std.fmt.allocPrint(allocator, "Guest completion is not supported for `{s}`. Use `/auth complete {s} <code_or_url>`.", .{ provider, provider }),
+                    .provider = provider,
+                    .model = defaultModelForProvider(provider),
+                    .login_session_id = login_session,
+                    .login_code = "",
+                    .auth_status = "rejected",
+                },
+                error.SessionExpired => return .{
+                    .is_command = true,
+                    .command_name = "auth",
+                    .reply = try allocator.dupe(u8, "Auth failed: session expired."),
+                    .provider = provider,
+                    .model = defaultModelForProvider(provider),
+                    .login_session_id = login_session,
+                    .login_code = "",
+                    .auth_status = "expired",
+                },
+                error.SessionNotFound => return .{
+                    .is_command = true,
+                    .command_name = "auth",
+                    .reply = try allocator.dupe(u8, "Auth failed: session not found."),
+                    .provider = provider,
+                    .model = defaultModelForProvider(provider),
+                    .login_session_id = login_session,
+                    .login_code = "",
+                    .auth_status = "missing",
+                },
+            };
+            try self.setAuthBinding(target, provider, completed.loginSessionId);
+            return .{
+                .is_command = true,
+                .command_name = "auth",
+                .reply = try std.fmt.allocPrint(allocator, "Guest auth completed for `{s}`. Session `{s}` is `{s}`.", .{ provider, completed.loginSessionId, completed.status }),
+                .provider = provider,
+                .model = completed.model,
+                .login_session_id = completed.loginSessionId,
+                .login_code = "",
+                .auth_status = completed.status,
+            };
+        }
         if (std.ascii.eqlIgnoreCase(action, "complete")) {
             if (rest.len == 0) {
                 return .{
                     .is_command = true,
                     .command_name = "auth",
-                    .reply = try allocator.dupe(u8, "Missing code. Usage: /auth complete <provider> <code_or_url> [session_id]"),
+                    .reply = try allocator.dupe(u8, "Missing code. Usage: /auth complete <provider> <callback_url_or_code> [session_id]"),
                     .provider = default_provider,
                     .model = default_model,
                     .login_session_id = "",
@@ -558,6 +626,10 @@ pub const TelegramRuntime = struct {
                 session_token = rest[1];
             }
 
+            if (!isKnownProvider(rest[0])) {
+                if (inferProviderFromAuthInput(code_token)) |inferred| provider = inferred;
+            }
+
             const key = try authBindingKey(allocator, target, provider);
             defer allocator.free(key);
             const login_session = if (std.mem.trim(u8, session_token, " \t\r\n").len > 0) session_token else (self.auth_bindings.get(key) orelse "");
@@ -574,12 +646,15 @@ pub const TelegramRuntime = struct {
                 };
             }
 
-            const code = extractAuthCode(code_token);
+            const code = web_login.extractAuthCode(code_token);
             const completed = self.login_manager.complete(login_session, code) catch |err| switch (err) {
                 error.InvalidCode => return .{
                     .is_command = true,
                     .command_name = "auth",
-                    .reply = try allocator.dupe(u8, "Auth failed: invalid code."),
+                    .reply = if (web_login.supportsGuestBypass(provider))
+                        try std.fmt.allocPrint(allocator, "Auth failed: invalid code. For `{s}` you can also run `/auth guest {s}` after choosing 'Stay logged out'.", .{ provider, provider })
+                    else
+                        try allocator.dupe(u8, "Auth failed: invalid code."),
                     .provider = provider,
                     .model = defaultModelForProvider(provider),
                     .login_session_id = login_session,
@@ -765,13 +840,13 @@ fn authBindingKey(allocator: std.mem.Allocator, target: []const u8, provider: []
 fn normalizeProvider(provider_raw: []const u8) []const u8 {
     const trimmed = std.mem.trim(u8, provider_raw, " \t\r\n");
     if (trimmed.len == 0) return "chatgpt";
-    if (std.ascii.eqlIgnoreCase(trimmed, "openai") or std.ascii.eqlIgnoreCase(trimmed, "chatgpt.com") or std.ascii.eqlIgnoreCase(trimmed, "chatgpt-web")) return "chatgpt";
-    if (std.ascii.eqlIgnoreCase(trimmed, "openai-codex") or std.ascii.eqlIgnoreCase(trimmed, "codex-cli")) return "codex";
-    if (std.ascii.eqlIgnoreCase(trimmed, "anthropic")) return "claude";
-    if (std.ascii.eqlIgnoreCase(trimmed, "google")) return "gemini";
-    if (std.ascii.eqlIgnoreCase(trimmed, "qwen-chat") or std.ascii.eqlIgnoreCase(trimmed, "qwen-cli") or std.ascii.eqlIgnoreCase(trimmed, "copaw")) return "qwen";
-    if (std.ascii.eqlIgnoreCase(trimmed, "z.ai") or std.ascii.eqlIgnoreCase(trimmed, "z-ai") or std.ascii.eqlIgnoreCase(trimmed, "glm-5") or std.ascii.eqlIgnoreCase(trimmed, "glm5")) return "zai";
-    if (std.ascii.eqlIgnoreCase(trimmed, "mercury2") or std.ascii.eqlIgnoreCase(trimmed, "mercury-2")) return "inception";
+    if (std.ascii.eqlIgnoreCase(trimmed, "openai") or std.ascii.eqlIgnoreCase(trimmed, "openai-chatgpt") or std.ascii.eqlIgnoreCase(trimmed, "chatgpt.com") or std.ascii.eqlIgnoreCase(trimmed, "chatgpt-web")) return "chatgpt";
+    if (std.ascii.eqlIgnoreCase(trimmed, "openai-codex") or std.ascii.eqlIgnoreCase(trimmed, "codex-cli") or std.ascii.eqlIgnoreCase(trimmed, "openai-codex-cli")) return "codex";
+    if (std.ascii.eqlIgnoreCase(trimmed, "anthropic") or std.ascii.eqlIgnoreCase(trimmed, "claude-cli") or std.ascii.eqlIgnoreCase(trimmed, "claude-code") or std.ascii.eqlIgnoreCase(trimmed, "claude-desktop")) return "claude";
+    if (std.ascii.eqlIgnoreCase(trimmed, "google") or std.ascii.eqlIgnoreCase(trimmed, "google-gemini") or std.ascii.eqlIgnoreCase(trimmed, "google-gemini-cli") or std.ascii.eqlIgnoreCase(trimmed, "gemini-cli")) return "gemini";
+    if (std.ascii.eqlIgnoreCase(trimmed, "qwen-portal") or std.ascii.eqlIgnoreCase(trimmed, "qwen-chat") or std.ascii.eqlIgnoreCase(trimmed, "qwen-cli") or std.ascii.eqlIgnoreCase(trimmed, "qwen35") or std.ascii.eqlIgnoreCase(trimmed, "qwen3.5") or std.ascii.eqlIgnoreCase(trimmed, "qwen-3.5") or std.ascii.eqlIgnoreCase(trimmed, "copaw") or std.ascii.eqlIgnoreCase(trimmed, "qwen-copaw") or std.ascii.eqlIgnoreCase(trimmed, "qwen-agent")) return "qwen";
+    if (std.ascii.eqlIgnoreCase(trimmed, "z.ai") or std.ascii.eqlIgnoreCase(trimmed, "z-ai") or std.ascii.eqlIgnoreCase(trimmed, "zaiweb") or std.ascii.eqlIgnoreCase(trimmed, "zai-web") or std.ascii.eqlIgnoreCase(trimmed, "glm") or std.ascii.eqlIgnoreCase(trimmed, "glm-5") or std.ascii.eqlIgnoreCase(trimmed, "glm5")) return "zai";
+    if (std.ascii.eqlIgnoreCase(trimmed, "inception-labs") or std.ascii.eqlIgnoreCase(trimmed, "inceptionlabs") or std.ascii.eqlIgnoreCase(trimmed, "mercury") or std.ascii.eqlIgnoreCase(trimmed, "mercury2") or std.ascii.eqlIgnoreCase(trimmed, "mercury-2")) return "inception";
     return trimmed;
 }
 
@@ -786,7 +861,7 @@ fn defaultModelForProvider(provider_raw: []const u8) []const u8 {
     if (std.ascii.eqlIgnoreCase(provider, "gemini")) return "gemini-2.5-pro";
     if (std.ascii.eqlIgnoreCase(provider, "openrouter")) return "openrouter/auto";
     if (std.ascii.eqlIgnoreCase(provider, "opencode")) return "opencode/default";
-    if (std.ascii.eqlIgnoreCase(provider, "qwen")) return "qwen3-coder";
+    if (std.ascii.eqlIgnoreCase(provider, "qwen")) return "qwen-max";
     if (std.ascii.eqlIgnoreCase(provider, "zai")) return "glm-5";
     if (std.ascii.eqlIgnoreCase(provider, "inception")) return "mercury-2";
     return "gpt-5.2";
@@ -800,18 +875,30 @@ fn isKnownProvider(provider_raw: []const u8) bool {
     return false;
 }
 
-fn extractAuthCode(input_raw: []const u8) []const u8 {
+fn inferProviderFromAuthInput(input_raw: []const u8) ?[]const u8 {
     const trimmed = std.mem.trim(u8, input_raw, " \t\r\n");
-    if (trimmed.len == 0) return "";
-    for ([_][]const u8{ "openclaw_code=", "code=", "device_code=", "auth_code=", "token=", "oauth_token=" }) |needle| {
-        if (std.mem.indexOf(u8, trimmed, needle)) |idx| {
-            const start = idx + needle.len;
-            var end = start;
-            while (end < trimmed.len and trimmed[end] != '&' and trimmed[end] != '#' and trimmed[end] != '/') : (end += 1) {}
-            if (end > start) return trimmed[start..end];
-        }
+    if (trimmed.len == 0) return null;
+    if (!std.mem.containsAtLeast(u8, trimmed, 1, "://")) return null;
+
+    if (containsIgnoreCase(trimmed, "chat.qwen.ai")) return "qwen";
+    if (containsIgnoreCase(trimmed, "chat.z.ai")) return "zai";
+    if (containsIgnoreCase(trimmed, "inceptionlabs.ai")) return "inception";
+    if (containsIgnoreCase(trimmed, "chatgpt.com")) return "chatgpt";
+    if (containsIgnoreCase(trimmed, "claude.ai")) return "claude";
+    if (containsIgnoreCase(trimmed, "aistudio.google.com")) return "gemini";
+    if (containsIgnoreCase(trimmed, "openrouter.ai")) return "openrouter";
+    if (containsIgnoreCase(trimmed, "opencode.ai")) return "opencode";
+    return null;
+}
+
+fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (haystack.len < needle.len) return false;
+    var idx: usize = 0;
+    while (idx + needle.len <= haystack.len) : (idx += 1) {
+        if (std.ascii.eqlIgnoreCase(haystack[idx .. idx + needle.len], needle)) return true;
     }
-    return trimmed;
+    return false;
 }
 
 test "telegram runtime model command lifecycle" {
@@ -866,4 +953,65 @@ test "telegram runtime auth command and reply poll lifecycle" {
     var poll_result = try runtime.pollFromFrame(allocator, poll_frame);
     defer poll_result.deinit(allocator);
     try std.testing.expect(poll_result.count >= 1);
+}
+
+test "telegram runtime qwen guest auth lifecycle" {
+    var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
+    defer login.deinit();
+    var runtime = TelegramRuntime.init(std.testing.allocator, &login);
+    defer runtime.deinit();
+
+    const allocator = std.testing.allocator;
+    const model_frame =
+        \\{"id":"tg-model-qwen","method":"send","params":{"channel":"telegram","to":"room-qwen","sessionId":"sess-qwen","message":"/model qwen/qwen-max"}}
+    ;
+    var model_result = try runtime.sendFromFrame(allocator, model_frame);
+    defer model_result.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, model_result.provider, "qwen"));
+
+    const start_frame =
+        \\{"id":"tg-auth-start-qwen","method":"send","params":{"channel":"telegram","to":"room-qwen","sessionId":"sess-qwen","message":"/auth start qwen"}}
+    ;
+    var start_result = try runtime.sendFromFrame(allocator, start_frame);
+    defer start_result.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, start_result.provider, "qwen"));
+    try std.testing.expect(std.mem.indexOf(u8, start_result.reply, "/auth guest qwen") != null);
+
+    const guest_frame =
+        \\{"id":"tg-auth-guest-qwen","method":"send","params":{"channel":"telegram","to":"room-qwen","sessionId":"sess-qwen","message":"/auth guest qwen"}}
+    ;
+    var guest_result = try runtime.sendFromFrame(allocator, guest_frame);
+    defer guest_result.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, guest_result.authStatus, "authorized"));
+
+    const chat_frame =
+        \\{"id":"tg-chat-qwen","method":"send","params":{"channel":"telegram","to":"room-qwen","sessionId":"sess-qwen","message":"hello qwen"}}
+    ;
+    var chat_result = try runtime.sendFromFrame(allocator, chat_frame);
+    defer chat_result.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, chat_result.reply, "OpenClaw Zig (qwen/") != null);
+}
+
+test "telegram runtime auth complete infers provider from callback URL" {
+    var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
+    defer login.deinit();
+    var runtime = TelegramRuntime.init(std.testing.allocator, &login);
+    defer runtime.deinit();
+
+    const allocator = std.testing.allocator;
+    const start_frame =
+        \\{"id":"tg-auth-start-zai","method":"send","params":{"channel":"telegram","to":"room-zai","sessionId":"sess-zai","message":"/auth start zai"}}
+    ;
+    var start_result = try runtime.sendFromFrame(allocator, start_frame);
+    defer start_result.deinit(allocator);
+    try std.testing.expect(start_result.loginSessionId.len > 0);
+
+    const callback_url = try std.fmt.allocPrint(allocator, "https://chat.z.ai/oauth/callback?code={s}", .{start_result.loginCode});
+    defer allocator.free(callback_url);
+    const complete_frame = try std.fmt.allocPrint(allocator, "{{\"id\":\"tg-auth-complete-zai\",\"method\":\"send\",\"params\":{{\"channel\":\"telegram\",\"to\":\"room-zai\",\"sessionId\":\"sess-zai\",\"message\":\"/auth complete {s}\"}}}}", .{callback_url});
+    defer allocator.free(complete_frame);
+    var complete_result = try runtime.sendFromFrame(allocator, complete_frame);
+    defer complete_result.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, complete_result.provider, "zai"));
+    try std.testing.expect(std.mem.eql(u8, complete_result.authStatus, "authorized"));
 }

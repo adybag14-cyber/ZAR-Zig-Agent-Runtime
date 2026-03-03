@@ -66,6 +66,10 @@ Port OpenClaw Go runtime behavior from baseline commit `65c974b528e2` into a pro
   - Real web login manager implemented (`src/bridge/web_login.zig`) with `web.login.start|wait|complete|status`
   - Telegram command/reply runtime implemented (`src/channels/telegram_runtime.zig`) with `send` and `poll` RPC wiring
   - Telegram command surface now handles `/auth` and `/model` flows with queued reply polling
+  - Added provider-aware guest/auth parity for browser-session providers:
+    - Qwen/GLM-5/Mercury-2 now expose explicit guest bypass metadata (`stay_logged_out`) through `browser.request` and OAuth provider catalog responses.
+    - `/auth guest <provider>` command path added for Telegram, plus callback-URL provider inference and robust callback code extraction (`query/fragment/path`) shared with web login.
+    - Browser request parsing now separates `engine` (`lightpanda`) from target `provider` so `qwen|zai|inception` no longer fail as unsupported engine values.
   - Dispatcher `channels.status` now includes telegram queue/target/auth telemetry
   - Added auth + reply-loop smokes (`scripts/web-login-smoke-check.ps1`, `scripts/telegram-reply-loop-smoke-check.ps1`)
 - Phase 6 in progress:
@@ -112,7 +116,7 @@ Port OpenClaw Go runtime behavior from baseline commit `65c974b528e2` into a pro
   - Go baseline method-set parity is now complete (`133/133` covered in Zig for commit `65c974b528e2a960b171e3110e8e4e4dbb6fda63`), with `12` intentional Zig-only extras retained for edge/runtime depth.
   - Hardened smoke scripts to avoid flaky `zig build run` startup timing by prebuilding and launching the binary directly (`zig-out/bin/openclaw-zig.exe`) with explicit readiness and exit diagnostics.
 - Toolchain/runtime notes (local Windows Zig master):
-  - Codeberg `master` is currently `96a19d3a6b867e6e8dc9ddc9c3fdc675521dd41b`.
+  - Codeberg `master` is currently `af1ab5fa08f2c58517f94c253535403e1575c3b6`.
   - Local Zig toolchain remains `0.16.0-dev.2703+0a412853a` (hash `0a412853a`) and is behind current Codeberg `master` (acknowledged).
   - Added Windows build workaround in `build.zig`:
     - use `-fstrip` for executable to avoid missing `.pdb` install failure on this master toolchain.

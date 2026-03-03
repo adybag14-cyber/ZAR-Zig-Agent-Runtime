@@ -3313,14 +3313,17 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             verificationUri: []const u8,
             supportsBrowserSession: bool,
             defaultModel: []const u8,
+            authMode: []const u8,
+            guestBypassSupported: bool,
+            popupBypassAction: []const u8,
         }{
-            .{ .id = "chatgpt", .name = "ChatGPT", .verificationUri = "https://chatgpt.com/", .supportsBrowserSession = true, .defaultModel = "gpt-5.2" },
-            .{ .id = "claude", .name = "Claude", .verificationUri = "https://claude.ai/", .supportsBrowserSession = true, .defaultModel = "claude-opus-4" },
-            .{ .id = "gemini", .name = "Gemini", .verificationUri = "https://aistudio.google.com/", .supportsBrowserSession = true, .defaultModel = "gemini-2.5-pro" },
-            .{ .id = "qwen", .name = "Qwen", .verificationUri = "https://chat.qwen.ai/", .supportsBrowserSession = true, .defaultModel = "qwen-max" },
-            .{ .id = "zai", .name = "ZAI", .verificationUri = "https://chat.z.ai/", .supportsBrowserSession = true, .defaultModel = "glm-5" },
-            .{ .id = "inception", .name = "Mercury", .verificationUri = "https://chat.inceptionlabs.ai/", .supportsBrowserSession = true, .defaultModel = "mercury-2" },
-            .{ .id = "openrouter", .name = "OpenRouter", .verificationUri = "https://openrouter.ai/", .supportsBrowserSession = false, .defaultModel = "openai/gpt-5.2-mini" },
+            .{ .id = "chatgpt", .name = "ChatGPT", .verificationUri = "https://chatgpt.com/", .supportsBrowserSession = true, .defaultModel = "gpt-5.2", .authMode = "device_code", .guestBypassSupported = false, .popupBypassAction = "not_applicable" },
+            .{ .id = "claude", .name = "Claude", .verificationUri = "https://claude.ai/", .supportsBrowserSession = true, .defaultModel = "claude-opus-4", .authMode = "device_code", .guestBypassSupported = false, .popupBypassAction = "not_applicable" },
+            .{ .id = "gemini", .name = "Gemini", .verificationUri = "https://aistudio.google.com/", .supportsBrowserSession = true, .defaultModel = "gemini-2.5-pro", .authMode = "device_code", .guestBypassSupported = false, .popupBypassAction = "not_applicable" },
+            .{ .id = "qwen", .name = "Qwen", .verificationUri = "https://chat.qwen.ai/", .supportsBrowserSession = true, .defaultModel = "qwen-max", .authMode = "guest_or_code", .guestBypassSupported = true, .popupBypassAction = "stay_logged_out" },
+            .{ .id = "zai", .name = "ZAI", .verificationUri = "https://chat.z.ai/", .supportsBrowserSession = true, .defaultModel = "glm-5", .authMode = "guest_or_code", .guestBypassSupported = true, .popupBypassAction = "stay_logged_out" },
+            .{ .id = "inception", .name = "Mercury", .verificationUri = "https://chat.inceptionlabs.ai/", .supportsBrowserSession = true, .defaultModel = "mercury-2", .authMode = "guest_or_code", .guestBypassSupported = true, .popupBypassAction = "stay_logged_out" },
+            .{ .id = "openrouter", .name = "OpenRouter", .verificationUri = "https://openrouter.ai/", .supportsBrowserSession = false, .defaultModel = "openai/gpt-5.2-mini", .authMode = "api_key", .guestBypassSupported = false, .popupBypassAction = "not_applicable" },
         };
         return protocol.encodeResult(allocator, req.id, .{
             .providers = providers,
@@ -4870,14 +4873,17 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
     }
 
     if (std.ascii.eqlIgnoreCase(req.method, "browser.request") or std.ascii.eqlIgnoreCase(req.method, "browser.open")) {
-        const provider_resolved = try parseProviderFromFrame(allocator, frame_json);
-        defer if (provider_resolved.owned) |owned| allocator.free(owned);
+        const browser_params = try parseBrowserRequestFromFrame(allocator, frame_json);
+        defer browser_params.deinit(allocator);
 
-        const provider = provider_resolved.value;
-        const completion = lightpanda.complete(provider) catch {
+        const completion = lightpanda.complete(browser_params.engine, browser_params.provider, browser_params.model, browser_params.auth_mode) catch |err| {
+            const message = switch (err) {
+                error.UnsupportedEngine => "unsupported browser engine; lightpanda is required",
+                error.UnsupportedProvider => "unsupported browser provider",
+            };
             return protocol.encodeError(allocator, req.id, .{
                 .code = -32602,
-                .message = "unsupported browser provider; lightpanda is required",
+                .message = message,
             });
         };
         return protocol.encodeResult(allocator, req.id, completion);
@@ -4917,9 +4923,18 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
     });
 }
 
-const ProviderResult = struct {
-    value: []const u8,
-    owned: ?[]u8,
+const BrowserRequestParams = struct {
+    engine: []u8,
+    provider: []u8,
+    model: []u8,
+    auth_mode: []u8,
+
+    fn deinit(self: BrowserRequestParams, allocator: std.mem.Allocator) void {
+        allocator.free(self.engine);
+        allocator.free(self.provider);
+        allocator.free(self.model);
+        allocator.free(self.auth_mode);
+    }
 };
 
 fn currentConfig() config.Config {
@@ -5945,16 +5960,69 @@ fn renderWasmExecutionOutput(
     return std.fmt.allocPrint(allocator, "custom-module:{s} executed", .{module_id});
 }
 
-fn parseProviderFromFrame(allocator: std.mem.Allocator, frame_json: []const u8) !ProviderResult {
+fn parseBrowserRequestFromFrame(allocator: std.mem.Allocator, frame_json: []const u8) !BrowserRequestParams {
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
     defer parsed.deinit();
-    if (parsed.value != .object) return .{ .value = "lightpanda", .owned = null };
-    const params_value = parsed.value.object.get("params") orelse return .{ .value = "lightpanda", .owned = null };
-    if (params_value != .object) return .{ .value = "lightpanda", .owned = null };
-    const provider_value = params_value.object.get("provider") orelse return .{ .value = "lightpanda", .owned = null };
-    if (provider_value != .string) return .{ .value = "lightpanda", .owned = null };
-    const owned = try allocator.dupe(u8, provider_value.string);
-    return .{ .value = owned, .owned = owned };
+    var engine: []const u8 = "lightpanda";
+    var provider: []const u8 = "chatgpt";
+    var model: []const u8 = "";
+    var auth_mode: []const u8 = "";
+    var engine_explicit = false;
+    if (parsed.value == .object) {
+        if (parsed.value.object.get("params")) |params_value| {
+            if (params_value == .object) {
+                if (params_value.object.get("engine")) |value| {
+                    if (value == .string) {
+                        engine = value.string;
+                        engine_explicit = true;
+                    }
+                }
+                if (params_value.object.get("provider")) |value| {
+                    if (value == .string) {
+                        const candidate = std.mem.trim(u8, value.string, " \t\r\n");
+                        if (!engine_explicit and isBrowserEngineAlias(candidate)) {
+                            engine = candidate;
+                        } else if (candidate.len > 0) {
+                            provider = candidate;
+                        }
+                    }
+                }
+                if (params_value.object.get("targetProvider")) |value| {
+                    if (value == .string) {
+                        const candidate = std.mem.trim(u8, value.string, " \t\r\n");
+                        if (candidate.len > 0) provider = candidate;
+                    }
+                }
+                if (params_value.object.get("model")) |value| {
+                    if (value == .string) model = value.string;
+                }
+                if (params_value.object.get("targetModel")) |value| {
+                    if (value == .string and std.mem.trim(u8, model, " \t\r\n").len == 0) model = value.string;
+                }
+                if (params_value.object.get("authMode")) |value| {
+                    if (value == .string) auth_mode = value.string;
+                }
+                if (params_value.object.get("mode")) |value| {
+                    if (value == .string and std.mem.trim(u8, auth_mode, " \t\r\n").len == 0) auth_mode = value.string;
+                }
+            }
+        }
+    }
+
+    return .{
+        .engine = try allocator.dupe(u8, std.mem.trim(u8, engine, " \t\r\n")),
+        .provider = try allocator.dupe(u8, std.mem.trim(u8, provider, " \t\r\n")),
+        .model = try allocator.dupe(u8, std.mem.trim(u8, model, " \t\r\n")),
+        .auth_mode = try allocator.dupe(u8, std.mem.trim(u8, auth_mode, " \t\r\n")),
+    };
+}
+
+fn isBrowserEngineAlias(value_raw: []const u8) bool {
+    const value = std.mem.trim(u8, value_raw, " \t\r\n");
+    if (value.len == 0) return false;
+    return std.ascii.eqlIgnoreCase(value, "lightpanda") or
+        std.ascii.eqlIgnoreCase(value, "playwright") or
+        std.ascii.eqlIgnoreCase(value, "puppeteer");
 }
 
 test "dispatch returns health result" {
@@ -5993,6 +6061,16 @@ test "dispatch accepts lightpanda provider" {
     const out = try dispatch(allocator, "{\"id\":\"3\",\"method\":\"browser.request\",\"params\":{\"provider\":\"lightpanda\"}}");
     defer allocator.free(out);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"engine\":\"lightpanda\"") != null);
+}
+
+test "dispatch browser.request accepts qwen target provider with guest metadata" {
+    const allocator = std.testing.allocator;
+    const out = try dispatch(allocator, "{\"id\":\"3b\",\"method\":\"browser.request\",\"params\":{\"provider\":\"qwen\",\"model\":\"qwen-max\"}}");
+    defer allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"engine\":\"lightpanda\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"provider\":\"qwen\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"guestBypassSupported\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"popupBypassAction\":\"stay_logged_out\"") != null);
 }
 
 test "dispatch config.get and tools.catalog expose runtime + wasm contracts" {

@@ -31,6 +31,11 @@ Release lock: no release tag is allowed until all phases are complete and parity
 - [x] Implement Telegram command/reply surface (`send`/`poll` + `/auth` + `/model` command path)
 - [x] Add smoke coverage for auth + reply loops (`scripts/web-login-smoke-check.ps1` + `scripts/telegram-reply-loop-smoke-check.ps1`)
 
+Phase 5 enhancement notes:
+- Added browser request provider split (`engine` vs target `provider`) so `qwen|zai|inception` route through Lightpanda correctly.
+- Added guest bypass metadata and action hints (`stay_logged_out`) to browser completion and OAuth provider catalog payloads.
+- Added Telegram `/auth guest <provider>` flow plus callback URL provider inference and shared callback code extraction (`query/fragment/path`) via `web_login.extractAuthCode`.
+
 ## Phase 6 - Memory + Edge
 - [x] Port memory persistence primitives
 - [x] Port edge handler contracts
@@ -85,6 +90,10 @@ Phase 6 progress notes:
 - [x] `zig build`
 - [x] `zig build test`
 - [x] `zig test src/main.zig`
+- [x] Guest/auth parity tests:
+  - `channels.telegram_runtime.test.telegram runtime qwen guest auth lifecycle`
+  - `channels.telegram_runtime.test.telegram runtime auth complete infers provider from callback URL`
+  - `bridge.web_login.test.guest providers can complete auth with guest token`
 - [x] `scripts/zig-syntax-check.ps1`
 - [x] `scripts/zig-codeberg-master-check.ps1` (reports local vs remote master hash)
 - [x] Go-vs-Zig method diff check (pinned baseline): `Go=133`, `Zig=145`, `missing_in_zig=0`, `zig_extras=12`
@@ -95,7 +104,7 @@ Phase 6 progress notes:
 - [x] `scripts/docker-smoke-check.ps1` (host + Docker HTTP 200 checks on `/health` and `/rpc`)
 - [x] `scripts/web-login-smoke-check.ps1` (`web.login.start -> wait -> complete -> status` all HTTP 200 with authorized completion)
 - [x] `scripts/telegram-reply-loop-smoke-check.ps1` (`send /auth start -> send /auth complete -> send chat -> poll` all HTTP 200 with non-empty queued replies)
-- [x] Freshness check: Codeberg Zig `master`=`96a19d3a6b867e6e8dc9ddc9c3fdc675521dd41b`; local toolchain=`0.16.0-dev.2703+0a412853a` (hash mismatch acknowledged)
+- [x] Freshness check: Codeberg Zig `master`=`af1ab5fa08f2c58517f94c253535403e1575c3b6`; local toolchain=`0.16.0-dev.2703+0a412853a` (hash mismatch acknowledged)
 - [x] Serve smoke: `GET /health` and `POST /rpc` (`shutdown`) both returned HTTP 200
 - [x] Serve smoke: `POST /rpc` `file.write`, `file.read`, and `exec.run` returned HTTP 200 with real payloads
 - [x] Serve smoke: `POST /rpc` `security.audit` and `doctor` return structured diagnostics payloads
