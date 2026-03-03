@@ -139,6 +139,40 @@ const CompatAgentJob = struct {
     }
 };
 
+const CompatCronJob = struct {
+    cron_id: []u8,
+    name: []u8,
+    schedule: []u8,
+    method: []u8,
+    enabled: bool,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+    last_run_at_ms: i64,
+    last_run_status: []u8,
+
+    fn deinit(self: *CompatCronJob, allocator: std.mem.Allocator) void {
+        allocator.free(self.cron_id);
+        allocator.free(self.name);
+        allocator.free(self.schedule);
+        allocator.free(self.method);
+        allocator.free(self.last_run_status);
+    }
+};
+
+const CompatCronRun = struct {
+    run_id: []u8,
+    cron_id: []u8,
+    status: []u8,
+    started_at_ms: i64,
+    ended_at_ms: i64,
+
+    fn deinit(self: *CompatCronRun, allocator: std.mem.Allocator) void {
+        allocator.free(self.run_id);
+        allocator.free(self.cron_id);
+        allocator.free(self.status);
+    }
+};
+
 const ConfigOverlayEntry = struct {
     key: []const u8,
     value: []const u8,
@@ -175,6 +209,9 @@ const CompatState = struct {
     skills: std.ArrayList(CompatSkill),
     next_agent_job_id: u64,
     agent_jobs: std.ArrayList(CompatAgentJob),
+    next_cron_id: u64,
+    cron_jobs: std.ArrayList(CompatCronJob),
+    cron_runs: std.ArrayList(CompatCronRun),
     events: std.ArrayList(CompatEvent),
     update_jobs: std.ArrayList(CompatUpdateJob),
     config_overlay: std.StringHashMap([]u8),
@@ -209,6 +246,9 @@ const CompatState = struct {
             .skills = .empty,
             .next_agent_job_id = 1,
             .agent_jobs = .empty,
+            .next_cron_id = 1,
+            .cron_jobs = .empty,
+            .cron_runs = .empty,
             .events = .empty,
             .update_jobs = .empty,
             .config_overlay = std.StringHashMap([]u8).init(allocator),
@@ -234,6 +274,10 @@ const CompatState = struct {
         self.skills.deinit(self.allocator);
         for (self.agent_jobs.items) |*entry| entry.deinit(self.allocator);
         self.agent_jobs.deinit(self.allocator);
+        for (self.cron_jobs.items) |*entry| entry.deinit(self.allocator);
+        self.cron_jobs.deinit(self.allocator);
+        for (self.cron_runs.items) |*entry| entry.deinit(self.allocator);
+        self.cron_runs.deinit(self.allocator);
         for (self.events.items) |*event| event.deinit(self.allocator);
         self.events.deinit(self.allocator);
         for (self.update_jobs.items) |*job| job.deinit(self.allocator);
@@ -643,6 +687,106 @@ const CompatState = struct {
             if (std.ascii.eqlIgnoreCase(entry.job_id, normalized)) return entry;
         }
         return null;
+    }
+
+    fn findCronJobIndex(self: *const CompatState, cron_id: []const u8) ?usize {
+        const normalized = std.mem.trim(u8, cron_id, " \t\r\n");
+        if (normalized.len == 0) return null;
+        for (self.cron_jobs.items, 0..) |entry, idx| {
+            if (std.ascii.eqlIgnoreCase(entry.cron_id, normalized)) return idx;
+        }
+        return null;
+    }
+
+    fn addCronJob(
+        self: *CompatState,
+        name: []const u8,
+        schedule: []const u8,
+        method: []const u8,
+        enabled: bool,
+    ) !CompatCronJob {
+        const now = time_util.nowMs();
+        const cron_id = try std.fmt.allocPrint(self.allocator, "cron-{d:0>4}", .{self.next_cron_id});
+        self.next_cron_id += 1;
+        try self.cron_jobs.append(self.allocator, .{
+            .cron_id = cron_id,
+            .name = try self.allocator.dupe(u8, if (std.mem.trim(u8, name, " \t\r\n").len > 0) name else cron_id),
+            .schedule = try self.allocator.dupe(u8, if (std.mem.trim(u8, schedule, " \t\r\n").len > 0) schedule else "@hourly"),
+            .method = try self.allocator.dupe(u8, if (std.mem.trim(u8, method, " \t\r\n").len > 0) method else "agent"),
+            .enabled = enabled,
+            .created_at_ms = now,
+            .updated_at_ms = now,
+            .last_run_at_ms = 0,
+            .last_run_status = try self.allocator.dupe(u8, ""),
+        });
+        return self.cron_jobs.items[self.cron_jobs.items.len - 1];
+    }
+
+    fn updateCronJob(
+        self: *CompatState,
+        cron_id: []const u8,
+        name: []const u8,
+        schedule: []const u8,
+        method: []const u8,
+        enabled: ?bool,
+    ) ?CompatCronJob {
+        const idx = self.findCronJobIndex(cron_id) orelse return null;
+        var entry = &self.cron_jobs.items[idx];
+        if (name.len > 0) {
+            self.allocator.free(entry.name);
+            entry.name = self.allocator.dupe(u8, name) catch return null;
+        }
+        if (schedule.len > 0) {
+            self.allocator.free(entry.schedule);
+            entry.schedule = self.allocator.dupe(u8, schedule) catch return null;
+        }
+        if (method.len > 0) {
+            self.allocator.free(entry.method);
+            entry.method = self.allocator.dupe(u8, method) catch return null;
+        }
+        if (enabled) |value| entry.enabled = value;
+        entry.updated_at_ms = time_util.nowMs();
+        return entry.*;
+    }
+
+    fn removeCronJob(self: *CompatState, cron_id: []const u8) bool {
+        const idx = self.findCronJobIndex(cron_id) orelse return false;
+        var removed = self.cron_jobs.orderedRemove(idx);
+        removed.deinit(self.allocator);
+        return true;
+    }
+
+    fn runCronJob(self: *CompatState, cron_id: []const u8) ?CompatCronRun {
+        const idx = self.findCronJobIndex(cron_id) orelse return null;
+        const now = time_util.nowMs();
+        const run_id = std.fmt.allocPrint(self.allocator, "cron-run-{d}", .{now}) catch return null;
+        self.cron_runs.append(self.allocator, .{
+            .run_id = run_id,
+            .cron_id = self.allocator.dupe(u8, cron_id) catch {
+                self.allocator.free(run_id);
+                return null;
+            },
+            .status = self.allocator.dupe(u8, "completed") catch {
+                self.allocator.free(run_id);
+                return null;
+            },
+            .started_at_ms = now,
+            .ended_at_ms = now,
+        }) catch {
+            self.allocator.free(run_id);
+            return null;
+        };
+        if (self.cron_runs.items.len > 256) {
+            var removed = self.cron_runs.orderedRemove(0);
+            removed.deinit(self.allocator);
+        }
+
+        var job = &self.cron_jobs.items[idx];
+        job.last_run_at_ms = now;
+        self.allocator.free(job.last_run_status);
+        job.last_run_status = self.allocator.dupe(u8, "completed") catch return null;
+        job.updated_at_ms = now;
+        return self.cron_runs.items[self.cron_runs.items.len - 1];
     }
 
     fn markSessionDeleted(self: *CompatState, session_id: []const u8) !void {
@@ -1453,6 +1597,203 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
                 .updatedAtMs = skill.updated_at_ms,
                 .installed = skill.installed,
             },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "cron.list")) {
+        const compat = try getCompatState();
+        const CronJobView = struct {
+            cronId: []const u8,
+            name: []const u8,
+            schedule: []const u8,
+            method: []const u8,
+            enabled: bool,
+            createdAtMs: i64,
+            updatedAtMs: i64,
+            lastRunAtMs: i64,
+            lastRunStatus: []const u8,
+        };
+        var items: std.ArrayList(CronJobView) = .empty;
+        defer items.deinit(allocator);
+        for (compat.cron_jobs.items) |entry| {
+            try items.append(allocator, .{
+                .cronId = entry.cron_id,
+                .name = entry.name,
+                .schedule = entry.schedule,
+                .method = entry.method,
+                .enabled = entry.enabled,
+                .createdAtMs = entry.created_at_ms,
+                .updatedAtMs = entry.updated_at_ms,
+                .lastRunAtMs = entry.last_run_at_ms,
+                .lastRunStatus = entry.last_run_status,
+            });
+        }
+        sortCronJobViewsById(items.items);
+        return protocol.encodeResult(allocator, req.id, .{
+            .count = items.items.len,
+            .items = items.items,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "cron.status")) {
+        const compat = try getCompatState();
+        return protocol.encodeResult(allocator, req.id, .{
+            .running = false,
+            .jobs = compat.cron_jobs.items.len,
+            .runs = compat.cron_runs.items.len,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "cron.add")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const compat = try getCompatState();
+        const job = try compat.addCronJob(
+            firstParamString(params, "name", ""),
+            firstParamString(params, "schedule", "@hourly"),
+            firstParamString(params, "method", "agent"),
+            firstParamBool(params, "enabled", true),
+        );
+        return protocol.encodeResult(allocator, req.id, .{
+            .job = .{
+                .cronId = job.cron_id,
+                .name = job.name,
+                .schedule = job.schedule,
+                .method = job.method,
+                .enabled = job.enabled,
+                .createdAtMs = job.created_at_ms,
+                .updatedAtMs = job.updated_at_ms,
+                .lastRunAtMs = job.last_run_at_ms,
+                .lastRunStatus = job.last_run_status,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "cron.update")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const cron_id = firstParamString(params, "cronId", firstParamString(params, "id", ""));
+        if (cron_id.len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing cronId",
+            });
+        }
+
+        var enabled_opt: ?bool = null;
+        if (params) |obj| {
+            if (obj.get("enabled") != null) {
+                enabled_opt = firstParamBool(params, "enabled", true);
+            }
+        }
+        const compat = try getCompatState();
+        const job = compat.updateCronJob(
+            cron_id,
+            firstParamString(params, "name", ""),
+            firstParamString(params, "schedule", ""),
+            firstParamString(params, "method", ""),
+            enabled_opt,
+        ) orelse {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32004,
+                .message = "cron job not found",
+            });
+        };
+        return protocol.encodeResult(allocator, req.id, .{
+            .job = .{
+                .cronId = job.cron_id,
+                .name = job.name,
+                .schedule = job.schedule,
+                .method = job.method,
+                .enabled = job.enabled,
+                .createdAtMs = job.created_at_ms,
+                .updatedAtMs = job.updated_at_ms,
+                .lastRunAtMs = job.last_run_at_ms,
+                .lastRunStatus = job.last_run_status,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "cron.remove")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const cron_id = firstParamString(params, "cronId", firstParamString(params, "id", ""));
+        if (cron_id.len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing cronId",
+            });
+        }
+        const compat = try getCompatState();
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = compat.removeCronJob(cron_id),
+            .cronId = cron_id,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "cron.run")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const cron_id = firstParamString(params, "cronId", firstParamString(params, "id", ""));
+        if (cron_id.len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing cronId",
+            });
+        }
+        const compat = try getCompatState();
+        const run = compat.runCronJob(cron_id) orelse {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32004,
+                .message = "cron job not found",
+            });
+        };
+        return protocol.encodeResult(allocator, req.id, .{
+            .run = .{
+                .runId = run.run_id,
+                .cronId = run.cron_id,
+                .status = run.status,
+                .startedAtMs = run.started_at_ms,
+                .endedAtMs = run.ended_at_ms,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "cron.runs")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        var limit_i64 = firstParamInt(params, "limit", 25);
+        if (limit_i64 < 0) limit_i64 = 25;
+        const limit: usize = @intCast(limit_i64);
+        const compat = try getCompatState();
+        var start: usize = 0;
+        if (limit > 0 and compat.cron_runs.items.len > limit) start = compat.cron_runs.items.len - limit;
+        const CronRunView = struct {
+            runId: []const u8,
+            cronId: []const u8,
+            status: []const u8,
+            startedAtMs: i64,
+            endedAtMs: i64,
+        };
+        var items: std.ArrayList(CronRunView) = .empty;
+        defer items.deinit(allocator);
+        for (compat.cron_runs.items[start..]) |entry| {
+            try items.append(allocator, .{
+                .runId = entry.run_id,
+                .cronId = entry.cron_id,
+                .status = entry.status,
+                .startedAtMs = entry.started_at_ms,
+                .endedAtMs = entry.ended_at_ms,
+            });
+        }
+        return protocol.encodeResult(allocator, req.id, .{
+            .count = items.items.len,
+            .items = items.items,
         });
     }
 
@@ -3706,6 +4047,13 @@ fn shouldEnforceGuard(method: []const u8) bool {
     if (std.ascii.eqlIgnoreCase(method, "skills.bins")) return false;
     if (std.ascii.eqlIgnoreCase(method, "skills.install")) return false;
     if (std.ascii.eqlIgnoreCase(method, "skills.update")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "cron.list")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "cron.status")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "cron.add")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "cron.update")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "cron.remove")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "cron.run")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "cron.runs")) return false;
     if (std.ascii.eqlIgnoreCase(method, "secrets.reload")) return false;
     if (std.ascii.eqlIgnoreCase(method, "config.get")) return false;
     if (std.ascii.eqlIgnoreCase(method, "config.set")) return false;
@@ -4153,6 +4501,20 @@ fn sortOwnedStringsAsc(items: [][]u8) void {
         var j: usize = i + 1;
         while (j < items.len) : (j += 1) {
             if (std.mem.order(u8, items[j], items[i]) == .lt) {
+                const tmp = items[i];
+                items[i] = items[j];
+                items[j] = tmp;
+            }
+        }
+    }
+}
+
+fn sortCronJobViewsById(items: anytype) void {
+    var i: usize = 0;
+    while (i < items.len) : (i += 1) {
+        var j: usize = i + 1;
+        while (j < items.len) : (j += 1) {
+            if (std.mem.order(u8, items[j].cronId, items[i].cronId) == .lt) {
                 const tmp = items[i];
                 items[i] = items[j];
                 items[j] = tmp;
@@ -5139,6 +5501,60 @@ test "dispatch compat agent and skills methods return contracts" {
     const deleted = try dispatch(allocator, deleted_frame);
     defer allocator.free(deleted);
     try std.testing.expect(std.mem.indexOf(u8, deleted, "\"ok\":true") != null);
+}
+
+test "dispatch compat cron methods return contracts" {
+    const allocator = std.testing.allocator;
+
+    const status_initial = try dispatch(allocator, "{\"id\":\"compat-cron-status0\",\"method\":\"cron.status\",\"params\":{}}");
+    defer allocator.free(status_initial);
+    try std.testing.expect(std.mem.indexOf(u8, status_initial, "\"jobs\"") != null);
+
+    const added = try dispatch(allocator, "{\"id\":\"compat-cron-add\",\"method\":\"cron.add\",\"params\":{\"name\":\"nightly-sync\",\"schedule\":\"@daily\",\"method\":\"agent\"}}");
+    defer allocator.free(added);
+    const cron_id = try extractResultObjectStringField(allocator, added, "job", "cronId");
+    defer allocator.free(cron_id);
+    try std.testing.expect(std.mem.indexOf(u8, added, "\"nightly-sync\"") != null);
+
+    const listed = try dispatch(allocator, "{\"id\":\"compat-cron-list\",\"method\":\"cron.list\",\"params\":{}}");
+    defer allocator.free(listed);
+    try std.testing.expect(std.mem.indexOf(u8, listed, cron_id) != null);
+
+    const update_frame = try encodeFrame(allocator, "compat-cron-update", "cron.update", .{
+        .cronId = cron_id,
+        .enabled = false,
+        .schedule = "0 4 * * *",
+    });
+    defer allocator.free(update_frame);
+    const updated = try dispatch(allocator, update_frame);
+    defer allocator.free(updated);
+    try std.testing.expect(std.mem.indexOf(u8, updated, "\"enabled\":false") != null);
+
+    const run_frame = try encodeFrame(allocator, "compat-cron-run", "cron.run", .{
+        .cronId = cron_id,
+    });
+    defer allocator.free(run_frame);
+    const run = try dispatch(allocator, run_frame);
+    defer allocator.free(run);
+    const run_id = try extractResultObjectStringField(allocator, run, "run", "runId");
+    defer allocator.free(run_id);
+    try std.testing.expect(std.mem.indexOf(u8, run, "\"status\":\"completed\"") != null);
+
+    const runs = try dispatch(allocator, "{\"id\":\"compat-cron-runs\",\"method\":\"cron.runs\",\"params\":{\"limit\":10}}");
+    defer allocator.free(runs);
+    try std.testing.expect(std.mem.indexOf(u8, runs, run_id) != null);
+
+    const remove_frame = try encodeFrame(allocator, "compat-cron-remove", "cron.remove", .{
+        .cronId = cron_id,
+    });
+    defer allocator.free(remove_frame);
+    const removed = try dispatch(allocator, remove_frame);
+    defer allocator.free(removed);
+    try std.testing.expect(std.mem.indexOf(u8, removed, "\"ok\":true") != null);
+
+    const run_missing = try dispatch(allocator, "{\"id\":\"compat-cron-run-missing\",\"method\":\"cron.run\",\"params\":{\"cronId\":\"missing-cron\"}}");
+    defer allocator.free(run_missing);
+    try std.testing.expect(std.mem.indexOf(u8, run_missing, "\"code\":-32004") != null);
 }
 
 test "dispatch edge parity slice methods return contracts" {
