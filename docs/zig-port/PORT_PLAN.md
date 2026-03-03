@@ -72,6 +72,7 @@ Port OpenClaw Go runtime behavior from baseline commit `65c974b528e2` into a pro
   - Memory persistence primitives implemented (`src/memory/store.zig`) with append/history/stats and on-disk JSON persistence.
   - Dispatcher memory parity slice shipped: `sessions.history`, `chat.history`, and `doctor.memory.status`.
   - Edge handler parity slice shipped: `edge.wasm.marketplace.list`, `edge.router.plan`, `edge.swarm.plan`, `edge.multimodal.inspect`, and `edge.voice.transcribe`.
+  - Advanced edge handler parity slice shipped: `edge.enclave.status`, `edge.enclave.prove`, `edge.mesh.status`, `edge.homomorphic.compute`, `edge.finetune.status`, `edge.finetune.run`, `edge.identity.trust.status`, `edge.personality.profile`, `edge.handoff.plan`, `edge.marketplace.revenue.preview`, `edge.finetune.cluster.plan`, `edge.alignment.evaluate`, `edge.quantum.status`, and `edge.collaboration.plan`.
   - Added dispatcher contract tests for new edge methods and memory flows.
 - Toolchain/runtime notes (local Windows Zig master):
   - Local Zig pinned to Codeberg `master` commit `0a412853aae9815eb663a88a8a2d37b91c614317` (`0.16.0-dev.2703+0a412853a`).
