@@ -40,6 +40,10 @@ Phase 5 enhancement notes:
   - `/auth start <provider> [account] [--force]`
   - `/auth status|wait|guest|complete|cancel <provider> [session_id] [account]`
   - provider-level authorized fallback for chat replies when any account scope is authorized.
+- Added auth UX depth for guest and account flows:
+  - `/auth providers` now includes auth mode + guest/popup hints.
+  - `/auth bridge <provider>` now returns provider-specific lightpanda guidance.
+  - `/auth wait` supports backward-compatible positional timeout (`/auth wait <provider> [account] <seconds>`) in addition to `--timeout`.
 
 ## Phase 6 - Memory + Edge
 - [x] Port memory persistence primitives
@@ -101,6 +105,9 @@ Phase 6 progress notes:
   - `bridge.web_login.test.guest providers can complete auth with guest token`
 - [x] Account-scoped auth tests:
   - `channels.telegram_runtime.test.telegram runtime auth supports account scope and force restart`
+- [x] Auth UX tests:
+  - `channels.telegram_runtime.test.telegram runtime auth bridge and providers help include guest guidance`
+  - `channels.telegram_runtime.test.telegram runtime wait supports positional timeout with account`
 - [x] `scripts/zig-syntax-check.ps1`
 - [x] `scripts/zig-codeberg-master-check.ps1` (reports local vs remote master hash)
 - [x] Go-vs-Zig method diff check (pinned baseline): `Go=133`, `Zig=145`, `missing_in_zig=0`, `zig_extras=12`

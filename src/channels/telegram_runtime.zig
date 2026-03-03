@@ -415,10 +415,24 @@ pub const TelegramRuntime = struct {
             };
         }
         if (std.ascii.eqlIgnoreCase(action, "providers")) {
+            const provider_lines =
+                \\chatgpt (mode:device_code, guest:false)
+                \\codex (mode:device_code, guest:false)
+                \\claude (mode:device_code, guest:false)
+                \\gemini (mode:device_code, guest:false)
+                \\openrouter (mode:api_key_or_oauth, guest:false)
+                \\opencode (mode:api_key_or_oauth, guest:false)
+                \\qwen (mode:guest_or_code, guest:true, popup:Stay logged out)
+                \\zai/glm-5 (mode:guest_or_code, guest:true, popup:Stay logged out)
+                \\inception/mercury-2 (mode:guest_or_code, guest:true, popup:Stay logged out)
+                \\minimax (mode:device_code, guest:false)
+                \\kimi (mode:device_code, guest:false)
+                \\zhipuai (mode:device_code, guest:false)
+            ;
             return .{
                 .is_command = true,
                 .command_name = "auth",
-                .reply = try allocator.dupe(u8, "Auth providers: chatgpt, codex, claude, gemini, openrouter, opencode, qwen, zai(glm-5), inception(mercury-2), minimax, kimi, zhipuai"),
+                .reply = try std.fmt.allocPrint(allocator, "Auth providers:\n{s}", .{provider_lines}),
                 .provider = default_provider,
                 .model = default_model,
                 .login_session_id = "",
@@ -427,12 +441,14 @@ pub const TelegramRuntime = struct {
             };
         }
         if (std.ascii.eqlIgnoreCase(action, "bridge")) {
+            const bridge_provider = if (rest.len > 0 and isKnownProvider(rest[0])) normalizeProvider(rest[0]) else default_provider;
+            const guidance = providerBridgeGuidance(bridge_provider);
             return .{
                 .is_command = true,
                 .command_name = "auth",
-                .reply = try allocator.dupe(u8, "Browser bridge: lightpanda"),
-                .provider = default_provider,
-                .model = default_model,
+                .reply = try std.fmt.allocPrint(allocator, "{s}", .{guidance}),
+                .provider = bridge_provider,
+                .model = defaultModelForProvider(bridge_provider),
                 .login_session_id = "",
                 .login_code = "",
                 .auth_status = "ok",
@@ -569,6 +585,12 @@ pub const TelegramRuntime = struct {
                     continue;
                 }
                 if (std.ascii.startsWithIgnoreCase(token, "--")) continue;
+                if (std.ascii.eqlIgnoreCase(action, "wait") and session_token.len == 0 and std.mem.eql(u8, normalizeAccount(account), "default")) {
+                    if (std.fmt.parseInt(u32, token, 10)) |parsed_timeout| {
+                        timeout_secs = parsed_timeout;
+                        continue;
+                    } else |_| {}
+                }
                 if (session_token.len == 0 and looksLikeLoginSessionID(token)) {
                     session_token = token;
                     continue;
@@ -1133,6 +1155,20 @@ fn inferProviderFromAuthInput(input_raw: []const u8) ?[]const u8 {
     return null;
 }
 
+fn providerBridgeGuidance(provider_raw: []const u8) []const u8 {
+    const provider = normalizeProvider(provider_raw);
+    if (std.ascii.eqlIgnoreCase(provider, "qwen")) {
+        return "Browser bridge: lightpanda\nProvider: qwen\nFlow: open https://chat.qwen.ai and if popup appears click 'Stay logged out'.\nThen run: /auth guest qwen [account]";
+    }
+    if (std.ascii.eqlIgnoreCase(provider, "zai")) {
+        return "Browser bridge: lightpanda\nProvider: zai (glm-5)\nFlow: open https://chat.z.ai and click 'Stay logged out' on login prompts.\nThen run: /auth guest zai [account]";
+    }
+    if (std.ascii.eqlIgnoreCase(provider, "inception")) {
+        return "Browser bridge: lightpanda\nProvider: inception (mercury-2)\nFlow: open https://chat.inceptionlabs.ai and stay in guest mode.\nThen run: /auth guest inception [account]";
+    }
+    return "Browser bridge: lightpanda\nFlow: start auth and complete with callback URL or code.\nCommand: /auth complete <provider> <callback_url_or_code> [session_id] [account]";
+}
+
 fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
     if (needle.len == 0) return true;
     if (haystack.len < needle.len) return false;
@@ -1306,4 +1342,39 @@ test "telegram runtime auth supports account scope and force restart" {
     var chat_mobile = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-chat-mobile\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-acc\",\"sessionId\":\"sess-acc\",\"message\":\"hello after mobile auth\"}}");
     defer chat_mobile.deinit(allocator);
     try std.testing.expect(std.mem.indexOf(u8, chat_mobile.reply, "OpenClaw Zig (qwen/") != null);
+}
+
+test "telegram runtime auth bridge and providers help include guest guidance" {
+    var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
+    defer login.deinit();
+    var runtime = TelegramRuntime.init(std.testing.allocator, &login);
+    defer runtime.deinit();
+
+    const allocator = std.testing.allocator;
+    var providers = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-providers\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-help\",\"sessionId\":\"sess-help\",\"message\":\"/auth providers\"}}");
+    defer providers.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, providers.reply, "qwen (mode:guest_or_code") != null);
+    try std.testing.expect(std.mem.indexOf(u8, providers.reply, "zai/glm-5") != null);
+
+    var bridge_qwen = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-bridge-qwen\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-help\",\"sessionId\":\"sess-help\",\"message\":\"/auth bridge qwen\"}}");
+    defer bridge_qwen.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, bridge_qwen.reply, "Stay logged out") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bridge_qwen.reply, "/auth guest qwen") != null);
+}
+
+test "telegram runtime wait supports positional timeout with account" {
+    var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
+    defer login.deinit();
+    var runtime = TelegramRuntime.init(std.testing.allocator, &login);
+    defer runtime.deinit();
+
+    const allocator = std.testing.allocator;
+    var model_set = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-model-wait\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-wait\",\"sessionId\":\"sess-wait\",\"message\":\"/model qwen/qwen-max\"}}");
+    defer model_set.deinit(allocator);
+    var start = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-start-wait\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-wait\",\"sessionId\":\"sess-wait\",\"message\":\"/auth start qwen mobile\"}}");
+    defer start.deinit(allocator);
+
+    var wait = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-wait-positional\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-wait\",\"sessionId\":\"sess-wait\",\"message\":\"/auth wait qwen mobile 45\"}}");
+    defer wait.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, wait.reply, "Auth wait result: `pending`") != null);
 }

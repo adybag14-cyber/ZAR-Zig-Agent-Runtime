@@ -77,6 +77,10 @@ Port OpenClaw Go runtime behavior from baseline commit `65c974b528e2` into a pro
     - provider+account binding keys with backward-compatible legacy lookup.
     - `--force` session replacement for `/auth start`.
     - account-aware `status/wait/guest/complete/cancel` parsing and messaging.
+  - Added auth UX parity improvements in Telegram runtime:
+    - `/auth providers` output now exposes mode/guest/popup metadata.
+    - `/auth bridge <provider>` returns provider-specific lightpanda guest/auth guidance.
+    - `/auth wait` now accepts positional timeout syntax in addition to `--timeout`.
   - Dispatcher `channels.status` now includes telegram queue/target/auth telemetry
   - Added auth + reply-loop smokes (`scripts/web-login-smoke-check.ps1`, `scripts/telegram-reply-loop-smoke-check.ps1`)
 - Phase 6 in progress:
