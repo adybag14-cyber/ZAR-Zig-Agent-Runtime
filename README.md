@@ -81,6 +81,12 @@ Check Codeberg `master` freshness against local toolchain:
 ./scripts/zig-codeberg-master-check.ps1
 ```
 
+Diagnose arm64 cross-build failures (logs written under `release/arm64-diagnostics`):
+
+```powershell
+./scripts/zig-arm64-diagnose.ps1
+```
+
 Run host + Docker smoke/system checks:
 
 ```powershell
@@ -106,3 +112,8 @@ Build preview release bundles (and optionally publish to GitHub Releases):
 ./scripts/release-preview.ps1 -Version v0.1.1-zig-preview.2 -IncludeArm64
 ./scripts/release-preview.ps1 -Version v0.1.1-zig-preview.2 -Publish
 ```
+
+CI workflow:
+- `.github/workflows/zig-ci.yml` runs on push/PR with Zig `master`
+- validates build/test gates
+- attempts cross-target release builds (x86_64-macos required, aarch64-linux/aarch64-macos optional)

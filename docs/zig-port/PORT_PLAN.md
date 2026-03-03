@@ -112,7 +112,7 @@ Port OpenClaw Go runtime behavior from baseline commit `65c974b528e2` into a pro
   - Go method-set parity is now complete (`134/134` covered in Zig), with `11` intentional Zig-only extras retained for edge/runtime depth.
   - Hardened smoke scripts to avoid flaky `zig build run` startup timing by prebuilding and launching the binary directly (`zig-out/bin/openclaw-zig.exe`) with explicit readiness and exit diagnostics.
 - Toolchain/runtime notes (local Windows Zig master):
-  - Codeberg `master` is currently `d2db1d45f1651d25c779651378b002b027e5f8e4`.
+  - Codeberg `master` is currently `852c5d2824afdf3a0997b20923eac15f7569f56a`.
   - Local Zig toolchain remains `0.16.0-dev.2703+0a412853a` (hash `0a412853a`) and is behind current Codeberg `master` (acknowledged).
   - Added Windows build workaround in `build.zig`:
     - use `-fstrip` for executable to avoid missing `.pdb` install failure on this master toolchain.
@@ -126,3 +126,6 @@ Port OpenClaw Go runtime behavior from baseline commit `65c974b528e2` into a pro
 - Post-release hardening:
   - added `scripts/release-preview.ps1` to automate deterministic preview artifact creation, checksum generation, and optional `gh release create` publishing.
   - added a registry-wide dispatcher coverage test to assert every method in `registry.supported_methods` is actually dispatchable (no `-32601` method-not-found drift).
+  - added GitHub Actions workflow `.github/workflows/zig-ci.yml` to continuously run Zig master build/test and cross-target release build attempts.
+  - added `scripts/zig-arm64-diagnose.ps1` to collect reproducible arm64 failure logs (`stdout`/`stderr`) for local Windows toolchain triage.
+  - arm64 diagnostics now confirm a local toolchain failure class on this Windows Zig build (reproducible on minimal source): `compiler_rt` sub-compilation failure + `memory allocation failure`, with additional `invalid constraint: 'X'` for `aarch64-linux`.

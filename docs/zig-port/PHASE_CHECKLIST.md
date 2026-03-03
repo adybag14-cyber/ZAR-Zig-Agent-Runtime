@@ -95,7 +95,7 @@ Phase 6 progress notes:
 - [x] `scripts/docker-smoke-check.ps1` (host + Docker HTTP 200 checks on `/health` and `/rpc`)
 - [x] `scripts/web-login-smoke-check.ps1` (`web.login.start -> wait -> complete -> status` all HTTP 200 with authorized completion)
 - [x] `scripts/telegram-reply-loop-smoke-check.ps1` (`send /auth start -> send /auth complete -> send chat -> poll` all HTTP 200 with non-empty queued replies)
-- [x] Freshness check: Codeberg Zig `master`=`d2db1d45f1651d25c779651378b002b027e5f8e4`; local toolchain=`0.16.0-dev.2703+0a412853a` (hash mismatch acknowledged)
+- [x] Freshness check: Codeberg Zig `master`=`852c5d2824afdf3a0997b20923eac15f7569f56a`; local toolchain=`0.16.0-dev.2703+0a412853a` (hash mismatch acknowledged)
 - [x] Serve smoke: `GET /health` and `POST /rpc` (`shutdown`) both returned HTTP 200
 - [x] Serve smoke: `POST /rpc` `file.write`, `file.read`, and `exec.run` returned HTTP 200 with real payloads
 - [x] Serve smoke: `POST /rpc` `security.audit` and `doctor` return structured diagnostics payloads
@@ -110,3 +110,6 @@ Phase 6 progress notes:
   - https://github.com/adybag14-cyber/openclaw-zig-port/releases/tag/v0.1.0-zig-preview.1
 - [x] Cross-target note: `aarch64-linux` and `aarch64-macos` failed on local Zig `0.16.0-dev.2703+0a412853a` Windows toolchain with compiler exit code `5`; release matrix kept to passing `x86_64` targets.
 - [x] Dispatcher coverage guard: registry-wide test asserts every method in `registry.supported_methods` resolves in dispatcher (prevents method-set drift regressions).
+- [x] Added CI pipeline (`.github/workflows/zig-ci.yml`) for build/test gates and cross-target release build attempts on Zig master.
+- [x] Added arm64 diagnostic runner (`scripts/zig-arm64-diagnose.ps1`) to persist stdout/stderr logs for `aarch64-linux` and `aarch64-macos` failures.
+- [x] Arm64 diagnostics confirmed local Windows Zig master failure class is toolchain-level (repro on minimal `build-exe`): `compiler_rt` sub-compilation failure, `memory allocation failure`, and (`aarch64-linux`) `invalid constraint: 'X'`.
