@@ -1765,6 +1765,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
 
     if (std.ascii.eqlIgnoreCase(req.method, "status")) {
         const cfg = currentConfig();
+        const gateway_token_required = cfg.gateway.require_token or !isLoopbackBind(cfg.http_bind);
         const runtime = getRuntime();
         const guard = try getGuard();
         return protocol.encodeResult(allocator, req.id, .{
@@ -1774,6 +1775,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             .runtime_queue_depth = runtime.queueDepth(),
             .runtime_sessions = runtime.sessionCount(),
             .security = guard.snapshot(),
+            .gateway_auth_mode = if (gateway_token_required) "token" else "none",
             .configHash = config.fingerprintHex(cfg),
         });
     }
@@ -4043,6 +4045,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
 
     if (std.ascii.eqlIgnoreCase(req.method, "config.get")) {
         const cfg = currentConfig();
+        const gateway_token_required = cfg.gateway.require_token or !isLoopbackBind(cfg.http_bind);
         const runtime = getRuntime();
         const guard = try getGuard();
         const memory = try getMemoryStore();
@@ -4055,7 +4058,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             .gateway = .{
                 .bind = cfg.http_bind,
                 .port = cfg.http_port,
-                .authMode = if (cfg.gateway.require_token) "token" else "none",
+                .authMode = if (gateway_token_required) "token" else "none",
                 .rateLimit = .{
                     .enabled = cfg.gateway.rate_limit_enabled,
                     .windowMs = cfg.gateway.rate_limit_window_ms,
@@ -8770,6 +8773,20 @@ test "dispatch config.get and tools.catalog expose runtime + wasm contracts" {
     try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"tools\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"wasm\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"browser.open\"") != null);
+}
+
+test "dispatch config.get authMode reflects non-loopback bind token policy" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.http_bind = "0.0.0.0";
+    cfg.gateway.require_token = false;
+    cfg.gateway.auth_token = "edge-token";
+    setConfig(cfg);
+    defer setConfig(config.defaults());
+
+    const config_out = try dispatch(allocator, "{\"id\":\"cfg-bind\",\"method\":\"config.get\",\"params\":{}}");
+    defer allocator.free(config_out);
+    try std.testing.expect(std.mem.indexOf(u8, config_out, "\"authMode\":\"token\"") != null);
 }
 
 test "dispatch auth oauth alias lifecycle providers start wait complete logout import" {

@@ -131,7 +131,16 @@ pub fn run(
     }
 
     const gateway_token = std.mem.trim(u8, cfg.gateway.auth_token, " \t\r\n");
-    if (!cfg.gateway.require_token) {
+    const gateway_token_required = cfg.gateway.require_token or !isLoopbackBind(cfg.http_bind);
+    if (!cfg.gateway.require_token and !isLoopbackBind(cfg.http_bind)) {
+        try findings.append(allocator, .{
+            .checkId = "gateway.auth.token.policy_override",
+            .severity = "warn",
+            .title = "Gateway token policy override is active",
+            .detail = "http_bind is non-loopback, so token auth is enforced even with require_token=false",
+            .remediation = "set OPENCLAW_ZIG_GATEWAY_REQUIRE_TOKEN=true to make intent explicit",
+        });
+    } else if (!cfg.gateway.require_token) {
         try findings.append(allocator, .{
             .checkId = "gateway.auth.token.disabled",
             .severity = "warn",
@@ -139,12 +148,13 @@ pub fn run(
             .detail = "gateway requires no auth token for /rpc requests",
             .remediation = "set OPENCLAW_ZIG_GATEWAY_REQUIRE_TOKEN=true and configure OPENCLAW_ZIG_GATEWAY_AUTH_TOKEN",
         });
-    } else if (gateway_token.len == 0) {
+    }
+    if (gateway_token_required and gateway_token.len == 0) {
         try findings.append(allocator, .{
             .checkId = "gateway.auth.token.missing",
             .severity = "critical",
             .title = "Gateway token authentication is required but token is missing",
-            .detail = "OPENCLAW_ZIG_GATEWAY_REQUIRE_TOKEN=true without OPENCLAW_ZIG_GATEWAY_AUTH_TOKEN blocks all authenticated access",
+            .detail = "token auth is required by explicit config or non-loopback bind policy, but OPENCLAW_ZIG_GATEWAY_AUTH_TOKEN is empty",
             .remediation = "set a non-empty OPENCLAW_ZIG_GATEWAY_AUTH_TOKEN value",
         });
     }
@@ -281,11 +291,12 @@ pub fn doctor(
         .detail = "prefer loopback bind for local control endpoints",
     });
     const gateway_token = std.mem.trim(u8, cfg.gateway.auth_token, " \t\r\n");
+    const gateway_token_required = cfg.gateway.require_token or !isLoopbackBind(cfg.http_bind);
     try checks.append(allocator, .{
         .id = "gateway.auth_token",
-        .status = if (!cfg.gateway.require_token) "warn" else if (gateway_token.len == 0) "fail" else "pass",
-        .message = if (!cfg.gateway.require_token) "disabled" else if (gateway_token.len == 0) "missing" else "configured",
-        .detail = "rpc token gate should be required with non-empty token in production",
+        .status = if (!gateway_token_required) "warn" else if (gateway_token.len == 0) "fail" else "pass",
+        .message = if (!gateway_token_required) "disabled" else if (gateway_token.len == 0) "missing" else "configured",
+        .detail = "token auth is required by explicit setting or non-loopback bind policy",
     });
     try checks.append(allocator, .{
         .id = "gateway.rate_limit",
@@ -654,4 +665,48 @@ test "doctor includes deterministic config hash" {
     var report_b = try doctor(allocator, cfg, &runtime_guard, .{});
     defer report_b.deinit(allocator);
     try std.testing.expect(!std.mem.eql(u8, &hash_a, &report_b.configHash));
+}
+
+test "security audit reports bind policy override when non-loopback token enforcement is implicit" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.http_bind = "0.0.0.0";
+    cfg.gateway.require_token = false;
+    cfg.gateway.auth_token = "edge-token";
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try run(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found = false;
+    for (report.findings) |finding| {
+        if (std.mem.eql(u8, finding.checkId, "gateway.auth.token.policy_override")) {
+            found = true;
+            try std.testing.expect(std.mem.eql(u8, finding.severity, "warn"));
+        }
+    }
+    try std.testing.expect(found);
+}
+
+test "doctor fails gateway auth check when non-loopback bind has no token" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.http_bind = "0.0.0.0";
+    cfg.gateway.require_token = false;
+    cfg.gateway.auth_token = "";
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try doctor(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found = false;
+    for (report.checks) |check| {
+        if (std.mem.eql(u8, check.id, "gateway.auth_token")) {
+            found = true;
+            try std.testing.expect(std.mem.eql(u8, check.status, "fail"));
+        }
+    }
+    try std.testing.expect(found);
 }

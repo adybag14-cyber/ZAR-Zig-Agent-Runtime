@@ -116,6 +116,7 @@ pub fn routeRequest(
     }
 
     if (std.mem.eql(u8, target_path, "/rpc")) {
+        const token_required = bindRequiresGatewayToken(cfg);
         if (method != .POST) {
             return .{
                 .status = .method_not_allowed,
@@ -124,7 +125,18 @@ pub fn routeRequest(
             };
         }
 
-        if (cfg.gateway.require_token and !context.rpc_authorized) {
+        if (token_required and !gatewayTokenConfigured(cfg)) {
+            return .{
+                .status = .forbidden,
+                .content_type = "application/json",
+                .body = try encodeJson(allocator, .{
+                    .@"error" = "gateway_token_unconfigured",
+                    .detail = "non-loopback bind requires OPENCLAW_ZIG_GATEWAY_AUTH_TOKEN",
+                }),
+            };
+        }
+
+        if (token_required and !context.rpc_authorized) {
             return .{
                 .status = .unauthorized,
                 .content_type = "application/json",
@@ -198,7 +210,8 @@ fn serveRequest(
 
     var route_context: RouteContext = .{};
     if (method == .POST and std.mem.eql(u8, target, "/rpc")) {
-        route_context.rpc_authorized = !cfg.gateway.require_token or requestHasGatewayToken(request, cfg.gateway.auth_token);
+        const token_required = bindRequiresGatewayToken(cfg);
+        route_context.rpc_authorized = !token_required or requestHasGatewayToken(request, cfg.gateway.auth_token);
         route_context.rpc_rate_limited = !rate_limiter.allow(time_util.nowMs());
     }
 
@@ -283,7 +296,24 @@ fn serveWebSocket(
         },
     };
 
-    if (cfg.gateway.require_token and !requestHasGatewayToken(request, cfg.gateway.auth_token)) {
+    const token_required = bindRequiresGatewayToken(cfg);
+    if (token_required and !gatewayTokenConfigured(cfg)) {
+        const body = try encodeJson(allocator, .{
+            .@"error" = "gateway_token_unconfigured",
+            .detail = "non-loopback bind requires OPENCLAW_ZIG_GATEWAY_AUTH_TOKEN",
+        });
+        defer allocator.free(body);
+        try request.respond(body, .{
+            .status = .forbidden,
+            .keep_alive = false,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "application/json" },
+            },
+        });
+        return false;
+    }
+
+    if (token_required and !requestHasGatewayToken(request, cfg.gateway.auth_token)) {
         const body = try encodeJson(allocator, .{ .@"error" = "unauthorized", .detail = "missing or invalid gateway token" });
         defer allocator.free(body);
         try request.respond(body, .{
@@ -419,6 +449,22 @@ fn headerTokenMatches(raw_value: []const u8, expected_token: []const u8) bool {
         return std.mem.eql(u8, bearer_value, expected);
     }
     return std.mem.eql(u8, trimmed, expected);
+}
+
+fn bindRequiresGatewayToken(cfg: config.Config) bool {
+    return cfg.gateway.require_token or !isLoopbackBind(cfg.http_bind);
+}
+
+fn gatewayTokenConfigured(cfg: config.Config) bool {
+    return std.mem.trim(u8, cfg.gateway.auth_token, " \t\r\n").len > 0;
+}
+
+fn isLoopbackBind(bind: []const u8) bool {
+    const trimmed = std.mem.trim(u8, bind, " \t\r\n");
+    if (trimmed.len == 0) return false;
+    return std.ascii.eqlIgnoreCase(trimmed, "127.0.0.1") or
+        std.ascii.eqlIgnoreCase(trimmed, "::1") or
+        std.ascii.eqlIgnoreCase(trimmed, "localhost");
 }
 
 fn startsWithIgnoreCase(value: []const u8, prefix: []const u8) bool {
@@ -574,6 +620,48 @@ test "routeRequest rejects unauthorized rpc when gateway token is required" {
     defer allocator.free(result.body);
     try std.testing.expectEqual(std.http.Status.unauthorized, result.status);
     try std.testing.expect(std.mem.indexOf(u8, result.body, "unauthorized") != null);
+}
+
+test "routeRequest enforces token auth on non-loopback bind even when require_token is false" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.http_bind = "0.0.0.0";
+    cfg.gateway.require_token = false;
+    cfg.gateway.auth_token = "edge-token";
+    var should_shutdown = false;
+    const result = try routeRequest(
+        allocator,
+        cfg,
+        .{ .rpc_authorized = false },
+        .POST,
+        "/rpc",
+        "{\"id\":\"s1\",\"method\":\"health\",\"params\":{}}",
+        &should_shutdown,
+    );
+    defer allocator.free(result.body);
+    try std.testing.expectEqual(std.http.Status.unauthorized, result.status);
+    try std.testing.expect(std.mem.indexOf(u8, result.body, "unauthorized") != null);
+}
+
+test "routeRequest rejects non-loopback rpc when bind policy token is not configured" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.http_bind = "0.0.0.0";
+    cfg.gateway.require_token = false;
+    cfg.gateway.auth_token = "";
+    var should_shutdown = false;
+    const result = try routeRequest(
+        allocator,
+        cfg,
+        .{},
+        .POST,
+        "/rpc",
+        "{\"id\":\"s1\",\"method\":\"health\",\"params\":{}}",
+        &should_shutdown,
+    );
+    defer allocator.free(result.body);
+    try std.testing.expectEqual(std.http.Status.forbidden, result.status);
+    try std.testing.expect(std.mem.indexOf(u8, result.body, "gateway_token_unconfigured") != null);
 }
 
 test "routeRequest enforces rpc rate limiting context" {

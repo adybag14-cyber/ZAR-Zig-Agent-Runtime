@@ -41,6 +41,9 @@ Phase 4 hardening notes:
 - Added deterministic config fingerprinting for diagnostics posture tracking:
   - `health`, `status`, and `config.get` now expose `configHash`.
   - `doctor` now includes `configHash` (stable hash of active config + env overlays).
+- Added non-loopback bind token enforcement in gateway transport:
+  - `/rpc` and websocket routes now require token auth on non-loopback bind even when `OPENCLAW_ZIG_GATEWAY_REQUIRE_TOKEN=false`.
+  - non-loopback bind with empty token now fails closed (`gateway_token_unconfigured`) until `OPENCLAW_ZIG_GATEWAY_AUTH_TOKEN` is set.
 
 ## Phase 5 - Browser/Auth/Channels
 - [x] Implement web login manager (`start/wait/complete/status`)
@@ -182,7 +185,7 @@ Phase 6 progress notes:
 ## Latest Validation Snapshot
 - [x] `zig build`
 - [x] `zig build test`
-- [x] `zig build test --summary all` -> `95/95` passing (includes gateway auth/rate-limit hardening tests, runtime file/exec policy hardening tests, TTS/completion execution-path coverage, and bare-metal ABI v2 contract tests)
+- [x] `zig build test --summary all` -> `101/101` passing (includes gateway auth/rate-limit hardening tests, runtime file/exec policy hardening tests, config-hash diagnostics coverage, bind-policy token enforcement checks, TTS/completion execution-path coverage, and bare-metal ABI v2 contract tests)
 - [x] Runtime policy hardening slice shipped:
   - `file.read` / `file.write` optional sandbox enforcement with traversal + symlink denial paths:
     - `OPENCLAW_ZIG_RUNTIME_FILE_SANDBOX_ENABLED`
