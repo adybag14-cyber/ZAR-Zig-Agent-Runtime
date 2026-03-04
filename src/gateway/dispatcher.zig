@@ -1930,9 +1930,9 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
     if (std.ascii.eqlIgnoreCase(req.method, "tts.status")) {
         const compat = try getCompatState();
         const runtime_profile = runtimeFeatureProfileFromEnv();
-        const has_openai_key = hasEnvValue("OPENAI_API_KEY");
-        const has_elevenlabs_key = hasEnvValue("ELEVENLABS_API_KEY");
-        const has_kittentts_bin = hasEnvValue("OPENCLAW_ZIG_KITTENTTS_BIN");
+        const has_openai_key = ttsProviderApiKeyAvailable("openai");
+        const has_elevenlabs_key = ttsProviderApiKeyAvailable("elevenlabs");
+        const has_kittentts_bin = kittenttsBinaryAvailable();
         var provider_order: [4][]const u8 = undefined;
         const provider_count = ttsProviderOrder(runtime_profile, compat.tts_provider, &provider_order);
         var fallback_providers: [3][]const u8 = undefined;
@@ -2006,9 +2006,9 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
     }
 
     if (std.ascii.eqlIgnoreCase(req.method, "tts.providers")) {
-        const has_openai_key = hasEnvValue("OPENAI_API_KEY");
-        const has_elevenlabs_key = hasEnvValue("ELEVENLABS_API_KEY");
-        const has_kittentts_bin = hasEnvValue("OPENCLAW_ZIG_KITTENTTS_BIN");
+        const has_openai_key = ttsProviderApiKeyAvailable("openai");
+        const has_elevenlabs_key = ttsProviderApiKeyAvailable("elevenlabs");
+        const has_kittentts_bin = kittenttsBinaryAvailable();
         const providers = [_]struct {
             id: []const u8,
             name: []const u8,
@@ -7914,18 +7914,42 @@ fn ttsProviderApiKeyAlloc(allocator: std.mem.Allocator, provider_raw: []const u8
     const provider = normalizeTTSProvider(provider_raw);
     if (std.ascii.eqlIgnoreCase(provider, "openai")) {
         if (try envLookupAlloc(allocator, "OPENAI_API_KEY")) |value| return value;
-        return envLookupAlloc(allocator, "OPENCLAW_ZIG_TTS_OPENAI_API_KEY");
+        if (try envLookupAlloc(allocator, "OPENCLAW_ZIG_TTS_OPENAI_API_KEY")) |value| return value;
+        if (try envLookupAlloc(allocator, "OPENCLAW_GO_TTS_OPENAI_API_KEY")) |value| return value;
+        return envLookupAlloc(allocator, "OPENCLAW_RS_TTS_OPENAI_API_KEY");
     }
     if (std.ascii.eqlIgnoreCase(provider, "elevenlabs")) {
         if (try envLookupAlloc(allocator, "ELEVENLABS_API_KEY")) |value| return value;
-        return envLookupAlloc(allocator, "OPENCLAW_ZIG_TTS_ELEVENLABS_API_KEY");
+        if (try envLookupAlloc(allocator, "OPENCLAW_ZIG_TTS_ELEVENLABS_API_KEY")) |value| return value;
+        if (try envLookupAlloc(allocator, "OPENCLAW_GO_TTS_ELEVENLABS_API_KEY")) |value| return value;
+        return envLookupAlloc(allocator, "OPENCLAW_RS_TTS_ELEVENLABS_API_KEY");
     }
     return null;
 }
 
 fn kittenttsBinaryPathAlloc(allocator: std.mem.Allocator) !?[]u8 {
     if (try envLookupAlloc(allocator, "OPENCLAW_ZIG_KITTENTTS_BIN")) |value| return value;
+    if (try envLookupAlloc(allocator, "OPENCLAW_GO_KITTENTTS_BIN")) |value| return value;
+    if (try envLookupAlloc(allocator, "OPENCLAW_GO_TTS_KITTENTTS_BIN")) |value| return value;
     return envLookupAlloc(allocator, "OPENCLAW_RS_KITTENTTS_BIN");
+}
+
+fn ttsProviderApiKeyAvailable(provider_raw: []const u8) bool {
+    const value = ttsProviderApiKeyAlloc(std.heap.page_allocator, provider_raw) catch return false;
+    if (value) |key| {
+        std.heap.page_allocator.free(key);
+        return true;
+    }
+    return false;
+}
+
+fn kittenttsBinaryAvailable() bool {
+    const value = kittenttsBinaryPathAlloc(std.heap.page_allocator) catch return false;
+    if (value) |path| {
+        std.heap.page_allocator.free(path);
+        return true;
+    }
+    return false;
 }
 
 fn trySynthesizeKittentts(

@@ -105,6 +105,10 @@ Phase 6 progress notes:
     - OpenAI TTS HTTP path via `OPENAI_API_KEY` / `OPENCLAW_ZIG_TTS_OPENAI_API_KEY`
     - ElevenLabs HTTP path via `ELEVENLABS_API_KEY` / `OPENCLAW_ZIG_TTS_ELEVENLABS_API_KEY`
     - deterministic simulated-audio fallback remains for no-key/no-binary or provider failures.
+  - `tts.status` and `tts.providers` now use the same alias-aware credential/binary detection path as synthesis:
+    - OpenAI: `OPENAI_API_KEY`, `OPENCLAW_ZIG_TTS_OPENAI_API_KEY`, `OPENCLAW_GO_TTS_OPENAI_API_KEY`, `OPENCLAW_RS_TTS_OPENAI_API_KEY`
+    - ElevenLabs: `ELEVENLABS_API_KEY`, `OPENCLAW_ZIG_TTS_ELEVENLABS_API_KEY`, `OPENCLAW_GO_TTS_ELEVENLABS_API_KEY`, `OPENCLAW_RS_TTS_ELEVENLABS_API_KEY`
+    - KittenTTS binary: `OPENCLAW_ZIG_KITTENTTS_BIN`, `OPENCLAW_GO_KITTENTTS_BIN`, `OPENCLAW_GO_TTS_KITTENTTS_BIN`, `OPENCLAW_RS_KITTENTTS_BIN`
 - Added compat config/wizard/session-mutation slice:
   - config methods: `config.set`, `config.patch`, `config.apply`, `config.schema`
   - wizard methods: `wizard.start`, `wizard.next`, `wizard.cancel`, `wizard.status`
