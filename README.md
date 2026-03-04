@@ -36,6 +36,194 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
 - Checklist: [`docs/zig-port/PHASE_CHECKLIST.md`](docs/zig-port/PHASE_CHECKLIST.md)
 - Local Zig toolchain notes: [`docs/zig-port/ZIG_TOOLCHAIN_LOCAL.md`](docs/zig-port/ZIG_TOOLCHAIN_LOCAL.md)
 - GitHub master tracking issue: <https://github.com/adybag14-cyber/openclaw-zig-port/issues/1>
+- Full method registry (source of truth): [`src/gateway/registry.zig`](src/gateway/registry.zig)
+
+## Architecture Overview
+
+- Protocol: JSON-RPC request/response envelopes with deterministic error semantics.
+- Gateway: HTTP server with `GET /health` and `POST /rpc`, graceful shutdown via RPC.
+- Dispatcher: method routing and contract handling across runtime, security, browser/auth, channels, memory, and edge domains.
+- Runtime: session/job state, tool runtime actions, compat state surfaces.
+- Security: guard, loop-guard, doctor/security audit, remediation (`--fix`) path.
+- Browser/Auth: Lightpanda browser request contract + web login session lifecycle.
+- Channels: Telegram command/reply queue with auth/model controls and polling.
+- Memory: persistent local store with history/trim/delete/compact primitives.
+- Edge: wasm lifecycle, routing/acceleration/swarm/multimodal/voice, enclave/mesh/homomorphic/finetune and related advanced contracts.
+
+## Feature Coverage
+
+All major runtime feature domains are implemented and dispatchable. Representative method groups are listed below; full list is in [`registry.zig`](src/gateway/registry.zig).
+
+### 1) Protocol and Gateway
+
+- Connectivity and health:
+  - `connect`, `health`, `status`, `shutdown`
+- HTTP routes:
+  - `GET /health`
+  - `POST /rpc`
+- Contract coverage guard:
+  - test asserts every registered method resolves in dispatcher (no registry/dispatcher drift).
+
+### 2) Runtime and Tool Runtime
+
+- Tool execution and filesystem actions:
+  - `exec.run`
+  - `file.read`
+  - `file.write`
+- Runtime and session surfaces:
+  - `sessions.list`, `sessions.preview`, `session.status`
+  - `sessions.patch`, `sessions.resolve`
+  - `sessions.history`, `chat.history`
+  - `sessions.reset`, `sessions.delete`, `sessions.compact`
+  - `sessions.usage`, `sessions.usage.timeseries`, `sessions.usage.logs`
+- Queue/runtime telemetry:
+  - exposed through status/doctor and channel status snapshots.
+
+### 3) Security and Diagnostics
+
+- Prompt/tool safety layers:
+  - risk scoring + loop guard behavior
+  - blocked pattern policy checks
+- Diagnostics methods:
+  - `security.audit`
+  - `doctor`
+  - `doctor.memory.status`
+- CLI diagnostics:
+  - `--doctor`
+  - `--security-audit --deep`
+  - `--security-audit --deep --fix` (remediation actions)
+- Secrets/config resolution:
+  - `secrets.reload`
+  - `secrets.resolve` with config overlay and env alias fallback resolution.
+
+### 4) Browser Bridge and Auth
+
+- Browser runtime policy:
+  - Lightpanda-only runtime in dispatcher contracts.
+  - Playwright/Puppeteer requests are intentionally rejected.
+- Browser and login lifecycle:
+  - `browser.request`
+  - `browser.open`
+  - `web.login.start`
+  - `web.login.wait`
+  - `web.login.complete`
+  - `web.login.status`
+- OAuth alias surfaces for compatibility:
+  - `auth.oauth.providers`
+  - `auth.oauth.start`
+  - `auth.oauth.wait`
+  - `auth.oauth.complete`
+  - `auth.oauth.logout`
+  - `auth.oauth.import`
+- Provider/auth breadth:
+  - `chatgpt`, `codex`, `claude`, `gemini`, `openrouter`, `opencode`
+  - guest-capable browser session providers: `qwen`, `zai/glm-5`, `inception/mercury-2`
+  - additional provider aliases: `minimax`, `kimi`, `zhipuai`
+
+### 5) Channels and Telegram
+
+- Channel methods:
+  - `channels.status`
+  - `channels.logout`
+  - `send`, `chat.send`, `sessions.send`
+  - `poll`
+- Telegram command surface:
+  - `/auth` lifecycle (`start`, `status`, `wait`, `complete`, `guest`, `cancel`, `providers`, `bridge`)
+  - `/model` lifecycle (set/status/reset)
+  - account-scoped auth bindings and `--force` session rotation
+- Queue behavior:
+  - bounded retention (`max_queue_entries`, default `4096`)
+  - single-pass FIFO compaction on poll/drain paths.
+
+### 6) Memory System
+
+- Persistent memory store:
+  - append/history/stats/persistence roundtrip
+  - session delete + trim + compact semantics
+- Memory-backed runtime methods:
+  - `sessions.history`
+  - `chat.history`
+  - `doctor.memory.status`
+- Safety/perf:
+  - linear compaction and batched front-removal for bounded retention.
+
+### 7) Edge and Advanced Features
+
+- Wasm lifecycle and marketplace:
+  - `edge.wasm.marketplace.list`
+  - `edge.wasm.install`
+  - `edge.wasm.execute`
+  - `edge.wasm.remove`
+- Planning and acceleration:
+  - `edge.router.plan`
+  - `edge.acceleration.status`
+  - `edge.swarm.plan`
+  - `edge.collaboration.plan`
+- Multimodal and voice:
+  - `edge.multimodal.inspect`
+  - `edge.voice.transcribe`
+- Enclave/mesh/homomorphic:
+  - `edge.enclave.status`
+  - `edge.enclave.prove`
+  - `edge.mesh.status`
+  - `edge.homomorphic.compute`
+- Finetune/self-evolution:
+  - `edge.finetune.run`
+  - `edge.finetune.status`
+  - `edge.finetune.job.get`
+  - `edge.finetune.cancel`
+  - `edge.finetune.cluster.plan`
+- Additional edge parity contracts:
+  - `edge.identity.trust.status`
+  - `edge.personality.profile`
+  - `edge.handoff.plan`
+  - `edge.marketplace.revenue.preview`
+  - `edge.alignment.evaluate`
+  - `edge.quantum.status`
+
+### 8) Operations, Agents, Device/Node, and Compat Surfaces
+
+- Agent and skill surfaces:
+  - `agent`, `agent.identity.get`, `agent.wait`
+  - `agents.list/create/update/delete`
+  - `agents.files.list/get/set`
+  - `skills.status/bins/install/update`
+- Cron:
+  - `cron.list/status/add/update/remove/run/runs`
+- Device:
+  - `device.pair.list/approve/reject/remove`
+  - `device.token.rotate/revoke`
+- Node and approval workflow:
+  - `node.pair.request/list/approve/reject/verify`
+  - `node.rename/list/describe/invoke/invoke.result/event`
+  - `node.canvas.capability.refresh`
+  - `exec.approvals.get/set`
+  - `exec.approvals.node.get/set`
+  - `exec.approval.request/waitdecision/resolve`
+- Conversation/voice/TTS/system:
+  - `talk.config`, `talk.mode`
+  - `voicewake.get`, `voicewake.set`
+  - `tts.status`, `tts.enable`, `tts.disable`, `tts.providers`, `tts.setProvider`, `tts.convert`
+  - `models.list`, `chat.abort`, `chat.inject`
+  - `usage.status`, `usage.cost`, `last-heartbeat`, `set-heartbeats`, `system-presence`, `system-event`, `wake`
+  - `push.test`, `logs.tail`, `canvas.present`, `update.run`, `wizard.start/next/cancel/status`
+
+## Performance and Reliability Improvements
+
+Implemented optimization hardening includes:
+
+- memory store linear compaction and batched front-removal
+- runtime queue head-offset dequeue + amortized compaction
+- Telegram poll one-pass compaction and bounded queue retention
+- doctor docker probe cache (process-local)
+- registry supports fast-path exact-match lookup
+- dispatcher bounded-history one-pass compaction for capped lists
+
+## Known Constraints (Intentional)
+
+- Browser runtime in Zig remains Lightpanda-only by policy.
+- Local Windows zig master toolchain can lag Codeberg `master`; freshness is tracked and reported each session.
+- Some cross-target failures can be toolchain-specific on local Windows while CI Linux runners pass full cross-target matrices.
 
 ## Quick Start
 
