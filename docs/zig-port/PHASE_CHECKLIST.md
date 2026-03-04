@@ -109,6 +109,10 @@ Phase 6 progress notes:
     - OpenAI: `OPENAI_API_KEY`, `OPENCLAW_ZIG_TTS_OPENAI_API_KEY`, `OPENCLAW_GO_TTS_OPENAI_API_KEY`, `OPENCLAW_RS_TTS_OPENAI_API_KEY`
     - ElevenLabs: `ELEVENLABS_API_KEY`, `OPENCLAW_ZIG_TTS_ELEVENLABS_API_KEY`, `OPENCLAW_GO_TTS_ELEVENLABS_API_KEY`, `OPENCLAW_RS_TTS_ELEVENLABS_API_KEY`
     - KittenTTS binary: `OPENCLAW_ZIG_KITTENTTS_BIN`, `OPENCLAW_GO_KITTENTTS_BIN`, `OPENCLAW_GO_TTS_KITTENTTS_BIN`, `OPENCLAW_RS_KITTENTTS_BIN`
+  - KittenTTS execution path now supports stdin-fed synthesis and arg overrides for migration parity:
+    - stdin payload execution (`text` written to child stdin) to match Rust runtime behavior.
+    - optional args env fallbacks: `OPENCLAW_ZIG_KITTENTTS_ARGS`, `OPENCLAW_GO_KITTENTTS_ARGS`, `OPENCLAW_GO_TTS_KITTENTTS_ARGS`, `OPENCLAW_RS_KITTENTTS_ARGS`.
+    - placeholder token support for args: `{{text}}` and `{{format}}`.
 - Added compat config/wizard/session-mutation slice:
   - config methods: `config.set`, `config.patch`, `config.apply`, `config.schema`
   - wizard methods: `wizard.start`, `wizard.next`, `wizard.cancel`, `wizard.status`

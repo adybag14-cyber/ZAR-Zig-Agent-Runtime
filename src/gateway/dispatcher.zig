@@ -7934,6 +7934,13 @@ fn kittenttsBinaryPathAlloc(allocator: std.mem.Allocator) !?[]u8 {
     return envLookupAlloc(allocator, "OPENCLAW_RS_KITTENTTS_BIN");
 }
 
+fn kittenttsExtraArgsAlloc(allocator: std.mem.Allocator) !?[]u8 {
+    if (try envLookupAlloc(allocator, "OPENCLAW_ZIG_KITTENTTS_ARGS")) |value| return value;
+    if (try envLookupAlloc(allocator, "OPENCLAW_GO_KITTENTTS_ARGS")) |value| return value;
+    if (try envLookupAlloc(allocator, "OPENCLAW_GO_TTS_KITTENTTS_ARGS")) |value| return value;
+    return envLookupAlloc(allocator, "OPENCLAW_RS_KITTENTTS_ARGS");
+}
+
 fn ttsProviderApiKeyAvailable(provider_raw: []const u8) bool {
     const value = ttsProviderApiKeyAlloc(std.heap.page_allocator, provider_raw) catch return false;
     if (value) |key| {
@@ -7952,6 +7959,91 @@ fn kittenttsBinaryAvailable() bool {
     return false;
 }
 
+const ProcessCaptureResult = struct {
+    term: std.process.Child.Term,
+    stdout: []u8,
+    stderr: []u8,
+
+    fn deinit(self: ProcessCaptureResult, allocator: std.mem.Allocator) void {
+        allocator.free(self.stdout);
+        allocator.free(self.stderr);
+    }
+};
+
+fn runProcessCaptureWithStdin(
+    allocator: std.mem.Allocator,
+    argv: []const []const u8,
+    stdin_payload: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    timeout_ms: u32,
+) !?ProcessCaptureResult {
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var child = std.process.spawn(io, .{
+        .argv = argv,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+        .create_no_window = true,
+    }) catch return null;
+    defer child.kill(io);
+
+    if (child.stdin) |stdin_file| {
+        var writer_buffer: [1024]u8 = undefined;
+        var writer = stdin_file.writer(io, &writer_buffer);
+        writer.interface.writeAll(stdin_payload) catch {
+            stdin_file.close(io);
+            child.stdin = null;
+            return null;
+        };
+        writer.interface.flush() catch {
+            stdin_file.close(io);
+            child.stdin = null;
+            return null;
+        };
+        stdin_file.close(io);
+        child.stdin = null;
+    }
+
+    var multi_reader_buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
+    var multi_reader: std.Io.File.MultiReader = undefined;
+    multi_reader.init(allocator, io, multi_reader_buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer multi_reader.deinit();
+
+    const stdout_reader = multi_reader.reader(0);
+    const stderr_reader = multi_reader.reader(1);
+    const timeout: std.Io.Timeout = switch (builtin.os.tag) {
+        .windows => .none,
+        else => .{
+            .duration = .{
+                .clock = .awake,
+                .raw = std.Io.Duration.fromMilliseconds(timeout_ms),
+            },
+        },
+    };
+
+    while (multi_reader.fill(64, timeout)) |_| {
+        if (stdout_reader.buffered().len > stdout_limit) return null;
+        if (stderr_reader.buffered().len > stderr_limit) return null;
+    } else |err| switch (err) {
+        error.EndOfStream => {},
+        else => return null,
+    }
+
+    multi_reader.checkAnyError() catch return null;
+    const term = child.wait(io) catch return null;
+
+    const stdout = multi_reader.toOwnedSlice(0) catch return null;
+    errdefer allocator.free(stdout);
+    const stderr = multi_reader.toOwnedSlice(1) catch return null;
+
+    return .{
+        .term = term,
+        .stdout = stdout,
+        .stderr = stderr,
+    };
+}
+
 fn trySynthesizeKittentts(
     allocator: std.mem.Allocator,
     text: []const u8,
@@ -7962,26 +8054,52 @@ fn trySynthesizeKittentts(
     defer allocator.free(binary.?);
 
     const format_arg = if (std.ascii.eqlIgnoreCase(output_spec.output_format, "opus")) "opus" else "mp3";
-    const argv = [_][]const u8{ binary.?, "--format", format_arg, "--text", text };
-    const io = std.Io.Threaded.global_single_threaded.io();
-    const timeout: std.Io.Timeout = switch (builtin.os.tag) {
-        .windows => .none,
-        else => .{
-            .duration = .{
-                .clock = .awake,
-                .raw = std.Io.Duration.fromMilliseconds(20_000),
-            },
-        },
-    };
-    const run_result = std.process.run(allocator, io, .{
-        .argv = argv[0..],
-        .create_no_window = true,
-        .stdout_limit = .limited(8 * 1024 * 1024),
-        .stderr_limit = .limited(64 * 1024),
-        .timeout = timeout,
-    }) catch return null;
-    defer allocator.free(run_result.stdout);
-    defer allocator.free(run_result.stderr);
+    const args_raw = try kittenttsExtraArgsAlloc(allocator);
+    defer if (args_raw) |raw| allocator.free(raw);
+
+    var argv = std.ArrayList([]const u8).empty;
+    defer argv.deinit(allocator);
+    try argv.append(allocator, binary.?);
+
+    var owned_tokens = std.ArrayList([]u8).empty;
+    defer {
+        for (owned_tokens.items) |token| allocator.free(token);
+        owned_tokens.deinit(allocator);
+    }
+
+    var has_format_token = false;
+    if (args_raw) |raw| {
+        var tokens = std.mem.tokenizeAny(u8, raw, " \t\r\n");
+        while (tokens.next()) |token| {
+            if (std.ascii.eqlIgnoreCase(token, "--format")) has_format_token = true;
+            if (std.mem.eql(u8, token, "{{text}}")) {
+                try argv.append(allocator, text);
+                continue;
+            }
+            if (std.mem.eql(u8, token, "{{format}}")) {
+                try argv.append(allocator, format_arg);
+                has_format_token = true;
+                continue;
+            }
+            const owned = try allocator.dupe(u8, token);
+            try owned_tokens.append(allocator, owned);
+            try argv.append(allocator, owned);
+        }
+    }
+    if (!has_format_token) {
+        try argv.append(allocator, "--format");
+        try argv.append(allocator, format_arg);
+    }
+
+    const run_result = try runProcessCaptureWithStdin(
+        allocator,
+        argv.items,
+        text,
+        8 * 1024 * 1024,
+        64 * 1024,
+        20_000,
+    ) orelse return null;
+    defer run_result.deinit(allocator);
 
     switch (run_result.term) {
         .exited => |code| if (code != 0) return null,
