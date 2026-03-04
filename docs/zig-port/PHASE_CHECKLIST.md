@@ -203,6 +203,7 @@ Phase 6 progress notes:
 - [x] Parity reporting now includes reviewer-friendly markdown (`parity-go-zig.md`) in CI artifacts and release assets.
 - [x] Release workflow evidence update: run `22646648616` published `v0.1.0-zig-preview.ci-paritymd` including both `parity-go-zig.json` and `parity-go-zig.md`.
 - [x] Added cross-platform runtime smoke gate (`scripts/runtime-smoke-check.ps1`) and wired it into `zig-ci` validate job.
+- [x] Added update lifecycle smoke gate (`scripts/update-lifecycle-smoke-check.ps1`) and wired it into `zig-ci` + `release-preview` validate jobs (`update.plan`, `update.run`, `update.status` contract checks).
 - [x] Tracking/docs refresh:
   - README updated with current parity + validation + workflow status.
   - `docs/zig-port/ZIG_TOOLCHAIN_LOCAL.md` updated to current local/remote Zig hash state.

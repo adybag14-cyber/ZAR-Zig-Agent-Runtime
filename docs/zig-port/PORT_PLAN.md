@@ -219,3 +219,4 @@ while maintaining parity-first validation and release gating.
   - parity gate now also writes markdown evidence (`parity-go-zig.md`) for human review, and both CI + release flows publish JSON + markdown together.
   - release workflow smoke run `22646648616` validated dual parity evidence publication (`parity-go-zig.json`, `parity-go-zig.md`) for tag `v0.1.0-zig-preview.ci-paritymd`.
   - added cross-platform runtime smoke script (`scripts/runtime-smoke-check.ps1`) and made it a required gate in `zig-ci` validate job (server boot + health + rpc + auth + telegram reply loop simulation).
+  - added update lifecycle smoke script (`scripts/update-lifecycle-smoke-check.ps1`) and made it a required gate in both `zig-ci` and `release-preview` validate jobs (`update.plan`, `update.run`, `update.status` lifecycle checks).
