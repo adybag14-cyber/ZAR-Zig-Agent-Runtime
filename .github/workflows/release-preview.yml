@@ -31,11 +31,21 @@ jobs:
           use-cache: false
 
       - name: Setup Zig (master) mirror fallback
+        id: setup_zig_mirror_mach
         if: steps.setup_zig_primary.outcome == 'failure'
+        continue-on-error: true
         uses: mlugg/setup-zig@v2
         with:
           version: master
           mirror: https://pkg.machengine.org/zig
+          use-cache: false
+
+      - name: Setup Zig (master) mirror fallback (ziglang.org)
+        if: steps.setup_zig_primary.outcome == 'failure' && steps.setup_zig_mirror_mach.outcome == 'failure'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: master
+          mirror: https://ziglang.org/builds
           use-cache: false
 
       - name: Setup Node
@@ -165,11 +175,21 @@ jobs:
           use-cache: false
 
       - name: Setup Zig (master) mirror fallback
+        id: setup_zig_mirror_mach
         if: steps.setup_zig_primary.outcome == 'failure'
+        continue-on-error: true
         uses: mlugg/setup-zig@v2
         with:
           version: master
           mirror: https://pkg.machengine.org/zig
+          use-cache: false
+
+      - name: Setup Zig (master) mirror fallback (ziglang.org)
+        if: steps.setup_zig_primary.outcome == 'failure' && steps.setup_zig_mirror_mach.outcome == 'failure'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: master
+          mirror: https://ziglang.org/builds
           use-cache: false
 
       - name: Zig version
@@ -218,11 +238,21 @@ jobs:
           use-cache: false
 
       - name: Setup Zig (master) mirror fallback
+        id: setup_zig_mirror_mach
         if: steps.setup_zig_primary.outcome == 'failure'
+        continue-on-error: true
         uses: mlugg/setup-zig@v2
         with:
           version: master
           mirror: https://pkg.machengine.org/zig
+          use-cache: false
+
+      - name: Setup Zig (master) mirror fallback (ziglang.org)
+        if: steps.setup_zig_primary.outcome == 'failure' && steps.setup_zig_mirror_mach.outcome == 'failure'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: master
+          mirror: https://ziglang.org/builds
           use-cache: false
 
       - name: Zig version
