@@ -24,6 +24,7 @@ pub const feature_interrupt_state_export: u32 = 1 << 10;
 pub const feature_descriptor_load_export: u32 = 1 << 11;
 pub const feature_exception_telemetry_export: u32 = 1 << 12;
 pub const feature_exception_code_payload_export: u32 = 1 << 13;
+pub const feature_exception_history_export: u32 = 1 << 14;
 
 pub const kernel_abi_multiboot2: u32 = 1 << 0;
 pub const kernel_abi_command_mailbox: u32 = 1 << 1;
@@ -36,6 +37,7 @@ pub const kernel_abi_interrupt_state: u32 = 1 << 7;
 pub const kernel_abi_descriptor_load: u32 = 1 << 8;
 pub const kernel_abi_exception_telemetry: u32 = 1 << 9;
 pub const kernel_abi_exception_payload: u32 = 1 << 10;
+pub const kernel_abi_exception_history: u32 = 1 << 11;
 
 pub const command_nop: u16 = 0;
 pub const command_set_health_code: u16 = 1;
@@ -50,6 +52,7 @@ pub const command_reinit_descriptor_tables: u16 = 9;
 pub const command_load_descriptor_tables: u16 = 10;
 pub const command_reset_exception_counters: u16 = 11;
 pub const command_trigger_exception: u16 = 12;
+pub const command_clear_exception_history: u16 = 13;
 
 pub const result_ok: i16 = 0;
 pub const result_invalid_argument: i16 = -22;
@@ -104,7 +107,8 @@ pub fn defaultFeatureFlags() u32 {
         feature_interrupt_state_export |
         feature_descriptor_load_export |
         feature_exception_telemetry_export |
-        feature_exception_code_payload_export;
+        feature_exception_code_payload_export |
+        feature_exception_history_export;
 }
 
 pub fn defaultAbiFlags() u32 {
@@ -118,7 +122,8 @@ pub fn defaultAbiFlags() u32 {
         kernel_abi_interrupt_state |
         kernel_abi_descriptor_load |
         kernel_abi_exception_telemetry |
-        kernel_abi_exception_payload;
+        kernel_abi_exception_payload |
+        kernel_abi_exception_history;
 }
 
 pub fn modeIsValid(mode: u8) bool {

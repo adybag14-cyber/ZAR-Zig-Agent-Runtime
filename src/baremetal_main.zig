@@ -152,6 +152,7 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
             status.panic_count = 0;
             x86_bootstrap.oc_reset_interrupt_counters();
             x86_bootstrap.oc_reset_exception_counters();
+            x86_bootstrap.oc_exception_history_clear();
             return abi.result_ok;
         },
         abi.command_set_mode => {
@@ -197,6 +198,10 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
             const vector: u8 = @as(u8, @truncate(arg0));
             if (vector >= 32) return abi.result_invalid_argument;
             x86_bootstrap.oc_trigger_exception(vector, arg1);
+            return abi.result_ok;
+        },
+        abi.command_clear_exception_history => {
+            x86_bootstrap.oc_exception_history_clear();
             return abi.result_ok;
         },
         else => return abi.result_not_supported,
