@@ -335,6 +335,8 @@ $requiredSymbols = @(
     "oc_descriptor_tables_ready",
     "oc_last_interrupt_vector",
     "oc_interrupt_count",
+    "oc_descriptor_init_count",
+    "oc_interrupt_state_ptr",
     "oc_reset_interrupt_counters",
     "oc_trigger_interrupt",
     "oc_interrupt_stub",

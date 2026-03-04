@@ -20,6 +20,7 @@ pub const feature_kernel_info_export: u32 = 1 << 6;
 pub const feature_descriptor_tables_export: u32 = 1 << 7;
 pub const feature_interrupt_stub_export: u32 = 1 << 8;
 pub const feature_interrupt_mailbox_control: u32 = 1 << 9;
+pub const feature_interrupt_state_export: u32 = 1 << 10;
 
 pub const kernel_abi_multiboot2: u32 = 1 << 0;
 pub const kernel_abi_command_mailbox: u32 = 1 << 1;
@@ -28,6 +29,7 @@ pub const kernel_abi_tick_batch: u32 = 1 << 3;
 pub const kernel_abi_descriptor_tables: u32 = 1 << 4;
 pub const kernel_abi_interrupt_stub: u32 = 1 << 5;
 pub const kernel_abi_interrupt_mailbox: u32 = 1 << 6;
+pub const kernel_abi_interrupt_state: u32 = 1 << 7;
 
 pub const command_nop: u16 = 0;
 pub const command_set_health_code: u16 = 1;
@@ -89,7 +91,8 @@ pub fn defaultFeatureFlags() u32 {
         feature_kernel_info_export |
         feature_descriptor_tables_export |
         feature_interrupt_stub_export |
-        feature_interrupt_mailbox_control;
+        feature_interrupt_mailbox_control |
+        feature_interrupt_state_export;
 }
 
 pub fn defaultAbiFlags() u32 {
@@ -99,7 +102,8 @@ pub fn defaultAbiFlags() u32 {
         kernel_abi_tick_batch |
         kernel_abi_descriptor_tables |
         kernel_abi_interrupt_stub |
-        kernel_abi_interrupt_mailbox;
+        kernel_abi_interrupt_mailbox |
+        kernel_abi_interrupt_state;
 }
 
 pub fn modeIsValid(mode: u8) bool {

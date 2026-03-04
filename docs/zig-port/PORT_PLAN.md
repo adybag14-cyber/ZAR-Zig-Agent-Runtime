@@ -266,6 +266,9 @@ while maintaining parity-first validation and release gating.
   - bare-metal mailbox interrupt-control expansion shipped:
     - new command opcodes wired in runtime: `command_trigger_interrupt`, `command_reset_interrupt_counters`, `command_reinit_descriptor_tables`.
     - reset path now clears runtime interrupt counters via bootstrap export to keep command-driven diagnostics deterministic.
+  - bare-metal interrupt-state telemetry expansion shipped:
+    - new exports: `oc_descriptor_init_count` and `oc_interrupt_state_ptr`.
+    - smoke gate symbol contract expanded so telemetry exports cannot regress silently.
   - CI recovery note (2026-03-04):
     - fixed Zig master API regression in Telegram runtime env lookup (`.block = .global` on `std.process.Environ`), which broke `zig-ci` validate and all cross-target jobs on run `22668754695`.
     - implemented injected environ wiring (`telegram_runtime.setEnviron`) and switched env lookup to `std.process.Environ.getAlloc(process_environ, ...)`.

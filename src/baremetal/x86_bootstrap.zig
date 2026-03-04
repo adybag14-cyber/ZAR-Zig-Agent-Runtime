@@ -27,6 +27,14 @@ pub const DescriptorPointer = extern struct {
     base: u64,
 };
 
+pub const InterruptState = extern struct {
+    descriptor_tables_ready: u8,
+    last_interrupt_vector: u8,
+    reserved0: u16,
+    descriptor_init_count: u32,
+    interrupt_count: u64,
+};
+
 var gdt: [gdt_entries_count]GdtEntry = undefined;
 var idt: [idt_entries_count]IdtEntry = undefined;
 var gdtr: DescriptorPointer = .{ .limit = 0, .base = 0 };
@@ -35,6 +43,14 @@ var idtr: DescriptorPointer = .{ .limit = 0, .base = 0 };
 var descriptor_tables_ready: bool = false;
 var last_interrupt_vector: u8 = 0;
 var interrupt_counter: u64 = 0;
+var descriptor_init_counter: u32 = 0;
+var interrupt_state: InterruptState = .{
+    .descriptor_tables_ready = 0,
+    .last_interrupt_vector = 0,
+    .reserved0 = 0,
+    .descriptor_init_count = 0,
+    .interrupt_count = 0,
+};
 
 const default_selector: u16 = 0x08;
 const default_interrupt_type_attr: u8 = 0x8E;
@@ -61,7 +77,9 @@ pub fn init() void {
         .base = @as(u64, @intFromPtr(&idt)),
     };
 
+    descriptor_init_counter +%= 1;
     descriptor_tables_ready = true;
+    refreshInterruptState();
 }
 
 fn ensureInit() void {
@@ -128,9 +146,19 @@ pub export fn oc_interrupt_count() u64 {
     return interrupt_counter;
 }
 
+pub export fn oc_descriptor_init_count() u32 {
+    return descriptor_init_counter;
+}
+
+pub export fn oc_interrupt_state_ptr() *const InterruptState {
+    refreshInterruptState();
+    return &interrupt_state;
+}
+
 pub export fn oc_reset_interrupt_counters() void {
     last_interrupt_vector = 0;
     interrupt_counter = 0;
+    refreshInterruptState();
 }
 
 pub export fn oc_trigger_interrupt(vector: u8) void {
@@ -140,6 +168,17 @@ pub export fn oc_trigger_interrupt(vector: u8) void {
 pub export fn oc_interrupt_stub(vector: u8) void {
     last_interrupt_vector = vector;
     interrupt_counter +%= 1;
+    refreshInterruptState();
+}
+
+fn refreshInterruptState() void {
+    interrupt_state = .{
+        .descriptor_tables_ready = if (descriptor_tables_ready) 1 else 0,
+        .last_interrupt_vector = last_interrupt_vector,
+        .reserved0 = 0,
+        .descriptor_init_count = descriptor_init_counter,
+        .interrupt_count = interrupt_counter,
+    };
 }
 
 test "x86 bootstrap init builds descriptor pointers and interrupt defaults" {
@@ -149,14 +188,20 @@ test "x86 bootstrap init builds descriptor pointers and interrupt defaults" {
     try std.testing.expectEqual(@as(u16, @intCast(@sizeOf(IdtEntry) * idt_entries_count - 1)), idtr.limit);
     try std.testing.expect(idt[0].type_attr == default_interrupt_type_attr);
     try std.testing.expect(idt[255].type_attr == default_interrupt_type_attr);
+    try std.testing.expect(descriptor_init_counter > 0);
 }
 
 test "x86 bootstrap interrupt tracking updates counters" {
     init();
     const before = interrupt_counter;
+    const init_before = descriptor_init_counter;
     oc_trigger_interrupt(42);
     try std.testing.expectEqual(@as(u8, 42), last_interrupt_vector);
     try std.testing.expect(interrupt_counter == before + 1);
+    const state = oc_interrupt_state_ptr().*;
+    try std.testing.expectEqual(@as(u8, 42), state.last_interrupt_vector);
+    try std.testing.expectEqual(before + 1, state.interrupt_count);
+    try std.testing.expectEqual(init_before, state.descriptor_init_count);
     oc_reset_interrupt_counters();
     try std.testing.expectEqual(@as(u8, 0), last_interrupt_vector);
     try std.testing.expectEqual(@as(u64, 0), interrupt_counter);
