@@ -13,6 +13,11 @@ pub fn build(b: *std.Build) void {
         // Strip debug symbols here so install doesn't attempt to copy a missing .pdb.
         root_module.strip = true;
     }
+    if (target.result.os.tag == .linux and target.result.abi.isAndroid() and target.result.cpu.arch == .arm) {
+        // armv7 Android currently links with unresolved TLS symbol (__tls_get_addr)
+        // under Zig master for this codebase. Single-threaded build avoids TLS runtime linkage.
+        root_module.single_threaded = true;
+    }
 
     const exe = b.addExecutable(.{
         .name = "openclaw-zig",
