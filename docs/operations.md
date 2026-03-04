@@ -46,7 +46,7 @@ Recommended sequence:
 - falls back to GitHub Packages publish when `NPM_TOKEN` is not configured
 - attaches built npm tarball to the matching GitHub release tag when available
 
-### `pypi-release.yml`
+### `python-release.yml`
 
 - builds and validates `python/openclaw-zig-rpc-client`
 - supports manual dispatch with explicit PEP 440 version

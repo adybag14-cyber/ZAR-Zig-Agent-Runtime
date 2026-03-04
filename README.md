@@ -355,7 +355,7 @@ Validate python package publishability:
 - falls back to GitHub Packages publish (`npm.pkg.github.com`) when `NPM_TOKEN` is missing
 - always builds and attaches the npm tarball to the matching GitHub release tag when present
 
-`pypi-release` workflow (`.github/workflows/pypi-release.yml`):
+`python-release` workflow (`.github/workflows/python-release.yml`):
 
 - builds and validates `openclaw-zig-rpc-client` (unit tests + wheel/sdist + twine check)
 - supports `workflow_dispatch` with explicit Python version and optional release tag
@@ -378,5 +378,5 @@ gh workflow run npm-release.yml -R adybag14-cyber/openclaw-zig-port -f version=v
 Manual python release trigger:
 
 ```powershell
-gh workflow run pypi-release.yml -R adybag14-cyber/openclaw-zig-port -f version=0.2.0.dev12 -f release_tag=v0.2.0-zig-edge.12
+gh workflow run python-release.yml -R adybag14-cyber/openclaw-zig-port -f version=0.2.0.dev13 -f release_tag=v0.2.0-zig-edge.13
 ```

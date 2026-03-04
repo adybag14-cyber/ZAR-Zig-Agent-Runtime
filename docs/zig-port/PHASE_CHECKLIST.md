@@ -259,4 +259,4 @@ Phase 6 progress notes:
   - python package release lane added:
     - `python/openclaw-zig-rpc-client` package scaffold + tests + CLI.
     - `scripts/python-pack-check.ps1` added to local/CI/release validation gates.
-    - `.github/workflows/pypi-release.yml` added for manual/release-triggered publish with artifact attach + optional PyPI push.
+    - `.github/workflows/python-release.yml` added for manual publish with artifact attach + optional PyPI push.
