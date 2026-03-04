@@ -1,19 +1,20 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const abi = @import("baremetal/abi.zig");
 const x86_bootstrap = @import("baremetal/x86_bootstrap.zig");
-const build_options = @import("build_options");
 const BaremetalStatus = abi.BaremetalStatus;
 const BaremetalCommand = abi.BaremetalCommand;
 const BaremetalKernelInfo = abi.BaremetalKernelInfo;
 const BaremetalBootDiagnostics = abi.BaremetalBootDiagnostics;
 const BaremetalCommandEvent = abi.BaremetalCommandEvent;
 const BaremetalHealthEvent = abi.BaremetalHealthEvent;
+const BaremetalModeEvent = abi.BaremetalModeEvent;
 
 const multiboot2_magic: u32 = 0xE85250D6;
 const multiboot2_architecture_i386: u32 = 0;
 const qemu_debug_exit_port: u16 = 0xF4;
 const qemu_boot_ok_code: u8 = 0x2A;
-const qemu_smoke_enabled: bool = build_options.qemu_smoke;
+const qemu_smoke_enabled: bool = if (builtin.is_test) false else @import("build_options").qemu_smoke;
 
 const Multiboot2Header = extern struct {
     magic: u32,
@@ -100,6 +101,13 @@ var health_history_count: u32 = 0;
 var health_history_head: u32 = 0;
 var health_history_overflow: u32 = 0;
 var health_history_seq: u32 = 0;
+
+const mode_history_capacity: usize = 64;
+var mode_history: [mode_history_capacity]BaremetalModeEvent = std.mem.zeroes([mode_history_capacity]BaremetalModeEvent);
+var mode_history_count: u32 = 0;
+var mode_history_head: u32 = 0;
+var mode_history_overflow: u32 = 0;
+var mode_history_seq: u32 = 0;
 
 pub export fn oc_status_ptr() *const abi.BaremetalStatus {
     return &status;
@@ -198,6 +206,44 @@ pub export fn oc_health_history_clear() void {
     health_history_seq = 0;
 }
 
+pub export fn oc_mode_history_capacity() u32 {
+    return @as(u32, mode_history_capacity);
+}
+
+pub export fn oc_mode_history_len() u32 {
+    return mode_history_count;
+}
+
+pub export fn oc_mode_history_head_index() u32 {
+    return mode_history_head;
+}
+
+pub export fn oc_mode_history_overflow_count() u32 {
+    return mode_history_overflow;
+}
+
+pub export fn oc_mode_history_ptr() *const [mode_history_capacity]BaremetalModeEvent {
+    return &mode_history;
+}
+
+pub export fn oc_mode_history_event(index: u32) BaremetalModeEvent {
+    if (index >= mode_history_count) {
+        return std.mem.zeroes(BaremetalModeEvent);
+    }
+    const cap_u32: u32 = @as(u32, mode_history_capacity);
+    const oldest = if (mode_history_count == cap_u32) mode_history_head else 0;
+    const pos = @mod(oldest + index, cap_u32);
+    return mode_history[pos];
+}
+
+pub export fn oc_mode_history_clear() void {
+    @memset(&mode_history, std.mem.zeroes(BaremetalModeEvent));
+    mode_history_count = 0;
+    mode_history_head = 0;
+    mode_history_overflow = 0;
+    mode_history_seq = 0;
+}
+
 pub export fn oc_submit_command(opcode: u16, arg0: u64, arg1: u64) u32 {
     const next_seq = command_mailbox.seq +% 1;
     command_mailbox.opcode = opcode;
@@ -214,7 +260,9 @@ pub export fn oc_tick() void {
     }
     processPendingCommand();
     if (status.mode == abi.mode_booting) {
+        const previous_mode = status.mode;
         status.mode = abi.mode_running;
+        recordMode(previous_mode, status.mode, abi.mode_change_reason_runtime_tick, status.ticks, status.command_seq_ack);
         setBootPhase(abi.boot_phase_runtime);
     }
     if (status.mode != abi.mode_panicked) {
@@ -237,7 +285,9 @@ pub export fn _start() noreturn {
     setBootPhase(abi.boot_phase_init);
     x86_bootstrap.init();
     _ = x86_bootstrap.oc_try_load_descriptor_tables();
+    const previous_mode = status.mode;
     status.mode = abi.mode_running;
+    recordMode(previous_mode, status.mode, abi.mode_change_reason_boot, status.ticks, status.command_seq_ack);
     setBootPhase(abi.boot_phase_runtime);
     if (qemu_smoke_enabled) {
         qemuExit(qemu_boot_ok_code);
@@ -289,19 +339,28 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
             x86_bootstrap.oc_interrupt_history_clear();
             oc_command_history_clear();
             oc_health_history_clear();
+            oc_mode_history_clear();
             return abi.result_ok;
         },
         abi.command_set_mode => {
             if (arg0 > std.math.maxInt(u8)) return abi.result_invalid_argument;
             const mode: u8 = @as(u8, @truncate(arg0));
             if (!abi.modeIsValid(mode)) return abi.result_invalid_argument;
+            const previous_mode = status.mode;
             status.mode = mode;
+            if (previous_mode != status.mode) {
+                recordMode(previous_mode, status.mode, abi.mode_change_reason_command, status.ticks, status.command_seq_ack);
+            }
             return abi.result_ok;
         },
         abi.command_trigger_panic_flag => {
+            const previous_mode = status.mode;
             status.mode = abi.mode_panicked;
             status.panic_count +%= 1;
             setBootPhase(abi.boot_phase_panicked);
+            if (previous_mode != status.mode) {
+                recordMode(previous_mode, status.mode, abi.mode_change_reason_panic, status.ticks, status.command_seq_ack);
+            }
             recordHealth(status.last_health_code, status.mode, status.ticks, status.command_seq_ack);
             return abi.result_ok;
         },
@@ -373,6 +432,10 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
             oc_health_history_clear();
             return abi.result_ok;
         },
+        abi.command_clear_mode_history => {
+            oc_mode_history_clear();
+            return abi.result_ok;
+        },
         else => return abi.result_not_supported,
     }
 }
@@ -414,6 +477,28 @@ fn recordHealth(health_code: u16, mode: u8, tick: u64, command_seq_ack: u32) voi
         health_history_count += 1;
     } else {
         health_history_overflow +%= 1;
+    }
+}
+
+fn recordMode(previous_mode: u8, new_mode: u8, reason: u8, tick: u64, command_seq_ack: u32) void {
+    const cap_u32: u32 = @as(u32, mode_history_capacity);
+    const write_index = mode_history_head;
+    mode_history_seq +%= 1;
+    mode_history[write_index] = .{
+        .seq = mode_history_seq,
+        .previous_mode = previous_mode,
+        .new_mode = new_mode,
+        .reason = reason,
+        .reserved0 = 0,
+        .tick = tick,
+        .command_seq_ack = command_seq_ack,
+        .reserved1 = 0,
+    };
+    mode_history_head = @mod(mode_history_head + 1, cap_u32);
+    if (mode_history_count < cap_u32) {
+        mode_history_count += 1;
+    } else {
+        mode_history_overflow +%= 1;
     }
 }
 
@@ -485,9 +570,14 @@ fn out8(port: u16, value: u8) void {
 }
 
 pub fn panic(_: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
+    const previous_mode = status.mode;
     status.mode = abi.mode_panicked;
     status.panic_count +%= 1;
     setBootPhase(abi.boot_phase_panicked);
+    if (previous_mode != status.mode) {
+        recordMode(previous_mode, status.mode, abi.mode_change_reason_panic, status.ticks, status.command_seq_ack);
+    }
+    recordHealth(status.last_health_code, status.mode, status.ticks, status.command_seq_ack);
     while (true) {
         asm volatile ("" ::: "memory");
     }
@@ -510,6 +600,7 @@ test "baremetal diagnostics command flow updates phase and stack snapshot" {
     resetBootDiagnostics();
     oc_command_history_clear();
     oc_health_history_clear();
+    oc_mode_history_clear();
 
     var seq = oc_submit_command(abi.command_capture_stack_pointer, 0, 0);
     oc_tick();
@@ -563,6 +654,7 @@ test "baremetal command history ring keeps newest mailbox entries" {
         .arg1 = 0,
     };
     oc_command_history_clear();
+    oc_mode_history_clear();
 
     const cap = oc_command_history_capacity();
     var idx: u32 = 0;
@@ -598,6 +690,7 @@ test "baremetal health history captures tick health and clear control" {
         .arg1 = 0,
     };
     oc_health_history_clear();
+    oc_mode_history_clear();
 
     oc_tick();
     oc_tick();
@@ -619,4 +712,49 @@ test "baremetal health history captures tick health and clear control" {
     try std.testing.expectEqual(@as(u32, 1), oc_health_history_len());
     const clear_latest = oc_health_history_event(0);
     try std.testing.expectEqual(@as(u16, 200), clear_latest.health_code);
+}
+
+test "baremetal mode history captures command and panic transitions and clear control" {
+    status.mode = abi.mode_running;
+    status.ticks = 0;
+    status.command_seq_ack = 0;
+    status.panic_count = 0;
+    status.last_command_opcode = abi.command_nop;
+    status.last_command_result = abi.result_ok;
+    status.tick_batch_hint = 1;
+    command_mailbox = .{
+        .magic = abi.command_magic,
+        .api_version = abi.api_version,
+        .opcode = abi.command_nop,
+        .seq = 0,
+        .arg0 = 0,
+        .arg1 = 0,
+    };
+    oc_mode_history_clear();
+
+    _ = oc_submit_command(abi.command_set_mode, abi.mode_booting, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(u32, 2), oc_mode_history_len());
+    const m0 = oc_mode_history_event(0);
+    try std.testing.expectEqual(@as(u8, abi.mode_running), m0.previous_mode);
+    try std.testing.expectEqual(@as(u8, abi.mode_booting), m0.new_mode);
+    try std.testing.expectEqual(@as(u8, abi.mode_change_reason_command), m0.reason);
+
+    // Same tick transitions booting -> running after command processing.
+    const m1 = oc_mode_history_event(1);
+    try std.testing.expectEqual(@as(u8, abi.mode_booting), m1.previous_mode);
+    try std.testing.expectEqual(@as(u8, abi.mode_running), m1.new_mode);
+    try std.testing.expectEqual(@as(u8, abi.mode_change_reason_runtime_tick), m1.reason);
+
+    _ = oc_submit_command(abi.command_trigger_panic_flag, 0, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(u32, 3), oc_mode_history_len());
+    const m2 = oc_mode_history_event(2);
+    try std.testing.expectEqual(@as(u8, abi.mode_running), m2.previous_mode);
+    try std.testing.expectEqual(@as(u8, abi.mode_panicked), m2.new_mode);
+    try std.testing.expectEqual(@as(u8, abi.mode_change_reason_panic), m2.reason);
+
+    _ = oc_submit_command(abi.command_clear_mode_history, 0, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(u32, 0), oc_mode_history_len());
 }

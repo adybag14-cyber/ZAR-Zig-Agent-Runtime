@@ -12,7 +12,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - Union baseline: `135/135` covered (`MISSING_IN_ZIG=0`)
   - Gateway events: stable `19/19`, beta `19/19`, union `19/19` (`UNION_EVENTS_MISSING_IN_ZIG=0`)
 - Latest local validation: `zig build test --summary all` -> `95/95` passing
-- Latest edge release tag: `v0.2.0-zig-edge.18`
+- Latest edge release tag: `v0.2.0-zig-edge.19`
 - Dual runtime profiles available:
   - OS-hosted profile: `openclaw-zig` (`--serve`, doctor, security audit, full RPC stack)
 - Bare-metal profile: `openclaw-zig-baremetal.elf` (`zig build baremetal`, freestanding runtime loop + Multiboot2 header)
@@ -23,6 +23,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - bare-metal boot diagnostics ABI now exported with phase/command/tick telemetry and stack snapshot helpers (`oc_boot_diag_ptr`, `oc_boot_diag_capture_stack`)
   - bare-metal command history ABI now exported for mailbox execution tracing (`oc_command_history_capacity`, `oc_command_history_len`, `oc_command_history_event`, `oc_command_history_clear`)
   - bare-metal health history ABI now exported for tick/command health telemetry (`oc_health_history_capacity`, `oc_health_history_len`, `oc_health_history_event`, `oc_health_history_clear`)
+  - bare-metal mode history ABI now exported for runtime/command panic transition telemetry (`oc_mode_history_capacity`, `oc_mode_history_len`, `oc_mode_history_event`, `oc_mode_history_clear`)
   - command mailbox interrupt controls are available (`trigger_interrupt`, `trigger_exception`, `reset_interrupt_counters`, `reset_exception_counters`, `reset_vector_counters`, `clear_interrupt_history`, `clear_exception_history`, `reinit_descriptor_tables`)
   - x86 bootstrap exports now include descriptor table pointers, load telemetry, interrupt telemetry, exception/fault counters, vector counters, and bounded interrupt/exception history rings (`oc_gdtr_ptr`, `oc_idtr_ptr`, `oc_gdt_ptr`, `oc_idt_ptr`, `oc_descriptor_tables_loaded`, `oc_descriptor_load_attempt_count`, `oc_descriptor_load_success_count`, `oc_try_load_descriptor_tables`, `oc_interrupt_count`, `oc_last_interrupt_vector`, `oc_interrupt_vector_count`, `oc_exception_vector_count`, `oc_last_exception_vector`, `oc_exception_count`, `oc_last_exception_code`, `oc_interrupt_history_capacity`, `oc_interrupt_history_len`, `oc_interrupt_history_event`, `oc_interrupt_history_clear`, `oc_exception_history_capacity`, `oc_exception_history_len`, `oc_exception_history_event`, `oc_exception_history_clear`, `oc_descriptor_init_count`, `oc_interrupt_state_ptr`)
 - Recent optimization slices (2026-03-04):
