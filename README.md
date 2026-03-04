@@ -10,6 +10,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - Original OpenClaw baseline (`v2026.3.2`): `94/94` covered
   - Original OpenClaw beta baseline (`v2026.3.2-beta.1`): `94/94` covered
   - Union baseline: `135/135` covered (`MISSING_IN_ZIG=0`)
+  - Gateway events: stable `19/19`, beta `19/19`, union `19/19` (`UNION_EVENTS_MISSING_IN_ZIG=0`)
 - Latest local validation: `zig build test --summary all` -> `79/79` passing
 - Latest edge release tag: `v0.2.0-zig-edge.14`
 - Dual runtime profiles available:
@@ -333,7 +334,7 @@ Validate python package publishability:
 `zig-ci` workflow (`.github/workflows/zig-ci.yml`):
 
 - Zig master build/test gates
-- tri-baseline parity enforcement (Go latest + original stable latest + original beta latest)
+- tri-baseline method/event parity enforcement (Go latest + original stable latest + original beta latest)
 - freestanding bare-metal artifact smoke gate
 - runtime smoke gate
 - parity evidence artifact publication (`parity-go-zig.json`, `parity-go-zig.md`)

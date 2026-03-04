@@ -4,7 +4,7 @@
 
 - Latest edge release: `v0.2.0-zig-edge.14`
 - Latest local test gate: `zig build test --summary all` -> `79/79` passing
-- Latest parity gate: `scripts/check-go-method-parity.ps1` -> `GO_MISSING_IN_ZIG=0`, `ORIGINAL_MISSING_IN_ZIG=0`, `ORIGINAL_BETA_MISSING_IN_ZIG=0`, `ZIG_COUNT=153`
+- Latest parity gate: `scripts/check-go-method-parity.ps1` -> `GO_MISSING_IN_ZIG=0`, `ORIGINAL_MISSING_IN_ZIG=0`, `ORIGINAL_BETA_MISSING_IN_ZIG=0`, `UNION_EVENTS_MISSING_IN_ZIG=0`, `ZIG_COUNT=153`, `ZIG_EVENTS_COUNT=19`
 
 ## Local Validation Matrix
 
@@ -28,7 +28,7 @@ Recommended sequence:
 ### `zig-ci.yml`
 
 - Zig master build/test gates
-- parity gate enforcement (Go latest + original stable latest + original beta latest)
+- parity gate enforcement (Go latest + original stable latest + original beta latest, including gateway event parity)
 - runtime + gateway-auth + websocket smoke checks
 - parity evidence artifacts
   - websocket smoke validates `/ws` and root compatibility route `/`, including binary-frame RPC dispatch

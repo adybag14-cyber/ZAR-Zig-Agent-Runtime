@@ -167,6 +167,7 @@ Phase 6 progress notes:
   - Original OpenClaw latest release baseline: `94/94` covered in Zig.
   - Original OpenClaw latest beta baseline: `94/94` covered in Zig.
   - Union baseline: `135/135` covered in Zig.
+  - Gateway events parity: original stable `19/19`, original beta `19/19`, union `19/19` covered in Zig.
   - Zig-only extras vs union baseline: `18` (`shutdown`, `doctor`, `security.audit`, `exec.run`, `file.read`, `file.write`, `web.login.complete`, `web.login.status`, `edge.wasm.install`, `edge.wasm.execute`, `edge.wasm.remove`, `edge.finetune.job.get`, `edge.finetune.cancel`, `system.maintenance.plan`, `system.maintenance.run`, `system.maintenance.status`, `update.plan`, `update.status`).
 
 ## Phase 7 - Validation + Release
@@ -196,6 +197,7 @@ Phase 6 progress notes:
 - [x] `zig build baremetal` (freestanding image build: `openclaw-zig-baremetal.elf`)
 - [x] `scripts/zig-codeberg-master-check.ps1` (reports local vs remote master hash)
 - [x] Multi-baseline method diff check: `Go(latest)=134`, `Original(latest)=94`, `OriginalBeta(latest)=94`, `Union=135`, `Zig=153`, `missing_in_zig=0`, `union_extras=18`
+- [x] Multi-baseline gateway event diff check: `OriginalEvents(latest)=19`, `OriginalBetaEvents(latest)=19`, `UnionEvents=19`, `ZigEvents=19`, `union_events_missing_in_zig=0`
 - [x] Rust-vs-Zig method diff check: `Rust=124`, `Zig=143`, `missing_in_zig=0`, `zig_extras=19`
 - [x] Smoke scripts now run against built binary (`zig-out/bin/openclaw-zig.exe`) with readiness loops + early-exit diagnostics:
   - `scripts/docker-smoke-check.ps1` -> host+docker HTTP 200
@@ -250,7 +252,7 @@ Phase 6 progress notes:
   - `aarch64-android` and `armv7-android` (required)
 - [x] CI confirmation after ARMv7 fix: GitHub Actions run `22651999994` succeeded with Android cross-target jobs all green (`x86_64-android`, `aarch64-android`, `armv7-android`).
 - [x] Release workflow smoke validated: Actions run `22645353103` published `v0.1.0-zig-preview.ci-smoke` with full 5-target artifact set + `SHA256SUMS.txt`.
-- [x] Added cross-repo method parity gate script (`scripts/check-go-method-parity.ps1`) and wired it into CI + release workflows as a blocking check.
+- [x] Added cross-repo method/event parity gate script (`scripts/check-go-method-parity.ps1`) and wired it into CI + release workflows as a blocking check.
 - [x] Parity gate now resolves and checks all required latest baselines on each run:
   - `adybag14-cyber/openclaw-go-port` latest release tag
   - `openclaw/openclaw` latest release tag

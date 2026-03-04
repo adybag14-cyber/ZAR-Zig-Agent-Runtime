@@ -194,11 +194,12 @@ while maintaining parity-first validation and release gating.
     - approvals: `exec.approvals.get|set|node.get|node.set`, `exec.approval.request|waitdecision|resolve`
   - Method surface moved to `153` Zig methods (from `126`) while preserving Lightpanda-only browser policy and green validation gates.
   - Added dispatcher contract tests for new edge methods and memory flows.
-  - Method-set parity is now tracked and enforced against Go + original stable + original beta baselines:
+  - Method/event parity is now tracked and enforced against Go + original stable + original beta baselines:
     - Go release baseline (`adybag14-cyber/openclaw-go-port`): `134/134` covered in Zig.
     - Original OpenClaw release baseline (`openclaw/openclaw`): `94/94` covered in Zig.
     - Original OpenClaw beta baseline (`openclaw/openclaw` latest prerelease): `94/94` covered in Zig.
     - Union baseline coverage: `135/135` covered in Zig.
+    - Gateway events baseline coverage: stable `19/19`, beta `19/19`, union `19/19` covered in Zig.
     - Intentional Zig-only extras retained for edge/runtime depth: `18`.
   - Hardened smoke scripts to avoid flaky `zig build run` startup timing by prebuilding and launching the binary directly (`zig-out/bin/openclaw-zig.exe`) with explicit readiness and exit diagnostics.
 - Toolchain/runtime notes (local Windows Zig master):
@@ -233,7 +234,7 @@ while maintaining parity-first validation and release gating.
   - expanded release preview matrix with Android artifacts: required `x86_64-android`, `aarch64-android`, and `armv7-android`.
   - CI evidence update: run `22651999994` validated all Android cross-target jobs passed after ARMv7 TLS-link fix.
   - release workflow smoke run `22645353103` succeeded and published `v0.1.0-zig-preview.ci-smoke` with `x86_64-windows`, `x86_64-linux`, `x86_64-macos`, `aarch64-linux`, `aarch64-macos`, and `SHA256SUMS.txt`.
-  - upgraded `scripts/check-go-method-parity.ps1` into a tri-baseline parity gate and wired it into both CI workflows, enforcing that every method in:
+  - upgraded `scripts/check-go-method-parity.ps1` into a tri-baseline method/event parity gate and wired it into both CI workflows, enforcing that every method/event in:
     - latest Go release baseline,
     - latest original OpenClaw release baseline, and
     - latest original OpenClaw prerelease (beta) baseline

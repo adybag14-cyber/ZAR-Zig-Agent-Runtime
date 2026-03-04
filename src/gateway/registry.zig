@@ -156,6 +156,28 @@ pub const supported_methods = [_][]const u8{
     "chat.history",
 };
 
+pub const supported_events = [_][]const u8{
+    "connect.challenge",
+    "agent",
+    "chat",
+    "presence",
+    "tick",
+    "talk.mode",
+    "shutdown",
+    "health",
+    "heartbeat",
+    "cron",
+    "node.pair.requested",
+    "node.pair.resolved",
+    "node.invoke.request",
+    "device.pair.requested",
+    "device.pair.resolved",
+    "voicewake.changed",
+    "exec.approval.requested",
+    "exec.approval.resolved",
+    "update.available",
+};
+
 pub fn supports(method: []const u8) bool {
     var has_upper = false;
     for (method) |ch| {
@@ -177,6 +199,27 @@ pub fn supports(method: []const u8) bool {
     return false;
 }
 
+pub fn supportsEvent(event: []const u8) bool {
+    var has_upper = false;
+    for (event) |ch| {
+        if (std.ascii.isUpper(ch)) {
+            has_upper = true;
+            break;
+        }
+    }
+
+    for (supported_events) |entry| {
+        if (std.mem.eql(u8, entry, event)) return true;
+    }
+    if (!has_upper) return false;
+
+    for (supported_events) |entry| {
+        if (std.ascii.eqlIgnoreCase(entry, event)) return true;
+    }
+
+    return false;
+}
+
 pub fn count() usize {
     return supported_methods.len;
 }
@@ -186,4 +229,10 @@ test "registry includes browser.request and health" {
     try std.testing.expect(supports("health"));
     try std.testing.expect(supports("HeAlTh"));
     try std.testing.expect(!supports("unknown.method"));
+}
+
+test "registry includes core gateway events" {
+    try std.testing.expect(supportsEvent("connect.challenge"));
+    try std.testing.expect(supportsEvent("UPDATE.AVAILABLE"));
+    try std.testing.expect(!supportsEvent("unknown.event"));
 }
