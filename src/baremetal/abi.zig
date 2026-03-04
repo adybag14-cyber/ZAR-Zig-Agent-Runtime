@@ -42,6 +42,9 @@ pub const feature_command_result_counters_export: u32 = 1 << 22;
 pub const feature_scheduler_export: u32 = 1 << 23;
 pub const feature_allocator_export: u32 = 1 << 24;
 pub const feature_syscall_table_export: u32 = 1 << 25;
+pub const feature_timer_export: u32 = 1 << 26;
+pub const feature_wake_queue_export: u32 = 1 << 27;
+pub const feature_syscall_abi_v2: u32 = 1 << 28;
 
 pub const kernel_abi_multiboot2: u32 = 1 << 0;
 pub const kernel_abi_command_mailbox: u32 = 1 << 1;
@@ -66,6 +69,9 @@ pub const kernel_abi_command_result_counters: u32 = 1 << 19;
 pub const kernel_abi_scheduler: u32 = 1 << 20;
 pub const kernel_abi_allocator: u32 = 1 << 21;
 pub const kernel_abi_syscall_table: u32 = 1 << 22;
+pub const kernel_abi_timer: u32 = 1 << 23;
+pub const kernel_abi_wake_queue: u32 = 1 << 24;
+pub const kernel_abi_syscall_abi_v2: u32 = 1 << 25;
 
 pub const command_nop: u16 = 0;
 pub const command_set_health_code: u16 = 1;
@@ -105,6 +111,14 @@ pub const command_syscall_register: u16 = 34;
 pub const command_syscall_unregister: u16 = 35;
 pub const command_syscall_invoke: u16 = 36;
 pub const command_syscall_reset: u16 = 37;
+pub const command_syscall_enable: u16 = 38;
+pub const command_syscall_disable: u16 = 39;
+pub const command_syscall_set_flags: u16 = 40;
+pub const command_timer_reset: u16 = 41;
+pub const command_timer_schedule: u16 = 42;
+pub const command_timer_cancel: u16 = 43;
+pub const command_wake_queue_clear: u16 = 44;
+pub const command_scheduler_wake_task: u16 = 45;
 
 pub const mode_change_reason_boot: u8 = 0;
 pub const mode_change_reason_command: u8 = 1;
@@ -134,6 +148,7 @@ pub const task_state_running: u8 = 2;
 pub const task_state_completed: u8 = 3;
 pub const task_state_terminated: u8 = 4;
 pub const task_state_faulted: u8 = 5;
+pub const task_state_waiting: u8 = 6;
 
 pub const allocation_state_unused: u8 = 0;
 pub const allocation_state_active: u8 = 1;
@@ -143,6 +158,19 @@ pub const syscall_state_enabled: u8 = 1;
 
 pub const syscall_entry_state_unused: u8 = 0;
 pub const syscall_entry_state_registered: u8 = 1;
+pub const syscall_entry_flag_blocked: u8 = 1 << 0;
+
+pub const timer_state_disabled: u8 = 0;
+pub const timer_state_enabled: u8 = 1;
+
+pub const timer_entry_state_unused: u8 = 0;
+pub const timer_entry_state_armed: u8 = 1;
+pub const timer_entry_state_fired: u8 = 2;
+pub const timer_entry_state_canceled: u8 = 3;
+
+pub const wake_reason_timer: u8 = 1;
+pub const wake_reason_interrupt: u8 = 2;
+pub const wake_reason_manual: u8 = 3;
 
 pub const BaremetalStatus = extern struct {
     magic: u32,
@@ -323,6 +351,42 @@ pub const BaremetalSyscallEntry = extern struct {
     last_result: i64,
 };
 
+pub const BaremetalTimerState = extern struct {
+    enabled: u8,
+    timer_count: u8,
+    pending_wake_count: u16,
+    next_timer_id: u32,
+    dispatch_count: u64,
+    last_dispatch_tick: u64,
+    last_interrupt_count: u64,
+    last_wake_tick: u64,
+    tick_quantum: u32,
+    reserved0: u32,
+};
+
+pub const BaremetalTimerEntry = extern struct {
+    timer_id: u32,
+    task_id: u32,
+    state: u8,
+    reason: u8,
+    flags: u16,
+    period_ticks: u32,
+    next_fire_tick: u64,
+    fire_count: u64,
+    last_fire_tick: u64,
+};
+
+pub const BaremetalWakeEvent = extern struct {
+    seq: u32,
+    task_id: u32,
+    timer_id: u32,
+    reason: u8,
+    vector: u8,
+    reserved0: u16,
+    tick: u64,
+    interrupt_count: u64,
+};
+
 pub fn defaultFeatureFlags() u32 {
     return feature_os_hosted_runtime |
         feature_baremetal_runtime |
@@ -349,7 +413,10 @@ pub fn defaultFeatureFlags() u32 {
         feature_command_result_counters_export |
         feature_scheduler_export |
         feature_allocator_export |
-        feature_syscall_table_export;
+        feature_syscall_table_export |
+        feature_timer_export |
+        feature_wake_queue_export |
+        feature_syscall_abi_v2;
 }
 
 pub fn defaultAbiFlags() u32 {
@@ -375,7 +442,10 @@ pub fn defaultAbiFlags() u32 {
         kernel_abi_command_result_counters |
         kernel_abi_scheduler |
         kernel_abi_allocator |
-        kernel_abi_syscall_table;
+        kernel_abi_syscall_table |
+        kernel_abi_timer |
+        kernel_abi_wake_queue |
+        kernel_abi_syscall_abi_v2;
 }
 
 pub fn modeIsValid(mode: u8) bool {
@@ -418,6 +488,9 @@ test "baremetal kernel info size contract stays stable" {
     try std.testing.expectEqual(@as(usize, 48), @sizeOf(BaremetalAllocationRecord));
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalSyscallState));
     try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalSyscallEntry));
+    try std.testing.expectEqual(@as(usize, 48), @sizeOf(BaremetalTimerState));
+    try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalTimerEntry));
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalWakeEvent));
 }
 
 test "baremetal mode helper validates supported modes" {

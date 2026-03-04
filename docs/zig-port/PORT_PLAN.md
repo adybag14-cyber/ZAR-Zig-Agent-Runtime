@@ -132,6 +132,11 @@ while maintaining parity-first validation and release gating.
     - new allocator/syscall contracts (`BaremetalAllocatorState`, `BaremetalAllocationRecord`, `BaremetalSyscallState`, `BaremetalSyscallEntry`) and feature flags (`feature_allocator_export`, `feature_syscall_table_export`, `kernel_abi_allocator`, `kernel_abi_syscall_table`)
     - exported allocator/syscall telemetry and reset controls (`oc_allocator_state_ptr`, `oc_allocator_page_bitmap_ptr`, `oc_allocator_allocation_count`, `oc_allocator_allocation`, `oc_allocator_reset`, `oc_syscall_state_ptr`, `oc_syscall_entry_count`, `oc_syscall_entry`, `oc_syscall_reset`)
     - new allocator/syscall mailbox controls wired: `command_allocator_reset`, `command_allocator_alloc`, `command_allocator_free`, `command_syscall_register`, `command_syscall_unregister`, `command_syscall_invoke`, `command_syscall_reset`
+  - Bare-metal timer/wake queue + syscall ABI v2 depth expansion shipped:
+    - new timer/wake/syscall-v2 contracts (`BaremetalTimerState`, `BaremetalTimerEntry`, `BaremetalWakeEvent`) and feature/kernel ABI flags (`feature_timer_export`, `feature_wake_queue_export`, `feature_syscall_abi_v2`, `kernel_abi_timer`, `kernel_abi_wake_queue`, `kernel_abi_syscall_abi_v2`)
+    - exported timer + wake queue telemetry/reset controls (`oc_timer_state_ptr`, `oc_timer_entry_count`, `oc_timer_entry`, `oc_timer_reset`, `oc_wake_queue_len`, `oc_wake_queue_event`, `oc_wake_queue_clear`)
+    - new mailbox controls wired: `command_syscall_enable`, `command_syscall_disable`, `command_syscall_set_flags`, `command_timer_reset`, `command_timer_schedule`, `command_timer_cancel`, `command_wake_queue_clear`, `command_scheduler_wake_task`
+    - runtime now supports interrupt-driven wake queue progression by detecting interrupt-count deltas per tick and waking waiting tasks while preserving wake reason/vector telemetry.
     - runtime now provides contiguous page allocation/free on a bounded heap map and syscall registration/invocation/unregistration with dispatch telemetry.
 - Phase 4 complete:
   - Guard pipeline with prompt-risk scoring + loop-guard enforcement (`src/security/guard.zig`, `src/security/loop_guard.zig`)

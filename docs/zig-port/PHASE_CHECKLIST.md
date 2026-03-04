@@ -194,7 +194,7 @@ Phase 6 progress notes:
 - [x] `scripts/npm-pack-check.ps1` (validates npm package dry-run for `npm/openclaw-zig-rpc-client`)
 - [x] `scripts/python-pack-check.ps1` (validates python client package tests + wheel/sdist + twine checks for `python/openclaw-zig-rpc-client`)
 - [x] `zig test src/main.zig`
-- [x] `zig test src/baremetal_main.zig` (`20/20` passing; includes mode-history + boot-phase-history + command-result counter + scheduler + allocator/syscall telemetry coverage)
+- [x] `zig test src/baremetal_main.zig` (`22/22` passing; includes mode-history + boot-phase-history + command-result counter + scheduler + allocator/syscall + timer/wake queue telemetry coverage)
 - [x] Guest/auth parity tests:
   - `channels.telegram_runtime.test.telegram runtime qwen guest auth lifecycle`
   - `channels.telegram_runtime.test.telegram runtime auth complete infers provider from callback URL`
@@ -298,6 +298,12 @@ Phase 6 progress notes:
   - syscall exports: `oc_syscall_state_ptr`, `oc_syscall_entry_capacity`, `oc_syscall_entry_count`, `oc_syscall_entry`, `oc_syscall_entries_ptr`, `oc_syscall_enabled`, `oc_syscall_reset`
   - ABI additions: `BaremetalAllocatorState`, `BaremetalAllocationRecord`, `BaremetalSyscallState`, `BaremetalSyscallEntry`, `feature_allocator_export`, `feature_syscall_table_export`, `kernel_abi_allocator`, `kernel_abi_syscall_table`
   - opcodes: `command_allocator_reset`, `command_allocator_alloc`, `command_allocator_free`, `command_syscall_register`, `command_syscall_unregister`, `command_syscall_invoke`, `command_syscall_reset`
+- [x] Bare-metal timer/wake queue + syscall ABI v2 telemetry/control added:
+  - timer exports: `oc_timer_state_ptr`, `oc_timer_entry_capacity`, `oc_timer_entry_count`, `oc_timer_entry`, `oc_timer_entries_ptr`, `oc_timer_reset`
+  - wake queue exports: `oc_wake_queue_capacity`, `oc_wake_queue_len`, `oc_wake_queue_head_index`, `oc_wake_queue_overflow_count`, `oc_wake_queue_ptr`, `oc_wake_queue_event`, `oc_wake_queue_clear`
+  - ABI additions: `BaremetalTimerState`, `BaremetalTimerEntry`, `BaremetalWakeEvent`, `feature_timer_export`, `feature_wake_queue_export`, `feature_syscall_abi_v2`, `kernel_abi_timer`, `kernel_abi_wake_queue`, `kernel_abi_syscall_abi_v2`
+  - opcodes: `command_syscall_enable`, `command_syscall_disable`, `command_syscall_set_flags`, `command_timer_reset`, `command_timer_schedule`, `command_timer_cancel`, `command_wake_queue_clear`, `command_scheduler_wake_task`
+  - runtime behavior: timer one-shot scheduling transitions tasks to `waiting`, timer/interrupt/manual wake paths re-arm tasks and enqueue wake telemetry, syscall invoke now enforces entry-level blocked flags and global enable/disable state.
 - [x] `scripts/baremetal-smoke-check.ps1` now validates Multiboot2 header fields and checksum (`magic`, `arch`, `header_length`, `checksum`, end-tag tuple) in addition to section/symbol invariants.
 - [x] Cross-target diagnostics matrix (`scripts/zig-cross-target-matrix.ps1`) now covers desktop + Android with per-target logs and JSON summary:
   - Local Windows Zig master result: `4/8` pass (`x86_64-windows`, `x86_64-linux`, `x86_64-macos`, `x86_64-linux-android`)

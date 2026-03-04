@@ -17,6 +17,9 @@ const BaremetalAllocatorState = abi.BaremetalAllocatorState;
 const BaremetalAllocationRecord = abi.BaremetalAllocationRecord;
 const BaremetalSyscallState = abi.BaremetalSyscallState;
 const BaremetalSyscallEntry = abi.BaremetalSyscallEntry;
+const BaremetalTimerState = abi.BaremetalTimerState;
+const BaremetalTimerEntry = abi.BaremetalTimerEntry;
+const BaremetalWakeEvent = abi.BaremetalWakeEvent;
 
 const multiboot2_magic: u32 = 0xE85250D6;
 const multiboot2_architecture_i386: u32 = 0;
@@ -190,6 +193,27 @@ var syscall_state: BaremetalSyscallState = .{
     .last_invoke_tick = 0,
     .last_result = 0,
 };
+
+const timer_capacity: usize = 32;
+const wake_queue_capacity: usize = 64;
+var timer_entries: [timer_capacity]BaremetalTimerEntry = std.mem.zeroes([timer_capacity]BaremetalTimerEntry);
+var timer_state: BaremetalTimerState = .{
+    .enabled = abi.timer_state_enabled,
+    .timer_count = 0,
+    .pending_wake_count = 0,
+    .next_timer_id = 1,
+    .dispatch_count = 0,
+    .last_dispatch_tick = 0,
+    .last_interrupt_count = 0,
+    .last_wake_tick = 0,
+    .tick_quantum = 1,
+    .reserved0 = 0,
+};
+var wake_queue: [wake_queue_capacity]BaremetalWakeEvent = std.mem.zeroes([wake_queue_capacity]BaremetalWakeEvent);
+var wake_queue_count: u32 = 0;
+var wake_queue_head: u32 = 0;
+var wake_queue_overflow: u32 = 0;
+var wake_queue_seq: u32 = 0;
 
 pub export fn oc_status_ptr() *const abi.BaremetalStatus {
     return &status;
@@ -535,6 +559,83 @@ pub export fn oc_syscall_reset() void {
     };
 }
 
+pub export fn oc_timer_state_ptr() *const BaremetalTimerState {
+    return &timer_state;
+}
+
+pub export fn oc_timer_entry_capacity() u32 {
+    return @as(u32, timer_capacity);
+}
+
+pub export fn oc_timer_entry_count() u32 {
+    return timer_state.timer_count;
+}
+
+pub export fn oc_timer_entry(index: u32) BaremetalTimerEntry {
+    if (index >= @as(u32, timer_capacity)) return std.mem.zeroes(BaremetalTimerEntry);
+    return timer_entries[@as(usize, @intCast(index))];
+}
+
+pub export fn oc_timer_entries_ptr() *const [timer_capacity]BaremetalTimerEntry {
+    return &timer_entries;
+}
+
+pub export fn oc_wake_queue_capacity() u32 {
+    return @as(u32, wake_queue_capacity);
+}
+
+pub export fn oc_wake_queue_len() u32 {
+    return wake_queue_count;
+}
+
+pub export fn oc_wake_queue_head_index() u32 {
+    return wake_queue_head;
+}
+
+pub export fn oc_wake_queue_overflow_count() u32 {
+    return wake_queue_overflow;
+}
+
+pub export fn oc_wake_queue_ptr() *const [wake_queue_capacity]BaremetalWakeEvent {
+    return &wake_queue;
+}
+
+pub export fn oc_wake_queue_event(index: u32) BaremetalWakeEvent {
+    if (index >= wake_queue_count) {
+        return std.mem.zeroes(BaremetalWakeEvent);
+    }
+    const cap_u32: u32 = @as(u32, wake_queue_capacity);
+    const oldest = if (wake_queue_count == cap_u32) wake_queue_head else 0;
+    const pos = @mod(oldest + index, cap_u32);
+    return wake_queue[pos];
+}
+
+pub export fn oc_wake_queue_clear() void {
+    @memset(&wake_queue, std.mem.zeroes(BaremetalWakeEvent));
+    wake_queue_count = 0;
+    wake_queue_head = 0;
+    wake_queue_overflow = 0;
+    wake_queue_seq = 0;
+    timer_state.pending_wake_count = 0;
+}
+
+pub export fn oc_timer_reset() void {
+    @memset(&timer_entries, std.mem.zeroes(BaremetalTimerEntry));
+    timer_state = .{
+        .enabled = abi.timer_state_enabled,
+        .timer_count = 0,
+        .pending_wake_count = 0,
+        .next_timer_id = 1,
+        .dispatch_count = 0,
+        .last_dispatch_tick = status.ticks,
+        .last_interrupt_count = x86_bootstrap.oc_interrupt_count(),
+        .last_wake_tick = 0,
+        .tick_quantum = 1,
+        .reserved0 = 0,
+    };
+    oc_wake_queue_clear();
+}
+
 pub export fn oc_submit_command(opcode: u16, arg0: u64, arg1: u64) u32 {
     const next_seq = command_mailbox.seq +% 1;
     command_mailbox.opcode = opcode;
@@ -556,6 +657,7 @@ pub export fn oc_tick() void {
         recordMode(previous_mode, status.mode, abi.mode_change_reason_runtime_tick, status.ticks, status.command_seq_ack);
         setBootPhase(abi.boot_phase_runtime, abi.boot_phase_change_reason_runtime_tick);
     }
+    timerTick(status.ticks);
     schedulerTick(status.ticks);
     if (status.mode != abi.mode_panicked) {
         status.last_health_code = 200;
@@ -638,6 +740,7 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
             oc_scheduler_reset();
             oc_allocator_reset();
             oc_syscall_reset();
+            oc_timer_reset();
             return abi.result_ok;
         },
         abi.command_set_mode => {
@@ -823,6 +926,45 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
             oc_syscall_reset();
             return abi.result_ok;
         },
+        abi.command_syscall_enable => {
+            syscall_state.enabled = abi.syscall_state_enabled;
+            return abi.result_ok;
+        },
+        abi.command_syscall_disable => {
+            syscall_state.enabled = abi.syscall_state_disabled;
+            return abi.result_ok;
+        },
+        abi.command_syscall_set_flags => {
+            if (arg0 == 0 or arg0 > std.math.maxInt(u32) or arg1 > std.math.maxInt(u8)) {
+                return abi.result_invalid_argument;
+            }
+            return syscallSetFlags(@as(u32, @truncate(arg0)), @as(u8, @truncate(arg1)));
+        },
+        abi.command_timer_reset => {
+            oc_timer_reset();
+            return abi.result_ok;
+        },
+        abi.command_timer_schedule => {
+            if (arg0 == 0 or arg0 > std.math.maxInt(u32) or arg1 == 0 or arg1 > std.math.maxInt(u32)) {
+                return abi.result_invalid_argument;
+            }
+            return timerScheduleTask(@as(u32, @truncate(arg0)), @as(u32, @truncate(arg1)), status.ticks);
+        },
+        abi.command_timer_cancel => {
+            if (arg0 == 0 or arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
+            return timerCancel(@as(u32, @truncate(arg0)));
+        },
+        abi.command_wake_queue_clear => {
+            oc_wake_queue_clear();
+            return abi.result_ok;
+        },
+        abi.command_scheduler_wake_task => {
+            if (arg0 == 0 or arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
+            if (!schedulerWakeTask(@as(u32, @truncate(arg0)), abi.wake_reason_manual, 0, 0, status.ticks)) {
+                return abi.result_not_found;
+            }
+            return abi.result_ok;
+        },
         else => return abi.result_not_supported,
     }
 }
@@ -924,6 +1066,159 @@ fn recordCommandResult(seq: u32, opcode: u16, result: i16) void {
     }
 }
 
+fn timerTick(current_tick: u64) void {
+    if (timer_state.enabled != abi.timer_state_enabled) return;
+
+    const interrupt_count = x86_bootstrap.oc_interrupt_count();
+    if (interrupt_count > timer_state.last_interrupt_count) {
+        const interrupt_vector = x86_bootstrap.oc_last_interrupt_vector();
+        var remaining = interrupt_count - timer_state.last_interrupt_count;
+        while (remaining > 0) : (remaining -= 1) {
+            _ = schedulerWakeNextWaiting(abi.wake_reason_interrupt, 0, interrupt_vector, current_tick, interrupt_count);
+        }
+    }
+    timer_state.last_interrupt_count = interrupt_count;
+
+    for (&timer_entries) |*entry| {
+        if (entry.state != abi.timer_entry_state_armed) continue;
+        if (entry.next_fire_tick > current_tick) continue;
+        entry.state = abi.timer_entry_state_fired;
+        entry.fire_count +%= 1;
+        entry.last_fire_tick = current_tick;
+        timer_state.dispatch_count +%= 1;
+        timer_state.last_dispatch_tick = current_tick;
+        _ = schedulerWakeTask(entry.task_id, abi.wake_reason_timer, entry.timer_id, 0, current_tick);
+    }
+    timerRecountEntries();
+}
+
+fn timerRecountEntries() void {
+    var count: u8 = 0;
+    for (timer_entries) |entry| {
+        if (entry.state == abi.timer_entry_state_armed) count +%= 1;
+    }
+    timer_state.timer_count = count;
+    timer_state.pending_wake_count = @as(u16, @intCast(wake_queue_count));
+}
+
+fn timerScheduleTask(task_id: u32, delay_ticks: u32, current_tick: u64) i16 {
+    if (timer_state.enabled != abi.timer_state_enabled) return abi.result_not_supported;
+    const slot = schedulerFindTaskSlot(task_id) orelse return abi.result_not_found;
+    if (scheduler_tasks[slot].state == abi.task_state_terminated or scheduler_tasks[slot].state == abi.task_state_completed) {
+        return abi.result_invalid_argument;
+    }
+
+    for (&timer_entries) |*entry| {
+        if (entry.state == abi.timer_entry_state_armed and entry.task_id == task_id) {
+            entry.next_fire_tick = current_tick + delay_ticks;
+            entry.period_ticks = 0;
+            scheduler_tasks[slot].state = abi.task_state_waiting;
+            schedulerRecountTasks();
+            return abi.result_ok;
+        }
+    }
+
+    for (&timer_entries) |*entry| {
+        if (entry.state != abi.timer_entry_state_unused and entry.state != abi.timer_entry_state_fired and entry.state != abi.timer_entry_state_canceled) {
+            continue;
+        }
+        entry.* = .{
+            .timer_id = timer_state.next_timer_id,
+            .task_id = task_id,
+            .state = abi.timer_entry_state_armed,
+            .reason = abi.wake_reason_timer,
+            .flags = 0,
+            .period_ticks = 0,
+            .next_fire_tick = current_tick + delay_ticks,
+            .fire_count = 0,
+            .last_fire_tick = 0,
+        };
+        timer_state.next_timer_id +%= 1;
+        scheduler_tasks[slot].state = abi.task_state_waiting;
+        schedulerRecountTasks();
+        timerRecountEntries();
+        return abi.result_ok;
+    }
+    return abi.result_no_space;
+}
+
+fn timerCancel(timer_id: u32) i16 {
+    for (&timer_entries) |*entry| {
+        if (entry.state == abi.timer_entry_state_armed and entry.timer_id == timer_id) {
+            entry.state = abi.timer_entry_state_canceled;
+            timerRecountEntries();
+            return abi.result_ok;
+        }
+    }
+    return abi.result_not_found;
+}
+
+fn wakeQueuePush(task_id: u32, timer_id: u32, reason: u8, vector: u8, tick: u64, interrupt_count: u64) void {
+    const cap_u32: u32 = @as(u32, wake_queue_capacity);
+    const write_index = wake_queue_head;
+    wake_queue_seq +%= 1;
+    wake_queue[write_index] = .{
+        .seq = wake_queue_seq,
+        .task_id = task_id,
+        .timer_id = timer_id,
+        .reason = reason,
+        .vector = vector,
+        .reserved0 = 0,
+        .tick = tick,
+        .interrupt_count = interrupt_count,
+    };
+    wake_queue_head = @mod(wake_queue_head + 1, cap_u32);
+    if (wake_queue_count < cap_u32) {
+        wake_queue_count += 1;
+    } else {
+        wake_queue_overflow +%= 1;
+    }
+    timer_state.pending_wake_count = @as(u16, @intCast(wake_queue_count));
+}
+
+fn schedulerFindTaskSlot(task_id: u32) ?usize {
+    var slot: usize = 0;
+    while (slot < scheduler_task_capacity) : (slot += 1) {
+        if (scheduler_tasks[slot].task_id == task_id and scheduler_tasks[slot].state != abi.task_state_unused) {
+            return slot;
+        }
+    }
+    return null;
+}
+
+fn schedulerWakeTask(task_id: u32, reason: u8, timer_id: u32, vector: u8, tick: u64) bool {
+    const slot = schedulerFindTaskSlot(task_id) orelse return false;
+    var task = &scheduler_tasks[slot];
+    if (task.state == abi.task_state_terminated or task.state == abi.task_state_completed or task.state == abi.task_state_unused) {
+        return false;
+    }
+    if (task.budget_remaining == 0) {
+        task.budget_remaining = if (task.budget_ticks == 0) scheduler_state.default_budget_ticks else task.budget_ticks;
+    }
+    task.state = abi.task_state_ready;
+    timer_state.last_wake_tick = tick;
+    wakeQueuePush(task.task_id, timer_id, reason, vector, tick, x86_bootstrap.oc_interrupt_count());
+    schedulerRecountTasks();
+    return true;
+}
+
+fn schedulerWakeNextWaiting(reason: u8, timer_id: u32, vector: u8, tick: u64, interrupt_count: u64) bool {
+    var slot: usize = 0;
+    while (slot < scheduler_task_capacity) : (slot += 1) {
+        const task = &scheduler_tasks[slot];
+        if (task.state != abi.task_state_waiting) continue;
+        if (task.budget_remaining == 0) {
+            task.budget_remaining = if (task.budget_ticks == 0) scheduler_state.default_budget_ticks else task.budget_ticks;
+        }
+        task.state = abi.task_state_ready;
+        timer_state.last_wake_tick = tick;
+        wakeQueuePush(task.task_id, timer_id, reason, vector, tick, interrupt_count);
+        schedulerRecountTasks();
+        return true;
+    }
+    return false;
+}
+
 fn schedulerTick(current_tick: u64) void {
     if (status.mode == abi.mode_panicked) {
         scheduler_state.running_slot = scheduler_no_slot;
@@ -1006,6 +1301,12 @@ fn schedulerTerminateTask(task_id: u32) bool {
         if (task.task_id == task_id and task.state != abi.task_state_unused) {
             task.state = abi.task_state_terminated;
             task.budget_remaining = 0;
+            for (&timer_entries) |*entry| {
+                if (entry.task_id == task_id and entry.state == abi.timer_entry_state_armed) {
+                    entry.state = abi.timer_entry_state_canceled;
+                }
+            }
+            timerRecountEntries();
             schedulerRecountTasks();
             return true;
         }
@@ -1171,10 +1472,23 @@ fn syscallUnregister(syscall_id: u32) i16 {
     return abi.result_not_found;
 }
 
+fn syscallSetFlags(syscall_id: u32, flags: u8) i16 {
+    for (&syscall_entries) |*entry| {
+        if (entry.state == abi.syscall_entry_state_registered and entry.syscall_id == syscall_id) {
+            entry.flags = flags;
+            return abi.result_ok;
+        }
+    }
+    return abi.result_not_found;
+}
+
 fn syscallInvoke(syscall_id: u32, arg: u64, tick: u64) i16 {
     if (syscall_state.enabled != abi.syscall_state_enabled) return abi.result_not_supported;
     for (&syscall_entries) |*entry| {
         if (entry.state != abi.syscall_entry_state_registered or entry.syscall_id != syscall_id) continue;
+        if ((entry.flags & abi.syscall_entry_flag_blocked) != 0) {
+            return abi.result_conflict;
+        }
         const id_u64: u64 = syscall_id;
         const result_u64 = entry.handler_token ^ arg ^ id_u64;
         const result_i64: i64 = @as(i64, @bitCast(result_u64));
@@ -1715,4 +2029,131 @@ test "baremetal syscall command flow registers invokes and unregisters entries" 
     _ = oc_submit_command(abi.command_syscall_invoke, 7, 0x9999);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
+}
+
+test "baremetal timer scheduler wake flow handles timer and interrupt wakeups" {
+    status.mode = abi.mode_running;
+    status.ticks = 0;
+    status.command_seq_ack = 0;
+    status.last_command_opcode = abi.command_nop;
+    status.last_command_result = abi.result_ok;
+    status.tick_batch_hint = 1;
+    command_mailbox = .{
+        .magic = abi.command_magic,
+        .api_version = abi.api_version,
+        .opcode = abi.command_nop,
+        .seq = 0,
+        .arg0 = 0,
+        .arg1 = 0,
+    };
+    oc_scheduler_reset();
+    oc_allocator_reset();
+    oc_syscall_reset();
+    oc_timer_reset();
+    x86_bootstrap.oc_reset_interrupt_counters();
+
+    // Create task while scheduler is disabled to avoid pre-schedule dispatch.
+    _ = oc_submit_command(abi.command_task_create, 5, 1);
+    oc_tick();
+    const task1_id = oc_scheduler_task(0).task_id;
+    try std.testing.expect(task1_id != 0);
+
+    _ = oc_submit_command(abi.command_timer_schedule, task1_id, 2);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u8, abi.task_state_waiting), oc_scheduler_task(0).state);
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_entry_count());
+    const timer_entry = oc_timer_entry(0);
+    try std.testing.expectEqual(task1_id, timer_entry.task_id);
+    try std.testing.expectEqual(@as(u8, abi.timer_entry_state_armed), timer_entry.state);
+
+    _ = oc_submit_command(abi.command_scheduler_enable, 0, 0);
+    oc_tick();
+    // No timer fire yet.
+    try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
+
+    // Timer should fire and enqueue wake event; scheduler can dispatch task in same tick.
+    oc_tick();
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+    const wake0 = oc_wake_queue_event(0);
+    try std.testing.expectEqual(task1_id, wake0.task_id);
+    try std.testing.expectEqual(timer_entry.timer_id, wake0.timer_id);
+    try std.testing.expectEqual(@as(u8, abi.wake_reason_timer), wake0.reason);
+    try std.testing.expect(oc_scheduler_task(0).state == abi.task_state_ready or oc_scheduler_task(0).state == abi.task_state_running);
+
+    // Create second task, put it in waiting state, then wake it via interrupt-driven wake path.
+    _ = oc_submit_command(abi.command_scheduler_disable, 0, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_task_create, 4, 0);
+    oc_tick();
+    const task2_id = oc_scheduler_task(1).task_id;
+    try std.testing.expect(task2_id != 0);
+    _ = oc_submit_command(abi.command_timer_schedule, task2_id, 100);
+    oc_tick();
+    try std.testing.expectEqual(@as(u8, abi.task_state_waiting), oc_scheduler_task(1).state);
+
+    _ = oc_submit_command(abi.command_scheduler_enable, 0, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_trigger_interrupt, 200, 0);
+    oc_tick();
+
+    try std.testing.expect(oc_wake_queue_len() >= 2);
+    const wake_last = oc_wake_queue_event(oc_wake_queue_len() - 1);
+    try std.testing.expectEqual(task2_id, wake_last.task_id);
+    try std.testing.expectEqual(@as(u8, abi.wake_reason_interrupt), wake_last.reason);
+    try std.testing.expectEqual(@as(u8, 200), wake_last.vector);
+    try std.testing.expect(oc_scheduler_task(1).state == abi.task_state_ready or oc_scheduler_task(1).state == abi.task_state_running);
+
+    _ = oc_submit_command(abi.command_wake_queue_clear, 0, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
+}
+
+test "baremetal syscall abi v2 supports enable disable and entry flags" {
+    status.mode = abi.mode_running;
+    status.ticks = 0;
+    status.command_seq_ack = 0;
+    status.last_command_opcode = abi.command_nop;
+    status.last_command_result = abi.result_ok;
+    status.tick_batch_hint = 1;
+    command_mailbox = .{
+        .magic = abi.command_magic,
+        .api_version = abi.api_version,
+        .opcode = abi.command_nop,
+        .seq = 0,
+        .arg0 = 0,
+        .arg1 = 0,
+    };
+    oc_syscall_reset();
+    oc_timer_reset();
+    oc_scheduler_reset();
+
+    _ = oc_submit_command(abi.command_syscall_register, 9, 0xBEEF);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+
+    _ = oc_submit_command(abi.command_syscall_set_flags, 9, abi.syscall_entry_flag_blocked);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(abi.syscall_entry_flag_blocked, oc_syscall_entry(0).flags);
+
+    _ = oc_submit_command(abi.command_syscall_invoke, 9, 0x1234);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_conflict), status.last_command_result);
+
+    _ = oc_submit_command(abi.command_syscall_disable, 0, 0);
+    oc_tick();
+    try std.testing.expect(!oc_syscall_enabled());
+    _ = oc_submit_command(abi.command_syscall_invoke, 9, 0x1234);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_not_supported), status.last_command_result);
+
+    _ = oc_submit_command(abi.command_syscall_enable, 0, 0);
+    oc_tick();
+    try std.testing.expect(oc_syscall_enabled());
+    _ = oc_submit_command(abi.command_syscall_set_flags, 9, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_syscall_invoke, 9, 0x1234);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
 }
