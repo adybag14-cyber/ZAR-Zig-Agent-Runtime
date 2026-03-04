@@ -431,6 +431,11 @@ while maintaining parity-first validation and release gating.
     - new export: `oc_wake_queue_before_tick_count(max_tick)` for deadline-specific telemetry without mutating queue state.
     - wake queue compaction preserves FIFO ordering for non-matching events during deadline-selective drains.
     - validated with `zig build test --summary all` (`118/118`) and `scripts/baremetal-smoke-check.ps1`.
+  - bare-metal wake queue reason+vector selective drain slice shipped:
+    - new opcode: `command_wake_queue_pop_reason_vector` for exact-pair queue draining (`arg0=reason|(vector<<8)`, `arg1=count`, `count=0` -> pop one).
+    - new export: `oc_wake_queue_reason_vector_count(reason, vector)` for exact reason+vector telemetry without mutating queue state.
+    - wake queue compaction preserves FIFO ordering for non-matching events during exact-pair selective drains.
+    - validated with `zig build test --summary all` (`118/118`) and `scripts/baremetal-smoke-check.ps1`.
   - Week-3 control-plane completion slice shipped:
     - gateway now exposes `GET /ui` for minimal bootstrap control operations (`status`, `doctor`, `logs.tail`, `node.pair.list`) through a token-aware browser panel.
     - node-pair protocol handling consolidated across payload variants: request aliases (`node_id/deviceId`) and action aliases (`pair_id/nodePairId/id` + optional `status|decision`) now normalize into the same state transitions and response schema.
