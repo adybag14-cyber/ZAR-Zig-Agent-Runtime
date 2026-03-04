@@ -7,6 +7,7 @@ const lightpanda = @import("../bridge/lightpanda.zig");
 const provider_http = @import("../bridge/provider_http.zig");
 const web_login = @import("../bridge/web_login.zig");
 const telegram_runtime = @import("../channels/telegram_runtime.zig");
+const telegram_bot_api = @import("../channels/telegram_bot_api.zig");
 const memory_store = @import("../memory/store.zig");
 const tool_runtime = @import("../runtime/tool_runtime.zig");
 const security_guard = @import("../security/guard.zig");
@@ -4389,6 +4390,190 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         });
     }
 
+    if (std.ascii.eqlIgnoreCase(req.method, "channels.telegram.webhook.receive")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value) orelse {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing params",
+            });
+        };
+
+        const update_value = params.get("update") orelse params.get("payload") orelse params.get("webhookUpdate") orelse {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing update payload",
+            });
+        };
+
+        var incoming = (try telegram_bot_api.parseIncomingUpdateFromValue(allocator, update_value)) orelse {
+            return protocol.encodeResult(allocator, req.id, .{
+                .handled = false,
+                .status = "ignored",
+                .reason = "unsupported telegram update payload",
+            });
+        };
+        defer incoming.deinit(allocator);
+
+        const target = try std.fmt.allocPrint(allocator, "{d}", .{incoming.chat_id});
+        defer allocator.free(target);
+        const session_id = try std.fmt.allocPrint(allocator, "tg-chat-{d}", .{incoming.chat_id});
+        defer allocator.free(session_id);
+
+        const runtime_frame = try telegram_bot_api.buildRuntimeSendFrameAlloc(
+            allocator,
+            "tg-webhook-receive",
+            target,
+            session_id,
+            incoming.text,
+        );
+        defer allocator.free(runtime_frame);
+
+        const runtime = try getTelegramRuntime();
+        var send_result = runtime.sendFromFrame(allocator, runtime_frame) catch |err| {
+            return encodeTelegramRuntimeError(allocator, req.id, err);
+        };
+        defer send_result.deinit(allocator);
+
+        const memory = try getMemoryStore();
+        try memory.append(send_result.sessionId, "telegram", "send", "user", incoming.text);
+        try memory.append(send_result.sessionId, send_result.channel, "send", "assistant", send_result.reply);
+
+        var deliver = true;
+        if (params.get("deliver")) |value| {
+            if (parseOptionalBool(value)) |flag| deliver = flag;
+        }
+        if (params.get("dryRun")) |value| {
+            if (parseOptionalBool(value)) |flag| {
+                if (flag) deliver = false;
+            }
+        }
+        const timeout_ms = blk: {
+            var out: u32 = 15_000;
+            if (params.get("requestTimeoutMs")) |value| out = parseTimeout(value, out);
+            if (params.get("timeoutMs")) |value| out = parseTimeout(value, out);
+            break :blk out;
+        };
+
+        const compat = try getCompatState();
+        const maybe_token = try resolveTelegramBotTokenForParamsAlloc(allocator, compat, params);
+        defer if (maybe_token) |value| allocator.free(value);
+
+        var delivery = if (deliver)
+            try telegram_bot_api.sendMessage(
+                allocator,
+                maybe_token orelse "",
+                incoming.chat_id,
+                send_result.reply,
+                incoming.message_id,
+                timeout_ms,
+            )
+        else
+            telegram_bot_api.BotDeliveryResult{
+                .attempted = false,
+                .ok = true,
+                .statusCode = 0,
+                .requestUrl = try allocator.dupe(u8, ""),
+                .errorText = try allocator.dupe(u8, "delivery skipped"),
+                .messageId = null,
+                .responseBytes = 0,
+                .latencyMs = 0,
+                .requestTimeoutMs = timeout_ms,
+            };
+        defer delivery.deinit(allocator);
+
+        return protocol.encodeResult(allocator, req.id, .{
+            .handled = true,
+            .status = if (delivery.ok) "processed" else "processed_with_delivery_error",
+            .updateId = incoming.update_id,
+            .source = incoming.source,
+            .chatId = incoming.chat_id,
+            .messageId = incoming.message_id,
+            .text = incoming.text,
+            .send = send_result,
+            .delivery = delivery,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "channels.telegram.bot.send")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+
+        const chat_id = firstParamInt(params, "chatId", firstParamInt(params, "chat_id", 0));
+        if (chat_id == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing chatId",
+            });
+        }
+
+        const message = firstParamString(params, "message", firstParamString(params, "text", ""));
+        if (message.len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing message text",
+            });
+        }
+
+        var deliver = true;
+        if (params) |obj| {
+            if (obj.get("deliver")) |value| {
+                if (parseOptionalBool(value)) |flag| deliver = flag;
+            }
+            if (obj.get("dryRun")) |value| {
+                if (parseOptionalBool(value)) |flag| {
+                    if (flag) deliver = false;
+                }
+            }
+        }
+
+        const timeout_ms = blk: {
+            var out: u32 = 15_000;
+            if (params) |obj| {
+                if (obj.get("requestTimeoutMs")) |value| out = parseTimeout(value, out);
+                if (obj.get("timeoutMs")) |value| out = parseTimeout(value, out);
+            }
+            break :blk out;
+        };
+
+        const compat = try getCompatState();
+        const maybe_token = try resolveTelegramBotTokenForParamsAlloc(allocator, compat, params);
+        defer if (maybe_token) |value| allocator.free(value);
+
+        var delivery = if (deliver)
+            try telegram_bot_api.sendMessage(
+                allocator,
+                maybe_token orelse "",
+                chat_id,
+                message,
+                null,
+                timeout_ms,
+            )
+        else
+            telegram_bot_api.BotDeliveryResult{
+                .attempted = false,
+                .ok = true,
+                .statusCode = 0,
+                .requestUrl = try allocator.dupe(u8, ""),
+                .errorText = try allocator.dupe(u8, "delivery skipped"),
+                .messageId = null,
+                .responseBytes = 0,
+                .latencyMs = 0,
+                .requestTimeoutMs = timeout_ms,
+            };
+        defer delivery.deinit(allocator);
+
+        return protocol.encodeResult(allocator, req.id, .{
+            .channel = "telegram",
+            .chatId = chat_id,
+            .message = message,
+            .delivery = delivery,
+            .status = if (delivery.ok) "ok" else "delivery_failed",
+        });
+    }
+
     if (std.ascii.eqlIgnoreCase(req.method, "send") or std.ascii.eqlIgnoreCase(req.method, "chat.send") or std.ascii.eqlIgnoreCase(req.method, "sessions.send")) {
         const runtime = try getTelegramRuntime();
         var send_result = runtime.sendFromFrame(allocator, frame_json) catch |err| {
@@ -6438,6 +6623,8 @@ fn shouldEnforceGuard(method: []const u8) bool {
     if (std.ascii.eqlIgnoreCase(method, "tools.catalog")) return false;
     if (std.ascii.eqlIgnoreCase(method, "channels.status")) return false;
     if (std.ascii.eqlIgnoreCase(method, "channels.logout")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "channels.telegram.webhook.receive")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "channels.telegram.bot.send")) return false;
     if (std.ascii.eqlIgnoreCase(method, "update.plan")) return false;
     if (std.ascii.eqlIgnoreCase(method, "update.status")) return false;
     if (std.ascii.eqlIgnoreCase(method, "update.run")) return false;
@@ -7400,6 +7587,29 @@ fn resolveFirstSecretCandidateAlloc(
         if (try envLookupAlloc(allocator, name)) |value| return value;
     }
     return null;
+}
+
+fn resolveTelegramBotTokenForParamsAlloc(
+    allocator: std.mem.Allocator,
+    compat: *CompatState,
+    params: ?std.json.ObjectMap,
+) !?[]u8 {
+    const explicit_token = firstParamString(params, "botToken", firstParamString(params, "bot_token", ""));
+    if (explicit_token.len > 0) return try allocator.dupe(u8, explicit_token);
+
+    return resolveFirstSecretCandidateAlloc(
+        allocator,
+        compat,
+        &.{
+            "channels.telegram.botToken",
+            "channels.telegram.accounts.*.botToken",
+        },
+        &.{
+            "TELEGRAM_BOT_TOKEN",
+            "OPENCLAW_ZIG_TELEGRAM_BOT_TOKEN",
+            "OPENCLAW_ZIG_CHANNELS_TELEGRAM_BOT_TOKEN",
+        },
+    );
 }
 
 fn resolveSecretTargetValue(
@@ -9181,6 +9391,64 @@ test "dispatch send/poll handles auth command and assistant reply loop" {
     defer allocator.free(poll);
     try std.testing.expect(std.mem.indexOf(u8, poll, "\"count\":") != null);
     try std.testing.expect(std.mem.indexOf(u8, poll, "\"updates\"") != null);
+}
+
+test "dispatch channels.telegram.webhook.receive routes update through runtime and skips delivery in dry run" {
+    const allocator = std.testing.allocator;
+    const frame =
+        \\{"id":"tg-webhook","method":"channels.telegram.webhook.receive","params":{"dryRun":true,"update":{"update_id":42,"message":{"message_id":7,"chat":{"id":12345},"from":{"id":77},"text":"/auth providers"}}}}
+    ;
+    const out = try dispatch(allocator, frame);
+    defer allocator.free(out);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, out, .{});
+    defer parsed.deinit();
+    try std.testing.expect(parsed.value == .object);
+
+    const result_value = parsed.value.object.get("result") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(result_value == .object);
+
+    const handled = result_value.object.get("handled") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(handled == .bool and handled.bool);
+
+    const chat_id = result_value.object.get("chatId") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(chat_id == .integer and chat_id.integer == 12345);
+
+    const send = result_value.object.get("send") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(send == .object);
+    const accepted = send.object.get("accepted") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(accepted == .bool and accepted.bool);
+
+    const delivery = result_value.object.get("delivery") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(delivery == .object);
+    const attempted = delivery.object.get("attempted") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(attempted == .bool and !attempted.bool);
+}
+
+test "dispatch channels.telegram.bot.send reports missing bot token when delivery enabled" {
+    const allocator = std.testing.allocator;
+    const out = try dispatch(
+        allocator,
+        "{\"id\":\"tg-bot-send\",\"method\":\"channels.telegram.bot.send\",\"params\":{\"chatId\":12345,\"message\":\"hello from zig bot connector\"}}",
+    );
+    defer allocator.free(out);
+
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"status\":\"delivery_failed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"delivery\":{\"attempted\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "missing bot token") != null);
+}
+
+test "dispatch channels.telegram.bot.send supports dryRun without token" {
+    const allocator = std.testing.allocator;
+    const out = try dispatch(
+        allocator,
+        "{\"id\":\"tg-bot-send-dry\",\"method\":\"channels.telegram.bot.send\",\"params\":{\"chatId\":12345,\"message\":\"hello dry\",\"dryRun\":true}}",
+    );
+    defer allocator.free(out);
+
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"status\":\"ok\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"delivery\":{\"attempted\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "delivery skipped") != null);
 }
 
 test "dispatch memory history handlers return persisted send activity" {

@@ -21,7 +21,7 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 
 ## Summary
 
-- Total methods: **153**
+- Total methods: **155**
 - Prefix groups: **33**
 
 ## Prefix Overview
@@ -34,7 +34,7 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 | auth | 6 |
 | browser | 2 |
 | canvas | 1 |
-| channels | 2 |
+| channels | 4 |
 | chat | 4 |
 | config | 5 |
 | cron | 7 |
@@ -117,6 +117,8 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 
 - channels.logout
 - channels.status
+- channels.telegram.bot.send
+- channels.telegram.webhook.receive
 
 ### chat
 
@@ -315,5 +317,4 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 - wizard.next
 - wizard.start
 - wizard.status
-
 

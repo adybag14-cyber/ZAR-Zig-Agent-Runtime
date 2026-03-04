@@ -222,6 +222,10 @@ while maintaining parity-first validation and release gating.
   - Added completion semantics hardening:
     - Top-level `ok/status/message` now reflect bridge execution success/failure for completion requests (failure surfaces as `status=failed` with bridge error context).
     - Assistant text extraction expanded to additional response shapes (`output_text`, `output[].content[]`, and array-form message content) to reduce empty-response false negatives.
+  - Added Telegram Bot API connector path (receive -> route -> reply) alongside runtime model:
+    - new webhook ingress method: `channels.telegram.webhook.receive` (accepts Telegram update payloads, routes through runtime command handling, records memory history, and optionally delivers reply via Bot API).
+    - new direct delivery method: `channels.telegram.bot.send` (sends chat text to Telegram Bot API with dry-run + token fallback support).
+    - new parser/delivery module: `src/channels/telegram_bot_api.zig`.
   - Dispatcher `channels.status` now includes telegram queue/target/auth telemetry
   - Added auth + reply-loop smokes (`scripts/web-login-smoke-check.ps1`, `scripts/telegram-reply-loop-smoke-check.ps1`)
   - Telegram reply-loop smoke now asserts `/auth link` parity guidance includes active code/session identifiers and completion command hints.
@@ -290,7 +294,7 @@ while maintaining parity-first validation and release gating.
   - Added compat node + exec-approval surfaces with stateful behavior:
     - node: `node.pair.request|list|approve|reject|verify`, `node.rename`, `node.list`, `node.describe`, `node.invoke`, `node.invoke.result`, `node.event`, `node.canvas.capability.refresh`
     - approvals: `exec.approvals.get|set|node.get|node.set`, `exec.approval.request|waitdecision|resolve`
-  - Method surface moved to `153` Zig methods (from `126`) while preserving Lightpanda-only browser policy and green validation gates.
+  - Method surface moved to `155` Zig methods (from `126`) while preserving Lightpanda-only browser policy and green validation gates.
   - Added dispatcher contract tests for new edge methods and memory flows.
   - Method/event parity is now tracked and enforced against Go + original stable + original beta baselines:
     - Go release baseline (`adybag14-cyber/openclaw-go-port`): `134/134` covered in Zig.

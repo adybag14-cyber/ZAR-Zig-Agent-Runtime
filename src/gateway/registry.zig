@@ -122,6 +122,8 @@ pub const supported_methods = [_][]const u8{
     "edge.collaboration.plan",
     "channels.status",
     "channels.logout",
+    "channels.telegram.webhook.receive",
+    "channels.telegram.bot.send",
     "system.maintenance.plan",
     "system.maintenance.run",
     "system.maintenance.status",

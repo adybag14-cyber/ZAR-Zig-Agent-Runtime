@@ -130,5 +130,6 @@ if (-not [string]::IsNullOrWhiteSpace($outputDir) -and -not (Test-Path -LiteralP
 }
 
 $content = ($lines -join "`n") + "`n"
-Set-Content -Path $OutputPath -Value $content -Encoding utf8NoBOM
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($OutputPath, $content, $utf8NoBom)
 Write-Host "Generated RPC reference at $OutputPath ($($methods.Count) methods)."

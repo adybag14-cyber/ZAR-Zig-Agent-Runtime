@@ -84,6 +84,10 @@ Phase 5 enhancement notes:
   - New request flags: `directProvider`, `direct_provider`, `useProviderApi`.
   - Optional completion streaming parse with `params.stream=true` now supports SSE delta extraction for OpenAI and Anthropic responses.
   - Provider API-key resolution supports explicit request keys plus config/env fallback aliases.
+- Added real Telegram Bot API connector path alongside existing runtime queue model:
+  - `channels.telegram.webhook.receive` now accepts Telegram update payloads, routes update text through runtime command handlers, and can optionally deliver replies through Bot API `sendMessage`.
+  - `channels.telegram.bot.send` adds direct Bot API send path with `dryRun`/`deliver` controls and token fallback resolution.
+  - `src/channels/telegram_bot_api.zig` introduces Telegram update parsing, runtime frame builders, and Bot API delivery telemetry.
 - Completion semantics hardening:
   - Top-level `ok/status/message` for `browser.request` now reflect live completion outcome when completion execution is requested (`status=failed` on bridge failure).
   - Assistant text extraction now supports additional response shapes: `output_text`, `output[].content[]`, and array-based `choices[].message.content`.
@@ -177,7 +181,7 @@ Phase 6 progress notes:
   - added `update.plan` (channel-aware update planning) and `update.status` (job/queue observability).
   - `update.run` now resolves channel aliases (`stable/latest/lts`, `edge/nightly/preview`) and surfaces npm release metadata.
   - added npm client package at `npm/openclaw-zig-rpc-client` and release workflow `.github/workflows/npm-release.yml`.
-- Method surface now at `153` Zig methods; tri-baseline method-set parity is complete:
+- Method surface now at `155` Zig methods; tri-baseline method-set parity is complete:
   - Go latest release baseline: `134/134` covered in Zig.
   - Original OpenClaw latest release baseline: `94/94` covered in Zig.
   - Original OpenClaw latest beta baseline: `94/94` covered in Zig.
@@ -205,7 +209,7 @@ Phase 6 progress notes:
   - new runtime tests:
     - `runtime.tool_runtime.test.tool runtime file sandbox blocks traversal and out-of-root writes`
     - `runtime.tool_runtime.test.tool runtime exec policy denies non-allowlisted commands`
-- [x] `scripts/generate-rpc-reference.ps1` (regenerates `docs/rpc-reference.md` from `src/gateway/registry.zig`, currently `153` methods)
+- [x] `scripts/generate-rpc-reference.ps1` (regenerates `docs/rpc-reference.md` from `src/gateway/registry.zig`, currently `155` methods)
 - [x] `scripts/npm-pack-check.ps1` (validates npm package dry-run for `npm/openclaw-zig-rpc-client`)
 - [x] `scripts/python-pack-check.ps1` (validates python client package tests + wheel/sdist + twine checks for `python/openclaw-zig-rpc-client`)
 - [x] `zig test src/main.zig`
@@ -222,7 +226,7 @@ Phase 6 progress notes:
 - [x] `scripts/zig-syntax-check.ps1`
 - [x] `zig build baremetal` (freestanding image build: `openclaw-zig-baremetal.elf`)
 - [x] `scripts/zig-codeberg-master-check.ps1` (reports local vs remote master hash)
-- [x] Multi-baseline method diff check: `Go(latest)=134`, `Original(latest)=94`, `OriginalBeta(latest)=94`, `Union=135`, `Zig=153`, `missing_in_zig=0`, `union_extras=18`
+- [x] Multi-baseline method diff check: `Go(latest)=134`, `Original(latest)=94`, `OriginalBeta(latest)=94`, `Union=135`, `Zig=155`, `missing_in_zig=0`, `union_extras=20`
 - [x] Multi-baseline gateway event diff check: `OriginalEvents(latest)=19`, `OriginalBetaEvents(latest)=19`, `UnionEvents=19`, `ZigEvents=19`, `union_events_missing_in_zig=0`
 - [x] Rust-vs-Zig method diff check: `Rust=124`, `Zig=143`, `missing_in_zig=0`, `zig_extras=19`
 - [x] Smoke scripts now run against built binary (`zig-out/bin/openclaw-zig.exe`) with readiness loops + early-exit diagnostics:
