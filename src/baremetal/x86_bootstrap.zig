@@ -36,6 +36,9 @@ pub const InterruptState = extern struct {
     load_successes: u32,
     descriptor_init_count: u32,
     interrupt_count: u64,
+    last_exception_vector: u8,
+    reserved1: [7]u8,
+    exception_count: u64,
 };
 
 var gdt: [gdt_entries_count]GdtEntry = undefined;
@@ -47,6 +50,8 @@ var descriptor_tables_ready: bool = false;
 var descriptor_tables_loaded: bool = false;
 var last_interrupt_vector: u8 = 0;
 var interrupt_counter: u64 = 0;
+var last_exception_vector: u8 = 0;
+var exception_counter: u64 = 0;
 var descriptor_init_counter: u32 = 0;
 var descriptor_load_attempts: u32 = 0;
 var descriptor_load_successes: u32 = 0;
@@ -59,10 +64,14 @@ var interrupt_state: InterruptState = .{
     .load_successes = 0,
     .descriptor_init_count = 0,
     .interrupt_count = 0,
+    .last_exception_vector = 0,
+    .reserved1 = std.mem.zeroes([7]u8),
+    .exception_count = 0,
 };
 
 const default_selector: u16 = 0x08;
 const default_interrupt_type_attr: u8 = 0x8E;
+const exception_vector_limit: u8 = 32;
 
 pub fn init() void {
     @memset(&gdt, std.mem.zeroes(GdtEntry));
@@ -155,6 +164,14 @@ pub export fn oc_interrupt_count() u64 {
     return interrupt_counter;
 }
 
+pub export fn oc_last_exception_vector() u8 {
+    return last_exception_vector;
+}
+
+pub export fn oc_exception_count() u64 {
+    return exception_counter;
+}
+
 pub export fn oc_descriptor_init_count() u32 {
     return descriptor_init_counter;
 }
@@ -198,6 +215,12 @@ pub export fn oc_reset_interrupt_counters() void {
     refreshInterruptState();
 }
 
+pub export fn oc_reset_exception_counters() void {
+    last_exception_vector = 0;
+    exception_counter = 0;
+    refreshInterruptState();
+}
+
 pub export fn oc_trigger_interrupt(vector: u8) void {
     oc_interrupt_stub(vector);
 }
@@ -205,6 +228,10 @@ pub export fn oc_trigger_interrupt(vector: u8) void {
 pub export fn oc_interrupt_stub(vector: u8) void {
     last_interrupt_vector = vector;
     interrupt_counter +%= 1;
+    if (vector < exception_vector_limit) {
+        last_exception_vector = vector;
+        exception_counter +%= 1;
+    }
     refreshInterruptState();
 }
 
@@ -218,6 +245,9 @@ fn refreshInterruptState() void {
         .load_successes = descriptor_load_successes,
         .descriptor_init_count = descriptor_init_counter,
         .interrupt_count = interrupt_counter,
+        .last_exception_vector = last_exception_vector,
+        .reserved1 = std.mem.zeroes([7]u8),
+        .exception_count = exception_counter,
     };
 }
 
@@ -258,4 +288,17 @@ test "x86 bootstrap descriptor load telemetry updates attempts and successes" {
     try std.testing.expectEqual(attempts_before + 1, oc_descriptor_load_attempt_count());
     try std.testing.expectEqual(success_before + 1, oc_descriptor_load_success_count());
     try std.testing.expectEqual(@as(u8, 1), state.descriptor_tables_loaded);
+}
+
+test "x86 bootstrap exception telemetry tracks exception vectors only" {
+    init();
+    oc_reset_exception_counters();
+    const before = oc_exception_count();
+    oc_trigger_interrupt(14);
+    oc_trigger_interrupt(200);
+    const state = oc_interrupt_state_ptr().*;
+    try std.testing.expectEqual(before + 1, oc_exception_count());
+    try std.testing.expectEqual(@as(u8, 14), oc_last_exception_vector());
+    try std.testing.expectEqual(before + 1, state.exception_count);
+    try std.testing.expectEqual(@as(u8, 14), state.last_exception_vector);
 }

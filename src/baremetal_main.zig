@@ -151,6 +151,7 @@ fn executeCommand(opcode: u16, arg0: u64, _: u64) i16 {
             status.ticks = 0;
             status.panic_count = 0;
             x86_bootstrap.oc_reset_interrupt_counters();
+            x86_bootstrap.oc_reset_exception_counters();
             return abi.result_ok;
         },
         abi.command_set_mode => {
@@ -186,6 +187,10 @@ fn executeCommand(opcode: u16, arg0: u64, _: u64) i16 {
         abi.command_load_descriptor_tables => {
             if (x86_bootstrap.oc_try_load_descriptor_tables()) return abi.result_ok;
             return abi.result_not_supported;
+        },
+        abi.command_reset_exception_counters => {
+            x86_bootstrap.oc_reset_exception_counters();
+            return abi.result_ok;
         },
         else => return abi.result_not_supported,
     }
