@@ -211,7 +211,7 @@ Phase 6 progress notes:
 ## Latest Validation Snapshot
 - [x] `zig build`
 - [x] `zig build test`
-- [x] `zig build test --summary all` -> `117/117` passing (includes gateway auth/rate-limit hardening tests, runtime file/exec policy hardening tests, config-hash diagnostics coverage, bind-policy token enforcement checks, TTS/completion execution-path coverage, PAL extraction coverage, secure secret-store backend coverage, and bare-metal ABI v2 contract tests)
+- [x] `zig build test --summary all` -> `118/118` passing (includes gateway auth/rate-limit hardening tests, runtime file/exec policy hardening tests, config-hash diagnostics coverage, bind-policy token enforcement checks, TTS/completion execution-path coverage, PAL extraction coverage, secure secret-store backend coverage, and bare-metal ABI v2 contract tests)
 - [x] Runtime policy hardening slice shipped:
   - `file.read` / `file.write` optional sandbox enforcement with traversal + symlink denial paths:
     - `OPENCLAW_ZIG_RUNTIME_FILE_SANDBOX_ENABLED`
@@ -245,6 +245,10 @@ Phase 6 progress notes:
   - `channels.telegram_runtime.test.telegram runtime wait supports positional timeout with account`
 - [x] `scripts/zig-syntax-check.ps1`
 - [x] `zig build baremetal` (freestanding image build: `openclaw-zig-baremetal.elf`)
+- [x] Bare-metal wake queue reason-selective drain slice shipped:
+  - new mailbox opcode: `command_wake_queue_pop_reason` (`arg0=reason`, `arg1=count`, `count=0` defaults to one)
+  - new export telemetry: `oc_wake_queue_reason_count(reason)` for timer/interrupt/manual wake distribution checks
+  - regression coverage added for reason-filtered pop ordering, invalid-reason rejection, and not-found behavior
 - [x] `scripts/zig-codeberg-master-check.ps1` (reports local vs remote master hash)
 - [x] Multi-baseline method diff check: `Go(latest)=134`, `Original(latest)=94`, `OriginalBeta(latest)=94`, `Union=135`, `Zig=160`, `missing_in_zig=0`, `union_extras=25`
 - [x] Multi-baseline gateway event diff check: `OriginalEvents(latest)=19`, `OriginalBetaEvents(latest)=19`, `UnionEvents=19`, `ZigEvents=19`, `union_events_missing_in_zig=0`

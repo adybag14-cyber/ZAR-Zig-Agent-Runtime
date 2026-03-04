@@ -132,6 +132,7 @@ pub const command_scheduler_set_policy: u16 = 55;
 pub const command_task_set_priority: u16 = 56;
 pub const command_task_wait_interrupt: u16 = 57;
 pub const command_task_wait_interrupt_for: u16 = 58;
+pub const command_wake_queue_pop_reason: u16 = 59;
 
 pub const mode_change_reason_boot: u8 = 0;
 pub const mode_change_reason_command: u8 = 1;
@@ -481,6 +482,10 @@ pub fn schedulerPolicyIsValid(policy: u8) bool {
     return policy == scheduler_policy_round_robin or policy == scheduler_policy_priority;
 }
 
+pub fn wakeReasonIsValid(reason: u8) bool {
+    return reason == wake_reason_timer or reason == wake_reason_interrupt or reason == wake_reason_manual;
+}
+
 test "baremetal abi layout contract stays stable" {
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(BaremetalStatus, "magic"));
     try std.testing.expectEqual(@as(usize, 4), @offsetOf(BaremetalStatus, "api_version"));
@@ -534,4 +539,12 @@ test "baremetal scheduler policy helper validates supported policies" {
     try std.testing.expect(schedulerPolicyIsValid(scheduler_policy_round_robin));
     try std.testing.expect(schedulerPolicyIsValid(scheduler_policy_priority));
     try std.testing.expect(!schedulerPolicyIsValid(2));
+}
+
+test "baremetal wake reason helper validates supported reasons" {
+    try std.testing.expect(wakeReasonIsValid(wake_reason_timer));
+    try std.testing.expect(wakeReasonIsValid(wake_reason_interrupt));
+    try std.testing.expect(wakeReasonIsValid(wake_reason_manual));
+    try std.testing.expect(!wakeReasonIsValid(0));
+    try std.testing.expect(!wakeReasonIsValid(4));
 }

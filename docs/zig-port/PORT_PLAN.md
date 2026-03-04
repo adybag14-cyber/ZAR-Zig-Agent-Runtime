@@ -416,6 +416,11 @@ while maintaining parity-first validation and release gating.
     - implemented injected environ wiring (`telegram_runtime.setEnviron`) and switched env lookup to `std.process.Environ.getAlloc(process_environ, ...)`.
     - fix commit `e204e60`; validation run `22669040232` fully green across validate + cross-target matrix.
     - docs-pages re-verified by manual dispatch run `22669207780` with build+deploy success.
+  - bare-metal wake queue reason-selective drain slice shipped:
+    - new opcode: `command_wake_queue_pop_reason` for selective queue draining by wake reason (`timer`, `interrupt`, `manual`) with bounded count semantics (`count=0` -> pop one).
+    - new export: `oc_wake_queue_reason_count(reason)` for reason-specific telemetry without mutating queue state.
+    - wake queue compaction preserves FIFO ordering for non-matching events during selective drains.
+    - validated with `zig build test --summary all` (`118/118`) and `scripts/baremetal-smoke-check.ps1`.
   - Week-3 control-plane completion slice shipped:
     - gateway now exposes `GET /ui` for minimal bootstrap control operations (`status`, `doctor`, `logs.tail`, `node.pair.list`) through a token-aware browser panel.
     - node-pair protocol handling consolidated across payload variants: request aliases (`node_id/deviceId`) and action aliases (`pair_id/nodePairId/id` + optional `status|decision`) now normalize into the same state transitions and response schema.
