@@ -113,6 +113,7 @@ while maintaining parity-first validation and release gating.
     - `config.set`, `config.patch`, `config.apply`, `config.schema`
     - `wizard.start`, `wizard.next`, `wizard.cancel`, `wizard.status`
     - `sessions.patch`, `sessions.resolve`, `secrets.reload`, `secrets.resolve`
+    - `secrets.resolve` now performs active secret resolution from config overlay keys (including wildcard matching) and environment aliases (`OPENCLAW_ZIG_*` with `OPENCLAW_GO_*` / `OPENCLAW_RS_*` fallbacks), instead of returning inactive placeholders only.
   - Added compat agent/skills surfaces with stateful behavior:
     - `agent`, `agent.identity.get`, `agent.wait`
     - `agents.list`, `agents.create`, `agents.update`, `agents.delete`, `agents.files.list`, `agents.files.get`, `agents.files.set`
@@ -135,7 +136,7 @@ while maintaining parity-first validation and release gating.
     - Intentional Zig-only extras retained for edge/runtime depth: `11`.
   - Hardened smoke scripts to avoid flaky `zig build run` startup timing by prebuilding and launching the binary directly (`zig-out/bin/openclaw-zig.exe`) with explicit readiness and exit diagnostics.
 - Toolchain/runtime notes (local Windows Zig master):
-  - Codeberg `master` is currently `af1ab5fa08f2c58517f94c253535403e1575c3b6`.
+  - Codeberg `master` is currently `ce32003625566dcc3687e9e32be411ccb83a4aaa`.
   - Local Zig toolchain remains `0.16.0-dev.2703+0a412853a` (hash `0a412853a`) and is behind current Codeberg `master` (acknowledged).
   - Added Windows build workaround in `build.zig`:
     - use `-fstrip` for executable to avoid missing `.pdb` install failure on this master toolchain.

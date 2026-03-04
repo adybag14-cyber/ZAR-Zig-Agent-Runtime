@@ -18,6 +18,7 @@ pub fn main(init: std.process.Init) !void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
+    dispatcher.setEnviron(init.minimal.environ);
     const cfg = try config.loadFromEnviron(allocator, init.minimal.environ);
     dispatcher.setConfig(cfg);
 

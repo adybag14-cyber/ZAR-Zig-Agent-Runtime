@@ -17,6 +17,8 @@ var runtime_io_ready: bool = false;
 
 var active_config: config.Config = config.defaults();
 var config_ready: bool = false;
+var active_environ: std.process.Environ = std.process.Environ.empty;
+var environ_ready: bool = false;
 
 var guard_instance: ?security_guard.Guard = null;
 var login_manager: ?web_login.LoginManager = null;
@@ -538,6 +540,26 @@ const CompatState = struct {
 
     fn configOverlayCount(self: *const CompatState) usize {
         return self.config_overlay.count();
+    }
+
+    fn resolveConfigSecretValue(self: *const CompatState, target_id: []const u8) ?[]const u8 {
+        const normalized_target = std.mem.trim(u8, target_id, " \t\r\n");
+        if (normalized_target.len == 0) return null;
+        if (self.config_overlay.get(normalized_target)) |raw| {
+            const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+            if (trimmed.len > 0) return trimmed;
+        }
+
+        var it = self.config_overlay.iterator();
+        while (it.next()) |entry| {
+            const key = std.mem.trim(u8, entry.key_ptr.*, " \t\r\n");
+            if (key.len == 0) continue;
+            if (!wildcardPathMatch(normalized_target, key) and !wildcardPathMatch(key, normalized_target)) continue;
+            const value = std.mem.trim(u8, entry.value_ptr.*, " \t\r\n");
+            if (value.len == 0) continue;
+            return value;
+        }
+        return null;
     }
 
     fn wizardStart(self: *CompatState, flow: []const u8) !void {
@@ -1411,6 +1433,11 @@ pub fn setConfig(cfg: config.Config) void {
         compat_state_instance.?.deinit();
         compat_state_instance = null;
     }
+}
+
+pub fn setEnviron(environ: std.process.Environ) void {
+    active_environ = environ;
+    environ_ready = true;
 }
 
 pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
@@ -2960,6 +2987,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         defer {
             for (assignments.items) |entry| {
                 allocator.free(entry.pathSegments);
+                if (entry.value) |value| allocator.free(value);
             }
             assignments.deinit(allocator);
         }
@@ -2969,6 +2997,9 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
 
         var inactive_ref_paths: std.ArrayList([]const u8) = .empty;
         defer inactive_ref_paths.deinit(allocator);
+
+        const compat = try getCompatState();
+        var resolved_count: usize = 0;
 
         for (target_ids_value.?.array.items) |entry| {
             if (entry != .string) {
@@ -2991,25 +3022,37 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             }
 
             const path_segments = try splitPathSegments(allocator, target_id);
+            const resolved_value = try resolveSecretTargetValue(allocator, compat, target_id);
             try assignments.append(allocator, .{
                 .path = target_id,
                 .pathSegments = path_segments,
-                .value = null,
+                .value = resolved_value,
             });
-            try inactive_ref_paths.append(allocator, target_id);
+            if (resolved_value == null) {
+                try inactive_ref_paths.append(allocator, target_id);
+            } else {
+                resolved_count += 1;
+            }
         }
 
         if (assignments.items.len == 0) {
             try diagnostics.append(allocator, "secrets.resolve received no matching target ids.");
+        } else if (resolved_count == 0) {
+            try diagnostics.append(allocator, "secrets.resolve completed with inactive refs only.");
+        } else if (inactive_ref_paths.items.len > 0) {
+            try diagnostics.append(allocator, "secrets.resolve completed with active and inactive refs.");
         } else {
-            try diagnostics.append(allocator, "secrets.resolve completed with inactive refs only in zig parity mode.");
+            try diagnostics.append(allocator, "secrets.resolve resolved all requested refs.");
         }
 
         return protocol.encodeResult(allocator, req.id, .{
             .ok = true,
+            .commandName = command_name,
             .assignments = assignments.items,
             .diagnostics = diagnostics.items,
             .inactiveRefPaths = inactive_ref_paths.items,
+            .resolvedCount = resolved_count,
+            .inactiveCount = inactive_ref_paths.items.len,
         });
     }
 
@@ -5740,6 +5783,120 @@ fn splitPathSegments(allocator: std.mem.Allocator, path: []const u8) ![]const []
     return segments.toOwnedSlice(allocator);
 }
 
+fn wildcardPathMatch(pattern: []const u8, text: []const u8) bool {
+    if (pattern.len == 0) return text.len == 0;
+
+    var pattern_idx: usize = 0;
+    var text_idx: usize = 0;
+    var star_idx: ?usize = null;
+    var backtrack_text_idx: usize = 0;
+
+    while (text_idx < text.len) {
+        if (pattern_idx < pattern.len and pattern[pattern_idx] == '*') {
+            star_idx = pattern_idx;
+            pattern_idx += 1;
+            backtrack_text_idx = text_idx;
+            continue;
+        }
+
+        if (pattern_idx < pattern.len and std.ascii.toLower(pattern[pattern_idx]) == std.ascii.toLower(text[text_idx])) {
+            pattern_idx += 1;
+            text_idx += 1;
+            continue;
+        }
+
+        if (star_idx) |idx| {
+            pattern_idx = idx + 1;
+            backtrack_text_idx += 1;
+            text_idx = backtrack_text_idx;
+            continue;
+        }
+        return false;
+    }
+
+    while (pattern_idx < pattern.len and pattern[pattern_idx] == '*') : (pattern_idx += 1) {}
+    return pattern_idx == pattern.len;
+}
+
+fn resolveSecretTargetValue(
+    allocator: std.mem.Allocator,
+    compat: *CompatState,
+    target_id: []const u8,
+) !?[]const u8 {
+    if (compat.resolveConfigSecretValue(target_id)) |value| {
+        return try allocator.dupe(u8, value);
+    }
+    return try resolveSecretFromEnvironment(allocator, target_id);
+}
+
+fn resolveSecretFromEnvironment(allocator: std.mem.Allocator, target_id: []const u8) !?[]const u8 {
+    const normalized = try normalizeSecretTargetToken(allocator, target_id);
+    defer allocator.free(normalized);
+
+    const zig_secret = try std.fmt.allocPrint(allocator, "OPENCLAW_ZIG_SECRET_{s}", .{normalized});
+    defer allocator.free(zig_secret);
+    if (try envLookupAlloc(allocator, zig_secret)) |value| return value;
+
+    const go_secret = try std.fmt.allocPrint(allocator, "OPENCLAW_GO_SECRET_{s}", .{normalized});
+    defer allocator.free(go_secret);
+    if (try envLookupAlloc(allocator, go_secret)) |value| return value;
+
+    const rs_secret = try std.fmt.allocPrint(allocator, "OPENCLAW_RS_SECRET_{s}", .{normalized});
+    defer allocator.free(rs_secret);
+    if (try envLookupAlloc(allocator, rs_secret)) |value| return value;
+
+    const generic_secret = try std.fmt.allocPrint(allocator, "OPENCLAW_SECRET_{s}", .{normalized});
+    defer allocator.free(generic_secret);
+    if (try envLookupAlloc(allocator, generic_secret)) |value| return value;
+
+    if (std.mem.eql(u8, target_id, "talk.apiKey")) {
+        if (try envLookupAlloc(allocator, "OPENAI_API_KEY")) |value| return value;
+        if (try envLookupAlloc(allocator, "OPENROUTER_API_KEY")) |value| return value;
+    }
+    if (std.mem.eql(u8, target_id, "channels.telegram.botToken") or std.mem.eql(u8, target_id, "channels.telegram.accounts.*.botToken")) {
+        if (try envLookupAlloc(allocator, "TELEGRAM_BOT_TOKEN")) |value| return value;
+    }
+    if (std.mem.eql(u8, target_id, "channels.telegram.webhookSecret") or std.mem.eql(u8, target_id, "channels.telegram.accounts.*.webhookSecret")) {
+        if (try envLookupAlloc(allocator, "TELEGRAM_WEBHOOK_SECRET")) |value| return value;
+    }
+
+    return null;
+}
+
+fn normalizeSecretTargetToken(allocator: std.mem.Allocator, target_id: []const u8) ![]u8 {
+    const trimmed = std.mem.trim(u8, target_id, " \t\r\n");
+    if (trimmed.len == 0) return allocator.dupe(u8, "EMPTY");
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    var prev_was_underscore = false;
+    var prev_was_lower = false;
+    for (trimmed) |ch| {
+        if (std.ascii.isAlphanumeric(ch)) {
+            if (std.ascii.isUpper(ch) and prev_was_lower and out.items.len > 0 and !prev_was_underscore) {
+                try out.append(allocator, '_');
+            }
+            try out.append(allocator, std.ascii.toUpper(ch));
+            prev_was_underscore = false;
+            prev_was_lower = std.ascii.isLower(ch);
+            continue;
+        }
+
+        if (out.items.len > 0 and !prev_was_underscore) {
+            try out.append(allocator, '_');
+            prev_was_underscore = true;
+        }
+        prev_was_lower = false;
+    }
+
+    while (out.items.len > 0 and out.items[out.items.len - 1] == '_') {
+        _ = out.pop();
+    }
+    if (out.items.len == 0) try out.appendSlice(allocator, "EMPTY");
+    return out.toOwnedSlice(allocator);
+}
+
 fn isKnownSecretTargetId(target_id: []const u8) bool {
     const known_target_ids = [_][]const u8{
         "agents.defaults.memorySearch.remote.apiKey",
@@ -5814,13 +5971,77 @@ fn isKnownSecretTargetId(target_id: []const u8) bool {
 }
 
 fn envTruthy(name: []const u8) bool {
-    _ = name;
+    const allocator = std.heap.page_allocator;
+    const maybe = envLookupAlloc(allocator, name) catch return false;
+    if (maybe) |value| {
+        defer allocator.free(value);
+        return parseEnvTruthyValue(value);
+    }
     return false;
 }
 
 fn envValue(allocator: std.mem.Allocator, name: []const u8, fallback: []const u8) ![]u8 {
-    _ = name;
+    if (try envLookupAlloc(allocator, name)) |value| return value;
     return allocator.dupe(u8, fallback);
+}
+
+fn parseEnvTruthyValue(raw: []const u8) bool {
+    const value = std.mem.trim(u8, raw, " \t\r\n");
+    if (value.len == 0) return false;
+    if (std.mem.eql(u8, value, "0")) return false;
+    if (std.mem.eql(u8, value, "-1")) return false;
+    if (std.ascii.eqlIgnoreCase(value, "false")) return false;
+    if (std.ascii.eqlIgnoreCase(value, "off")) return false;
+    if (std.ascii.eqlIgnoreCase(value, "no")) return false;
+    if (std.ascii.eqlIgnoreCase(value, "none")) return false;
+    if (std.ascii.eqlIgnoreCase(value, "null")) return false;
+
+    if (std.mem.eql(u8, value, "1")) return true;
+    if (std.ascii.eqlIgnoreCase(value, "true")) return true;
+    if (std.ascii.eqlIgnoreCase(value, "yes")) return true;
+    if (std.ascii.eqlIgnoreCase(value, "on")) return true;
+
+    return true;
+}
+
+fn envLookupAlloc(allocator: std.mem.Allocator, name: []const u8) !?[]u8 {
+    if (try loadEnvValueAlloc(allocator, name)) |value| return value;
+
+    const prefix = "OPENCLAW_ZIG_";
+    if (!std.mem.startsWith(u8, name, prefix)) return null;
+
+    const suffix = name[prefix.len..];
+    if (suffix.len == 0) return null;
+
+    const go_name = try std.fmt.allocPrint(allocator, "OPENCLAW_GO_{s}", .{suffix});
+    defer allocator.free(go_name);
+    if (try loadEnvValueAlloc(allocator, go_name)) |value| return value;
+
+    const rs_name = try std.fmt.allocPrint(allocator, "OPENCLAW_RS_{s}", .{suffix});
+    defer allocator.free(rs_name);
+    if (try loadEnvValueAlloc(allocator, rs_name)) |value| return value;
+
+    return null;
+}
+
+fn loadEnvValueAlloc(allocator: std.mem.Allocator, name: []const u8) !?[]u8 {
+    if (!environ_ready) return null;
+
+    const raw = std.process.Environ.getAlloc(active_environ, allocator, name) catch |err| switch (err) {
+        error.EnvironmentVariableMissing => return null,
+        error.InvalidWtf8 => return null,
+        else => return err,
+    };
+
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    if (trimmed.len == 0) {
+        allocator.free(raw);
+        return null;
+    }
+    if (trimmed.ptr == raw.ptr and trimmed.len == raw.len) return raw;
+    const value = try allocator.dupe(u8, trimmed);
+    allocator.free(raw);
+    return value;
 }
 
 fn parseCiphertexts(
@@ -6669,11 +6890,19 @@ test "dispatch compat config wizard and sessions patch resolve methods return co
     defer allocator.free(secrets_reload);
     try std.testing.expect(std.mem.indexOf(u8, secrets_reload, "\"count\":2") != null);
 
-    const secrets_resolve = try dispatch(allocator, "{\"id\":\"compat-secrets-resolve\",\"method\":\"secrets.resolve\",\"params\":{\"commandName\":\"memory status\",\"targetIds\":[\"talk.apiKey\"]}}");
+    const config_secret = try dispatch(allocator, "{\"id\":\"compat-config-secret\",\"method\":\"config.set\",\"params\":{\"talk.apiKey\":\"sk-zig-local\",\"talk.providers.openrouter.apiKey\":\"or-zig-local\"}}");
+    defer allocator.free(config_secret);
+    try std.testing.expect(std.mem.indexOf(u8, config_secret, "\"talk.apiKey\"") != null);
+
+    const secrets_resolve = try dispatch(allocator, "{\"id\":\"compat-secrets-resolve\",\"method\":\"secrets.resolve\",\"params\":{\"commandName\":\"memory status\",\"targetIds\":[\"talk.apiKey\",\"talk.providers.*.apiKey\"]}}");
     defer allocator.free(secrets_resolve);
     try std.testing.expect(std.mem.indexOf(u8, secrets_resolve, "\"ok\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, secrets_resolve, "\"assignments\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, secrets_resolve, "\"inactiveRefPaths\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, secrets_resolve, "\"resolvedCount\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, secrets_resolve, "\"inactiveCount\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, secrets_resolve, "\"value\":\"sk-zig-local\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, secrets_resolve, "\"value\":\"or-zig-local\"") != null);
 
     const secrets_resolve_unknown = try dispatch(allocator, "{\"id\":\"compat-secrets-resolve-unknown\",\"method\":\"secrets.resolve\",\"params\":{\"commandName\":\"memory status\",\"targetIds\":[\"unknown.target\"]}}");
     defer allocator.free(secrets_resolve_unknown);
@@ -7168,6 +7397,21 @@ test "dispatch advanced edge methods return parity contracts" {
     const collaboration = try dispatch(allocator, "{\"id\":\"edge-collab\",\"method\":\"edge.collaboration.plan\",\"params\":{\"team\":\"platform\",\"goal\":\"shipping\"}}");
     defer allocator.free(collaboration);
     try std.testing.expect(std.mem.indexOf(u8, collaboration, "\"checkpoints\"") != null);
+}
+
+test "wildcard path match supports compat secret patterns" {
+    try std.testing.expect(wildcardPathMatch("talk.providers.*.apiKey", "talk.providers.openrouter.apiKey"));
+    try std.testing.expect(wildcardPathMatch("channels.telegram.accounts.*.botToken", "channels.telegram.accounts.primary.botToken"));
+    try std.testing.expect(!wildcardPathMatch("talk.providers.*.apiKey", "talk.providers.openrouter.model"));
+}
+
+test "parse env truthy value handles falsey and default truthy forms" {
+    try std.testing.expect(parseEnvTruthyValue("true"));
+    try std.testing.expect(parseEnvTruthyValue("yes"));
+    try std.testing.expect(parseEnvTruthyValue("enabled"));
+    try std.testing.expect(!parseEnvTruthyValue("0"));
+    try std.testing.expect(!parseEnvTruthyValue("off"));
+    try std.testing.expect(!parseEnvTruthyValue("none"));
 }
 
 fn extractLoginStringField(

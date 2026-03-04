@@ -72,6 +72,7 @@ Phase 6 progress notes:
   - wizard methods: `wizard.start`, `wizard.next`, `wizard.cancel`, `wizard.status`
   - session mutation methods: `sessions.patch`, `sessions.resolve`
   - `secrets.reload` and `secrets.resolve` contract methods added for key reload + secret reference resolution parity.
+  - `secrets.resolve` now performs active resolution from config overlay values (direct + wildcard key matching) and environment alias fallbacks (`OPENCLAW_ZIG_*`, `OPENCLAW_GO_*`, `OPENCLAW_RS_*`).
 - Added compat agent/skills slice:
   - agent methods: `agent`, `agent.identity.get`, `agent.wait`
   - agents methods: `agents.list`, `agents.create`, `agents.update`, `agents.delete`, `agents.files.list`, `agents.files.get`, `agents.files.set`
@@ -128,7 +129,7 @@ Phase 6 progress notes:
   - Failure class reproduces in minimal targets and remains toolchain-level on this host (`compiler_rt` + `memory allocation failure`; `aarch64-linux*` additionally show `invalid constraint: 'X'`; `arm-linux-androideabi` minimal repro exits with access-violation code `-1073741819`)
   - Evidence: `release/cross-target-diagnostics/summary.json` and per-target `stdout/stderr` logs in `release/cross-target-diagnostics/`
 - [x] Android ARMv7 link failure (`__tls_get_addr`) was resolved for CI/release builds by forcing single-threaded mode for `arm-linux-androideabi` in `build.zig`.
-- [x] Freshness check: Codeberg Zig `master`=`af1ab5fa08f2c58517f94c253535403e1575c3b6`; local toolchain=`0.16.0-dev.2703+0a412853a` (hash mismatch acknowledged)
+- [x] Freshness check: Codeberg Zig `master`=`ce32003625566dcc3687e9e32be411ccb83a4aaa`; local toolchain=`0.16.0-dev.2703+0a412853a` (hash mismatch acknowledged)
 - [x] Serve smoke: `GET /health` and `POST /rpc` (`shutdown`) both returned HTTP 200
 - [x] Serve smoke: `POST /rpc` `file.write`, `file.read`, and `exec.run` returned HTTP 200 with real payloads
 - [x] Serve smoke: `POST /rpc` `security.audit` and `doctor` return structured diagnostics payloads
