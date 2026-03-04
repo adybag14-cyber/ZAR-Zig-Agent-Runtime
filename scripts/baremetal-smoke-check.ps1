@@ -368,6 +368,7 @@ $requiredSymbols = @(
     "oc_scheduler_task_capacity",
     "oc_scheduler_task_count",
     "oc_scheduler_waiting_count",
+    "oc_scheduler_wait_interrupt_count",
     "oc_scheduler_task",
     "oc_scheduler_tasks_ptr",
     "oc_scheduler_reset",

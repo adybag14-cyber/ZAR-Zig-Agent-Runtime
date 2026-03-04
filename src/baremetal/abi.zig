@@ -130,6 +130,7 @@ pub const command_task_wait_for: u16 = 53;
 pub const command_wake_queue_pop: u16 = 54;
 pub const command_scheduler_set_policy: u16 = 55;
 pub const command_task_set_priority: u16 = 56;
+pub const command_task_wait_interrupt: u16 = 57;
 
 pub const mode_change_reason_boot: u8 = 0;
 pub const mode_change_reason_command: u8 = 1;
@@ -185,6 +186,8 @@ pub const timer_entry_flag_periodic: u16 = 1 << 0;
 pub const wake_reason_timer: u8 = 1;
 pub const wake_reason_interrupt: u8 = 2;
 pub const wake_reason_manual: u8 = 3;
+
+pub const wait_interrupt_any_vector: u16 = 0xFFFF;
 
 pub const BaremetalStatus = extern struct {
     magic: u32,

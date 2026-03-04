@@ -153,6 +153,10 @@ while maintaining parity-first validation and release gating.
     - new control opcodes: `command_scheduler_set_policy`, `command_task_set_priority`.
     - scheduler policy constants exported through ABI: `scheduler_policy_round_robin`, `scheduler_policy_priority`.
     - scheduler selection now supports priority-aware dispatch while preserving default round-robin policy and cursor tie-break behavior.
+  - Bare-metal interrupt-wait filtering depth expansion shipped:
+    - new interrupt-wait opcode: `command_task_wait_interrupt` with `wait_interrupt_any_vector` sentinel semantics.
+    - scheduler interrupt wait telemetry export: `oc_scheduler_wait_interrupt_count`.
+    - interrupt wake path now filters by explicit wait condition (any or vector-specific), preventing unintended wakeups of manual-wait tasks on interrupt noise.
     - runtime now provides contiguous page allocation/free on a bounded heap map and syscall registration/invocation/unregistration with dispatch telemetry.
 - Phase 4 complete:
   - Guard pipeline with prompt-risk scoring + loop-guard enforcement (`src/security/guard.zig`, `src/security/loop_guard.zig`)
