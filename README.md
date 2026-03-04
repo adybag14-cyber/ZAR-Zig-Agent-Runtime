@@ -329,7 +329,9 @@ Validate npm package publishability:
 
 - publishes `@adybag14-cyber/openclaw-zig-rpc-client` to npm
 - supports `workflow_dispatch` (manual version + dist-tag) and `release.published`
-- uses `NPM_TOKEN` secret and npm provenance publishing
+- uses `NPM_TOKEN` for npmjs publish with provenance when available
+- falls back to GitHub Packages publish (`npm.pkg.github.com`) when `NPM_TOKEN` is missing
+- always builds and attaches the npm tarball to the matching GitHub release tag when present
 
 Manual release-preview trigger:
 

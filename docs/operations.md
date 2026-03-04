@@ -34,7 +34,9 @@ Recommended sequence:
 
 - publishes `@adybag14-cyber/openclaw-zig-rpc-client` to npm
 - supports manual version/dist-tag dispatch and release-triggered publish
-- requires `NPM_TOKEN` repository secret
+- uses `NPM_TOKEN` when present for npmjs publish
+- falls back to GitHub Packages publish when `NPM_TOKEN` is not configured
+- attaches built npm tarball to the matching GitHub release tag when available
 
 ## Release Notes
 

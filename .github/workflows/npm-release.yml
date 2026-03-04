@@ -17,8 +17,9 @@ on:
       - published
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
+  packages: write
 
 jobs:
   publish:
@@ -39,15 +40,20 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ inputs.version }}"
+            VERSION_RAW="${{ inputs.version }}"
             DIST_TAG="${{ inputs.dist_tag }}"
           else
-            VERSION="${{ github.event.release.tag_name }}"
+            VERSION_RAW="${{ github.event.release.tag_name }}"
             if [ "${{ github.event.release.prerelease }}" = "true" ]; then
               DIST_TAG="edge"
             else
               DIST_TAG="latest"
             fi
+          fi
+          VERSION="${VERSION_RAW#v}"
+          TAG="${VERSION_RAW}"
+          if [[ "${TAG}" != v* ]]; then
+            TAG="v${TAG}"
           fi
           VERSION="${VERSION#v}"
           if [ -z "${VERSION}" ]; then
@@ -58,8 +64,9 @@ jobs:
             DIST_TAG="latest"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "dist_tag=${DIST_TAG}" >> "$GITHUB_OUTPUT"
-          echo "Resolved version=${VERSION}, dist_tag=${DIST_TAG}"
+          echo "Resolved tag=${TAG}, version=${VERSION}, dist_tag=${DIST_TAG}"
 
       - name: Set package version
         working-directory: npm/openclaw-zig-rpc-client
@@ -69,13 +76,71 @@ jobs:
         working-directory: npm/openclaw-zig-rpc-client
         run: npm pack --dry-run
 
-      - name: Publish npm package
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Build npm tarball
+        id: tarball
+        shell: bash
         working-directory: npm/openclaw-zig-rpc-client
         run: |
-          if [ -z "${NODE_AUTH_TOKEN}" ]; then
-            echo "NPM_TOKEN secret is required for npm publish."
+          set -euo pipefail
+          PACK_FILE="$(npm pack | tail -n 1)"
+          if [ ! -f "${PACK_FILE}" ]; then
+            echo "Failed to produce npm tarball."
             exit 1
           fi
+          echo "file=${PACK_FILE}" >> "$GITHUB_OUTPUT"
+          echo "tarball=$(pwd)/${PACK_FILE}" >> "$GITHUB_OUTPUT"
+          echo "Built tarball: ${PACK_FILE}"
+
+      - name: Upload npm tarball to matching GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.tag }}"
+          FILE="${{ steps.tarball.outputs.tarball }}"
+          if gh release view "${TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "${FILE}" --repo "${{ github.repository }}" --clobber
+            echo "Attached npm tarball to release ${TAG}."
+          else
+            echo "Release ${TAG} not found. Skipping tarball attach."
+          fi
+
+      - name: Publish npm package (npmjs)
+        if: ${{ secrets.NPM_TOKEN != '' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        working-directory: npm/openclaw-zig-rpc-client
+        run: |
+          set -euo pipefail
+          PACKAGE_NAME="$(node -p "require('./package.json').name")"
+          VERSION="${{ steps.meta.outputs.version }}"
+          if npm view "${PACKAGE_NAME}@${VERSION}" --registry https://registry.npmjs.org >/dev/null 2>&1; then
+            echo "${PACKAGE_NAME}@${VERSION} already exists on npmjs. Skipping publish."
+            exit 0
+          fi
           npm publish --access public --tag "${{ steps.meta.outputs.dist_tag }}" --provenance
+
+      - name: Setup Node for GitHub Packages fallback
+        if: ${{ secrets.NPM_TOKEN == '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://npm.pkg.github.com"
+
+      - name: Publish npm package (GitHub Packages fallback)
+        if: ${{ secrets.NPM_TOKEN == '' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        shell: bash
+        working-directory: npm/openclaw-zig-rpc-client
+        run: |
+          set -euo pipefail
+          PACKAGE_NAME="$(node -p "require('./package.json').name")"
+          VERSION="${{ steps.meta.outputs.version }}"
+          if npm view "${PACKAGE_NAME}@${VERSION}" --registry https://npm.pkg.github.com >/dev/null 2>&1; then
+            echo "${PACKAGE_NAME}@${VERSION} already exists on GitHub Packages. Skipping fallback publish."
+            exit 0
+          fi
+          npm publish --tag "${{ steps.meta.outputs.dist_tag }}" --registry https://npm.pkg.github.com
