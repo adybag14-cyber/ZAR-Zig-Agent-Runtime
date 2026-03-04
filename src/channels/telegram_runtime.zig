@@ -296,6 +296,30 @@ pub const TelegramRuntime = struct {
         else
             try std.fmt.allocPrint(allocator, "Auth required for `{s}/{s}`. Run `/auth start {s}` then `/auth complete {s} <code_or_url>`.", .{ provider, model, provider, provider });
 
+        const provider_used = normalizeTtsProvider(self.tts_provider);
+        var audio_base64: ?[]u8 = null;
+        var audio_format: []const u8 = "";
+        var audio_bytes: usize = 0;
+        var audio_source: []const u8 = "";
+        if (authorized and self.tts_enabled and std.mem.trim(u8, reply, " \t\r\n").len > 0) {
+            audio_source = resolveTtsSource(allocator, provider_used);
+            audio_base64 = try synthesizeTelegramTtsClipBase64(
+                allocator,
+                std.mem.trim(u8, reply, " \t\r\n"),
+                provider_used,
+                audio_source,
+            );
+            audio_format = "wav";
+            audio_bytes = base64DecodedLen(audio_base64.?);
+            const audio_payload = try std.fmt.allocPrint(
+                allocator,
+                "{{\"format\":\"{s}\",\"providerUsed\":\"{s}\",\"source\":\"{s}\",\"audioBytes\":{d},\"audioBase64\":\"{s}\"}}",
+                .{ audio_format, provider_used, audio_source, audio_bytes, audio_base64.? },
+            );
+            defer allocator.free(audio_payload);
+            try self.enqueue(target, session_id, "assistant", "audio_clip", audio_payload);
+        }
+
         try self.enqueue(target, session_id, "assistant", "assistant_reply", reply);
         return .{
             .is_command = false,
@@ -306,6 +330,11 @@ pub const TelegramRuntime = struct {
             .login_session_id = login_session,
             .login_code = "",
             .auth_status = if (authorized) "authorized" else auth_status,
+            .audio_base64 = audio_base64,
+            .audio_format = audio_format,
+            .audio_bytes = audio_bytes,
+            .audio_provider_used = if (audio_base64 != null) provider_used else "",
+            .audio_source = if (audio_base64 != null) audio_source else "",
         };
     }
 
@@ -601,18 +630,8 @@ pub const TelegramRuntime = struct {
                 };
             }
 
-            const has_openai_key = ttsProviderApiKeyAvailable(allocator, "openai");
-            const has_elevenlabs_key = ttsProviderApiKeyAvailable(allocator, "elevenlabs");
-            const has_kittentts_bin = kittenttsBinaryAvailable(allocator);
             const provider_used = normalizeTtsProvider(self.tts_provider);
-            const source = if (std.ascii.eqlIgnoreCase(provider_used, "openai") and has_openai_key)
-                "remote"
-            else if (std.ascii.eqlIgnoreCase(provider_used, "elevenlabs") and has_elevenlabs_key)
-                "remote"
-            else if (std.ascii.eqlIgnoreCase(provider_used, "kittentts") and has_kittentts_bin)
-                "offline-local"
-            else
-                "simulated";
+            const source = resolveTtsSource(allocator, provider_used);
             const audio_base64 = try synthesizeTelegramTtsClipBase64(allocator, trimmed, provider_used, source);
 
             return .{
@@ -1576,6 +1595,13 @@ fn kittenttsBinaryAvailable(allocator: std.mem.Allocator) bool {
     });
 }
 
+fn resolveTtsSource(allocator: std.mem.Allocator, provider_used: []const u8) []const u8 {
+    if (std.ascii.eqlIgnoreCase(provider_used, "openai") and ttsProviderApiKeyAvailable(allocator, "openai")) return "remote";
+    if (std.ascii.eqlIgnoreCase(provider_used, "elevenlabs") and ttsProviderApiKeyAvailable(allocator, "elevenlabs")) return "remote";
+    if (std.ascii.eqlIgnoreCase(provider_used, "kittentts") and kittenttsBinaryAvailable(allocator)) return "offline-local";
+    return "simulated";
+}
+
 fn synthesizeTelegramTtsClipBase64(
     allocator: std.mem.Allocator,
     text: []const u8,
@@ -1714,6 +1740,9 @@ test "telegram runtime auth command and reply poll lifecycle" {
     var chat_result = try runtime.sendFromFrame(allocator, chat_frame);
     defer chat_result.deinit(allocator);
     try std.testing.expect(std.mem.indexOf(u8, chat_result.reply, "OpenClaw Zig") != null);
+    try std.testing.expect(chat_result.audioAvailable);
+    try std.testing.expect(chat_result.audioBase64.len > 0);
+    try std.testing.expect(std.mem.eql(u8, chat_result.audioFormat, "wav"));
 
     const poll_frame =
         \\{"id":"tg-poll","method":"poll","params":{"channel":"telegram","limit":10}}
@@ -1721,6 +1750,14 @@ test "telegram runtime auth command and reply poll lifecycle" {
     var poll_result = try runtime.pollFromFrame(allocator, poll_frame);
     defer poll_result.deinit(allocator);
     try std.testing.expect(poll_result.count >= 1);
+    var saw_audio_clip = false;
+    for (poll_result.updates) |update| {
+        if (std.mem.eql(u8, update.kind, "audio_clip")) {
+            saw_audio_clip = true;
+            break;
+        }
+    }
+    try std.testing.expect(saw_audio_clip);
 }
 
 test "telegram runtime poll compacts queue front in one pass and keeps ordering" {

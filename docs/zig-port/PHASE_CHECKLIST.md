@@ -46,6 +46,7 @@ Phase 5 enhancement notes:
   - `/auth wait` supports backward-compatible positional timeout (`/auth wait <provider> [account] <seconds>`) in addition to `--timeout`.
   - `/auth link|open` now re-surfaces active login URL + code + exact completion commands for phone-only flows.
   - `/tts speak` now emits clip payload metadata in `send` responses (`audioAvailable`, `audioFormat`, `audioBase64`, `audioBytes`, `audioProviderUsed`, `audioSource`) and queues a dedicated `audio_clip` update for downstream transport adapters.
+  - Authorized non-command Telegram replies now also emit `audio_clip` updates + audio metadata in `send` responses when TTS is enabled, aligning with Rust bridge auto-TTS response behavior.
   - Telegram TTS key/bin status checks now use alias-aware env resolution for Zig/Go/Rust migration paths (matching dispatcher fallback chains).
 - Added live Lightpanda probe telemetry for `browser.request` and `browser.open`:
   - Dispatcher now probes `<endpoint>/json/version` per request and returns structured probe status (`ok/url/statusCode/latencyMs/error`).
