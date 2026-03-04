@@ -1,0 +1,529 @@
+const std = @import("std");
+const lightpanda = @import("lightpanda.zig");
+const time_util = @import("../util/time.zig");
+
+const direct_openai_url = "https://api.openai.com/v1/chat/completions";
+const direct_anthropic_url = "https://api.anthropic.com/v1/messages";
+const anthropic_version = "2023-06-01";
+
+pub fn executeCompletion(
+    allocator: std.mem.Allocator,
+    provider_raw: []const u8,
+    model_raw: []const u8,
+    messages: []const lightpanda.CompletionMessage,
+    temperature: ?f64,
+    max_tokens: ?u32,
+    api_key_raw: []const u8,
+    request_timeout_ms: u32,
+    stream_requested: bool,
+) !lightpanda.BridgeCompletionExecution {
+    const normalized_provider = lightpanda.normalizeProvider(provider_raw) catch "";
+    if (!std.ascii.eqlIgnoreCase(normalized_provider, "chatgpt") and !std.ascii.eqlIgnoreCase(normalized_provider, "claude")) {
+        return .{
+            .requested = true,
+            .ok = false,
+            .provider = try allocator.dupe(u8, if (normalized_provider.len > 0) normalized_provider else std.mem.trim(u8, provider_raw, " \t\r\n")),
+            .endpoint = try allocator.dupe(u8, ""),
+            .requestUrl = try allocator.dupe(u8, ""),
+            .requestTimeoutMs = request_timeout_ms,
+            .statusCode = 0,
+            .model = try allocator.dupe(u8, normalizedModel(normalized_provider, model_raw)),
+            .assistantText = try allocator.dupe(u8, ""),
+            .latencyMs = 0,
+            .errorText = try allocator.dupe(u8, "unsupported direct provider; supported providers: chatgpt, claude"),
+        };
+    }
+
+    const api_key = std.mem.trim(u8, api_key_raw, " \t\r\n");
+    if (api_key.len == 0) {
+        const model = normalizedModel(normalized_provider, model_raw);
+        return .{
+            .requested = true,
+            .ok = false,
+            .provider = try allocator.dupe(u8, normalized_provider),
+            .endpoint = try allocator.dupe(u8, ""),
+            .requestUrl = try allocator.dupe(u8, if (std.ascii.eqlIgnoreCase(normalized_provider, "claude")) direct_anthropic_url else direct_openai_url),
+            .requestTimeoutMs = request_timeout_ms,
+            .statusCode = 0,
+            .model = try allocator.dupe(u8, model),
+            .assistantText = try allocator.dupe(u8, ""),
+            .latencyMs = 0,
+            .errorText = try allocator.dupe(u8, "missing API key for direct provider request"),
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(normalized_provider, "claude")) {
+        return executeAnthropicCompletion(
+            allocator,
+            normalized_provider,
+            model_raw,
+            messages,
+            temperature,
+            max_tokens,
+            api_key,
+            request_timeout_ms,
+            stream_requested,
+        );
+    }
+    return executeOpenAICompletion(
+        allocator,
+        normalized_provider,
+        model_raw,
+        messages,
+        temperature,
+        max_tokens,
+        api_key,
+        request_timeout_ms,
+        stream_requested,
+    );
+}
+
+fn executeOpenAICompletion(
+    allocator: std.mem.Allocator,
+    provider: []const u8,
+    model_raw: []const u8,
+    messages: []const lightpanda.CompletionMessage,
+    temperature: ?f64,
+    max_tokens: ?u32,
+    api_key: []const u8,
+    request_timeout_ms: u32,
+    stream_requested: bool,
+) !lightpanda.BridgeCompletionExecution {
+    const model = normalizedModel(provider, model_raw);
+    const endpoint = try allocator.dupe(u8, "https://api.openai.com");
+    errdefer allocator.free(endpoint);
+    const request_url = try allocator.dupe(u8, direct_openai_url);
+    errdefer allocator.free(request_url);
+
+    const Payload = struct {
+        model: []const u8,
+        messages: []const lightpanda.CompletionMessage,
+        temperature: ?f64 = null,
+        max_tokens: ?u32 = null,
+        stream: bool = false,
+    };
+
+    const payload = Payload{
+        .model = model,
+        .messages = messages,
+        .temperature = temperature,
+        .max_tokens = max_tokens,
+        .stream = stream_requested,
+    };
+
+    var request_body: std.Io.Writer.Allocating = .init(allocator);
+    defer request_body.deinit();
+    try std.json.Stringify.value(payload, .{ .emit_null_optional_fields = false }, &request_body.writer);
+    const request_payload = try request_body.toOwnedSlice();
+    defer allocator.free(request_payload);
+
+    var client: std.http.Client = .{
+        .allocator = allocator,
+        .io = std.Io.Threaded.global_single_threaded.io(),
+    };
+    defer client.deinit();
+
+    var response_body: std.Io.Writer.Allocating = .init(allocator);
+    defer response_body.deinit();
+
+    const authorization = try std.fmt.allocPrint(allocator, "Bearer {s}", .{api_key});
+    defer allocator.free(authorization);
+    var headers = [_]std.http.Header{
+        .{ .name = "content-type", .value = "application/json" },
+        .{ .name = "authorization", .value = authorization },
+        .{ .name = "accept", .value = "text/event-stream" },
+    };
+    const extra_headers = if (stream_requested) headers[0..3] else headers[0..2];
+
+    const started_ms = time_util.nowMs();
+    const fetch_result = client.fetch(.{
+        .location = .{ .url = request_url },
+        .method = .POST,
+        .payload = request_payload,
+        .keep_alive = false,
+        .extra_headers = extra_headers,
+        .response_writer = &response_body.writer,
+    }) catch |err| {
+        return .{
+            .requested = true,
+            .ok = false,
+            .provider = try allocator.dupe(u8, provider),
+            .endpoint = endpoint,
+            .requestUrl = request_url,
+            .requestTimeoutMs = request_timeout_ms,
+            .statusCode = 0,
+            .model = try allocator.dupe(u8, model),
+            .assistantText = try allocator.dupe(u8, ""),
+            .latencyMs = time_util.nowMs() - started_ms,
+            .errorText = try std.fmt.allocPrint(allocator, "direct provider request failed: {s}", .{@errorName(err)}),
+        };
+    };
+
+    const response_status: u16 = @intCast(@intFromEnum(fetch_result.status));
+    const response_json = try response_body.toOwnedSlice();
+    defer allocator.free(response_json);
+
+    if (response_status < 200 or response_status >= 300) {
+        return .{
+            .requested = true,
+            .ok = false,
+            .provider = try allocator.dupe(u8, provider),
+            .endpoint = endpoint,
+            .requestUrl = request_url,
+            .requestTimeoutMs = request_timeout_ms,
+            .statusCode = response_status,
+            .model = try allocator.dupe(u8, model),
+            .assistantText = try allocator.dupe(u8, ""),
+            .latencyMs = time_util.nowMs() - started_ms,
+            .errorText = try allocErrorSnippet(allocator, response_json, response_status),
+        };
+    }
+
+    const assistant_text = if (stream_requested)
+        try extractOpenAIStreamTextAlloc(allocator, response_json)
+    else
+        try extractOpenAIAssistantTextAlloc(allocator, response_json);
+
+    var parsed_model = try allocator.dupe(u8, model);
+    if (!stream_requested) {
+        const maybe_model = try extractModelFromJsonAlloc(allocator, response_json);
+        if (maybe_model) |resolved| {
+            allocator.free(parsed_model);
+            parsed_model = resolved;
+        }
+    }
+
+    return .{
+        .requested = true,
+        .ok = true,
+        .provider = try allocator.dupe(u8, provider),
+        .endpoint = endpoint,
+        .requestUrl = request_url,
+        .requestTimeoutMs = request_timeout_ms,
+        .statusCode = response_status,
+        .model = parsed_model,
+        .assistantText = assistant_text,
+        .latencyMs = time_util.nowMs() - started_ms,
+        .errorText = try allocator.dupe(u8, ""),
+    };
+}
+
+fn executeAnthropicCompletion(
+    allocator: std.mem.Allocator,
+    provider: []const u8,
+    model_raw: []const u8,
+    messages: []const lightpanda.CompletionMessage,
+    temperature: ?f64,
+    max_tokens: ?u32,
+    api_key: []const u8,
+    request_timeout_ms: u32,
+    stream_requested: bool,
+) !lightpanda.BridgeCompletionExecution {
+    const model = normalizedModel(provider, model_raw);
+    const endpoint = try allocator.dupe(u8, "https://api.anthropic.com");
+    errdefer allocator.free(endpoint);
+    const request_url = try allocator.dupe(u8, direct_anthropic_url);
+    errdefer allocator.free(request_url);
+
+    const Payload = struct {
+        model: []const u8,
+        max_tokens: u32,
+        messages: []const lightpanda.CompletionMessage,
+        temperature: ?f64 = null,
+        stream: bool = false,
+    };
+
+    const payload = Payload{
+        .model = model,
+        .max_tokens = max_tokens orelse 1024,
+        .messages = messages,
+        .temperature = temperature,
+        .stream = stream_requested,
+    };
+
+    var request_body: std.Io.Writer.Allocating = .init(allocator);
+    defer request_body.deinit();
+    try std.json.Stringify.value(payload, .{ .emit_null_optional_fields = false }, &request_body.writer);
+    const request_payload = try request_body.toOwnedSlice();
+    defer allocator.free(request_payload);
+
+    var client: std.http.Client = .{
+        .allocator = allocator,
+        .io = std.Io.Threaded.global_single_threaded.io(),
+    };
+    defer client.deinit();
+
+    var response_body: std.Io.Writer.Allocating = .init(allocator);
+    defer response_body.deinit();
+
+    var headers = [_]std.http.Header{
+        .{ .name = "content-type", .value = "application/json" },
+        .{ .name = "x-api-key", .value = api_key },
+        .{ .name = "anthropic-version", .value = anthropic_version },
+        .{ .name = "accept", .value = "text/event-stream" },
+    };
+    const extra_headers = if (stream_requested) headers[0..4] else headers[0..3];
+
+    const started_ms = time_util.nowMs();
+    const fetch_result = client.fetch(.{
+        .location = .{ .url = request_url },
+        .method = .POST,
+        .payload = request_payload,
+        .keep_alive = false,
+        .extra_headers = extra_headers,
+        .response_writer = &response_body.writer,
+    }) catch |err| {
+        return .{
+            .requested = true,
+            .ok = false,
+            .provider = try allocator.dupe(u8, provider),
+            .endpoint = endpoint,
+            .requestUrl = request_url,
+            .requestTimeoutMs = request_timeout_ms,
+            .statusCode = 0,
+            .model = try allocator.dupe(u8, model),
+            .assistantText = try allocator.dupe(u8, ""),
+            .latencyMs = time_util.nowMs() - started_ms,
+            .errorText = try std.fmt.allocPrint(allocator, "direct provider request failed: {s}", .{@errorName(err)}),
+        };
+    };
+
+    const response_status: u16 = @intCast(@intFromEnum(fetch_result.status));
+    const response_json = try response_body.toOwnedSlice();
+    defer allocator.free(response_json);
+
+    if (response_status < 200 or response_status >= 300) {
+        return .{
+            .requested = true,
+            .ok = false,
+            .provider = try allocator.dupe(u8, provider),
+            .endpoint = endpoint,
+            .requestUrl = request_url,
+            .requestTimeoutMs = request_timeout_ms,
+            .statusCode = response_status,
+            .model = try allocator.dupe(u8, model),
+            .assistantText = try allocator.dupe(u8, ""),
+            .latencyMs = time_util.nowMs() - started_ms,
+            .errorText = try allocErrorSnippet(allocator, response_json, response_status),
+        };
+    }
+
+    const assistant_text = if (stream_requested)
+        try extractAnthropicStreamTextAlloc(allocator, response_json)
+    else
+        try extractAnthropicAssistantTextAlloc(allocator, response_json);
+
+    return .{
+        .requested = true,
+        .ok = true,
+        .provider = try allocator.dupe(u8, provider),
+        .endpoint = endpoint,
+        .requestUrl = request_url,
+        .requestTimeoutMs = request_timeout_ms,
+        .statusCode = response_status,
+        .model = try allocator.dupe(u8, model),
+        .assistantText = assistant_text,
+        .latencyMs = time_util.nowMs() - started_ms,
+        .errorText = try allocator.dupe(u8, ""),
+    };
+}
+
+fn normalizedModel(provider: []const u8, model_raw: []const u8) []const u8 {
+    const trimmed = std.mem.trim(u8, model_raw, " \t\r\n");
+    if (trimmed.len > 0) return trimmed;
+    if (std.ascii.eqlIgnoreCase(provider, "claude")) return "claude-opus-4";
+    return "gpt-5.2";
+}
+
+fn allocErrorSnippet(allocator: std.mem.Allocator, body: []const u8, status_code: u16) ![]u8 {
+    const trimmed = std.mem.trim(u8, body, " \t\r\n");
+    if (trimmed.len == 0) {
+        return std.fmt.allocPrint(allocator, "direct provider returned status {d} (empty body)", .{status_code});
+    }
+    const max_len: usize = 200;
+    const prefix = if (trimmed.len > max_len) trimmed[0..max_len] else trimmed;
+    if (trimmed.len > max_len) {
+        return std.fmt.allocPrint(allocator, "direct provider returned status {d}: {s}...", .{ status_code, prefix });
+    }
+    return std.fmt.allocPrint(allocator, "direct provider returned status {d}: {s}", .{ status_code, prefix });
+}
+
+fn extractModelFromJsonAlloc(allocator: std.mem.Allocator, payload: []const u8) !?[]u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, payload, .{}) catch return null;
+    defer parsed.deinit();
+    if (parsed.value != .object) return null;
+    if (parsed.value.object.get("model")) |value| {
+        if (value == .string) {
+            const trimmed = std.mem.trim(u8, value.string, " \t\r\n");
+            if (trimmed.len > 0) return try allocator.dupe(u8, trimmed);
+        }
+    }
+    return null;
+}
+
+fn extractOpenAIAssistantTextAlloc(allocator: std.mem.Allocator, payload: []const u8) ![]u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, payload, .{}) catch {
+        return allocator.dupe(u8, "");
+    };
+    defer parsed.deinit();
+    if (parsed.value != .object) return allocator.dupe(u8, "");
+    if (parsed.value.object.get("choices")) |choices| {
+        if (choices == .array) {
+            for (choices.array.items) |choice| {
+                if (choice != .object) continue;
+                if (choice.object.get("message")) |message| {
+                    if (message != .object) continue;
+                    if (message.object.get("content")) |content| {
+                        if (content == .string) {
+                            return allocator.dupe(u8, std.mem.trim(u8, content.string, " \t\r\n"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return allocator.dupe(u8, "");
+}
+
+fn extractAnthropicAssistantTextAlloc(allocator: std.mem.Allocator, payload: []const u8) ![]u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, payload, .{}) catch {
+        return allocator.dupe(u8, "");
+    };
+    defer parsed.deinit();
+    if (parsed.value != .object) return allocator.dupe(u8, "");
+    if (parsed.value.object.get("content")) |content| {
+        if (content == .array) {
+            var out: std.ArrayList(u8) = .empty;
+            defer out.deinit(allocator);
+            for (content.array.items) |item| {
+                if (item != .object) continue;
+                const kind = item.object.get("type") orelse continue;
+                if (kind != .string or !std.ascii.eqlIgnoreCase(std.mem.trim(u8, kind.string, " \t\r\n"), "text")) continue;
+                const text = item.object.get("text") orelse continue;
+                if (text != .string) continue;
+                const trimmed = std.mem.trim(u8, text.string, " \t\r\n");
+                if (trimmed.len == 0) continue;
+                if (out.items.len > 0) try out.append(allocator, '\n');
+                try out.appendSlice(allocator, trimmed);
+            }
+            return out.toOwnedSlice(allocator);
+        }
+    }
+    return allocator.dupe(u8, "");
+}
+
+fn extractOpenAIStreamTextAlloc(allocator: std.mem.Allocator, payload: []const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    var lines = std.mem.splitScalar(u8, payload, '\n');
+    while (lines.next()) |line_raw| {
+        const line = std.mem.trim(u8, line_raw, " \t\r\n");
+        if (line.len == 0) continue;
+        if (!std.mem.startsWith(u8, line, "data:")) continue;
+        const data = std.mem.trim(u8, line["data:".len..], " \t\r\n");
+        if (data.len == 0 or std.mem.eql(u8, data, "[DONE]")) continue;
+
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, data, .{}) catch continue;
+        defer parsed.deinit();
+        if (parsed.value != .object) continue;
+        const choices = parsed.value.object.get("choices") orelse continue;
+        if (choices != .array) continue;
+        for (choices.array.items) |choice| {
+            if (choice != .object) continue;
+            const delta = choice.object.get("delta") orelse continue;
+            if (delta != .object) continue;
+            const content = delta.object.get("content") orelse continue;
+            if (content != .string) continue;
+            const text = std.mem.trim(u8, content.string, " \t\r\n");
+            if (text.len == 0) continue;
+            if (out.items.len > 0) try out.append(allocator, ' ');
+            try out.appendSlice(allocator, text);
+        }
+    }
+    return out.toOwnedSlice(allocator);
+}
+
+fn extractAnthropicStreamTextAlloc(allocator: std.mem.Allocator, payload: []const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    var lines = std.mem.splitScalar(u8, payload, '\n');
+    while (lines.next()) |line_raw| {
+        const line = std.mem.trim(u8, line_raw, " \t\r\n");
+        if (line.len == 0) continue;
+        if (!std.mem.startsWith(u8, line, "data:")) continue;
+        const data = std.mem.trim(u8, line["data:".len..], " \t\r\n");
+        if (data.len == 0 or std.mem.eql(u8, data, "[DONE]")) continue;
+
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, data, .{}) catch continue;
+        defer parsed.deinit();
+        if (parsed.value != .object) continue;
+        const event_type = parsed.value.object.get("type") orelse continue;
+        if (event_type != .string) continue;
+        const event_name = std.mem.trim(u8, event_type.string, " \t\r\n");
+
+        if (std.ascii.eqlIgnoreCase(event_name, "content_block_delta")) {
+            const delta = parsed.value.object.get("delta") orelse continue;
+            if (delta != .object) continue;
+            const text = delta.object.get("text") orelse continue;
+            if (text != .string) continue;
+            const trimmed = std.mem.trim(u8, text.string, " \t\r\n");
+            if (trimmed.len == 0) continue;
+            if (out.items.len > 0) try out.append(allocator, ' ');
+            try out.appendSlice(allocator, trimmed);
+        }
+    }
+    return out.toOwnedSlice(allocator);
+}
+
+test "direct provider completion rejects unsupported providers deterministically" {
+    const allocator = std.testing.allocator;
+    const messages = [_]lightpanda.CompletionMessage{
+        .{ .role = "user", .content = "hello" },
+    };
+    var execution = try executeCompletion(allocator, "qwen", "", messages[0..], null, null, "test-key", 1500, false);
+    defer execution.deinit(allocator);
+    try std.testing.expect(execution.requested);
+    try std.testing.expect(!execution.ok);
+    try std.testing.expect(std.mem.indexOf(u8, execution.errorText, "unsupported direct provider") != null);
+}
+
+test "direct provider completion requires api key" {
+    const allocator = std.testing.allocator;
+    const messages = [_]lightpanda.CompletionMessage{
+        .{ .role = "user", .content = "hello" },
+    };
+    var execution = try executeCompletion(allocator, "chatgpt", "gpt-5.2", messages[0..], null, null, "", 1500, false);
+    defer execution.deinit(allocator);
+    try std.testing.expect(execution.requested);
+    try std.testing.expect(!execution.ok);
+    try std.testing.expect(std.mem.indexOf(u8, execution.errorText, "missing API key") != null);
+}
+
+test "openai stream parser extracts assistant text from sse chunks" {
+    const allocator = std.testing.allocator;
+    const sse =
+        \\event: message
+        \\data: {"choices":[{"delta":{"content":"hello"}}]}
+        \\
+        \\data: {"choices":[{"delta":{"content":"world"}}]}
+        \\data: [DONE]
+    ;
+    const text = try extractOpenAIStreamTextAlloc(allocator, sse);
+    defer allocator.free(text);
+    try std.testing.expect(std.mem.eql(u8, text, "hello world"));
+}
+
+test "anthropic stream parser extracts assistant text from sse chunks" {
+    const allocator = std.testing.allocator;
+    const sse =
+        \\event: content_block_delta
+        \\data: {"type":"content_block_delta","delta":{"text":"alpha"}}
+        \\
+        \\data: {"type":"content_block_delta","delta":{"text":"beta"}}
+    ;
+    const text = try extractAnthropicStreamTextAlloc(allocator, sse);
+    defer allocator.free(text);
+    try std.testing.expect(std.mem.eql(u8, text, "alpha beta"));
+}

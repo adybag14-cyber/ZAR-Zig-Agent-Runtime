@@ -80,6 +80,10 @@ Phase 5 enhancement notes:
   - When prompt/messages are present, dispatcher now POSTs to `<endpoint>/v1/chat/completions`.
   - RPC responses include structured `bridgeCompletion` telemetry (`requested/ok/provider/requestUrl/statusCode/model/assistantText/latencyMs/error`).
   - Request parsing now supports completion payload keys with normalization: `messages`, `prompt|message|text`, `temperature`, `max_tokens|maxTokens`, `loginSessionId|login_session_id`, and `apiKey|api_key`.
+- Added direct provider completion fallback path (`chatgpt` and `claude`) for `browser.request`:
+  - New request flags: `directProvider`, `direct_provider`, `useProviderApi`.
+  - Optional completion streaming parse with `params.stream=true` now supports SSE delta extraction for OpenAI and Anthropic responses.
+  - Provider API-key resolution supports explicit request keys plus config/env fallback aliases.
 - Completion semantics hardening:
   - Top-level `ok/status/message` for `browser.request` now reflect live completion outcome when completion execution is requested (`status=failed` on bridge failure).
   - Assistant text extraction now supports additional response shapes: `output_text`, `output[].content[]`, and array-based `choices[].message.content`.

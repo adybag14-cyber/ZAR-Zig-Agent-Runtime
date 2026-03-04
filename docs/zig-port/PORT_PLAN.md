@@ -215,6 +215,10 @@ while maintaining parity-first validation and release gating.
     - `browser.request` now executes live Lightpanda completion calls when prompt/messages payloads are present (`POST <endpoint>/v1/chat/completions`).
     - Responses now include `bridgeCompletion` telemetry with request URL, status code, assistant text extraction, latency, and failure reason surfaces.
     - Completion parser now normalizes aliases and payload keys (`prompt|message|text`, `messages`, `max_tokens|maxTokens`, `loginSessionId|login_session_id`, `apiKey|api_key`) for parity with Go runtime behavior.
+  - Added direct provider completion fallback path (`chatgpt`/`claude`) in dispatcher:
+    - `browser.request` supports `directProvider`/`direct_provider`/`useProviderApi` flags to bypass Lightpanda completion relay when needed.
+    - Direct provider path supports optional completion streaming parse (`params.stream=true`) with SSE delta extraction for OpenAI and Anthropic response streams.
+    - API key resolution now supports explicit request keys and fallback secret lookups (config overlay + env aliases) for provider-specific key names.
   - Added completion semantics hardening:
     - Top-level `ok/status/message` now reflect bridge execution success/failure for completion requests (failure surfaces as `status=failed` with bridge error context).
     - Assistant text extraction expanded to additional response shapes (`output_text`, `output[].content[]`, and array-form message content) to reduce empty-response false negatives.
