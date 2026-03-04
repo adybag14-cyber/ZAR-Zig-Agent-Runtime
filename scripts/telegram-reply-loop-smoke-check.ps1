@@ -59,6 +59,32 @@ try {
     throw "missing auth session id or code from /auth start send response"
   }
 
+  $linkPayload = @{
+    id = "tg-auth-link"
+    method = "send"
+    params = @{
+      channel = "telegram"
+      to = "smoke-room"
+      sessionId = "smoke-session"
+      message = "/auth link chatgpt"
+    }
+  } | ConvertTo-Json -Depth 8 -Compress
+  $link = Invoke-WebRequest -Uri "http://127.0.0.1:$port/rpc" -Method Post -ContentType "application/json" -Body $linkPayload -UseBasicParsing
+  $linkJson = $link.Content | ConvertFrom-Json
+  $linkReply = "$($linkJson.result.reply)"
+  if ([string]::IsNullOrWhiteSpace($linkReply)) {
+    throw "/auth link response is empty"
+  }
+  if ($linkReply -notmatch [regex]::Escape($loginCode)) {
+    throw "/auth link reply does not include login code"
+  }
+  if ($linkReply -notmatch [regex]::Escape($loginSessionId)) {
+    throw "/auth link reply does not include login session id"
+  }
+  if ($linkReply -notmatch "/auth complete chatgpt") {
+    throw "/auth link reply does not include expected completion guidance"
+  }
+
   $completePayload = @{
     id = "tg-auth-complete"
     method = "send"
@@ -101,9 +127,12 @@ try {
   }
 
   Write-Output "TELEGRAM_SEND_AUTH_START_HTTP=$($start.StatusCode)"
+  Write-Output "TELEGRAM_SEND_AUTH_LINK_HTTP=$($link.StatusCode)"
   Write-Output "TELEGRAM_SEND_AUTH_COMPLETE_HTTP=$($complete.StatusCode)"
   Write-Output "TELEGRAM_SEND_CHAT_HTTP=$($chat.StatusCode)"
   Write-Output "TELEGRAM_POLL_HTTP=$($poll.StatusCode)"
+  Write-Output "TELEGRAM_AUTH_LINK_HAS_CODE=$([bool]($linkReply -match [regex]::Escape($loginCode)))"
+  Write-Output "TELEGRAM_AUTH_LINK_HAS_SESSION=$([bool]($linkReply -match [regex]::Escape($loginSessionId)))"
   Write-Output "TELEGRAM_AUTH_COMPLETE_STATUS=$($completeJson.result.authStatus)"
   Write-Output "TELEGRAM_CHAT_REPLY_HAS_OPENCLAW=$([bool]($chatJson.result.reply -match 'OpenClaw Zig'))"
   Write-Output "TELEGRAM_POLL_COUNT=$($pollJson.result.count)"

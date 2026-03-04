@@ -105,6 +105,7 @@ while maintaining parity-first validation and release gating.
     - `/auth link|open` now re-surfaces pending auth URL/code/session details with provider/account aware completion commands.
   - Dispatcher `channels.status` now includes telegram queue/target/auth telemetry
   - Added auth + reply-loop smokes (`scripts/web-login-smoke-check.ps1`, `scripts/telegram-reply-loop-smoke-check.ps1`)
+  - Telegram reply-loop smoke now asserts `/auth link` parity guidance includes active code/session identifiers and completion command hints.
 - Phase 6 in progress:
   - Memory persistence primitives implemented (`src/memory/store.zig`) with append/history/stats and on-disk JSON persistence.
   - Memory/runtime/channel optimization slice shipped:
