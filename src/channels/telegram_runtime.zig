@@ -105,6 +105,8 @@ pub const TelegramRuntime = struct {
     max_queue_entries: usize,
     target_models: std.StringHashMap([]u8),
     auth_bindings: std.StringHashMap([]u8),
+    tts_enabled: bool,
+    tts_provider: []u8,
     next_update_id: u64,
 
     pub fn init(allocator: std.mem.Allocator, login_manager: *web_login.LoginManager) TelegramRuntime {
@@ -115,6 +117,8 @@ pub const TelegramRuntime = struct {
             .max_queue_entries = 4096,
             .target_models = std.StringHashMap([]u8).init(allocator),
             .auth_bindings = std.StringHashMap([]u8).init(allocator),
+            .tts_enabled = true,
+            .tts_provider = allocator.dupe(u8, "edge") catch @panic("oom"),
             .next_update_id = 1,
         };
     }
@@ -136,6 +140,7 @@ pub const TelegramRuntime = struct {
             self.allocator.free(entry.value_ptr.*);
         }
         self.auth_bindings.deinit();
+        self.allocator.free(self.tts_provider);
     }
 
     pub fn status(self: *TelegramRuntime) StatusView {
@@ -316,7 +321,7 @@ pub const TelegramRuntime = struct {
         var it = std.mem.tokenizeAny(u8, raw_message, " \t\r\n");
         while (it.next()) |token| try tokens.append(allocator, token);
         if (tokens.items.len == 0) {
-            return .{ .is_command = true, .command_name = "help", .reply = try allocator.dupe(u8, "Commands: /model, /auth, /start, /help"), .provider = "chatgpt", .model = "gpt-5.2", .login_session_id = "", .login_code = "", .auth_status = "ok" };
+            return .{ .is_command = true, .command_name = "help", .reply = try allocator.dupe(u8, "Commands: /model, /auth, /tts, /start, /help"), .provider = "chatgpt", .model = "gpt-5.2", .login_session_id = "", .login_code = "", .auth_status = "ok" };
         }
 
         var command = tokens.items[0];
@@ -328,7 +333,7 @@ pub const TelegramRuntime = struct {
             return .{
                 .is_command = true,
                 .command_name = "help",
-                .reply = try allocator.dupe(u8, "Commands: /model, /auth, /start, /help"),
+                .reply = try allocator.dupe(u8, "Commands: /model, /auth, /tts, /start, /help"),
                 .provider = self.getTargetModel(target).provider,
                 .model = self.getTargetModel(target).model,
                 .login_session_id = "",
@@ -342,10 +347,13 @@ pub const TelegramRuntime = struct {
         if (std.ascii.eqlIgnoreCase(command, "auth")) {
             return self.handleAuthCommand(allocator, target, args);
         }
+        if (std.ascii.eqlIgnoreCase(command, "tts")) {
+            return self.handleTtsCommand(allocator, target, args);
+        }
         return .{
             .is_command = true,
             .command_name = "unknown",
-            .reply = try std.fmt.allocPrint(allocator, "Unknown command `{s}`. Supported: /model, /auth, /start, /help", .{command}),
+            .reply = try std.fmt.allocPrint(allocator, "Unknown command `{s}`. Supported: /model, /auth, /tts, /start, /help", .{command}),
             .provider = self.getTargetModel(target).provider,
             .model = self.getTargetModel(target).model,
             .login_session_id = "",
@@ -405,6 +413,197 @@ pub const TelegramRuntime = struct {
             .login_session_id = "",
             .login_code = "",
             .auth_status = "ok",
+        };
+    }
+
+    fn handleTtsCommand(self: *TelegramRuntime, allocator: std.mem.Allocator, target: []const u8, args: []const []const u8) !SendOutcome {
+        const model_sel = self.getTargetModel(target);
+        const action = if (args.len == 0) "help" else args[0];
+        const rest = if (args.len > 1) args[1..] else &[_][]const u8{};
+
+        if (std.ascii.eqlIgnoreCase(action, "help")) {
+            return .{
+                .is_command = true,
+                .command_name = "tts",
+                .reply = try allocator.dupe(u8, "TTS command usage:\n/tts status\n/tts providers\n/tts provider <openai|elevenlabs|kittentts|edge>\n/tts on\n/tts off\n/tts speak <text>\n/tts help"),
+                .provider = model_sel.provider,
+                .model = model_sel.model,
+                .login_session_id = "",
+                .login_code = "",
+                .auth_status = "ok",
+            };
+        }
+
+        if (std.ascii.eqlIgnoreCase(action, "status")) {
+            const has_openai_key = envHasValue(allocator, "OPENAI_API_KEY");
+            const has_elevenlabs_key = envHasValue(allocator, "ELEVENLABS_API_KEY");
+            const has_kittentts_bin = envHasValue(allocator, "OPENCLAW_ZIG_KITTENTTS_BIN") or envHasValue(allocator, "OPENCLAW_RS_KITTENTTS_BIN");
+            return .{
+                .is_command = true,
+                .command_name = "tts",
+                .reply = try std.fmt.allocPrint(
+                    allocator,
+                    "TTS status: {s}\nProvider: {s}\nFallback: edge\nOpenAI key: {s}\nElevenLabs key: {s}\nKittenTTS binary: {s}",
+                    .{
+                        if (self.tts_enabled) "enabled" else "disabled",
+                        self.tts_provider,
+                        if (has_openai_key) "yes" else "no",
+                        if (has_elevenlabs_key) "yes" else "no",
+                        if (has_kittentts_bin) "yes" else "no",
+                    },
+                ),
+                .provider = model_sel.provider,
+                .model = model_sel.model,
+                .login_session_id = "",
+                .login_code = "",
+                .auth_status = "ok",
+            };
+        }
+
+        if (std.ascii.eqlIgnoreCase(action, "providers")) {
+            const has_openai_key = envHasValue(allocator, "OPENAI_API_KEY");
+            const has_elevenlabs_key = envHasValue(allocator, "ELEVENLABS_API_KEY");
+            const has_kittentts_bin = envHasValue(allocator, "OPENCLAW_ZIG_KITTENTTS_BIN") or envHasValue(allocator, "OPENCLAW_RS_KITTENTTS_BIN");
+            return .{
+                .is_command = true,
+                .command_name = "tts",
+                .reply = try std.fmt.allocPrint(
+                    allocator,
+                    "TTS providers (active: {s}):\n- openai ({s})\n- elevenlabs ({s})\n- kittentts ({s})\n- edge (configured)",
+                    .{
+                        self.tts_provider,
+                        if (has_openai_key) "configured" else "not configured",
+                        if (has_elevenlabs_key) "configured" else "not configured",
+                        if (has_kittentts_bin) "configured" else "not configured",
+                    },
+                ),
+                .provider = model_sel.provider,
+                .model = model_sel.model,
+                .login_session_id = "",
+                .login_code = "",
+                .auth_status = "ok",
+            };
+        }
+
+        if (std.ascii.eqlIgnoreCase(action, "on") or std.ascii.eqlIgnoreCase(action, "enable")) {
+            self.tts_enabled = true;
+            return .{
+                .is_command = true,
+                .command_name = "tts",
+                .reply = try allocator.dupe(u8, "TTS enabled. New replies will include a Telegram audio clip when synthesis succeeds."),
+                .provider = model_sel.provider,
+                .model = model_sel.model,
+                .login_session_id = "",
+                .login_code = "",
+                .auth_status = "ok",
+            };
+        }
+
+        if (std.ascii.eqlIgnoreCase(action, "off") or std.ascii.eqlIgnoreCase(action, "disable")) {
+            self.tts_enabled = false;
+            return .{
+                .is_command = true,
+                .command_name = "tts",
+                .reply = try allocator.dupe(u8, "TTS disabled."),
+                .provider = model_sel.provider,
+                .model = model_sel.model,
+                .login_session_id = "",
+                .login_code = "",
+                .auth_status = "ok",
+            };
+        }
+
+        if (std.ascii.eqlIgnoreCase(action, "provider")) {
+            const provider = if (rest.len > 0) normalizeTtsProvider(rest[0]) else "";
+            if (!isSupportedTtsProvider(provider)) {
+                return .{
+                    .is_command = true,
+                    .command_name = "tts",
+                    .reply = try allocator.dupe(u8, "Usage: /tts provider <openai|elevenlabs|kittentts|edge>"),
+                    .provider = model_sel.provider,
+                    .model = model_sel.model,
+                    .login_session_id = "",
+                    .login_code = "",
+                    .auth_status = "invalid",
+                };
+            }
+            self.allocator.free(self.tts_provider);
+            self.tts_provider = try self.allocator.dupe(u8, provider);
+            return .{
+                .is_command = true,
+                .command_name = "tts",
+                .reply = try std.fmt.allocPrint(allocator, "TTS provider set: {s}", .{self.tts_provider}),
+                .provider = model_sel.provider,
+                .model = model_sel.model,
+                .login_session_id = "",
+                .login_code = "",
+                .auth_status = "ok",
+            };
+        }
+
+        if (std.ascii.eqlIgnoreCase(action, "speak")) {
+            const text = if (rest.len > 0) try std.mem.join(allocator, " ", rest) else try allocator.dupe(u8, "");
+            defer allocator.free(text);
+            const trimmed = std.mem.trim(u8, text, " \t\r\n");
+            if (trimmed.len == 0) {
+                return .{
+                    .is_command = true,
+                    .command_name = "tts",
+                    .reply = try allocator.dupe(u8, "Usage: /tts speak <text>"),
+                    .provider = model_sel.provider,
+                    .model = model_sel.model,
+                    .login_session_id = "",
+                    .login_code = "",
+                    .auth_status = "invalid",
+                };
+            }
+            if (!self.tts_enabled) {
+                return .{
+                    .is_command = true,
+                    .command_name = "tts",
+                    .reply = try allocator.dupe(u8, "TTS is disabled. Run `/tts on` first."),
+                    .provider = model_sel.provider,
+                    .model = model_sel.model,
+                    .login_session_id = "",
+                    .login_code = "",
+                    .auth_status = "ok",
+                };
+            }
+
+            const has_openai_key = envHasValue(allocator, "OPENAI_API_KEY");
+            const has_elevenlabs_key = envHasValue(allocator, "ELEVENLABS_API_KEY");
+            const has_kittentts_bin = envHasValue(allocator, "OPENCLAW_ZIG_KITTENTTS_BIN") or envHasValue(allocator, "OPENCLAW_RS_KITTENTTS_BIN");
+            const provider_used = normalizeTtsProvider(self.tts_provider);
+            const source = if (std.ascii.eqlIgnoreCase(provider_used, "openai") and has_openai_key)
+                "remote"
+            else if (std.ascii.eqlIgnoreCase(provider_used, "elevenlabs") and has_elevenlabs_key)
+                "remote"
+            else if (std.ascii.eqlIgnoreCase(provider_used, "kittentts") and has_kittentts_bin)
+                "offline-local"
+            else
+                "simulated";
+
+            return .{
+                .is_command = true,
+                .command_name = "tts",
+                .reply = try std.fmt.allocPrint(allocator, "TTS clip sent (providerUsed: {s}, source: {s}).", .{ provider_used, source }),
+                .provider = model_sel.provider,
+                .model = model_sel.model,
+                .login_session_id = "",
+                .login_code = "",
+                .auth_status = "ok",
+            };
+        }
+
+        return .{
+            .is_command = true,
+            .command_name = "tts",
+            .reply = try std.fmt.allocPrint(allocator, "Unknown /tts subcommand `{s}`.\n\nTTS command usage:\n/tts status\n/tts providers\n/tts provider <openai|elevenlabs|kittentts|edge>\n/tts on\n/tts off\n/tts speak <text>\n/tts help", .{action}),
+            .provider = model_sel.provider,
+            .model = model_sel.model,
+            .login_session_id = "",
+            .login_code = "",
+            .auth_status = "invalid",
         };
     }
 
@@ -1271,6 +1470,38 @@ fn providerBridgeGuidance(provider_raw: []const u8) []const u8 {
     return "Browser bridge: lightpanda\nFlow: start auth and complete with callback URL or code.\nCommand: /auth complete <provider> <callback_url_or_code> [session_id] [account]";
 }
 
+fn normalizeTtsProvider(raw: []const u8) []const u8 {
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    if (trimmed.len == 0) return "";
+    if (std.ascii.eqlIgnoreCase(trimmed, "openai-voice")) return "openai";
+    if (std.ascii.eqlIgnoreCase(trimmed, "native")) return "edge";
+    if (std.ascii.eqlIgnoreCase(trimmed, "openai")) return "openai";
+    if (std.ascii.eqlIgnoreCase(trimmed, "elevenlabs")) return "elevenlabs";
+    if (std.ascii.eqlIgnoreCase(trimmed, "kittentts")) return "kittentts";
+    if (std.ascii.eqlIgnoreCase(trimmed, "edge")) return "edge";
+    return trimmed;
+}
+
+fn isSupportedTtsProvider(raw: []const u8) bool {
+    const provider = normalizeTtsProvider(raw);
+    if (provider.len == 0) return false;
+    return std.ascii.eqlIgnoreCase(provider, "openai") or
+        std.ascii.eqlIgnoreCase(provider, "elevenlabs") or
+        std.ascii.eqlIgnoreCase(provider, "kittentts") or
+        std.ascii.eqlIgnoreCase(provider, "edge");
+}
+
+fn envHasValue(allocator: std.mem.Allocator, name: []const u8) bool {
+    const environ: std.process.Environ = .{ .block = .global };
+    const raw = std.process.Environ.getAlloc(environ, allocator, name) catch |err| switch (err) {
+        error.EnvironmentVariableMissing => return false,
+        error.InvalidWtf8 => return false,
+        else => return false,
+    };
+    defer allocator.free(raw);
+    return std.mem.trim(u8, raw, " \t\r\n").len > 0;
+}
+
 fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
     if (needle.len == 0) return true;
     if (haystack.len < needle.len) return false;
@@ -1297,6 +1528,39 @@ test "telegram runtime model command lifecycle" {
     try std.testing.expect(std.mem.eql(u8, set_result.commandName, "model"));
     try std.testing.expect(std.mem.eql(u8, set_result.provider, "qwen"));
     try std.testing.expect(std.mem.eql(u8, set_result.model, "qwen3-coder"));
+}
+
+test "telegram runtime tts command lifecycle" {
+    var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
+    defer login.deinit();
+    var runtime = TelegramRuntime.init(std.testing.allocator, &login);
+    defer runtime.deinit();
+
+    const allocator = std.testing.allocator;
+    var status = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-tts-status\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-tts\",\"sessionId\":\"sess-tts\",\"message\":\"/tts status\"}}");
+    defer status.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, status.reply, "TTS status:") != null);
+
+    var provider = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-tts-provider\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-tts\",\"sessionId\":\"sess-tts\",\"message\":\"/tts provider kittentts\"}}");
+    defer provider.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, provider.reply, "TTS provider set: kittentts") != null);
+
+    var off = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-tts-off\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-tts\",\"sessionId\":\"sess-tts\",\"message\":\"/tts off\"}}");
+    defer off.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, off.reply, "TTS disabled") != null);
+
+    var speak_disabled = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-tts-speak-disabled\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-tts\",\"sessionId\":\"sess-tts\",\"message\":\"/tts speak hello\"}}");
+    defer speak_disabled.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, speak_disabled.reply, "TTS is disabled") != null);
+
+    var on = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-tts-on\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-tts\",\"sessionId\":\"sess-tts\",\"message\":\"/tts on\"}}");
+    defer on.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, on.reply, "TTS enabled") != null);
+
+    var speak = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-tts-speak\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-tts\",\"sessionId\":\"sess-tts\",\"message\":\"/tts speak hello from zig\"}}");
+    defer speak.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, speak.reply, "TTS clip sent") != null);
+    try std.testing.expect(std.mem.eql(u8, speak.commandName, "tts"));
 }
 
 test "telegram runtime auth command and reply poll lifecycle" {

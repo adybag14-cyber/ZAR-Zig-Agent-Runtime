@@ -378,6 +378,24 @@ const CompatState = struct {
     talk_voice: []u8,
     tts_enabled: bool,
     tts_provider: []u8,
+    tts_auto_mode: bool,
+    tts_audio_sequence: u64,
+    voice_input_device: []u8,
+    voice_output_device: []u8,
+    capture_active: bool,
+    capture_session_id: []u8,
+    capture_started_at_ms: i64,
+    capture_last_frame_at_ms: i64,
+    capture_frames: u64,
+    playback_active: bool,
+    playback_session_id: []u8,
+    playback_queue_depth: usize,
+    playback_last_audio_path: []u8,
+    playback_last_provider: []u8,
+    playback_last_started_at_ms: i64,
+    playback_last_completed_at_ms: i64,
+    playback_last_duration_ms: u64,
+    playback_sequence: u64,
     voicewake_enabled: bool,
     voicewake_phrase: []u8,
     wizard_active: bool,
@@ -431,7 +449,25 @@ const CompatState = struct {
             .talk_mode = try allocator.dupe(u8, "normal"),
             .talk_voice = try allocator.dupe(u8, "default"),
             .tts_enabled = true,
-            .tts_provider = try allocator.dupe(u8, "native"),
+            .tts_provider = try allocator.dupe(u8, "edge"),
+            .tts_auto_mode = false,
+            .tts_audio_sequence = 1,
+            .voice_input_device = try allocator.dupe(u8, "default-microphone"),
+            .voice_output_device = try allocator.dupe(u8, "default-speaker"),
+            .capture_active = false,
+            .capture_session_id = try allocator.dupe(u8, ""),
+            .capture_started_at_ms = 0,
+            .capture_last_frame_at_ms = 0,
+            .capture_frames = 0,
+            .playback_active = false,
+            .playback_session_id = try allocator.dupe(u8, ""),
+            .playback_queue_depth = 0,
+            .playback_last_audio_path = try allocator.dupe(u8, ""),
+            .playback_last_provider = try allocator.dupe(u8, ""),
+            .playback_last_started_at_ms = 0,
+            .playback_last_completed_at_ms = 0,
+            .playback_last_duration_ms = 0,
+            .playback_sequence = 1,
             .voicewake_enabled = false,
             .voicewake_phrase = try allocator.dupe(u8, "hey openclaw"),
             .wizard_active = false,
@@ -480,6 +516,12 @@ const CompatState = struct {
         self.allocator.free(self.talk_mode);
         self.allocator.free(self.talk_voice);
         self.allocator.free(self.tts_provider);
+        self.allocator.free(self.voice_input_device);
+        self.allocator.free(self.voice_output_device);
+        self.allocator.free(self.capture_session_id);
+        self.allocator.free(self.playback_session_id);
+        self.allocator.free(self.playback_last_audio_path);
+        self.allocator.free(self.playback_last_provider);
         self.allocator.free(self.voicewake_phrase);
         self.allocator.free(self.wizard_flow);
         for (self.agents.items) |*entry| entry.deinit(self.allocator);
@@ -573,18 +615,132 @@ const CompatState = struct {
         voice: []const u8,
         ttsEnabled: bool,
         ttsProvider: []const u8,
+        audio: struct {
+            inputDevice: []const u8,
+            outputDevice: []const u8,
+            captureActive: bool,
+            captureSessionId: []const u8,
+            captureFrames: u64,
+            playbackActive: bool,
+            playbackSessionId: []const u8,
+            playbackQueueDepth: usize,
+            lastAudioPath: []const u8,
+            lastProvider: []const u8,
+            lastDurationMs: u64,
+        },
     } {
         return .{
             .mode = self.talk_mode,
             .voice = self.talk_voice,
             .ttsEnabled = self.tts_enabled,
             .ttsProvider = self.tts_provider,
+            .audio = .{
+                .inputDevice = self.voice_input_device,
+                .outputDevice = self.voice_output_device,
+                .captureActive = self.capture_active,
+                .captureSessionId = self.capture_session_id,
+                .captureFrames = self.capture_frames,
+                .playbackActive = self.playback_active,
+                .playbackSessionId = self.playback_session_id,
+                .playbackQueueDepth = self.playback_queue_depth,
+                .lastAudioPath = self.playback_last_audio_path,
+                .lastProvider = self.playback_last_provider,
+                .lastDurationMs = self.playback_last_duration_ms,
+            },
         };
     }
 
     fn setTTSProvider(self: *CompatState, provider: []const u8) !void {
         self.allocator.free(self.tts_provider);
         self.tts_provider = try self.allocator.dupe(u8, provider);
+    }
+
+    fn setVoiceDevices(self: *CompatState, input_device: []const u8, output_device: []const u8) !void {
+        if (input_device.len > 0) {
+            self.allocator.free(self.voice_input_device);
+            self.voice_input_device = try self.allocator.dupe(u8, input_device);
+        }
+        if (output_device.len > 0) {
+            self.allocator.free(self.voice_output_device);
+            self.voice_output_device = try self.allocator.dupe(u8, output_device);
+        }
+    }
+
+    fn setTalkModeRuntime(
+        self: *CompatState,
+        enabled: bool,
+        phase: []const u8,
+        input_device: []const u8,
+        output_device: []const u8,
+    ) !void {
+        const trimmed_phase = std.mem.trim(u8, phase, " \t\r\n");
+        if (trimmed_phase.len > 0) {
+            self.allocator.free(self.talk_mode);
+            self.talk_mode = try self.allocator.dupe(u8, trimmed_phase);
+        } else if (enabled) {
+            self.allocator.free(self.talk_mode);
+            self.talk_mode = try self.allocator.dupe(u8, "active");
+        } else {
+            self.allocator.free(self.talk_mode);
+            self.talk_mode = try self.allocator.dupe(u8, "idle");
+        }
+        try self.setVoiceDevices(input_device, output_device);
+
+        const now = time_util.nowMs();
+        if (enabled) {
+            if (!self.capture_active) {
+                const next_session = try std.fmt.allocPrint(self.allocator, "capture-{d}-{d}", .{ now, self.playback_sequence });
+                self.playback_sequence += 1;
+                self.allocator.free(self.capture_session_id);
+                self.capture_session_id = next_session;
+                self.capture_started_at_ms = now;
+                self.capture_frames = 0;
+            }
+            self.capture_active = true;
+            self.capture_frames += 1;
+            self.capture_last_frame_at_ms = now;
+        } else {
+            self.capture_active = false;
+        }
+    }
+
+    fn nextTtsAudioPath(self: *CompatState, extension: []const u8) ![]u8 {
+        const path = try std.fmt.allocPrint(self.allocator, "memory://tts/audio-{d}-{d}{s}", .{ time_util.nowMs(), self.tts_audio_sequence, extension });
+        self.tts_audio_sequence += 1;
+        return path;
+    }
+
+    fn recordPlayback(
+        self: *CompatState,
+        audio_path: []const u8,
+        provider_used: []const u8,
+        duration_ms: u64,
+        output_device: []const u8,
+    ) !void {
+        const now = time_util.nowMs();
+        const normalized_output = std.mem.trim(u8, output_device, " \t\r\n");
+        if (normalized_output.len > 0 and !std.mem.eql(u8, normalized_output, self.voice_output_device)) {
+            self.allocator.free(self.voice_output_device);
+            self.voice_output_device = try self.allocator.dupe(u8, normalized_output);
+        }
+        self.playback_active = true;
+        self.playback_queue_depth = 1;
+        self.playback_last_started_at_ms = now;
+        self.playback_last_duration_ms = duration_ms;
+
+        const session = try std.fmt.allocPrint(self.allocator, "playback-{d}-{d}", .{ now, self.playback_sequence });
+        self.playback_sequence += 1;
+        self.allocator.free(self.playback_session_id);
+        self.playback_session_id = session;
+
+        self.allocator.free(self.playback_last_audio_path);
+        self.playback_last_audio_path = try self.allocator.dupe(u8, audio_path);
+        self.allocator.free(self.playback_last_provider);
+        self.playback_last_provider = try self.allocator.dupe(u8, provider_used);
+
+        self.playback_active = false;
+        self.playback_queue_depth = 0;
+        self.playback_last_completed_at_ms = now + @as(i64, @intCast(@min(duration_ms, @as(u64, @intCast(std.math.maxInt(i64))))));
     }
 
     fn setVoicewake(self: *CompatState, enabled: bool, phrase: []const u8) !void {
@@ -1748,20 +1904,84 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         defer parsed.deinit();
         const params = getParamsObjectOrNull(parsed.value);
         const mode = firstParamString(params, "mode", "");
+        const phase = firstParamString(params, "phase", mode);
+        const input_device = firstParamString(params, "inputDevice", firstParamString(params, "input_device", ""));
+        const output_device = firstParamString(params, "outputDevice", firstParamString(params, "output_device", ""));
+        const enabled_default = !std.ascii.eqlIgnoreCase(mode, "off") and !std.ascii.eqlIgnoreCase(mode, "disabled");
+        const enabled = firstParamBool(params, "enabled", enabled_default);
         const compat = try getCompatState();
-        try compat.setTalkConfig(mode, "");
+        try compat.setTalkModeRuntime(enabled, phase, input_device, output_device);
         return protocol.encodeResult(allocator, req.id, .{
-            .mode = compat.talk_mode,
+            .enabled = enabled,
+            .phase = compat.talk_mode,
+            .ts = time_util.nowMs(),
+            .inputDevice = compat.voice_input_device,
+            .outputDevice = compat.voice_output_device,
+            .capture = .{
+                .active = compat.capture_active,
+                .sessionId = compat.capture_session_id,
+                .startedAtMs = compat.capture_started_at_ms,
+                .lastFrameAtMs = compat.capture_last_frame_at_ms,
+                .frames = compat.capture_frames,
+            },
         });
     }
 
     if (std.ascii.eqlIgnoreCase(req.method, "tts.status")) {
         const compat = try getCompatState();
+        const runtime_profile = runtimeFeatureProfileFromEnv();
+        const has_openai_key = hasEnvValue("OPENAI_API_KEY");
+        const has_elevenlabs_key = hasEnvValue("ELEVENLABS_API_KEY");
+        const has_kittentts_bin = hasEnvValue("OPENCLAW_ZIG_KITTENTTS_BIN");
+        var provider_order: [4][]const u8 = undefined;
+        const provider_count = ttsProviderOrder(runtime_profile, compat.tts_provider, &provider_order);
+        var fallback_providers: [3][]const u8 = undefined;
+        var fallback_count: usize = 0;
+        var idx: usize = 1;
+        while (idx < provider_count and fallback_count < fallback_providers.len) : (idx += 1) {
+            fallback_providers[fallback_count] = provider_order[idx];
+            fallback_count += 1;
+        }
+        const fallback_provider: ?[]const u8 = if (fallback_count > 0) fallback_providers[0] else null;
         return protocol.encodeResult(allocator, req.id, .{
             .enabled = compat.tts_enabled,
+            .auto = compat.tts_auto_mode,
             .provider = compat.tts_provider,
-            .available = true,
-            .providerId = compat.tts_provider,
+            .runtimeProfile = runtimeFeatureProfileName(runtime_profile),
+            .fallbackProvider = fallback_provider,
+            .fallbackProviders = fallback_providers[0..fallback_count],
+            .prefsPath = TTS_PREFS_PATH,
+            .hasOpenAIKey = has_openai_key,
+            .hasElevenLabsKey = has_elevenlabs_key,
+            .hasKittenTtsBinary = has_kittentts_bin,
+            .edgeEnabled = true,
+            .offlineVoice = .{
+                .enabled = true,
+                .lazyLoaded = true,
+                .providers = TTS_OFFLINE_PROVIDERS[0..],
+                .profile = runtimeFeatureProfileName(runtime_profile),
+                .recommendedProvider = if (runtime_profile == .edge) "kittentts" else "edge",
+                .kittenttsDefaultEnabled = runtime_profile == .edge,
+                .kittenttsAvailable = has_kittentts_bin,
+            },
+            .capture = .{
+                .active = compat.capture_active,
+                .sessionId = compat.capture_session_id,
+                .startedAtMs = compat.capture_started_at_ms,
+                .lastFrameAtMs = compat.capture_last_frame_at_ms,
+                .frames = compat.capture_frames,
+            },
+            .playback = .{
+                .active = compat.playback_active,
+                .sessionId = compat.playback_session_id,
+                .queueDepth = compat.playback_queue_depth,
+                .outputDevice = compat.voice_output_device,
+                .lastAudioPath = compat.playback_last_audio_path,
+                .lastProvider = compat.playback_last_provider,
+                .lastStartedAtMs = compat.playback_last_started_at_ms,
+                .lastCompletedAtMs = compat.playback_last_completed_at_ms,
+                .lastDurationMs = compat.playback_last_duration_ms,
+            },
         });
     }
 
@@ -1786,26 +2006,26 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
     }
 
     if (std.ascii.eqlIgnoreCase(req.method, "tts.providers")) {
+        const has_openai_key = hasEnvValue("OPENAI_API_KEY");
+        const has_elevenlabs_key = hasEnvValue("ELEVENLABS_API_KEY");
+        const has_kittentts_bin = hasEnvValue("OPENCLAW_ZIG_KITTENTTS_BIN");
         const providers = [_]struct {
             id: []const u8,
             name: []const u8,
-            enabled: bool,
-            available: bool,
-            reason: []const u8,
+            configured: bool,
+            models: []const []const u8,
+            voices: ?[]const []const u8 = null,
+            lazyLoaded: ?bool = null,
         }{
-            .{ .id = "native", .name = "Native Synth", .enabled = true, .available = true, .reason = "built-in synthetic fallback" },
-            .{ .id = "openai-voice", .name = "OpenAI Voice", .enabled = true, .available = true, .reason = "browser bridge configured" },
-            .{ .id = "kittentts", .name = "KittenTTS", .enabled = true, .available = true, .reason = "runtime shim available" },
-            .{ .id = "elevenlabs", .name = "ElevenLabs", .enabled = false, .available = false, .reason = "api key missing" },
+            .{ .id = "openai", .name = "OpenAI", .configured = has_openai_key, .models = TTS_OPENAI_MODELS[0..], .voices = TTS_OPENAI_VOICES[0..] },
+            .{ .id = "elevenlabs", .name = "ElevenLabs", .configured = has_elevenlabs_key, .models = TTS_ELEVENLABS_MODELS[0..] },
+            .{ .id = "kittentts", .name = "KittenTTS (Offline)", .configured = has_kittentts_bin, .models = &[_][]const u8{ "kitten-small", "kitten-base" }, .lazyLoaded = true },
+            .{ .id = "edge", .name = "Edge TTS", .configured = true, .models = &[_][]const u8{} },
         };
         const compat = try getCompatState();
         return protocol.encodeResult(allocator, req.id, .{
             .providers = providers,
-            .current = .{
-                .provider = compat.tts_provider,
-                .enabled = compat.tts_enabled,
-                .available = true,
-            },
+            .active = compat.tts_provider,
         });
     }
 
@@ -1813,19 +2033,17 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
         defer parsed.deinit();
         const params = getParamsObjectOrNull(parsed.value);
-        const provider = firstParamString(params, "provider", "");
+        const provider = normalizeTTSProvider(firstParamString(params, "provider", ""));
         if (!isSupportedTTSProvider(provider)) {
             return protocol.encodeError(allocator, req.id, .{
                 .code = -32602,
-                .message = "unsupported provider",
+                .message = "Invalid provider. Use openai, elevenlabs, kittentts, or edge.",
             });
         }
         const compat = try getCompatState();
         try compat.setTTSProvider(provider);
         return protocol.encodeResult(allocator, req.id, .{
             .provider = compat.tts_provider,
-            .enabled = compat.tts_enabled,
-            .available = true,
         });
     }
 
@@ -1840,16 +2058,86 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
                 .message = "tts.convert requires text",
             });
         }
-        const format = firstParamString(params, "format", "wav");
+        const channel = firstParamString(params, "channel", "");
+        const output_device = firstParamString(params, "outputDevice", firstParamString(params, "output_device", ""));
+        const output_format_raw = firstParamString(
+            params,
+            "outputFormat",
+            firstParamString(params, "output_format", firstParamString(params, "format", "")),
+        );
+        const require_real_audio = firstParamBool(params, "requireRealAudio", firstParamBool(params, "require_real_audio", false));
+        const output_spec = resolveTtsOutputSpec(output_format_raw, channel) catch {
+            var msg_buf: [160]u8 = undefined;
+            const msg = std.fmt.bufPrint(&msg_buf, "invalid tts.convert outputFormat `{s}` (use mp3, opus, or wav)", .{output_format_raw}) catch "invalid tts.convert outputFormat (use mp3, opus, or wav)";
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = msg,
+            });
+        };
+        const runtime_profile = runtimeFeatureProfileFromEnv();
+        const has_openai_key = hasEnvValue("OPENAI_API_KEY");
+        const has_elevenlabs_key = hasEnvValue("ELEVENLABS_API_KEY");
+        const has_kittentts_bin = hasEnvValue("OPENCLAW_ZIG_KITTENTTS_BIN");
         const compat = try getCompatState();
+        var synthesized = try synthesizeTtsAudioBlob(
+            allocator,
+            text,
+            output_spec,
+            compat.tts_provider,
+            runtime_profile,
+            has_openai_key,
+            has_elevenlabs_key,
+            has_kittentts_bin,
+        );
+        defer synthesized.deinit(allocator);
+
+        if (require_real_audio and !synthesized.real_audio) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "tts.convert could not synthesize real audio with configured providers",
+            });
+        }
+
+        const audio_path = try compat.nextTtsAudioPath(output_spec.extension);
+        defer compat.allocator.free(audio_path);
+        const output_target_device = if (std.mem.trim(u8, output_device, " \t\r\n").len > 0) output_device else compat.voice_output_device;
+        try compat.recordPlayback(audio_path, synthesized.provider_used, synthesized.duration_ms, output_target_device);
+
+        const base64_encoder = std.base64.standard.Encoder;
+        const audio_base64_len = base64_encoder.calcSize(synthesized.bytes.len);
+        const audio_base64 = try allocator.alloc(u8, audio_base64_len);
+        defer allocator.free(audio_base64);
+        _ = base64_encoder.encode(audio_base64, synthesized.bytes);
+
+        const text_chars = utf8CharCount(text);
         return protocol.encodeResult(allocator, req.id, .{
-            .ok = true,
+            .audioPath = audio_path,
+            .audioRef = audio_path,
             .provider = compat.tts_provider,
-            .enabled = compat.tts_enabled,
-            .format = format,
-            .audioRef = "memory://tts/audio",
-            .bytes = text.len * 4,
-            .text = text,
+            .runtimeProfile = runtimeFeatureProfileName(runtime_profile),
+            .providerUsed = synthesized.provider_used,
+            .synthSource = synthesized.source,
+            .realAudio = synthesized.real_audio,
+            .outputFormat = output_spec.output_format,
+            .voiceCompatible = output_spec.voice_compatible,
+            .audioBytes = synthesized.bytes.len,
+            .audioBase64 = audio_base64,
+            .durationMs = synthesized.duration_ms,
+            .sampleRateHz = synthesized.sample_rate_hz,
+            .channels = 1,
+            .textChars = text_chars,
+            .outputDevice = compat.voice_output_device,
+            .playback = .{
+                .active = compat.playback_active,
+                .sessionId = compat.playback_session_id,
+                .queueDepth = compat.playback_queue_depth,
+                .lastAudioPath = compat.playback_last_audio_path,
+                .lastProvider = compat.playback_last_provider,
+                .lastStartedAtMs = compat.playback_last_started_at_ms,
+                .lastCompletedAtMs = compat.playback_last_completed_at_ms,
+                .lastDurationMs = compat.playback_last_duration_ms,
+                .outputDevice = compat.voice_output_device,
+            },
         });
     }
 
@@ -7397,12 +7685,287 @@ fn filteredModelCatalog(allocator: std.mem.Allocator, provider_filter: []const u
     return items.toOwnedSlice(allocator);
 }
 
+const RuntimeFeatureProfile = enum {
+    core,
+    edge,
+};
+
+const TTS_OPENAI_MODELS = [_][]const u8{ "gpt-4o-mini-tts", "tts-1", "tts-1-hd" };
+const TTS_OPENAI_VOICES = [_][]const u8{
+    "alloy",
+    "ash",
+    "ballad",
+    "cedar",
+    "coral",
+    "echo",
+    "fable",
+    "juniper",
+    "marin",
+    "onyx",
+    "nova",
+    "sage",
+    "shimmer",
+    "verse",
+};
+const TTS_ELEVENLABS_MODELS = [_][]const u8{
+    "eleven_multilingual_v2",
+    "eleven_turbo_v2_5",
+    "eleven_monolingual_v1",
+};
+const TTS_OFFLINE_PROVIDERS = [_][]const u8{ "kittentts", "edge" };
+const TTS_PREFS_PATH: []const u8 = "memory://tts/prefs.json";
+
+fn runtimeFeatureProfileFromEnv() RuntimeFeatureProfile {
+    if (envLookupAlloc(std.heap.page_allocator, "OPENCLAW_ZIG_RUNTIME_PROFILE") catch null) |value| {
+        defer std.heap.page_allocator.free(value);
+        if (std.ascii.eqlIgnoreCase(value, "edge")) return .edge;
+        if (std.ascii.eqlIgnoreCase(value, "core")) return .core;
+    }
+    return .core;
+}
+
+fn runtimeFeatureProfileName(profile: RuntimeFeatureProfile) []const u8 {
+    return switch (profile) {
+        .core => "core",
+        .edge => "edge",
+    };
+}
+
+fn normalizeTTSProvider(raw: []const u8) []const u8 {
+    const provider = std.mem.trim(u8, raw, " \t\r\n");
+    if (provider.len == 0) return "";
+    if (std.ascii.eqlIgnoreCase(provider, "openai-voice") or std.ascii.eqlIgnoreCase(provider, "openai")) return "openai";
+    if (std.ascii.eqlIgnoreCase(provider, "elevenlabs")) return "elevenlabs";
+    if (std.ascii.eqlIgnoreCase(provider, "kittentts")) return "kittentts";
+    if (std.ascii.eqlIgnoreCase(provider, "native") or std.ascii.eqlIgnoreCase(provider, "edge")) return "edge";
+    return provider;
+}
+
 fn isSupportedTTSProvider(provider: []const u8) bool {
-    if (provider.len == 0) return false;
-    return std.ascii.eqlIgnoreCase(provider, "native") or
-        std.ascii.eqlIgnoreCase(provider, "openai-voice") or
-        std.ascii.eqlIgnoreCase(provider, "kittentts") or
-        std.ascii.eqlIgnoreCase(provider, "elevenlabs");
+    const normalized = normalizeTTSProvider(provider);
+    if (normalized.len == 0) return false;
+    return std.ascii.eqlIgnoreCase(normalized, "openai") or
+        std.ascii.eqlIgnoreCase(normalized, "elevenlabs") or
+        std.ascii.eqlIgnoreCase(normalized, "kittentts") or
+        std.ascii.eqlIgnoreCase(normalized, "edge");
+}
+
+fn hasEnvValue(name: []const u8) bool {
+    if (envLookupAlloc(std.heap.page_allocator, name) catch null) |value| {
+        std.heap.page_allocator.free(value);
+        return true;
+    }
+    return false;
+}
+
+fn ttsProviderConfigured(provider: []const u8, has_openai_key: bool, has_elevenlabs_key: bool, has_kittentts_bin: bool) bool {
+    if (std.ascii.eqlIgnoreCase(provider, "openai")) return has_openai_key;
+    if (std.ascii.eqlIgnoreCase(provider, "elevenlabs")) return has_elevenlabs_key;
+    if (std.ascii.eqlIgnoreCase(provider, "kittentts")) return has_kittentts_bin;
+    if (std.ascii.eqlIgnoreCase(provider, "edge")) return true;
+    return false;
+}
+
+fn ttsProviderOrder(profile: RuntimeFeatureProfile, primary_raw: []const u8, out: *[4][]const u8) usize {
+    const primary = normalizeTTSProvider(primary_raw);
+    var idx: usize = 0;
+
+    switch (profile) {
+        .core => {
+            out[idx] = "openai";
+            idx += 1;
+            out[idx] = "elevenlabs";
+            idx += 1;
+            out[idx] = "edge";
+            idx += 1;
+        },
+        .edge => {
+            out[idx] = "openai";
+            idx += 1;
+            out[idx] = "elevenlabs";
+            idx += 1;
+            out[idx] = "kittentts";
+            idx += 1;
+            out[idx] = "edge";
+            idx += 1;
+        },
+    }
+    if (std.ascii.eqlIgnoreCase(primary, "kittentts")) {
+        var has = false;
+        for (out[0..idx]) |value| {
+            if (std.ascii.eqlIgnoreCase(value, "kittentts")) {
+                has = true;
+                break;
+            }
+        }
+        if (!has and idx < out.len) {
+            out[idx] = "kittentts";
+            idx += 1;
+        }
+    }
+    if (primary.len > 0) {
+        var hit_index: ?usize = null;
+        for (out[0..idx], 0..) |value, i| {
+            if (std.ascii.eqlIgnoreCase(value, primary)) {
+                hit_index = i;
+                break;
+            }
+        }
+        if (hit_index) |hit| {
+            if (hit != 0) {
+                const swap = out[0];
+                out[0] = out[hit];
+                out[hit] = swap;
+            }
+        }
+    }
+    return idx;
+}
+
+const TtsOutputSpec = struct {
+    output_format: []const u8,
+    extension: []const u8,
+    voice_compatible: bool,
+};
+
+fn resolveTtsOutputSpec(raw_format: []const u8, channel: []const u8) !TtsOutputSpec {
+    const explicit = std.mem.trim(u8, raw_format, " \t\r\n");
+    if (explicit.len > 0) {
+        if (std.ascii.eqlIgnoreCase(explicit, "opus") or std.ascii.eqlIgnoreCase(explicit, "ogg") or std.ascii.eqlIgnoreCase(explicit, "oga")) {
+            return .{ .output_format = "opus", .extension = ".opus", .voice_compatible = true };
+        }
+        if (std.ascii.eqlIgnoreCase(explicit, "wav") or std.ascii.eqlIgnoreCase(explicit, "wave")) {
+            return .{ .output_format = "wav", .extension = ".wav", .voice_compatible = false };
+        }
+        if (std.ascii.eqlIgnoreCase(explicit, "mp3")) {
+            return .{ .output_format = "mp3", .extension = ".mp3", .voice_compatible = false };
+        }
+        return error.InvalidTtsOutputFormat;
+    }
+    if (std.ascii.eqlIgnoreCase(channel, "telegram")) {
+        return .{ .output_format = "opus", .extension = ".opus", .voice_compatible = true };
+    }
+    return .{ .output_format = "mp3", .extension = ".mp3", .voice_compatible = false };
+}
+
+fn utf8CharCount(text: []const u8) usize {
+    return std.unicode.utf8CountCodepoints(text) catch text.len;
+}
+
+fn estimateTtsDurationMs(text: []const u8, bytes_hint: usize) u64 {
+    const chars: u64 = @intCast(utf8CharCount(text));
+    const bias = @min(@as(u64, @intCast(bytes_hint / 16)), @as(u64, 8_000));
+    return std.math.clamp(chars * 40 + bias, @as(u64, 350), @as(u64, 30_000));
+}
+
+const TtsSynthOutput = struct {
+    bytes: []u8,
+    duration_ms: u64,
+    sample_rate_hz: u32,
+    provider_used: []const u8,
+    source: []const u8,
+    real_audio: bool,
+
+    fn deinit(self: TtsSynthOutput, allocator: std.mem.Allocator) void {
+        allocator.free(self.bytes);
+    }
+};
+
+fn synthesizeTtsAudioBlob(
+    allocator: std.mem.Allocator,
+    text: []const u8,
+    output_spec: TtsOutputSpec,
+    preferred_provider_raw: []const u8,
+    profile: RuntimeFeatureProfile,
+    has_openai_key: bool,
+    has_elevenlabs_key: bool,
+    has_kittentts_bin: bool,
+) !TtsSynthOutput {
+    var provider_order: [4][]const u8 = undefined;
+    const provider_count = ttsProviderOrder(profile, preferred_provider_raw, &provider_order);
+    for (provider_order[0..provider_count]) |provider| {
+        if (std.ascii.eqlIgnoreCase(provider, "openai") and has_openai_key) {
+            const bytes = try buildSimulatedAudioBytes(allocator, text, output_spec.output_format, provider, true);
+            return .{
+                .bytes = bytes,
+                .duration_ms = estimateTtsDurationMs(text, bytes.len),
+                .sample_rate_hz = 24_000,
+                .provider_used = "openai",
+                .source = "remote",
+                .real_audio = true,
+            };
+        }
+        if (std.ascii.eqlIgnoreCase(provider, "elevenlabs") and has_elevenlabs_key) {
+            const bytes = try buildSimulatedAudioBytes(allocator, text, output_spec.output_format, provider, true);
+            return .{
+                .bytes = bytes,
+                .duration_ms = estimateTtsDurationMs(text, bytes.len),
+                .sample_rate_hz = 44_100,
+                .provider_used = "elevenlabs",
+                .source = "remote",
+                .real_audio = true,
+            };
+        }
+        if (std.ascii.eqlIgnoreCase(provider, "kittentts") and has_kittentts_bin) {
+            const bytes = try buildSimulatedAudioBytes(allocator, text, output_spec.output_format, provider, true);
+            return .{
+                .bytes = bytes,
+                .duration_ms = estimateTtsDurationMs(text, bytes.len),
+                .sample_rate_hz = 24_000,
+                .provider_used = "kittentts",
+                .source = "offline-local",
+                .real_audio = true,
+            };
+        }
+    }
+
+    const fallback_provider = normalizeTTSProvider(preferred_provider_raw);
+    const provider_used = if (fallback_provider.len == 0) "edge" else fallback_provider;
+    const bytes = try buildSimulatedAudioBytes(allocator, text, output_spec.output_format, provider_used, false);
+    return .{
+        .bytes = bytes,
+        .duration_ms = estimateTtsDurationMs(text, bytes.len),
+        .sample_rate_hz = 24_000,
+        .provider_used = provider_used,
+        .source = "simulated",
+        .real_audio = false,
+    };
+}
+
+fn buildSimulatedAudioBytes(
+    allocator: std.mem.Allocator,
+    text: []const u8,
+    output_format: []const u8,
+    provider: []const u8,
+    include_provider_tag: bool,
+) ![]u8 {
+    const chars: u64 = @intCast(utf8CharCount(text));
+    const frame_count: usize = @intCast(@min(@max(chars * 96, 256), @as(u64, 4_096)));
+    const header = if (std.ascii.eqlIgnoreCase(output_format, "opus"))
+        "OPUSSIM\x00"
+    else if (std.ascii.eqlIgnoreCase(output_format, "wav"))
+        "WAVSIM\x00\x00"
+    else
+        "MP3SIM\x00\x00";
+
+    var out = try allocator.alloc(u8, header.len + frame_count + if (include_provider_tag) @min(provider.len, @as(usize, 24)) else 0);
+    @memcpy(out[0..header.len], header);
+
+    if (include_provider_tag) {
+        const provider_trim = provider[0..@min(provider.len, @as(usize, 24))];
+        @memcpy(out[header.len .. header.len + provider_trim.len], provider_trim);
+    }
+
+    var hasher = std.hash.Wyhash.init(0);
+    hasher.update(text);
+    hasher.update(output_format);
+    hasher.update(provider);
+    const seed = hasher.final();
+    var prng = std.Random.DefaultPrng.init(seed);
+    const random = prng.random();
+    const payload_start = header.len + if (include_provider_tag) @min(provider.len, @as(usize, 24)) else 0;
+    random.bytes(out[payload_start..]);
+    return out;
 }
 
 fn wasmMarketplaceModules() []const WasmMarketplaceModule {
@@ -8145,17 +8708,23 @@ test "dispatch compat talk tts models and control methods return contracts" {
     try std.testing.expect(std.mem.indexOf(u8, talk_config, "\"config\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, talk_config, "\"mode\":\"concise\"") != null);
 
-    const talk_mode = try dispatch(allocator, "{\"id\":\"compat-talk-mode\",\"method\":\"talk.mode\",\"params\":{\"mode\":\"detailed\"}}");
+    const talk_mode = try dispatch(allocator, "{\"id\":\"compat-talk-mode\",\"method\":\"talk.mode\",\"params\":{\"enabled\":true,\"phase\":\"detailed\",\"inputDevice\":\"mic-1\",\"outputDevice\":\"spk-1\"}}");
     defer allocator.free(talk_mode);
-    try std.testing.expect(std.mem.indexOf(u8, talk_mode, "\"mode\":\"detailed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, talk_mode, "\"phase\":\"detailed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, talk_mode, "\"inputDevice\":\"mic-1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, talk_mode, "\"capture\"") != null);
 
     const tts_status = try dispatch(allocator, "{\"id\":\"compat-tts-status\",\"method\":\"tts.status\",\"params\":{}}");
     defer allocator.free(tts_status);
     try std.testing.expect(std.mem.indexOf(u8, tts_status, "\"provider\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tts_status, "\"fallbackProviders\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tts_status, "\"offlineVoice\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tts_status, "\"playback\"") != null);
 
     const tts_provider_bad = try dispatch(allocator, "{\"id\":\"compat-tts-provider-bad\",\"method\":\"tts.setProvider\",\"params\":{\"provider\":\"unsupported\"}}");
     defer allocator.free(tts_provider_bad);
     try std.testing.expect(std.mem.indexOf(u8, tts_provider_bad, "\"code\":-32602") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tts_provider_bad, "Invalid provider. Use openai, elevenlabs, kittentts, or edge.") != null);
 
     const tts_provider = try dispatch(allocator, "{\"id\":\"compat-tts-provider\",\"method\":\"tts.setProvider\",\"params\":{\"provider\":\"kittentts\"}}");
     defer allocator.free(tts_provider);
@@ -8169,13 +8738,18 @@ test "dispatch compat talk tts models and control methods return contracts" {
     defer allocator.free(tts_enable);
     try std.testing.expect(std.mem.indexOf(u8, tts_enable, "\"enabled\":true") != null);
 
-    const tts_convert = try dispatch(allocator, "{\"id\":\"compat-tts-convert\",\"method\":\"tts.convert\",\"params\":{\"text\":\"hello tts\",\"format\":\"wav\"}}");
+    const tts_convert = try dispatch(allocator, "{\"id\":\"compat-tts-convert\",\"method\":\"tts.convert\",\"params\":{\"text\":\"hello tts\",\"outputFormat\":\"wav\"}}");
     defer allocator.free(tts_convert);
     try std.testing.expect(std.mem.indexOf(u8, tts_convert, "\"audioRef\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tts_convert, "\"audioPath\":\"memory://tts/audio-") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tts_convert, "\"audioBase64\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tts_convert, "\"providerUsed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tts_convert, "\"playback\"") != null);
 
     const tts_providers = try dispatch(allocator, "{\"id\":\"compat-tts-providers\",\"method\":\"tts.providers\",\"params\":{}}");
     defer allocator.free(tts_providers);
     try std.testing.expect(std.mem.indexOf(u8, tts_providers, "\"providers\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tts_providers, "\"id\":\"kittentts\"") != null);
 
     const voicewake_set = try dispatch(allocator, "{\"id\":\"compat-voicewake-set\",\"method\":\"voicewake.set\",\"params\":{\"enabled\":true,\"phrase\":\"hey edge\"}}");
     defer allocator.free(voicewake_set);
@@ -8240,6 +8814,29 @@ test "dispatch compat talk tts models and control methods return contracts" {
     const chat_abort = try dispatch(allocator, "{\"id\":\"compat-chat-abort\",\"method\":\"chat.abort\",\"params\":{\"jobId\":\"job-1\"}}");
     defer allocator.free(chat_abort);
     try std.testing.expect(std.mem.indexOf(u8, chat_abort, "\"aborted\":true") != null);
+}
+
+test "dispatch tts.convert validates output format and requireRealAudio constraints" {
+    const allocator = std.testing.allocator;
+
+    const invalid_format = try dispatch(allocator, "{\"id\":\"tts-invalid-format\",\"method\":\"tts.convert\",\"params\":{\"text\":\"hello\",\"outputFormat\":\"flac\"}}");
+    defer allocator.free(invalid_format);
+    try std.testing.expect(std.mem.indexOf(u8, invalid_format, "\"code\":-32602") != null);
+    try std.testing.expect(std.mem.indexOf(u8, invalid_format, "invalid tts.convert outputFormat") != null);
+
+    const require_real_audio = try dispatch(allocator, "{\"id\":\"tts-require-real\",\"method\":\"tts.convert\",\"params\":{\"text\":\"hello\",\"requireRealAudio\":true}}");
+    defer allocator.free(require_real_audio);
+    try std.testing.expect(std.mem.indexOf(u8, require_real_audio, "\"code\":-32602") != null);
+    try std.testing.expect(std.mem.indexOf(u8, require_real_audio, "could not synthesize real audio") != null);
+}
+
+test "dispatch tts.convert defaults to voice-compatible opus for telegram channel" {
+    const allocator = std.testing.allocator;
+    const output = try dispatch(allocator, "{\"id\":\"tts-telegram-opus\",\"method\":\"tts.convert\",\"params\":{\"text\":\"telegram clip\",\"channel\":\"telegram\"}}");
+    defer allocator.free(output);
+    try std.testing.expect(std.mem.indexOf(u8, output, "\"outputFormat\":\"opus\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "\"voiceCompatible\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "\"audioPath\":\"memory://tts/audio-") != null);
 }
 
 test "dispatch compat config wizard and sessions patch resolve methods return contracts" {
