@@ -4,6 +4,7 @@ const dispatcher = @import("gateway/dispatcher.zig");
 const http_server = @import("gateway/http_server.zig");
 const security_guard = @import("security/guard.zig");
 const security_audit = @import("security/audit.zig");
+const baremetal_abi = @import("baremetal/abi.zig");
 
 const CliFlags = struct {
     serve: bool = false,
@@ -127,4 +128,10 @@ test "parseCliFlags detects serve/doctor/security flags" {
     try std.testing.expect(flags.doctor);
     try std.testing.expect(flags.deep);
     try std.testing.expect(flags.fix);
+}
+
+test "baremetal abi module exposes expected v2 contract constants" {
+    try std.testing.expectEqual(@as(u16, 2), baremetal_abi.api_version);
+    try std.testing.expect((baremetal_abi.defaultFeatureFlags() & baremetal_abi.feature_command_mailbox) != 0);
+    try std.testing.expect((baremetal_abi.defaultAbiFlags() & baremetal_abi.kernel_abi_command_mailbox) != 0);
 }

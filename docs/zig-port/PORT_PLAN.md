@@ -61,7 +61,7 @@ while maintaining parity-first validation and release gating.
     - target-path normalization for gateway route matching (`/health|/rpc|/ws` now correctly match query-bearing targets like `/rpc?x=1` and `/ws?mode=compat`)
     - websocket RPC parity expanded to accept binary websocket frames in addition to text frames (aligned with Go transport behavior)
     - `security.audit` + `doctor` gateway auth/rate-limit checks and regression tests
-    - validation: `zig build`, `zig build test` (`79/79`), `scripts/runtime-smoke-check.ps1`, `scripts/gateway-auth-smoke-check.ps1`, `scripts/websocket-smoke-check.ps1`, `scripts/web-login-smoke-check.ps1`
+    - validation: `zig build`, `zig build test` (`84/84`), `scripts/runtime-smoke-check.ps1`, `scripts/gateway-auth-smoke-check.ps1`, `scripts/websocket-smoke-check.ps1`, `scripts/web-login-smoke-check.ps1`
   - README refreshed with current parity/validation state and workflow guidance.
   - Local Zig toolchain reference doc refreshed to current local/remote hashes.
   - MkDocs documentation site scaffolded with full feature/domain documentation and GitHub Pages deployment workflow.
@@ -250,8 +250,12 @@ while maintaining parity-first validation and release gating.
   - added bare-metal runtime profile (`src/baremetal_main.zig`) and build target (`zig build baremetal`) plus smoke gate (`scripts/baremetal-smoke-check.ps1`) in both `zig-ci` and `release-preview` validate jobs.
   - release-preview packaging now ships the freestanding image artifact (`openclaw-zig-<version>-x86_64-freestanding-none.elf`) alongside desktop/android zips + checksums.
   - bare-metal runtime now embeds Multiboot2 header and smoke gate checks ELF magic + Multiboot2 magic bytes to reduce boot-regression risk.
-  - bare-metal smoke gate now parses ELF section/symbol tables to enforce `.multiboot` section presence and required runtime exports (`_start`, `oc_tick`, `oc_status_ptr`, `multiboot2_header`).
+  - bare-metal smoke gate now parses ELF section/symbol tables to enforce `.multiboot` section presence and required runtime exports (`_start`, `oc_tick`, `oc_tick_n`, `oc_status_ptr`, `oc_command_ptr`, `oc_kernel_info_ptr`, `oc_submit_command`, `kernel_info`, `multiboot2_header`).
   - bare-metal smoke gate now enforces full Multiboot2 header invariants (field values + checksum + end-tag contract), reducing false-positive magic-only matches.
+  - bare-metal ABI v2 depth expansion shipped:
+    - added shared ABI contracts module (`src/baremetal/abi.zig`) with explicit layout tests
+    - added command mailbox + kernel info exports and runtime command-processing loop in `src/baremetal_main.zig`
+    - validated with `zig build test --summary all` (`84/84`) and `scripts/baremetal-smoke-check.ps1`
   - CI recovery note (2026-03-04):
     - fixed Zig master API regression in Telegram runtime env lookup (`.block = .global` on `std.process.Environ`), which broke `zig-ci` validate and all cross-target jobs on run `22668754695`.
     - implemented injected environ wiring (`telegram_runtime.setEnviron`) and switched env lookup to `std.process.Environ.getAlloc(process_environ, ...)`.

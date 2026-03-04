@@ -11,13 +11,14 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - Original OpenClaw beta baseline (`v2026.3.2-beta.1`): `94/94` covered
   - Union baseline: `135/135` covered (`MISSING_IN_ZIG=0`)
   - Gateway events: stable `19/19`, beta `19/19`, union `19/19` (`UNION_EVENTS_MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> `79/79` passing
+- Latest local validation: `zig build test --summary all` -> `84/84` passing
 - Latest edge release tag: `v0.2.0-zig-edge.14`
 - Dual runtime profiles available:
   - OS-hosted profile: `openclaw-zig` (`--serve`, doctor, security audit, full RPC stack)
 - Bare-metal profile: `openclaw-zig-baremetal.elf` (`zig build baremetal`, freestanding runtime loop + Multiboot2 header)
   - smoke gate validates ELF class/endianness, Multiboot2 location/alignment, `.multiboot` section, and required exported symbols
   - smoke gate also validates Multiboot2 header field contract and checksum
+  - bare-metal ABI now includes exported kernel info + command mailbox hooks (`oc_kernel_info_ptr`, `oc_command_ptr`, `oc_submit_command`, `oc_tick_n`)
 - Recent optimization slices (2026-03-04):
   - memory/runtime/channel queue compaction and retention hardening
   - diagnostics docker probe caching
@@ -57,7 +58,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
 
 - Runtime profiles:
   - OS-hosted runtime: full HTTP/RPC gateway and feature surface.
-  - Bare-metal runtime: freestanding image exporting core lifecycle hooks (`_start`, `oc_tick`, `oc_status_ptr`) and a Multiboot2 header for bootloader/hypervisor integration.
+  - Bare-metal runtime: freestanding image exporting lifecycle hooks (`_start`, `oc_tick`, `oc_tick_n`, `oc_status_ptr`) plus command/mailbox ABI (`oc_command_ptr`, `oc_submit_command`, `oc_kernel_info_ptr`) and a Multiboot2 header for bootloader/hypervisor integration.
 - Protocol: JSON-RPC request/response envelopes with deterministic error semantics.
 - Gateway: HTTP/WebSocket server with `GET /health`, `POST /rpc`, and websocket RPC routes (`GET /ws` + root compatibility on `GET /`), graceful shutdown via RPC.
 - Dispatcher: method routing and contract handling across runtime, security, browser/auth, channels, memory, and edge domains.

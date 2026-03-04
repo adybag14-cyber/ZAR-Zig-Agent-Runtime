@@ -179,7 +179,7 @@ Phase 6 progress notes:
 ## Latest Validation Snapshot
 - [x] `zig build`
 - [x] `zig build test`
-- [x] `zig build test --summary all` -> `79/79` passing (includes gateway auth/rate-limit hardening tests and TTS/completion execution-path coverage)
+- [x] `zig build test --summary all` -> `84/84` passing (includes gateway auth/rate-limit hardening tests, TTS/completion execution-path coverage, and bare-metal ABI v2 contract tests)
 - [x] `scripts/generate-rpc-reference.ps1` (regenerates `docs/rpc-reference.md` from `src/gateway/registry.zig`, currently `153` methods)
 - [x] `scripts/npm-pack-check.ps1` (validates npm package dry-run for `npm/openclaw-zig-rpc-client`)
 - [x] `scripts/python-pack-check.ps1` (validates python client package tests + wheel/sdist + twine checks for `python/openclaw-zig-rpc-client`)
@@ -216,7 +216,11 @@ Phase 6 progress notes:
 - [x] `scripts/system-maintenance-smoke-check.ps1` (`system.maintenance.plan -> run(dry-run+apply) -> status` all HTTP 200 with lifecycle contract checks)
 - [x] `scripts/baremetal-smoke-check.ps1` (`zig build baremetal` + artifact presence/size checks for freestanding image)
 - [x] `scripts/baremetal-smoke-check.ps1` now validates ELF + Multiboot2 magic in the freestanding image.
-- [x] `scripts/baremetal-smoke-check.ps1` now validates `.multiboot` section + required exported symbols (`_start`, `oc_tick`, `oc_status_ptr`, `multiboot2_header`) from ELF symtab.
+- [x] `scripts/baremetal-smoke-check.ps1` now validates `.multiboot` section + required exported symbols (`_start`, `oc_tick`, `oc_tick_n`, `oc_status_ptr`, `oc_command_ptr`, `oc_kernel_info_ptr`, `oc_submit_command`, `kernel_info`, `multiboot2_header`) from ELF symtab.
+- [x] Bare-metal ABI v2 contract slice shipped:
+  - shared ABI module: `src/baremetal/abi.zig` (status/command/kernel-info structs, mode/feature/opcode constants)
+  - freestanding runtime exports command mailbox and kernel introspection hooks (`oc_command_ptr`, `oc_submit_command`, `oc_kernel_info_ptr`)
+  - freestanding runtime supports command processing on tick loop (`set health`, `set feature flags`, `set mode`, `reset counters`, `set tick batch`, `panic flag`)
 - [x] `scripts/baremetal-smoke-check.ps1` now validates Multiboot2 header fields and checksum (`magic`, `arch`, `header_length`, `checksum`, end-tag tuple) in addition to section/symbol invariants.
 - [x] Cross-target diagnostics matrix (`scripts/zig-cross-target-matrix.ps1`) now covers desktop + Android with per-target logs and JSON summary:
   - Local Windows Zig master result: `4/8` pass (`x86_64-windows`, `x86_64-linux`, `x86_64-macos`, `x86_64-linux-android`)

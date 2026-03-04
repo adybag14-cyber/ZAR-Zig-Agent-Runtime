@@ -8,7 +8,8 @@ This page summarizes functional coverage across all major OpenClaw Zig runtime d
   - full HTTP + JSON-RPC gateway and complete OpenClaw feature surface
 - bare-metal profile:
   - freestanding runtime image (`zig build baremetal`)
-  - exported lifecycle hooks for firmware/bootloader integration (`_start`, `oc_tick`, `oc_status_ptr`)
+  - exported lifecycle hooks for firmware/bootloader integration (`_start`, `oc_tick`, `oc_tick_n`, `oc_status_ptr`)
+  - exported command/mailbox ABI (`oc_command_ptr`, `oc_submit_command`, `oc_kernel_info_ptr`, `kernel_info`)
   - Multiboot2 header embedded for loader compatibility checks
 
 ## Protocol and Gateway

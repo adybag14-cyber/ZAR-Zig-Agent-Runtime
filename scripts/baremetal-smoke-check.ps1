@@ -320,7 +320,17 @@ for ($i = 0; $i -lt $symbolCount; $i++) {
     }
 }
 
-$requiredSymbols = @("_start", "oc_tick", "oc_status_ptr", "multiboot2_header")
+$requiredSymbols = @(
+    "_start",
+    "oc_tick",
+    "oc_tick_n",
+    "oc_status_ptr",
+    "oc_command_ptr",
+    "oc_kernel_info_ptr",
+    "oc_submit_command",
+    "kernel_info",
+    "multiboot2_header"
+)
 foreach ($required in $requiredSymbols) {
     if (-not $symbols.Contains($required)) {
         throw "required symbol not found in ELF symtab: $required"

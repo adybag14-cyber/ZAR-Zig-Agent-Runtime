@@ -26,7 +26,7 @@
 
 5. Runtime Profiles
 - OS-hosted profile (`src/main.zig`) with HTTP + JSON-RPC gateway and full feature surface
-- freestanding bare-metal profile (`src/baremetal_main.zig`) with exported lifecycle hooks and Multiboot2 header for bootloader/hypervisor integration
+- freestanding bare-metal profile (`src/baremetal_main.zig`) with exported lifecycle hooks, command/mailbox ABI exports, and Multiboot2 header for bootloader/hypervisor integration
 
 ## Major Modules
 
@@ -39,6 +39,7 @@
 - `src/channels/telegram_runtime.zig`
 - `src/bridge/*`
 - `src/memory/store.zig`
+- `src/baremetal/abi.zig`
 - `src/baremetal_main.zig`
 
 ## State and Lifecycle
