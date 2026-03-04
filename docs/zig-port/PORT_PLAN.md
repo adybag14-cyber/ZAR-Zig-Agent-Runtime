@@ -141,6 +141,10 @@ while maintaining parity-first validation and release gating.
     - new timer control opcodes: `command_timer_enable`, `command_timer_disable`, `command_timer_set_quantum`, `command_timer_schedule_periodic`.
     - timer exports extended with control telemetry: `oc_timer_enabled`, `oc_timer_quantum`.
     - runtime now supports periodic timer re-arming and configurable timer scan quantum while maintaining interrupt-driven wake progression.
+  - Bare-metal scheduler wait/resume + task-targeted timer cancel depth expansion shipped:
+    - new control opcodes: `command_task_wait`, `command_task_resume`, `command_timer_cancel_task`.
+    - scheduler/timer telemetry exports extended: `oc_scheduler_waiting_count`, `oc_timer_fire_total_count`.
+    - runtime now supports explicit task waiting/resume transitions with manual wake events and cancellation of all armed timers associated with a task.
     - runtime now provides contiguous page allocation/free on a bounded heap map and syscall registration/invocation/unregistration with dispatch telemetry.
 - Phase 4 complete:
   - Guard pipeline with prompt-risk scoring + loop-guard enforcement (`src/security/guard.zig`, `src/security/loop_guard.zig`)

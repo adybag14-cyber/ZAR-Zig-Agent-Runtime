@@ -444,6 +444,14 @@ pub export fn oc_scheduler_task_count() u32 {
     return scheduler_state.task_count;
 }
 
+pub export fn oc_scheduler_waiting_count() u32 {
+    var count: u32 = 0;
+    for (scheduler_tasks) |task| {
+        if (task.state == abi.task_state_waiting and task.task_id != 0) count +%= 1;
+    }
+    return count;
+}
+
 pub export fn oc_scheduler_task(index: u32) BaremetalTask {
     if (index >= @as(u32, scheduler_task_capacity)) return std.mem.zeroes(BaremetalTask);
     return scheduler_tasks[@as(usize, @intCast(index))];
@@ -577,6 +585,14 @@ pub export fn oc_timer_entry_capacity() u32 {
 
 pub export fn oc_timer_entry_count() u32 {
     return timer_state.timer_count;
+}
+
+pub export fn oc_timer_fire_total_count() u64 {
+    var total: u64 = 0;
+    for (timer_entries) |entry| {
+        total +%= entry.fire_count;
+    }
+    return total;
 }
 
 pub export fn oc_timer_entry(index: u32) BaremetalTimerEntry {
@@ -885,6 +901,18 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
             if (!schedulerTerminateTask(task_id)) return abi.result_not_found;
             return abi.result_ok;
         },
+        abi.command_task_wait => {
+            if (arg0 == 0 or arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
+            if (!schedulerSetTaskWaiting(@as(u32, @truncate(arg0)))) return abi.result_not_found;
+            return abi.result_ok;
+        },
+        abi.command_task_resume => {
+            if (arg0 == 0 or arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
+            if (!schedulerWakeTask(@as(u32, @truncate(arg0)), abi.wake_reason_manual, 0, 0, status.ticks)) {
+                return abi.result_not_found;
+            }
+            return abi.result_ok;
+        },
         abi.command_scheduler_set_timeslice => {
             if (arg0 == 0 or arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
             scheduler_state.timeslice_ticks = @as(u32, @truncate(arg0));
@@ -967,6 +995,10 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
         abi.command_timer_cancel => {
             if (arg0 == 0 or arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
             return timerCancel(@as(u32, @truncate(arg0)));
+        },
+        abi.command_timer_cancel_task => {
+            if (arg0 == 0 or arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
+            return timerCancelTask(@as(u32, @truncate(arg0)));
         },
         abi.command_timer_enable => {
             timer_state.enabled = abi.timer_state_enabled;
@@ -1209,6 +1241,19 @@ fn timerCancel(timer_id: u32) i16 {
     return abi.result_not_found;
 }
 
+fn timerCancelTask(task_id: u32) i16 {
+    var canceled_any = false;
+    for (&timer_entries) |*entry| {
+        if (entry.state == abi.timer_entry_state_armed and entry.task_id == task_id) {
+            entry.state = abi.timer_entry_state_canceled;
+            canceled_any = true;
+        }
+    }
+    if (!canceled_any) return abi.result_not_found;
+    timerRecountEntries();
+    return abi.result_ok;
+}
+
 fn wakeQueuePush(task_id: u32, timer_id: u32, reason: u8, vector: u8, tick: u64, interrupt_count: u64) void {
     const cap_u32: u32 = @as(u32, wake_queue_capacity);
     const write_index = wake_queue_head;
@@ -1240,6 +1285,17 @@ fn schedulerFindTaskSlot(task_id: u32) ?usize {
         }
     }
     return null;
+}
+
+fn schedulerSetTaskWaiting(task_id: u32) bool {
+    const slot = schedulerFindTaskSlot(task_id) orelse return false;
+    var task = &scheduler_tasks[slot];
+    if (task.state == abi.task_state_unused or task.state == abi.task_state_terminated or task.state == abi.task_state_completed) {
+        return false;
+    }
+    task.state = abi.task_state_waiting;
+    schedulerRecountTasks();
+    return true;
 }
 
 fn schedulerWakeTask(task_id: u32, reason: u8, timer_id: u32, vector: u8, tick: u64) bool {
@@ -2313,4 +2369,93 @@ test "baremetal timer quantum delays one shot dispatch until quantum boundary" {
     try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
     oc_tick(); // current_tick=6
     try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+}
+
+test "baremetal task wait and resume commands control runnable state and wake queue" {
+    status.mode = abi.mode_running;
+    status.ticks = 0;
+    status.command_seq_ack = 0;
+    status.last_command_opcode = abi.command_nop;
+    status.last_command_result = abi.result_ok;
+    status.tick_batch_hint = 1;
+    command_mailbox = .{
+        .magic = abi.command_magic,
+        .api_version = abi.api_version,
+        .opcode = abi.command_nop,
+        .seq = 0,
+        .arg0 = 0,
+        .arg1 = 0,
+    };
+    oc_scheduler_reset();
+    oc_timer_reset();
+    oc_wake_queue_clear();
+
+    _ = oc_submit_command(abi.command_scheduler_disable, 0, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_task_create, 5, 0);
+    oc_tick();
+    const task_id = oc_scheduler_task(0).task_id;
+    try std.testing.expect(task_id != 0);
+    try std.testing.expectEqual(@as(u32, 0), oc_scheduler_waiting_count());
+
+    _ = oc_submit_command(abi.command_task_wait, task_id, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u8, abi.task_state_waiting), oc_scheduler_task(0).state);
+    try std.testing.expectEqual(@as(u32, 1), oc_scheduler_waiting_count());
+    try std.testing.expectEqual(@as(u32, 0), oc_scheduler_task_count());
+
+    _ = oc_submit_command(abi.command_task_resume, task_id, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 0), oc_scheduler_waiting_count());
+    try std.testing.expectEqual(@as(u32, 1), oc_scheduler_task_count());
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+    const evt = oc_wake_queue_event(0);
+    try std.testing.expectEqual(task_id, evt.task_id);
+    try std.testing.expectEqual(@as(u8, abi.wake_reason_manual), evt.reason);
+}
+
+test "baremetal timer cancel task command cancels armed task timers" {
+    status.mode = abi.mode_running;
+    status.ticks = 0;
+    status.command_seq_ack = 0;
+    status.last_command_opcode = abi.command_nop;
+    status.last_command_result = abi.result_ok;
+    status.tick_batch_hint = 1;
+    command_mailbox = .{
+        .magic = abi.command_magic,
+        .api_version = abi.api_version,
+        .opcode = abi.command_nop,
+        .seq = 0,
+        .arg0 = 0,
+        .arg1 = 0,
+    };
+    oc_scheduler_reset();
+    oc_timer_reset();
+    oc_wake_queue_clear();
+
+    _ = oc_submit_command(abi.command_scheduler_disable, 0, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_task_create, 7, 0);
+    oc_tick();
+    const task_id = oc_scheduler_task(0).task_id;
+    try std.testing.expect(task_id != 0);
+
+    _ = oc_submit_command(abi.command_timer_schedule, task_id, 10);
+    oc_tick();
+    _ = oc_submit_command(abi.command_timer_schedule_periodic, task_id, 20);
+    oc_tick();
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u8, abi.timer_entry_state_armed), oc_timer_entry(0).state);
+
+    _ = oc_submit_command(abi.command_timer_cancel_task, task_id, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 0), oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u8, abi.timer_entry_state_canceled), oc_timer_entry(0).state);
+
+    _ = oc_submit_command(abi.command_timer_cancel_task, task_id, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
 }
