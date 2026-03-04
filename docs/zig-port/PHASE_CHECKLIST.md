@@ -194,7 +194,7 @@ Phase 6 progress notes:
 - [x] `scripts/npm-pack-check.ps1` (validates npm package dry-run for `npm/openclaw-zig-rpc-client`)
 - [x] `scripts/python-pack-check.ps1` (validates python client package tests + wheel/sdist + twine checks for `python/openclaw-zig-rpc-client`)
 - [x] `zig test src/main.zig`
-- [x] `zig test src/baremetal_main.zig` (`18/18` passing; includes mode-history + boot-phase-history + command-result counter + scheduler telemetry coverage)
+- [x] `zig test src/baremetal_main.zig` (`20/20` passing; includes mode-history + boot-phase-history + command-result counter + scheduler + allocator/syscall telemetry coverage)
 - [x] Guest/auth parity tests:
   - `channels.telegram_runtime.test.telegram runtime qwen guest auth lifecycle`
   - `channels.telegram_runtime.test.telegram runtime auth complete infers provider from callback URL`
@@ -293,6 +293,11 @@ Phase 6 progress notes:
   - exports: `oc_scheduler_state_ptr`, `oc_scheduler_enabled`, `oc_scheduler_task_capacity`, `oc_scheduler_task_count`, `oc_scheduler_task`, `oc_scheduler_tasks_ptr`, `oc_scheduler_reset`
   - ABI additions: `BaremetalSchedulerState`, `BaremetalTask`, `feature_scheduler_export`, `kernel_abi_scheduler`
   - opcodes: `command_scheduler_enable`, `command_scheduler_disable`, `command_scheduler_reset`, `command_task_create`, `command_task_terminate`, `command_scheduler_set_timeslice`, `command_scheduler_set_default_budget`
+- [x] Bare-metal allocator/syscall telemetry + control added:
+  - allocator exports: `oc_allocator_state_ptr`, `oc_allocator_page_count`, `oc_allocator_page_bitmap_ptr`, `oc_allocator_allocation_capacity`, `oc_allocator_allocation_count`, `oc_allocator_allocation`, `oc_allocator_allocations_ptr`, `oc_allocator_reset`
+  - syscall exports: `oc_syscall_state_ptr`, `oc_syscall_entry_capacity`, `oc_syscall_entry_count`, `oc_syscall_entry`, `oc_syscall_entries_ptr`, `oc_syscall_enabled`, `oc_syscall_reset`
+  - ABI additions: `BaremetalAllocatorState`, `BaremetalAllocationRecord`, `BaremetalSyscallState`, `BaremetalSyscallEntry`, `feature_allocator_export`, `feature_syscall_table_export`, `kernel_abi_allocator`, `kernel_abi_syscall_table`
+  - opcodes: `command_allocator_reset`, `command_allocator_alloc`, `command_allocator_free`, `command_syscall_register`, `command_syscall_unregister`, `command_syscall_invoke`, `command_syscall_reset`
 - [x] `scripts/baremetal-smoke-check.ps1` now validates Multiboot2 header fields and checksum (`magic`, `arch`, `header_length`, `checksum`, end-tag tuple) in addition to section/symbol invariants.
 - [x] Cross-target diagnostics matrix (`scripts/zig-cross-target-matrix.ps1`) now covers desktop + Android with per-target logs and JSON summary:
   - Local Windows Zig master result: `4/8` pass (`x86_64-windows`, `x86_64-linux`, `x86_64-macos`, `x86_64-linux-android`)

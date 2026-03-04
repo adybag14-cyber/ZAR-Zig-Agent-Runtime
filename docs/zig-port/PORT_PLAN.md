@@ -128,6 +128,11 @@ while maintaining parity-first validation and release gating.
     - exported scheduler/task telemetry and reset controls (`oc_scheduler_state_ptr`, `oc_scheduler_enabled`, `oc_scheduler_task_capacity`, `oc_scheduler_task_count`, `oc_scheduler_task`, `oc_scheduler_tasks_ptr`, `oc_scheduler_reset`)
     - new scheduler mailbox controls wired: `command_scheduler_enable`, `command_scheduler_disable`, `command_scheduler_reset`, `command_task_create`, `command_task_terminate`, `command_scheduler_set_timeslice`, `command_scheduler_set_default_budget`
     - runtime now performs cooperative round-robin task dispatch on tick with budget depletion and task-state transitions (`ready -> running -> ready/completed`).
+  - Bare-metal allocator/syscall depth expansion shipped:
+    - new allocator/syscall contracts (`BaremetalAllocatorState`, `BaremetalAllocationRecord`, `BaremetalSyscallState`, `BaremetalSyscallEntry`) and feature flags (`feature_allocator_export`, `feature_syscall_table_export`, `kernel_abi_allocator`, `kernel_abi_syscall_table`)
+    - exported allocator/syscall telemetry and reset controls (`oc_allocator_state_ptr`, `oc_allocator_page_bitmap_ptr`, `oc_allocator_allocation_count`, `oc_allocator_allocation`, `oc_allocator_reset`, `oc_syscall_state_ptr`, `oc_syscall_entry_count`, `oc_syscall_entry`, `oc_syscall_reset`)
+    - new allocator/syscall mailbox controls wired: `command_allocator_reset`, `command_allocator_alloc`, `command_allocator_free`, `command_syscall_register`, `command_syscall_unregister`, `command_syscall_invoke`, `command_syscall_reset`
+    - runtime now provides contiguous page allocation/free on a bounded heap map and syscall registration/invocation/unregistration with dispatch telemetry.
 - Phase 4 complete:
   - Guard pipeline with prompt-risk scoring + loop-guard enforcement (`src/security/guard.zig`, `src/security/loop_guard.zig`)
   - RPC diagnostics surfaces: `security.audit` and `doctor`

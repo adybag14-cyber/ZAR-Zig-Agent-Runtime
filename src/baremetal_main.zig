@@ -13,6 +13,10 @@ const BaremetalBootPhaseEvent = abi.BaremetalBootPhaseEvent;
 const BaremetalCommandResultCounters = abi.BaremetalCommandResultCounters;
 const BaremetalSchedulerState = abi.BaremetalSchedulerState;
 const BaremetalTask = abi.BaremetalTask;
+const BaremetalAllocatorState = abi.BaremetalAllocatorState;
+const BaremetalAllocationRecord = abi.BaremetalAllocationRecord;
+const BaremetalSyscallState = abi.BaremetalSyscallState;
+const BaremetalSyscallEntry = abi.BaremetalSyscallEntry;
 
 const multiboot2_magic: u32 = 0xE85250D6;
 const multiboot2_architecture_i386: u32 = 0;
@@ -151,6 +155,41 @@ var scheduler_state: BaremetalSchedulerState = .{
     .reserved1 = 0,
 };
 var scheduler_rr_cursor: u8 = 0;
+
+const allocator_page_capacity: usize = 256;
+const allocator_record_capacity: usize = 64;
+const allocator_default_page_size: u32 = 4096;
+const allocator_default_heap_base: u64 = 0x0010_0000;
+var allocator_page_bitmap: [allocator_page_capacity]u8 = std.mem.zeroes([allocator_page_capacity]u8);
+var allocator_records: [allocator_record_capacity]BaremetalAllocationRecord = std.mem.zeroes([allocator_record_capacity]BaremetalAllocationRecord);
+var allocator_state: BaremetalAllocatorState = .{
+    .heap_base = allocator_default_heap_base,
+    .heap_size = @as(u64, allocator_page_capacity) * allocator_default_page_size,
+    .page_size = allocator_default_page_size,
+    .total_pages = @as(u32, allocator_page_capacity),
+    .free_pages = @as(u32, allocator_page_capacity),
+    .allocation_count = 0,
+    .alloc_ops = 0,
+    .free_ops = 0,
+    .bytes_in_use = 0,
+    .peak_bytes_in_use = 0,
+    .last_alloc_ptr = 0,
+    .last_alloc_size = 0,
+    .last_free_ptr = 0,
+    .last_free_size = 0,
+};
+
+const syscall_entry_capacity: usize = 64;
+var syscall_entries: [syscall_entry_capacity]BaremetalSyscallEntry = std.mem.zeroes([syscall_entry_capacity]BaremetalSyscallEntry);
+var syscall_state: BaremetalSyscallState = .{
+    .enabled = abi.syscall_state_enabled,
+    .entry_count = 0,
+    .reserved0 = 0,
+    .last_syscall_id = 0,
+    .dispatch_count = 0,
+    .last_invoke_tick = 0,
+    .last_result = 0,
+};
 
 pub export fn oc_status_ptr() *const abi.BaremetalStatus {
     return &status;
@@ -408,6 +447,94 @@ pub export fn oc_scheduler_reset() void {
     scheduler_rr_cursor = 0;
 }
 
+pub export fn oc_allocator_state_ptr() *const BaremetalAllocatorState {
+    return &allocator_state;
+}
+
+pub export fn oc_allocator_page_count() u32 {
+    return allocator_state.total_pages;
+}
+
+pub export fn oc_allocator_page_bitmap_ptr() *const [allocator_page_capacity]u8 {
+    return &allocator_page_bitmap;
+}
+
+pub export fn oc_allocator_allocation_capacity() u32 {
+    return @as(u32, allocator_record_capacity);
+}
+
+pub export fn oc_allocator_allocation_count() u32 {
+    return allocator_state.allocation_count;
+}
+
+pub export fn oc_allocator_allocation(index: u32) BaremetalAllocationRecord {
+    if (index >= @as(u32, allocator_record_capacity)) return std.mem.zeroes(BaremetalAllocationRecord);
+    return allocator_records[@as(usize, @intCast(index))];
+}
+
+pub export fn oc_allocator_allocations_ptr() *const [allocator_record_capacity]BaremetalAllocationRecord {
+    return &allocator_records;
+}
+
+pub export fn oc_allocator_reset() void {
+    @memset(&allocator_page_bitmap, 0);
+    @memset(&allocator_records, std.mem.zeroes(BaremetalAllocationRecord));
+    allocator_state = .{
+        .heap_base = allocator_default_heap_base,
+        .heap_size = @as(u64, allocator_page_capacity) * allocator_default_page_size,
+        .page_size = allocator_default_page_size,
+        .total_pages = @as(u32, allocator_page_capacity),
+        .free_pages = @as(u32, allocator_page_capacity),
+        .allocation_count = 0,
+        .alloc_ops = 0,
+        .free_ops = 0,
+        .bytes_in_use = 0,
+        .peak_bytes_in_use = 0,
+        .last_alloc_ptr = 0,
+        .last_alloc_size = 0,
+        .last_free_ptr = 0,
+        .last_free_size = 0,
+    };
+}
+
+pub export fn oc_syscall_state_ptr() *const BaremetalSyscallState {
+    return &syscall_state;
+}
+
+pub export fn oc_syscall_entry_capacity() u32 {
+    return @as(u32, syscall_entry_capacity);
+}
+
+pub export fn oc_syscall_entry_count() u32 {
+    return syscall_state.entry_count;
+}
+
+pub export fn oc_syscall_entry(index: u32) BaremetalSyscallEntry {
+    if (index >= @as(u32, syscall_entry_capacity)) return std.mem.zeroes(BaremetalSyscallEntry);
+    return syscall_entries[@as(usize, @intCast(index))];
+}
+
+pub export fn oc_syscall_entries_ptr() *const [syscall_entry_capacity]BaremetalSyscallEntry {
+    return &syscall_entries;
+}
+
+pub export fn oc_syscall_enabled() bool {
+    return syscall_state.enabled == abi.syscall_state_enabled;
+}
+
+pub export fn oc_syscall_reset() void {
+    @memset(&syscall_entries, std.mem.zeroes(BaremetalSyscallEntry));
+    syscall_state = .{
+        .enabled = abi.syscall_state_enabled,
+        .entry_count = 0,
+        .reserved0 = 0,
+        .last_syscall_id = 0,
+        .dispatch_count = 0,
+        .last_invoke_tick = 0,
+        .last_result = 0,
+    };
+}
+
 pub export fn oc_submit_command(opcode: u16, arg0: u64, arg1: u64) u32 {
     const next_seq = command_mailbox.seq +% 1;
     command_mailbox.opcode = opcode;
@@ -509,6 +636,8 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
             oc_boot_phase_history_clear();
             oc_command_result_counters_clear();
             oc_scheduler_reset();
+            oc_allocator_reset();
+            oc_syscall_reset();
             return abi.result_ok;
         },
         abi.command_set_mode => {
@@ -653,6 +782,45 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
         abi.command_scheduler_set_default_budget => {
             if (arg0 == 0 or arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
             scheduler_state.default_budget_ticks = @as(u32, @truncate(arg0));
+            return abi.result_ok;
+        },
+        abi.command_allocator_reset => {
+            oc_allocator_reset();
+            return abi.result_ok;
+        },
+        abi.command_allocator_alloc => {
+            if (arg0 == 0) return abi.result_invalid_argument;
+            const size_bytes: u64 = arg0;
+            const alignment: u64 = if (arg1 == 0) allocator_state.page_size else arg1;
+            if (!std.math.isPowerOfTwo(alignment)) return abi.result_invalid_argument;
+            const ptr = allocatorAlloc(size_bytes, alignment, status.ticks) orelse return abi.result_no_space;
+            allocator_state.last_alloc_ptr = ptr;
+            allocator_state.last_alloc_size = size_bytes;
+            return abi.result_ok;
+        },
+        abi.command_allocator_free => {
+            if (arg0 == 0) return abi.result_invalid_argument;
+            const free_result = allocatorFree(arg0, arg1, status.ticks);
+            if (free_result == abi.result_ok) {
+                allocator_state.last_free_ptr = arg0;
+                allocator_state.last_free_size = if (arg1 == 0) allocator_state.last_free_size else arg1;
+            }
+            return free_result;
+        },
+        abi.command_syscall_register => {
+            if (arg0 == 0 or arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
+            return syscallRegister(@as(u32, @truncate(arg0)), arg1);
+        },
+        abi.command_syscall_unregister => {
+            if (arg0 == 0 or arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
+            return syscallUnregister(@as(u32, @truncate(arg0)));
+        },
+        abi.command_syscall_invoke => {
+            if (arg0 == 0 or arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
+            return syscallInvoke(@as(u32, @truncate(arg0)), arg1, status.ticks);
+        },
+        abi.command_syscall_reset => {
+            oc_syscall_reset();
             return abi.result_ok;
         },
         else => return abi.result_not_supported,
@@ -856,6 +1024,170 @@ fn schedulerRecountTasks() void {
     if (count == 0) {
         scheduler_state.running_slot = scheduler_no_slot;
     }
+}
+
+fn allocatorRequiredPages(size_bytes: u64) u32 {
+    const page = @as(u64, allocator_state.page_size);
+    return @as(u32, @intCast((size_bytes + page - 1) / page));
+}
+
+fn allocatorAlloc(size_bytes: u64, alignment: u64, tick: u64) ?u64 {
+    const required_pages = allocatorRequiredPages(size_bytes);
+    if (required_pages == 0) return null;
+    if (required_pages > allocator_state.free_pages) return null;
+
+    const required_len: usize = @as(usize, @intCast(required_pages));
+    var start: usize = 0;
+    while (start + required_len <= allocator_page_capacity) : (start += 1) {
+        const ptr = allocator_state.heap_base + @as(u64, start) * allocator_state.page_size;
+        if ((ptr & (alignment - 1)) != 0) continue;
+
+        var fit = true;
+        var off: usize = 0;
+        while (off < required_len) : (off += 1) {
+            if (allocator_page_bitmap[start + off] != 0) {
+                fit = false;
+                break;
+            }
+        }
+        if (!fit) continue;
+
+        var record_slot: ?usize = null;
+        for (allocator_records, 0..) |record, idx| {
+            if (record.state == abi.allocation_state_unused) {
+                record_slot = idx;
+                break;
+            }
+        }
+        const slot = record_slot orelse return null;
+
+        off = 0;
+        while (off < required_len) : (off += 1) {
+            allocator_page_bitmap[start + off] = 1;
+        }
+
+        allocator_records[slot] = .{
+            .ptr = ptr,
+            .size_bytes = size_bytes,
+            .page_start = @as(u32, @intCast(start)),
+            .page_len = required_pages,
+            .state = abi.allocation_state_active,
+            .reserved0 = std.mem.zeroes([7]u8),
+            .created_tick = tick,
+            .last_used_tick = tick,
+        };
+
+        allocator_state.free_pages -= required_pages;
+        allocator_state.allocation_count +%= 1;
+        allocator_state.alloc_ops +%= 1;
+        allocator_state.bytes_in_use +%= size_bytes;
+        if (allocator_state.bytes_in_use > allocator_state.peak_bytes_in_use) {
+            allocator_state.peak_bytes_in_use = allocator_state.bytes_in_use;
+        }
+        return ptr;
+    }
+    return null;
+}
+
+fn allocatorFree(ptr: u64, expected_size: u64, tick: u64) i16 {
+    for (&allocator_records) |*record| {
+        if (record.state != abi.allocation_state_active) continue;
+        if (record.ptr != ptr) continue;
+        if (expected_size != 0 and expected_size != record.size_bytes) return abi.result_invalid_argument;
+
+        const start: usize = @as(usize, @intCast(record.page_start));
+        const len: usize = @as(usize, @intCast(record.page_len));
+        var off: usize = 0;
+        while (off < len) : (off += 1) {
+            allocator_page_bitmap[start + off] = 0;
+        }
+
+        const freed_size = record.size_bytes;
+        record.last_used_tick = tick;
+        record.state = abi.allocation_state_unused;
+        record.ptr = 0;
+        record.size_bytes = 0;
+        record.page_start = 0;
+        record.page_len = 0;
+        record.created_tick = 0;
+
+        allocator_state.free_pages +%= @as(u32, @intCast(len));
+        if (allocator_state.allocation_count > 0) allocator_state.allocation_count -= 1;
+        allocator_state.free_ops +%= 1;
+        if (allocator_state.bytes_in_use >= freed_size) {
+            allocator_state.bytes_in_use -= freed_size;
+        } else {
+            allocator_state.bytes_in_use = 0;
+        }
+        allocator_state.last_free_size = freed_size;
+        return abi.result_ok;
+    }
+    return abi.result_not_found;
+}
+
+fn syscallRecountEntries() void {
+    var count: u8 = 0;
+    for (syscall_entries) |entry| {
+        if (entry.state == abi.syscall_entry_state_registered) count +%= 1;
+    }
+    syscall_state.entry_count = count;
+}
+
+fn syscallRegister(syscall_id: u32, handler_token: u64) i16 {
+    if (handler_token == 0) return abi.result_invalid_argument;
+    for (&syscall_entries) |*entry| {
+        if (entry.state == abi.syscall_entry_state_registered and entry.syscall_id == syscall_id) {
+            entry.handler_token = handler_token;
+            return abi.result_ok;
+        }
+    }
+    for (&syscall_entries) |*entry| {
+        if (entry.state == abi.syscall_entry_state_unused) {
+            entry.* = .{
+                .syscall_id = syscall_id,
+                .state = abi.syscall_entry_state_registered,
+                .flags = 0,
+                .reserved0 = 0,
+                .handler_token = handler_token,
+                .invoke_count = 0,
+                .last_arg = 0,
+                .last_result = 0,
+            };
+            syscallRecountEntries();
+            return abi.result_ok;
+        }
+    }
+    return abi.result_no_space;
+}
+
+fn syscallUnregister(syscall_id: u32) i16 {
+    for (&syscall_entries) |*entry| {
+        if (entry.state == abi.syscall_entry_state_registered and entry.syscall_id == syscall_id) {
+            entry.* = std.mem.zeroes(BaremetalSyscallEntry);
+            syscallRecountEntries();
+            return abi.result_ok;
+        }
+    }
+    return abi.result_not_found;
+}
+
+fn syscallInvoke(syscall_id: u32, arg: u64, tick: u64) i16 {
+    if (syscall_state.enabled != abi.syscall_state_enabled) return abi.result_not_supported;
+    for (&syscall_entries) |*entry| {
+        if (entry.state != abi.syscall_entry_state_registered or entry.syscall_id != syscall_id) continue;
+        const id_u64: u64 = syscall_id;
+        const result_u64 = entry.handler_token ^ arg ^ id_u64;
+        const result_i64: i64 = @as(i64, @bitCast(result_u64));
+        entry.invoke_count +%= 1;
+        entry.last_arg = arg;
+        entry.last_result = result_i64;
+        syscall_state.last_syscall_id = syscall_id;
+        syscall_state.dispatch_count +%= 1;
+        syscall_state.last_invoke_tick = tick;
+        syscall_state.last_result = result_i64;
+        return abi.result_ok;
+    }
+    return abi.result_not_found;
 }
 
 fn resetBootDiagnostics() void {
@@ -1287,4 +1619,100 @@ test "baremetal scheduler command flow creates dispatches and completes tasks" {
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
     try std.testing.expectEqual(@as(u32, 0), oc_scheduler_task_count());
+}
+
+test "baremetal allocator command flow allocates and frees mapped pages" {
+    status.mode = abi.mode_running;
+    status.ticks = 0;
+    status.command_seq_ack = 0;
+    status.last_command_opcode = abi.command_nop;
+    status.last_command_result = abi.result_ok;
+    status.tick_batch_hint = 1;
+    command_mailbox = .{
+        .magic = abi.command_magic,
+        .api_version = abi.api_version,
+        .opcode = abi.command_nop,
+        .seq = 0,
+        .arg0 = 0,
+        .arg1 = 0,
+    };
+    oc_allocator_reset();
+    oc_command_result_counters_clear();
+    oc_scheduler_reset();
+
+    const initial_free = oc_allocator_state_ptr().free_pages;
+    _ = oc_submit_command(abi.command_allocator_alloc, 8192, 4096);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    const state_after_alloc = oc_allocator_state_ptr().*;
+    try std.testing.expectEqual(@as(u32, 1), state_after_alloc.allocation_count);
+    try std.testing.expectEqual(initial_free - 2, state_after_alloc.free_pages);
+    try std.testing.expect(state_after_alloc.last_alloc_ptr != 0);
+    try std.testing.expectEqual(@as(u64, 8192), state_after_alloc.last_alloc_size);
+    const alloc0 = oc_allocator_allocation(0);
+    try std.testing.expectEqual(@as(u8, abi.allocation_state_active), alloc0.state);
+    try std.testing.expectEqual(@as(u32, 2), alloc0.page_len);
+    try std.testing.expectEqual(state_after_alloc.last_alloc_ptr, alloc0.ptr);
+
+    _ = oc_submit_command(abi.command_allocator_free, alloc0.ptr + 4096, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
+
+    _ = oc_submit_command(abi.command_allocator_free, alloc0.ptr, 8192);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    const state_after_free = oc_allocator_state_ptr().*;
+    try std.testing.expectEqual(@as(u32, 0), state_after_free.allocation_count);
+    try std.testing.expectEqual(initial_free, state_after_free.free_pages);
+    try std.testing.expectEqual(alloc0.ptr, state_after_free.last_free_ptr);
+
+    _ = oc_submit_command(abi.command_allocator_alloc, state_after_free.heap_size + 4096, 4096);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_no_space), status.last_command_result);
+}
+
+test "baremetal syscall command flow registers invokes and unregisters entries" {
+    status.mode = abi.mode_running;
+    status.ticks = 0;
+    status.command_seq_ack = 0;
+    status.last_command_opcode = abi.command_nop;
+    status.last_command_result = abi.result_ok;
+    status.tick_batch_hint = 1;
+    command_mailbox = .{
+        .magic = abi.command_magic,
+        .api_version = abi.api_version,
+        .opcode = abi.command_nop,
+        .seq = 0,
+        .arg0 = 0,
+        .arg1 = 0,
+    };
+    oc_syscall_reset();
+    oc_command_result_counters_clear();
+    oc_scheduler_reset();
+    oc_allocator_reset();
+
+    _ = oc_submit_command(abi.command_syscall_register, 7, 0xAA55);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 1), oc_syscall_entry_count());
+    const entry0 = oc_syscall_entry(0);
+    try std.testing.expectEqual(@as(u32, 7), entry0.syscall_id);
+    try std.testing.expectEqual(@as(u8, abi.syscall_entry_state_registered), entry0.state);
+
+    _ = oc_submit_command(abi.command_syscall_invoke, 7, 0x1234);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    const syscall_state_after_invoke = oc_syscall_state_ptr().*;
+    try std.testing.expectEqual(@as(u32, 7), syscall_state_after_invoke.last_syscall_id);
+    try std.testing.expect(syscall_state_after_invoke.dispatch_count > 0);
+    try std.testing.expect(syscall_state_after_invoke.last_invoke_tick > 0);
+
+    _ = oc_submit_command(abi.command_syscall_unregister, 7, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 0), oc_syscall_entry_count());
+
+    _ = oc_submit_command(abi.command_syscall_invoke, 7, 0x9999);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
 }
