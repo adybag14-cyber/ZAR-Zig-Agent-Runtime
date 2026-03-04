@@ -152,12 +152,12 @@ pub fn routeRequest(
         };
     }
 
-    if (std.mem.eql(u8, target, "/ws")) {
+    if (isWebSocketPath(target)) {
         if (method != .GET) {
             return .{
                 .status = .method_not_allowed,
                 .content_type = "application/json",
-                .body = try encodeJson(allocator, .{ .@"error" = "method_not_allowed", .allowed = "GET /ws (websocket upgrade)" }),
+                .body = try encodeJson(allocator, .{ .@"error" = "method_not_allowed", .allowed = "GET /ws or / (websocket upgrade)" }),
             };
         }
         return .{
@@ -188,7 +188,7 @@ fn serveRequest(
     const target = try allocator.dupe(u8, request.head.target);
     defer allocator.free(target);
 
-    if (std.mem.eql(u8, target, "/ws")) {
+    if (isWebSocketPath(target)) {
         return try serveWebSocket(allocator, cfg, rate_limiter, request, should_shutdown);
     }
 
@@ -236,7 +236,7 @@ fn serveWebSocket(
     should_shutdown: *bool,
 ) !bool {
     if (request.head.method != .GET) {
-        const body = try encodeJson(allocator, .{ .@"error" = "method_not_allowed", .allowed = "GET /ws (websocket upgrade)" });
+        const body = try encodeJson(allocator, .{ .@"error" = "method_not_allowed", .allowed = "GET /ws or / (websocket upgrade)" });
         defer allocator.free(body);
         try request.respond(body, .{
             .status = .method_not_allowed,
@@ -368,6 +368,10 @@ fn serveWebSocket(
     return true;
 }
 
+fn isWebSocketPath(target: []const u8) bool {
+    return std.mem.eql(u8, target, "/ws") or std.mem.eql(u8, target, "/");
+}
+
 fn readRequestBody(allocator: std.mem.Allocator, request: *std.http.Server.Request) ![]u8 {
     var body_reader = try request.readerExpectContinue(&.{});
     return body_reader.allocRemaining(allocator, .limited(max_rpc_body_bytes));
@@ -461,6 +465,16 @@ test "routeRequest /ws requires websocket upgrade" {
     const cfg = config.defaults();
     var should_shutdown = false;
     const result = try routeRequest(allocator, cfg, .{}, .GET, "/ws", "", &should_shutdown);
+    defer allocator.free(result.body);
+    try std.testing.expectEqual(std.http.Status.upgrade_required, result.status);
+    try std.testing.expect(std.mem.indexOf(u8, result.body, "upgrade_required") != null);
+}
+
+test "routeRequest root path requires websocket upgrade compatibility" {
+    const allocator = std.testing.allocator;
+    const cfg = config.defaults();
+    var should_shutdown = false;
+    const result = try routeRequest(allocator, cfg, .{}, .GET, "/", "", &should_shutdown);
     defer allocator.free(result.body);
     try std.testing.expectEqual(std.http.Status.upgrade_required, result.status);
     try std.testing.expect(std.mem.indexOf(u8, result.body, "upgrade_required") != null);

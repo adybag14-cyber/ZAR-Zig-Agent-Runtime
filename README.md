@@ -9,7 +9,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - Go baseline (`v2.14.0-go`): `134/134` covered
   - Original OpenClaw baseline (`v2026.3.2`): `94/94` covered
   - Union baseline: `135/135` covered (`MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> `77/77` passing
+- Latest local validation: `zig build test --summary all` -> `79/79` passing
 - Latest edge release tag: `v0.2.0-zig-edge.14`
 - Dual runtime profiles available:
   - OS-hosted profile: `openclaw-zig` (`--serve`, doctor, security audit, full RPC stack)
@@ -56,7 +56,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - OS-hosted runtime: full HTTP/RPC gateway and feature surface.
   - Bare-metal runtime: freestanding image exporting core lifecycle hooks (`_start`, `oc_tick`, `oc_status_ptr`) and a Multiboot2 header for bootloader/hypervisor integration.
 - Protocol: JSON-RPC request/response envelopes with deterministic error semantics.
-- Gateway: HTTP server with `GET /health` and `POST /rpc`, graceful shutdown via RPC.
+- Gateway: HTTP/WebSocket server with `GET /health`, `POST /rpc`, and websocket RPC routes (`GET /ws` + root compatibility on `GET /`), graceful shutdown via RPC.
 - Dispatcher: method routing and contract handling across runtime, security, browser/auth, channels, memory, and edge domains.
 - Runtime: session/job state, tool runtime actions, compat state surfaces.
 - Security: guard, loop-guard, doctor/security audit, remediation (`--fix`) path.
@@ -73,9 +73,11 @@ All major runtime feature domains are implemented and dispatchable. Representati
 
 - Connectivity and health:
   - `connect`, `health`, `status`, `shutdown`
-- HTTP routes:
+- Gateway routes:
   - `GET /health`
   - `POST /rpc`
+  - `GET /ws` websocket upgrade route
+  - `GET /` websocket compatibility route for legacy bridge clients
 - Contract coverage guard:
   - test asserts every registered method resolves in dispatcher (no registry/dispatcher drift).
 
@@ -259,6 +261,8 @@ Core routes:
 
 - `GET /health`
 - `POST /rpc`
+- `GET /ws`
+- `GET /` (websocket compatibility route)
 - graceful shutdown via RPC method `shutdown`
 
 ## Validation and Diagnostics
@@ -304,6 +308,7 @@ Run smoke checks:
 ./scripts/docker-smoke-check.ps1
 ./scripts/baremetal-smoke-check.ps1
 ./scripts/runtime-smoke-check.ps1
+./scripts/websocket-smoke-check.ps1
 ./scripts/web-login-smoke-check.ps1
 ./scripts/telegram-reply-loop-smoke-check.ps1
 ```

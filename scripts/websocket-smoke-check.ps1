@@ -68,6 +68,7 @@ Remove-Item $stdoutLog,$stderrLog -ErrorAction SilentlyContinue
 $proc = Start-Process -FilePath $exe -ArgumentList @("--serve") -WorkingDirectory $repo -PassThru -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
 $baseUrl = "http://127.0.0.1:$Port"
 $wsUri = [Uri]::new("ws://127.0.0.1:$Port/ws")
+$wsRootUri = [Uri]::new("ws://127.0.0.1:$Port/")
 
 $ready = $false
 for ($i = 0; $i -lt $ReadyAttempts; $i++) {
@@ -129,6 +130,46 @@ try {
 
     try {
         $null = $ws.CloseAsync([System.Net.WebSockets.WebSocketCloseStatus]::NormalClosure, "smoke-complete", [System.Threading.CancellationToken]::None).GetAwaiter().GetResult()
+    } catch {
+        # Server-side close without full handshake is acceptable for this smoke.
+    }
+
+    # Root websocket compatibility route (ws://host:port/) parity check.
+    $wsRoot = [System.Net.WebSockets.ClientWebSocket]::new()
+    $rootCts = [System.Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds(15))
+    $null = $wsRoot.ConnectAsync($wsRootUri, $rootCts.Token).GetAwaiter().GetResult()
+
+    $rootRequestPayload = '{"id":"ws-smoke-root-1","method":"health","params":{}}'
+    $rootRequestBytes = [System.Text.Encoding]::UTF8.GetBytes($rootRequestPayload)
+    $rootRequestSegment = [ArraySegment[byte]]::new($rootRequestBytes)
+    $null = $wsRoot.SendAsync($rootRequestSegment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [System.Threading.CancellationToken]::None).GetAwaiter().GetResult()
+
+    $rootBuffer = New-Object byte[] 16384
+    $rootBuilder = [System.Text.StringBuilder]::new()
+    do {
+        $rootSegment = [ArraySegment[byte]]::new($rootBuffer)
+        $rootReceive = $wsRoot.ReceiveAsync($rootSegment, [System.Threading.CancellationToken]::None).GetAwaiter().GetResult()
+        if ($rootReceive.MessageType -eq [System.Net.WebSockets.WebSocketMessageType]::Close) {
+            throw "root websocket compatibility route closed before response frame was received"
+        }
+        $rootChunk = [System.Text.Encoding]::UTF8.GetString($rootBuffer, 0, $rootReceive.Count)
+        [void]$rootBuilder.Append($rootChunk)
+    } while (-not $rootReceive.EndOfMessage)
+
+    $rootResponseText = $rootBuilder.ToString()
+    $rootResponseJson = $rootResponseText | ConvertFrom-Json
+    if ($null -eq $rootResponseJson.result) {
+        throw "root websocket response missing result payload: $rootResponseText"
+    }
+    $rootStatus = "$($rootResponseJson.result.status)"
+    if ([string]::IsNullOrWhiteSpace($rootStatus) -or $rootStatus -ne "ok") {
+        throw "root websocket response unexpected health status: $rootResponseText"
+    }
+    Write-Output "WS_ROOT_COMPAT_CONNECT=ok"
+    Write-Output "WS_ROOT_COMPAT_STATUS=$rootStatus"
+
+    try {
+        $null = $wsRoot.CloseAsync([System.Net.WebSockets.WebSocketCloseStatus]::NormalClosure, "smoke-complete", [System.Threading.CancellationToken]::None).GetAwaiter().GetResult()
     } catch {
         # Server-side close without full handshake is acceptable for this smoke.
     }
