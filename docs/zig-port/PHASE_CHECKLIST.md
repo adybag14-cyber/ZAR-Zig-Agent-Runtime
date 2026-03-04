@@ -225,6 +225,7 @@ Phase 6 progress notes:
 - [x] `scripts/generate-rpc-reference.ps1` (regenerates `docs/rpc-reference.md` from `src/gateway/registry.zig`, currently `160` methods)
 - [x] `scripts/npm-pack-check.ps1` (validates npm package dry-run for `npm/openclaw-zig-rpc-client`)
 - [x] `scripts/python-pack-check.ps1` (validates python client package tests + wheel/sdist + twine checks for `python/openclaw-zig-rpc-client`)
+- [x] `scripts/generate-release-evidence.ps1` (generates release trust artifacts from packaged assets: `release-manifest.json`, `sbom.spdx.json`, `provenance.intoto.json`)
 - [x] WASM trust-host hook hardening regression coverage:
   - `gateway.dispatcher.test.dispatch wasm lifecycle methods install execute remove and enforce sandbox limits` now also checks trust mode metadata and host-hook allow/deny behavior.
 - [x] `zig test src/main.zig`
@@ -366,6 +367,9 @@ Phase 6 progress notes:
   - runtime behavior: timer and interrupt wait deadlines now use saturating tick arithmetic (no wraparound wake regressions near `u64` tick ceiling).
   - periodic re-arm behavior now advances using bounded arithmetic instead of overflow-prone increment loops.
 - [x] `scripts/baremetal-smoke-check.ps1` now validates Multiboot2 header fields and checksum (`magic`, `arch`, `header_length`, `checksum`, end-tag tuple) in addition to section/symbol invariants.
+- [x] Release trust evidence now generated and published in release flows:
+  - local `scripts/release-preview.ps1` now emits and includes `release-manifest.json`, `sbom.spdx.json`, and `provenance.intoto.json`.
+  - `.github/workflows/release-preview.yml` now generates and uploads the same trust artifacts into GitHub release assets.
 - [x] Cross-target diagnostics matrix (`scripts/zig-cross-target-matrix.ps1`) now covers desktop + Android with per-target logs and JSON summary:
   - Local Windows Zig master result: `4/8` pass (`x86_64-windows`, `x86_64-linux`, `x86_64-macos`, `x86_64-linux-android`)
   - Local failures: `aarch64-linux`, `aarch64-macos`, `aarch64-linux-android`, `arm-linux-androideabi`

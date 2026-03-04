@@ -369,6 +369,7 @@ Validate python package publishability:
 - includes bare-metal release artifact: `openclaw-zig-<version>-x86_64-freestanding-none.elf`
 - duplicate release tag guard
 - release asset parity evidence attachment
+- release trust evidence attachment (`release-manifest.json`, `sbom.spdx.json`, `provenance.intoto.json`)
 - npm package dry-run validation gate in validate stage
 
 `npm-release` workflow (`.github/workflows/npm-release.yml`):

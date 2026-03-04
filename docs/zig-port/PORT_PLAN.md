@@ -89,6 +89,10 @@ while maintaining parity-first validation and release gating.
     - new RPC methods: `secrets.store.status`, `secrets.store.set`, `secrets.store.get`, `secrets.store.delete`, `secrets.store.list`.
     - encrypted fallback backend implemented with XChaCha20-Poly1305 persistence (`secrets.store.enc.json`) and backend-selection abstraction (`env` / `encrypted-file` / `dpapi|keychain|keystore` with encrypted fallback).
     - `secrets.resolve` now checks secure store entries between config overlay and environment aliases.
+  - Release trust artifact generation shipped:
+    - new script: `scripts/generate-release-evidence.ps1`.
+    - local release flow (`scripts/release-preview.ps1`) now generates `release-manifest.json`, `sbom.spdx.json`, and `provenance.intoto.json` from packaged release assets.
+    - CI release flow (`.github/workflows/release-preview.yml`) now generates and publishes the same trust artifacts in GitHub release assets.
   - WASM trust/signature + host-hook hardening shipped:
     - `edge.wasm.install` now computes deterministic module digest metadata, validates optional expected hashes, and supports trust policy enforcement (`hash|signature|off`) with HMAC signature verification (`OPENCLAW_ZIG_WASM_TRUST_KEY`) when required.
     - custom module records now retain trust metadata (`sourceUrl`, `sha256`, `signature`, `signer`, `verificationMode`, `verified`) for execute-time and response-time observability.

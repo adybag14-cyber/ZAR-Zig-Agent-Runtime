@@ -136,6 +136,28 @@ $checksumLines = $assets | ForEach-Object {
 Set-Content -Path $checksumPath -Value $checksumLines -Encoding utf8
 $assets.Add($checksumPath) | Out-Null
 
+$releaseEvidenceScript = Join-Path $repoRoot "scripts\generate-release-evidence.ps1"
+if (-not (Test-Path $releaseEvidenceScript)) {
+    throw "Release evidence script not found: $releaseEvidenceScript"
+}
+
+& $releaseEvidenceScript -ArtifactDir $releaseRoot -Version $Version -OutputDir $releaseRoot -Repository $Repo
+if ($LASTEXITCODE -ne 0) {
+    throw "Release evidence generation failed with exit code $LASTEXITCODE"
+}
+
+$releaseEvidenceAssets = @(
+    Join-Path $releaseRoot "release-manifest.json",
+    Join-Path $releaseRoot "sbom.spdx.json",
+    Join-Path $releaseRoot "provenance.intoto.json"
+)
+foreach ($evidenceAsset in $releaseEvidenceAssets) {
+    if (-not (Test-Path $evidenceAsset)) {
+        throw "Expected release evidence output missing: $evidenceAsset"
+    }
+    $assets.Add($evidenceAsset) | Out-Null
+}
+
 if ($Publish) {
     $notesPath = Join-Path $releaseRoot "RELEASE_NOTES.txt"
     $notes = @(

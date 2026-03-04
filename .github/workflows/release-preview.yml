@@ -252,6 +252,10 @@ jobs:
           sed -i 's#dist/##g' dist/SHA256SUMS.txt
           cat dist/SHA256SUMS.txt
 
+      - name: Generate release evidence (manifest + sbom + provenance)
+        shell: pwsh
+        run: ./scripts/generate-release-evidence.ps1 -ArtifactDir dist -Version "${{ inputs.version }}" -OutputDir dist -Repository "${{ github.repository }}" -Commit "${{ github.sha }}"
+
       - name: Ensure release tag does not already exist
         env:
           GH_TOKEN: ${{ github.token }}
@@ -284,6 +288,15 @@ jobs:
           fi
           if [ -f dist/parity-go-zig.md ]; then
             ASSETS+=(dist/parity-go-zig.md)
+          fi
+          if [ -f dist/release-manifest.json ]; then
+            ASSETS+=(dist/release-manifest.json)
+          fi
+          if [ -f dist/sbom.spdx.json ]; then
+            ASSETS+=(dist/sbom.spdx.json)
+          fi
+          if [ -f dist/provenance.intoto.json ]; then
+            ASSETS+=(dist/provenance.intoto.json)
           fi
 
           gh release create "${{ inputs.version }}" \
