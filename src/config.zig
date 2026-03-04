@@ -18,6 +18,13 @@ pub const GatewayConfig = struct {
     rate_limit_max_requests: u32,
 };
 
+pub const RuntimeConfig = struct {
+    file_sandbox_enabled: bool,
+    file_allowed_roots: []const u8,
+    exec_enabled: bool,
+    exec_allowlist: []const u8,
+};
+
 pub const Config = struct {
     http_bind: []const u8,
     http_port: u16,
@@ -25,6 +32,7 @@ pub const Config = struct {
     lightpanda_endpoint: []const u8,
     lightpanda_timeout_ms: u32,
     gateway: GatewayConfig,
+    runtime: RuntimeConfig,
     security: SecurityConfig,
 };
 
@@ -41,6 +49,12 @@ pub fn defaults() Config {
             .rate_limit_enabled = true,
             .rate_limit_window_ms = 60_000,
             .rate_limit_max_requests = 300,
+        },
+        .runtime = .{
+            .file_sandbox_enabled = false,
+            .file_allowed_roots = "",
+            .exec_enabled = true,
+            .exec_allowlist = "",
         },
         .security = .{
             .loop_guard_enabled = true,
@@ -67,6 +81,10 @@ pub fn loadFromEnviron(allocator: std.mem.Allocator, environ: std.process.Enviro
     cfg.gateway.rate_limit_enabled = try parseBoolEnvOrDefault(allocator, environ, "OPENCLAW_ZIG_GATEWAY_RATE_LIMIT_ENABLED", cfg.gateway.rate_limit_enabled);
     cfg.gateway.rate_limit_window_ms = try parseU32EnvOrDefault(allocator, environ, "OPENCLAW_ZIG_GATEWAY_RATE_LIMIT_WINDOW_MS", cfg.gateway.rate_limit_window_ms);
     cfg.gateway.rate_limit_max_requests = try parseU32EnvOrDefault(allocator, environ, "OPENCLAW_ZIG_GATEWAY_RATE_LIMIT_MAX_REQUESTS", cfg.gateway.rate_limit_max_requests);
+    cfg.runtime.file_sandbox_enabled = try parseBoolEnvOrDefault(allocator, environ, "OPENCLAW_ZIG_RUNTIME_FILE_SANDBOX_ENABLED", cfg.runtime.file_sandbox_enabled);
+    cfg.runtime.file_allowed_roots = try getEnvOrDefault(allocator, environ, "OPENCLAW_ZIG_RUNTIME_FILE_ALLOWED_ROOTS", cfg.runtime.file_allowed_roots);
+    cfg.runtime.exec_enabled = try parseBoolEnvOrDefault(allocator, environ, "OPENCLAW_ZIG_RUNTIME_EXEC_ENABLED", cfg.runtime.exec_enabled);
+    cfg.runtime.exec_allowlist = try getEnvOrDefault(allocator, environ, "OPENCLAW_ZIG_RUNTIME_EXEC_ALLOWLIST", cfg.runtime.exec_allowlist);
     cfg.security.loop_guard_enabled = try parseBoolEnvOrDefault(allocator, environ, "OPENCLAW_ZIG_SECURITY_LOOP_GUARD_ENABLED", cfg.security.loop_guard_enabled);
     cfg.security.loop_guard_window_ms = try parseU32EnvOrDefault(allocator, environ, "OPENCLAW_ZIG_SECURITY_LOOP_GUARD_WINDOW_MS", cfg.security.loop_guard_window_ms);
     cfg.security.loop_guard_max_hits = try parseU16EnvOrDefault(allocator, environ, "OPENCLAW_ZIG_SECURITY_LOOP_GUARD_MAX_HITS", cfg.security.loop_guard_max_hits);
@@ -166,6 +184,10 @@ test "defaults are stable" {
     try std.testing.expect(!cfg.gateway.require_token);
     try std.testing.expect(cfg.gateway.rate_limit_enabled);
     try std.testing.expectEqual(@as(u32, 300), cfg.gateway.rate_limit_max_requests);
+    try std.testing.expect(!cfg.runtime.file_sandbox_enabled);
+    try std.testing.expect(std.mem.eql(u8, cfg.runtime.file_allowed_roots, ""));
+    try std.testing.expect(cfg.runtime.exec_enabled);
+    try std.testing.expect(std.mem.eql(u8, cfg.runtime.exec_allowlist, ""));
     try std.testing.expect(cfg.security.loop_guard_enabled);
     try std.testing.expectEqual(@as(u8, 90), cfg.security.risk_block_threshold);
 }

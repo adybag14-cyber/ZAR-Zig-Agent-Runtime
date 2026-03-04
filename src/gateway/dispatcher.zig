@@ -1700,6 +1700,10 @@ const EdgeState = struct {
 pub fn setConfig(cfg: config.Config) void {
     active_config = cfg;
     config_ready = true;
+    if (runtime_instance != null) {
+        runtime_instance.?.deinit();
+        runtime_instance = null;
+    }
     if (guard_instance != null) {
         guard_instance.?.deinit();
         guard_instance = null;
@@ -4057,6 +4061,14 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
                 .queueDepth = runtime.queueDepth(),
                 .sessions = runtime.sessionCount(),
                 .profile = "edge",
+                .fileSandbox = .{
+                    .enabled = cfg.runtime.file_sandbox_enabled,
+                    .allowedRoots = cfg.runtime.file_allowed_roots,
+                },
+                .exec = .{
+                    .enabled = cfg.runtime.exec_enabled,
+                    .allowlist = cfg.runtime.exec_allowlist,
+                },
             },
             .browserBridge = .{
                 .enabled = true,
@@ -6237,7 +6249,9 @@ fn currentConfig() config.Config {
 
 fn getRuntime() *tool_runtime.ToolRuntime {
     if (runtime_instance == null) {
-        runtime_instance = tool_runtime.ToolRuntime.init(std.heap.page_allocator, getRuntimeIo());
+        var runtime = tool_runtime.ToolRuntime.init(std.heap.page_allocator, getRuntimeIo());
+        runtime.configureRuntimePolicy(currentConfig().runtime);
+        runtime_instance = runtime;
     }
     return &runtime_instance.?;
 }
@@ -6647,6 +6661,29 @@ fn encodeRuntimeError(
         };
         return protocol.encodeError(allocator, id, .{
             .code = -32602,
+            .message = message,
+        });
+    }
+
+    const is_policy_error = switch (err) {
+        error.CommandDenied,
+        error.PathAccessDenied,
+        error.PathTraversalDetected,
+        error.PathSymlinkDisallowed,
+        => true,
+        else => false,
+    };
+
+    if (is_policy_error) {
+        const message = switch (err) {
+            error.CommandDenied => "exec.run denied by runtime policy",
+            error.PathAccessDenied => "file access denied by sandbox policy",
+            error.PathTraversalDetected => "path traversal denied by sandbox policy",
+            error.PathSymlinkDisallowed => "symlink path denied by sandbox policy",
+            else => "runtime policy denied request",
+        };
+        return protocol.encodeError(allocator, id, .{
+            .code = -32001,
             .message = message,
         });
     }

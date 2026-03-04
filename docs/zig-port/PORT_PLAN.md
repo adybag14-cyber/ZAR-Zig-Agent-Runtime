@@ -61,7 +61,7 @@ while maintaining parity-first validation and release gating.
     - target-path normalization for gateway route matching (`/health|/rpc|/ws` now correctly match query-bearing targets like `/rpc?x=1` and `/ws?mode=compat`)
     - websocket RPC parity expanded to accept binary websocket frames in addition to text frames (aligned with Go transport behavior)
     - `security.audit` + `doctor` gateway auth/rate-limit checks and regression tests
-    - validation: `zig build`, `zig build test` (`92/92`), `scripts/runtime-smoke-check.ps1`, `scripts/gateway-auth-smoke-check.ps1`, `scripts/websocket-smoke-check.ps1`, `scripts/web-login-smoke-check.ps1`
+    - validation: `zig build`, `zig build test` (`94/94`), `scripts/runtime-smoke-check.ps1`, `scripts/gateway-auth-smoke-check.ps1`, `scripts/websocket-smoke-check.ps1`, `scripts/web-login-smoke-check.ps1`
   - README refreshed with current parity/validation state and workflow guidance.
   - Local Zig toolchain reference doc refreshed to current local/remote hashes.
   - MkDocs documentation site scaffolded with full feature/domain documentation and GitHub Pages deployment workflow.
@@ -88,6 +88,12 @@ while maintaining parity-first validation and release gating.
   - Tool runtime actions (`exec.run`, `file.read`, `file.write`)
   - Dispatcher wiring and integration request lifecycle tests
   - Runtime status telemetry (`runtime_queue_depth`, `runtime_sessions`)
+  - Runtime policy hardening shipped:
+    - optional filesystem sandbox with traversal/symlink denial (`OPENCLAW_ZIG_RUNTIME_FILE_SANDBOX_ENABLED`, `OPENCLAW_ZIG_RUNTIME_FILE_ALLOWED_ROOTS`)
+    - optional `exec.run` policy gate + command-prefix allowlist (`OPENCLAW_ZIG_RUNTIME_EXEC_ENABLED`, `OPENCLAW_ZIG_RUNTIME_EXEC_ALLOWLIST`)
+    - new runtime tests:
+      - `tool runtime file sandbox blocks traversal and out-of-root writes`
+      - `tool runtime exec policy denies non-allowlisted commands`
 - Phase 4 complete:
   - Guard pipeline with prompt-risk scoring + loop-guard enforcement (`src/security/guard.zig`, `src/security/loop_guard.zig`)
   - RPC diagnostics surfaces: `security.audit` and `doctor`
@@ -255,7 +261,7 @@ while maintaining parity-first validation and release gating.
   - bare-metal ABI v2 depth expansion shipped:
     - added shared ABI contracts module (`src/baremetal/abi.zig`) with explicit layout tests
     - added command mailbox + kernel info exports and runtime command-processing loop in `src/baremetal_main.zig`
-    - validated with `zig build test --summary all` (`92/92`) and `scripts/baremetal-smoke-check.ps1`
+    - validated with `zig build test --summary all` (`94/94`) and `scripts/baremetal-smoke-check.ps1`
   - bare-metal x86 bootstrap depth expansion shipped:
     - added descriptor-table + interrupt bootstrap module (`src/baremetal/x86_bootstrap.zig`)
     - runtime now initializes descriptor tables via `x86_bootstrap.init()` on start/tick paths

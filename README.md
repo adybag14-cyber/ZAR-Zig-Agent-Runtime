@@ -11,8 +11,8 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - Original OpenClaw beta baseline (`v2026.3.2-beta.1`): `94/94` covered
   - Union baseline: `135/135` covered (`MISSING_IN_ZIG=0`)
   - Gateway events: stable `19/19`, beta `19/19`, union `19/19` (`UNION_EVENTS_MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> `92/92` passing
-- Latest edge release tag: `v0.2.0-zig-edge.14`
+- Latest local validation: `zig build test --summary all` -> `94/94` passing
+- Latest edge release tag: `v0.2.0-zig-edge.16`
 - Dual runtime profiles available:
   - OS-hosted profile: `openclaw-zig` (`--serve`, doctor, security audit, full RPC stack)
 - Bare-metal profile: `openclaw-zig-baremetal.elf` (`zig build baremetal`, freestanding runtime loop + Multiboot2 header)
@@ -28,6 +28,9 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - registry lookup hot-path optimization
   - dispatcher bounded-history one-pass compaction
   - browser completion execution telemetry hardening (`bridgeCompletion` failure/success semantics)
+  - runtime policy hardening:
+    - configurable filesystem sandbox for `file.read` / `file.write` (`OPENCLAW_ZIG_RUNTIME_FILE_SANDBOX_ENABLED`, `OPENCLAW_ZIG_RUNTIME_FILE_ALLOWED_ROOTS`)
+    - configurable `exec.run` gate + allowlist (`OPENCLAW_ZIG_RUNTIME_EXEC_ENABLED`, `OPENCLAW_ZIG_RUNTIME_EXEC_ALLOWLIST`)
 - Next-generation update/release slice:
   - channel-aware update lifecycle (`update.plan`, `update.status`, `update.run`)
   - npm client package and release pipeline (`@adybag14-cyber/openclaw-zig-rpc-client`)

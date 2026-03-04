@@ -179,7 +179,17 @@ Phase 6 progress notes:
 ## Latest Validation Snapshot
 - [x] `zig build`
 - [x] `zig build test`
-- [x] `zig build test --summary all` -> `92/92` passing (includes gateway auth/rate-limit hardening tests, TTS/completion execution-path coverage, and bare-metal ABI v2 contract tests)
+- [x] `zig build test --summary all` -> `94/94` passing (includes gateway auth/rate-limit hardening tests, runtime file/exec policy hardening tests, TTS/completion execution-path coverage, and bare-metal ABI v2 contract tests)
+- [x] Runtime policy hardening slice shipped:
+  - `file.read` / `file.write` optional sandbox enforcement with traversal + symlink denial paths:
+    - `OPENCLAW_ZIG_RUNTIME_FILE_SANDBOX_ENABLED`
+    - `OPENCLAW_ZIG_RUNTIME_FILE_ALLOWED_ROOTS` (CSV/semicolon-delimited roots)
+  - `exec.run` optional policy gate + allowlist controls:
+    - `OPENCLAW_ZIG_RUNTIME_EXEC_ENABLED`
+    - `OPENCLAW_ZIG_RUNTIME_EXEC_ALLOWLIST` (CSV/semicolon command-prefix list)
+  - new runtime tests:
+    - `runtime.tool_runtime.test.tool runtime file sandbox blocks traversal and out-of-root writes`
+    - `runtime.tool_runtime.test.tool runtime exec policy denies non-allowlisted commands`
 - [x] `scripts/generate-rpc-reference.ps1` (regenerates `docs/rpc-reference.md` from `src/gateway/registry.zig`, currently `153` methods)
 - [x] `scripts/npm-pack-check.ps1` (validates npm package dry-run for `npm/openclaw-zig-rpc-client`)
 - [x] `scripts/python-pack-check.ps1` (validates python client package tests + wheel/sdist + twine checks for `python/openclaw-zig-rpc-client`)
