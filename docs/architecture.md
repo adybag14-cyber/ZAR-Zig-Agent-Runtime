@@ -24,6 +24,10 @@
 - memory
 - edge/advanced contracts
 
+5. Runtime Profiles
+- OS-hosted profile (`src/main.zig`) with HTTP + JSON-RPC gateway and full feature surface
+- freestanding bare-metal profile (`src/baremetal_main.zig`) with exported lifecycle hooks for bootloader/hypervisor integration
+
 ## Major Modules
 
 - `src/protocol/envelope.zig`
@@ -35,6 +39,7 @@
 - `src/channels/telegram_runtime.zig`
 - `src/bridge/*`
 - `src/memory/store.zig`
+- `src/baremetal_main.zig`
 
 ## State and Lifecycle
 

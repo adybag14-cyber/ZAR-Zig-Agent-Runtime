@@ -2,6 +2,14 @@
 
 This page summarizes functional coverage across all major OpenClaw Zig runtime domains.
 
+## Runtime Profiles
+
+- OS-hosted profile:
+  - full HTTP + JSON-RPC gateway and complete OpenClaw feature surface
+- bare-metal profile:
+  - freestanding runtime image (`zig build baremetal`)
+  - exported lifecycle hooks for firmware/bootloader integration (`_start`, `oc_tick`, `oc_status_ptr`)
+
 ## Protocol and Gateway
 
 - `connect`, `health`, `status`, `shutdown`

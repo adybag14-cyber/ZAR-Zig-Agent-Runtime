@@ -63,6 +63,10 @@ jobs:
           zig build --summary all
           zig build test --summary all
 
+      - name: Bare-metal smoke check (freestanding build)
+        shell: pwsh
+        run: ./scripts/baremetal-smoke-check.ps1
+
       - name: Runtime smoke check (serve + rpc)
         shell: pwsh
         run: ./scripts/runtime-smoke-check.ps1 -SkipBuild

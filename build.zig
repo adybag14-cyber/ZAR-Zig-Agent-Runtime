@@ -50,4 +50,27 @@ pub fn build(b: *std.Build) void {
         const run_tests = b.addRunArtifact(tests);
         test_step.dependOn(&run_tests.step);
     }
+
+    const baremetal_target = b.resolveTargetQuery(.{
+        .cpu_arch = .x86_64,
+        .os_tag = .freestanding,
+        .abi = .none,
+    });
+    const baremetal_module = b.createModule(.{
+        .root_source_file = b.path("src/baremetal_main.zig"),
+        .target = baremetal_target,
+        .optimize = optimize,
+    });
+    baremetal_module.single_threaded = true;
+    baremetal_module.strip = true;
+
+    const baremetal_exe = b.addExecutable(.{
+        .name = "openclaw-zig-baremetal",
+        .root_module = baremetal_module,
+    });
+    const install_baremetal = b.addInstallArtifact(baremetal_exe, .{
+        .dest_sub_path = "openclaw-zig-baremetal.elf",
+    });
+    const baremetal_step = b.step("baremetal", "Build freestanding bare-metal runtime image");
+    baremetal_step.dependOn(&install_baremetal.step);
 }

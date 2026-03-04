@@ -150,6 +150,7 @@ Phase 6 progress notes:
   - `channels.telegram_runtime.test.telegram runtime auth bridge and providers help include guest guidance`
   - `channels.telegram_runtime.test.telegram runtime wait supports positional timeout with account`
 - [x] `scripts/zig-syntax-check.ps1`
+- [x] `zig build baremetal` (freestanding image build: `openclaw-zig-baremetal.elf`)
 - [x] `scripts/zig-codeberg-master-check.ps1` (reports local vs remote master hash)
 - [x] Multi-baseline method diff check: `Go(latest)=134`, `Original(latest)=94`, `Union=135`, `Zig=153`, `missing_in_zig=0`, `union_extras=18`
 - [x] Smoke scripts now run against built binary (`zig-out/bin/openclaw-zig.exe`) with readiness loops + early-exit diagnostics:
@@ -160,6 +161,7 @@ Phase 6 progress notes:
 - [x] `scripts/web-login-smoke-check.ps1` (`web.login.start -> wait -> complete -> status` all HTTP 200 with authorized completion)
 - [x] `scripts/telegram-reply-loop-smoke-check.ps1` (`send /auth start -> send /auth complete -> send chat -> poll` all HTTP 200 with non-empty queued replies)
 - [x] `scripts/system-maintenance-smoke-check.ps1` (`system.maintenance.plan -> run(dry-run+apply) -> status` all HTTP 200 with lifecycle contract checks)
+- [x] `scripts/baremetal-smoke-check.ps1` (`zig build baremetal` + artifact presence/size checks for freestanding image)
 - [x] Cross-target diagnostics matrix (`scripts/zig-cross-target-matrix.ps1`) now covers desktop + Android with per-target logs and JSON summary:
   - Local Windows Zig master result: `4/8` pass (`x86_64-windows`, `x86_64-linux`, `x86_64-macos`, `x86_64-linux-android`)
   - Local failures: `aarch64-linux`, `aarch64-macos`, `aarch64-linux-android`, `arm-linux-androideabi`
@@ -206,6 +208,7 @@ Phase 6 progress notes:
 - [x] Added cross-platform runtime smoke gate (`scripts/runtime-smoke-check.ps1`) and wired it into `zig-ci` validate job.
 - [x] Added update lifecycle smoke gate (`scripts/update-lifecycle-smoke-check.ps1`) and wired it into `zig-ci` + `release-preview` validate jobs (`update.plan`, `update.run`, `update.status` contract checks).
 - [x] Added system maintenance smoke gate (`scripts/system-maintenance-smoke-check.ps1`) and wired it into `zig-ci` + `release-preview` validate jobs (`system.maintenance.plan`, `system.maintenance.run`, `system.maintenance.status` contract checks).
+- [x] Added bare-metal smoke gate (`scripts/baremetal-smoke-check.ps1`) and wired it into `zig-ci` + `release-preview` validate jobs.
 - [x] Tracking/docs refresh:
   - README updated with current parity + validation + workflow status.
   - `docs/zig-port/ZIG_TOOLCHAIN_LOCAL.md` updated to current local/remote Zig hash state.

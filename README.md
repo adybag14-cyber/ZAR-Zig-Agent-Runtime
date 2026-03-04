@@ -10,6 +10,9 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - Original OpenClaw baseline (`v2026.3.2`): `94/94` covered
   - Union baseline: `135/135` covered (`MISSING_IN_ZIG=0`)
 - Latest local validation: `zig build test --summary all` -> `66/66` passing
+- Dual runtime profiles available:
+  - OS-hosted profile: `openclaw-zig` (`--serve`, doctor, security audit, full RPC stack)
+  - Bare-metal profile: `openclaw-zig-baremetal.elf` (`zig build baremetal`, freestanding runtime loop)
 - Recent optimization slices (2026-03-04):
   - memory/runtime/channel queue compaction and retention hardening
   - diagnostics docker probe caching
@@ -44,6 +47,9 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
 
 ## Architecture Overview
 
+- Runtime profiles:
+  - OS-hosted runtime: full HTTP/RPC gateway and feature surface.
+  - Bare-metal runtime: freestanding image exporting core lifecycle hooks (`_start`, `oc_tick`, `oc_status_ptr`) for bootloader/hypervisor integration.
 - Protocol: JSON-RPC request/response envelopes with deterministic error semantics.
 - Gateway: HTTP server with `GET /health` and `POST /rpc`, graceful shutdown via RPC.
 - Dispatcher: method routing and contract handling across runtime, security, browser/auth, channels, memory, and edge domains.
@@ -235,6 +241,7 @@ Implemented optimization hardening includes:
 zig build
 zig build run
 zig build test
+zig build baremetal
 ```
 
 Run gateway serve mode:
@@ -290,6 +297,7 @@ Run smoke checks:
 
 ```powershell
 ./scripts/docker-smoke-check.ps1
+./scripts/baremetal-smoke-check.ps1
 ./scripts/runtime-smoke-check.ps1
 ./scripts/web-login-smoke-check.ps1
 ./scripts/telegram-reply-loop-smoke-check.ps1
@@ -307,6 +315,7 @@ Validate npm package publishability:
 
 - Zig master build/test gates
 - dual-baseline parity enforcement
+- freestanding bare-metal artifact smoke gate
 - runtime smoke gate
 - parity evidence artifact publication (`parity-go-zig.json`, `parity-go-zig.md`)
 
@@ -320,6 +329,7 @@ Validate npm package publishability:
 `release-preview` workflow (`.github/workflows/release-preview.yml`):
 
 - upfront validate job (build + test + parity)
+- freestanding bare-metal smoke validation
 - full preview artifact matrix build and publish
 - duplicate release tag guard
 - release asset parity evidence attachment
