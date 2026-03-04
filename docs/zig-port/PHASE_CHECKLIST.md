@@ -88,11 +88,15 @@ Phase 6 progress notes:
   - node methods: `node.pair.request`, `node.pair.list`, `node.pair.approve`, `node.pair.reject`, `node.pair.verify`, `node.rename`, `node.list`, `node.describe`, `node.invoke`, `node.invoke.result`, `node.event`, `node.canvas.capability.refresh`
   - exec approval methods: `exec.approvals.get`, `exec.approvals.set`, `exec.approvals.node.get`, `exec.approvals.node.set`, `exec.approval.request`, `exec.approval.waitdecision`, `exec.approval.resolve`
   - stateful backing added for node pairs/nodes/events and approval policies/pending approval lifecycle.
-- Method surface now at `146` Zig methods; dual-baseline method-set parity is complete:
+- Self-evolution depth update:
+  - `edge.finetune.run` now supports provider alias/model default normalization, full trainer argv generation, `OPENCLAW_ZIG_LORA_TRAINER_TIMEOUT_MS`, and non-dry-run trainer execution telemetry.
+  - `edge.finetune.status` now includes richer job metadata (`statusReason`, `updatedAtMs`) and dataset source surfaces.
+  - new methods: `edge.finetune.job.get`, `edge.finetune.cancel`.
+- Method surface now at `148` Zig methods; dual-baseline method-set parity is complete:
   - Go latest release baseline: `134/134` covered in Zig.
   - Original OpenClaw latest release baseline: `94/94` covered in Zig.
   - Union baseline: `135/135` covered in Zig.
-  - Zig-only extras vs union baseline: `11` (`shutdown`, `doctor`, `security.audit`, `exec.run`, `file.read`, `file.write`, `web.login.complete`, `web.login.status`, `edge.wasm.install`, `edge.wasm.execute`, `edge.wasm.remove`).
+  - Zig-only extras vs union baseline: `13` (`shutdown`, `doctor`, `security.audit`, `exec.run`, `file.read`, `file.write`, `web.login.complete`, `web.login.status`, `edge.wasm.install`, `edge.wasm.execute`, `edge.wasm.remove`, `edge.finetune.job.get`, `edge.finetune.cancel`).
 
 ## Phase 7 - Validation + Release
 - [x] Run full parity diff against Go baseline
@@ -115,7 +119,7 @@ Phase 6 progress notes:
   - `channels.telegram_runtime.test.telegram runtime wait supports positional timeout with account`
 - [x] `scripts/zig-syntax-check.ps1`
 - [x] `scripts/zig-codeberg-master-check.ps1` (reports local vs remote master hash)
-- [x] Multi-baseline method diff check: `Go(latest)=134`, `Original(latest)=94`, `Union=135`, `Zig=146`, `missing_in_zig=0`, `union_extras=11`
+- [x] Multi-baseline method diff check: `Go(latest)=134`, `Original(latest)=94`, `Union=135`, `Zig=148`, `missing_in_zig=0`, `union_extras=13`
 - [x] Smoke scripts now run against built binary (`zig-out/bin/openclaw-zig.exe`) with readiness loops + early-exit diagnostics:
   - `scripts/docker-smoke-check.ps1` -> host+docker HTTP 200
   - `scripts/web-login-smoke-check.ps1` -> start/wait/complete/status HTTP 200

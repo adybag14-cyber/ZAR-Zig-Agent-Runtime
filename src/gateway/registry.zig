@@ -110,6 +110,8 @@ pub const supported_methods = [_][]const u8{
     "edge.homomorphic.compute",
     "edge.finetune.status",
     "edge.finetune.run",
+    "edge.finetune.job.get",
+    "edge.finetune.cancel",
     "edge.identity.trust.status",
     "edge.personality.profile",
     "edge.handoff.plan",

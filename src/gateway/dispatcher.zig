@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const config = @import("../config.zig");
 const protocol = @import("../protocol/envelope.zig");
 const registry = @import("registry.zig");
@@ -1246,6 +1247,7 @@ const EnclaveProof = struct {
 const FinetuneJob = struct {
     id: []u8,
     status: []u8,
+    status_reason: []u8,
     adapter_name: []u8,
     output_path: []u8,
     base_provider: []u8,
@@ -1253,10 +1255,12 @@ const FinetuneJob = struct {
     manifest_path: []u8,
     dry_run: bool,
     created_at_ms: i64,
+    updated_at_ms: i64,
 
     fn deinit(self: *FinetuneJob, allocator: std.mem.Allocator) void {
         allocator.free(self.id);
         allocator.free(self.status);
+        allocator.free(self.status_reason);
         allocator.free(self.adapter_name);
         allocator.free(self.output_path);
         allocator.free(self.base_provider);
@@ -1331,6 +1335,7 @@ const EdgeState = struct {
     fn appendFinetuneJob(
         self: *EdgeState,
         status: []const u8,
+        status_reason: []const u8,
         adapter_name: []const u8,
         output_path: []const u8,
         base_provider: []const u8,
@@ -1338,12 +1343,14 @@ const EdgeState = struct {
         manifest_path: []const u8,
         dry_run: bool,
         created_at_ms: i64,
+        updated_at_ms: i64,
     ) ![]const u8 {
         const id = try std.fmt.allocPrint(self.allocator, "finetune-{d}", .{self.next_finetune_id});
         self.next_finetune_id += 1;
         try self.finetune_jobs.append(self.allocator, .{
             .id = id,
             .status = try self.allocator.dupe(u8, status),
+            .status_reason = try self.allocator.dupe(u8, status_reason),
             .adapter_name = try self.allocator.dupe(u8, adapter_name),
             .output_path = try self.allocator.dupe(u8, output_path),
             .base_provider = try self.allocator.dupe(u8, base_provider),
@@ -1351,12 +1358,22 @@ const EdgeState = struct {
             .manifest_path = try self.allocator.dupe(u8, manifest_path),
             .dry_run = dry_run,
             .created_at_ms = created_at_ms,
+            .updated_at_ms = updated_at_ms,
         });
         if (self.finetune_jobs.items.len > 64) {
             var removed = self.finetune_jobs.orderedRemove(0);
             removed.deinit(self.allocator);
         }
         return id;
+    }
+
+    fn findFinetuneJobPtr(self: *EdgeState, job_id: []const u8) ?*FinetuneJob {
+        const needle = std.mem.trim(u8, job_id, " \t\r\n");
+        if (needle.len == 0) return null;
+        for (self.finetune_jobs.items) |*job| {
+            if (std.ascii.eqlIgnoreCase(job.id, needle)) return job;
+        }
+        return null;
     }
 
     fn installWasmModule(
@@ -4437,15 +4454,18 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         const memory = try getMemoryStore();
         const stats = memory.stats();
         const edge = getEdgeState();
+        const runtime_profile = "edge";
 
         const JobView = struct {
             id: []const u8,
             status: []const u8,
+            statusReason: []const u8,
             adapterName: []const u8,
             outputPath: []const u8,
             manifestPath: []const u8,
             dryRun: bool,
             createdAtMs: i64,
+            updatedAtMs: i64,
             baseModel: struct {
                 provider: []const u8,
                 id: []const u8,
@@ -4460,11 +4480,13 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             jobs[idx] = .{
                 .id = job.id,
                 .status = job.status,
+                .statusReason = job.status_reason,
                 .adapterName = job.adapter_name,
                 .outputPath = job.output_path,
                 .manifestPath = job.manifest_path,
                 .dryRun = job.dry_run,
                 .createdAtMs = job.created_at_ms,
+                .updatedAtMs = job.updated_at_ms,
                 .baseModel = .{
                     .provider = job.base_provider,
                     .id = job.base_model,
@@ -4476,7 +4498,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         const trainer_binary = try envValue(allocator, "OPENCLAW_ZIG_LORA_TRAINER_BIN", "");
         defer allocator.free(trainer_binary);
         return protocol.encodeResult(allocator, req.id, .{
-            .runtimeProfile = "edge",
+            .runtimeProfile = runtime_profile,
             .feature = "on-device-finetune-self-evolution",
             .supported = true,
             .adapterFormat = "lora",
@@ -4495,6 +4517,28 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
                 .graphNodes = stats.entries,
                 .graphEdges = stats.entries * 2,
             },
+            .datasetSources = [_]struct {
+                id: []const u8,
+                path: []const u8,
+                exists: bool,
+                entries: ?usize = null,
+                nodes: ?usize = null,
+                edges: ?usize = null,
+            }{
+                .{
+                    .id = "zvec",
+                    .path = stats.statePath,
+                    .exists = true,
+                    .entries = stats.entries,
+                },
+                .{
+                    .id = "graphlite",
+                    .path = stats.statePath,
+                    .exists = true,
+                    .nodes = stats.entries,
+                    .edges = stats.entries * 2,
+                },
+            },
             .jobs = jobs,
             .jobStats = .{
                 .running = running,
@@ -4511,8 +4555,13 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         const params = getParamsObjectOrNull(parsed.value);
 
         const now_ms = time_util.nowMs();
-        const base_provider = firstParamString(params, "provider", "chatgpt");
-        const base_model = firstParamString(params, "model", "gpt-5.2");
+        const raw_provider = firstParamString(params, "provider", "");
+        const base_provider = if (raw_provider.len == 0)
+            "chatgpt"
+        else
+            lightpanda.normalizeProvider(raw_provider) catch "chatgpt";
+        const raw_model = firstParamString(params, "model", firstParamString(params, "baseModel", ""));
+        const base_model = if (raw_model.len == 0) lightpanda.defaultModelForProvider(base_provider) else raw_model;
         const adapter_name = if (firstParamString(params, "adapterName", "").len > 0)
             try allocator.dupe(u8, firstParamString(params, "adapterName", ""))
         else
@@ -4528,11 +4577,13 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
 
         const epochs: i64 = std.math.clamp(firstParamInt(params, "epochs", 3), 1, 100);
         const rank: i64 = std.math.clamp(firstParamInt(params, "rank", 32), 4, 512);
-        const learning_rate = firstParamFloat(params, "learningRate", 0.0002);
+        var learning_rate = firstParamFloat(params, "learningRate", 0.0002);
+        if (learning_rate <= 0) learning_rate = 0.0002;
         const max_samples: i64 = std.math.clamp(firstParamInt(params, "maxSamples", 8192), 128, 1_000_000);
         const dry_run = firstParamBool(params, "dryRun", true);
         const auto_ingest = firstParamBool(params, "autoIngestMemory", true);
         const dataset_path = firstParamString(params, "datasetPath", firstParamString(params, "dataset", ""));
+        const runtime_profile = "edge";
 
         const memory = try getMemoryStore();
         const memory_stats = memory.stats();
@@ -4551,11 +4602,112 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
                 .message = "edge.finetune.run requires OPENCLAW_ZIG_LORA_TRAINER_BIN when dryRun=false",
             });
         }
+        const timeout_ms = try edgeLoraTrainerTimeoutMs(allocator);
 
-        const status = if (dry_run) "dry-run" else "completed";
+        var command_args_list: std.ArrayList([]const u8) = .empty;
+        defer command_args_list.deinit(allocator);
+        try command_args_list.append(allocator, "--model");
+        try command_args_list.append(allocator, base_model);
+        try command_args_list.append(allocator, "--provider");
+        try command_args_list.append(allocator, base_provider);
+        try command_args_list.append(allocator, "--adapter");
+        try command_args_list.append(allocator, adapter_name);
+        try command_args_list.append(allocator, "--rank");
+        const rank_arg = try std.fmt.allocPrint(allocator, "{d}", .{rank});
+        defer allocator.free(rank_arg);
+        try command_args_list.append(allocator, rank_arg);
+        try command_args_list.append(allocator, "--epochs");
+        const epochs_arg = try std.fmt.allocPrint(allocator, "{d}", .{epochs});
+        defer allocator.free(epochs_arg);
+        try command_args_list.append(allocator, epochs_arg);
+        try command_args_list.append(allocator, "--lr");
+        const lr_arg = try std.fmt.allocPrint(allocator, "{d:.6}", .{learning_rate});
+        defer allocator.free(lr_arg);
+        try command_args_list.append(allocator, lr_arg);
+        try command_args_list.append(allocator, "--max-samples");
+        const max_samples_arg = try std.fmt.allocPrint(allocator, "{d}", .{max_samples});
+        defer allocator.free(max_samples_arg);
+        try command_args_list.append(allocator, max_samples_arg);
+        try command_args_list.append(allocator, "--output");
+        try command_args_list.append(allocator, output_path);
+        if (dataset_path.len > 0) {
+            try command_args_list.append(allocator, "--dataset");
+            try command_args_list.append(allocator, dataset_path);
+        }
+        const command_args = try command_args_list.toOwnedSlice(allocator);
+        defer allocator.free(command_args);
+
+        var execution_status: []const u8 = "completed";
+        var execution_success = true;
+        var execution_timed_out = false;
+        var execution_error: ?[]const u8 = null;
+        var execution_exit_code: ?i32 = if (dry_run) null else 0;
+        var stdout_preview: ?[]u8 = null;
+        defer if (stdout_preview) |text| allocator.free(text);
+        var stderr_preview: ?[]u8 = null;
+        defer if (stderr_preview) |text| allocator.free(text);
+
+        if (!dry_run) run_trainer: {
+            const timeout: std.Io.Timeout = switch (builtin.os.tag) {
+                .windows => .none,
+                else => .{
+                    .duration = std.Io.Clock.Duration{
+                        .clock = .awake,
+                        .raw = std.Io.Duration.fromMilliseconds(timeout_ms),
+                    },
+                },
+            };
+            var argv = try allocator.alloc([]const u8, command_args.len + 1);
+            defer allocator.free(argv);
+            argv[0] = trainer_binary;
+            @memcpy(argv[1..], command_args);
+
+            const run_result = std.process.run(allocator, std.Io.Threaded.global_single_threaded.io(), .{
+                .argv = argv,
+                .timeout = timeout,
+                .stdout_limit = .limited(1024 * 1024),
+                .stderr_limit = .limited(1024 * 1024),
+            }) catch |err| {
+                execution_status = "failed";
+                execution_success = false;
+                execution_error = @errorName(err);
+                execution_exit_code = null;
+                break :run_trainer;
+            };
+            defer allocator.free(run_result.stdout);
+            defer allocator.free(run_result.stderr);
+
+            execution_exit_code = switch (run_result.term) {
+                .exited => |code| code,
+                .signal => |sig| -@as(i32, @intCast(@intFromEnum(sig))),
+                .stopped, .unknown => -1,
+            };
+            execution_success = execution_exit_code.? == 0;
+            stdout_preview = try previewTailAlloc(allocator, run_result.stdout, 960);
+            stderr_preview = try previewTailAlloc(allocator, run_result.stderr, 960);
+            if (!execution_success) {
+                execution_timed_out = run_result.term == .signal;
+                execution_status = if (execution_timed_out) "timeout" else "failed";
+                if (stderr_preview) |preview| {
+                    if (preview.len > 0) execution_error = preview;
+                }
+            }
+        }
+
+        const status = if (dry_run) "dry-run" else execution_status;
+        const status_reason = if (dry_run)
+            "dry-run requested"
+        else if (execution_success)
+            "trainer completed successfully"
+        else if (execution_timed_out)
+            "trainer command timed out"
+        else
+            "trainer command failed";
+
         const edge = getEdgeState();
         const job_id = try edge.appendFinetuneJob(
             status,
+            status_reason,
             adapter_name,
             output_path,
             base_provider,
@@ -4563,12 +4715,13 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             manifest_path,
             dry_run,
             now_ms,
+            time_util.nowMs(),
         );
 
         const manifest = .{
             .jobId = job_id,
             .createdAtMs = now_ms,
-            .runtimeProfile = "edge",
+            .runtimeProfile = runtime_profile,
             .dryRun = dry_run,
             .autoIngestMemory = auto_ingest,
             .memorySnapshot = .{
@@ -4579,6 +4732,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             .baseModel = .{
                 .provider = base_provider,
                 .id = base_model,
+                .name = base_model,
             },
             .adapter = .{
                 .name = adapter_name,
@@ -4596,8 +4750,8 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             },
             .suggestedCommand = .{
                 .binary = if (trainer_binary.len == 0) null else trainer_binary,
-                .argv = [_][]const u8{ "--model", base_model, "--provider", base_provider, "--adapter", adapter_name },
-                .timeoutMs = 1_800_000,
+                .argv = command_args,
+                .timeoutMs = timeout_ms,
             },
         };
 
@@ -4638,31 +4792,36 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         }
 
         return protocol.encodeResult(allocator, req.id, .{
-            .ok = true,
+            .ok = execution_success,
             .jobId = job_id,
-            .runtimeProfile = "edge",
+            .runtimeProfile = runtime_profile,
             .dryRun = dry_run,
             .manifestPath = manifest_path,
             .manifest = manifest,
             .execution = .{
                 .attempted = !dry_run,
-                .success = true,
-                .timedOut = false,
-                .status = "completed",
-                .timeoutMs = 1_800_000,
+                .success = execution_success,
+                .timedOut = execution_timed_out,
+                .status = execution_status,
+                .timeoutMs = timeout_ms,
                 .binary = if (trainer_binary.len == 0) null else trainer_binary,
-                .argv = [_][]const u8{ "--model", base_model, "--provider", base_provider, "--adapter", adapter_name },
-                .exitCode = if (dry_run) null else @as(i64, 0),
-                .@"error" = null,
-                .logTail = [_][]const u8{},
+                .argv = command_args,
+                .exitCode = execution_exit_code,
+                .@"error" = execution_error,
+                .logTail = .{
+                    .stdout = stdout_preview,
+                    .stderr = stderr_preview,
+                },
             },
             .jobStatus = .{
                 .id = job_id,
                 .status = status,
+                .statusReason = status_reason,
                 .adapterName = adapter_name,
                 .outputPath = output_path,
                 .manifestPath = manifest_path,
                 .dryRun = dry_run,
+                .updatedAtMs = time_util.nowMs(),
                 .baseModel = .{
                     .provider = base_provider,
                     .id = base_model,
@@ -4671,15 +4830,93 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             .job = .{
                 .id = job_id,
                 .status = status,
+                .statusReason = status_reason,
                 .adapterName = adapter_name,
                 .outputPath = output_path,
                 .manifestPath = manifest_path,
                 .dryRun = dry_run,
+                .updatedAtMs = time_util.nowMs(),
                 .baseModel = .{
                     .provider = base_provider,
                     .id = base_model,
                 },
             },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "edge.finetune.job.get")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const job_id = firstParamString(params, "jobId", "");
+        if (job_id.len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "edge.finetune.job.get requires jobId",
+            });
+        }
+        const edge = getEdgeState();
+        const job = edge.findFinetuneJobPtr(job_id) orelse return protocol.encodeError(allocator, req.id, .{
+            .code = -32004,
+            .message = "edge.finetune job not found",
+        });
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .job = .{
+                .id = job.id,
+                .status = job.status,
+                .statusReason = job.status_reason,
+                .adapterName = job.adapter_name,
+                .outputPath = job.output_path,
+                .manifestPath = job.manifest_path,
+                .dryRun = job.dry_run,
+                .createdAtMs = job.created_at_ms,
+                .updatedAtMs = job.updated_at_ms,
+                .baseModel = .{
+                    .provider = job.base_provider,
+                    .id = job.base_model,
+                },
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "edge.finetune.cancel")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const job_id = firstParamString(params, "jobId", "");
+        if (job_id.len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "edge.finetune.cancel requires jobId",
+            });
+        }
+        const edge = getEdgeState();
+        const job = edge.findFinetuneJobPtr(job_id) orelse return protocol.encodeError(allocator, req.id, .{
+            .code = -32004,
+            .message = "edge.finetune job not found",
+        });
+
+        const already_terminal = std.ascii.eqlIgnoreCase(job.status, "completed") or
+            std.ascii.eqlIgnoreCase(job.status, "dry-run") or
+            std.ascii.eqlIgnoreCase(job.status, "failed") or
+            std.ascii.eqlIgnoreCase(job.status, "timeout") or
+            std.ascii.eqlIgnoreCase(job.status, "canceled");
+        if (!already_terminal) {
+            edge.allocator.free(job.status);
+            job.status = try edge.allocator.dupe(u8, "canceled");
+            edge.allocator.free(job.status_reason);
+            job.status_reason = try edge.allocator.dupe(u8, "canceled by operator request");
+            job.updated_at_ms = time_util.nowMs();
+        }
+
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .jobId = job.id,
+            .canceled = std.ascii.eqlIgnoreCase(job.status, "canceled"),
+            .status = job.status,
+            .statusReason = job.status_reason,
+            .updatedAtMs = job.updated_at_ms,
         });
     }
 
@@ -5262,6 +5499,8 @@ fn shouldEnforceGuard(method: []const u8) bool {
     if (std.ascii.eqlIgnoreCase(method, "edge.homomorphic.compute")) return false;
     if (std.ascii.eqlIgnoreCase(method, "edge.finetune.status")) return false;
     if (std.ascii.eqlIgnoreCase(method, "edge.finetune.run")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "edge.finetune.job.get")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "edge.finetune.cancel")) return false;
     if (std.ascii.eqlIgnoreCase(method, "edge.identity.trust.status")) return false;
     if (std.ascii.eqlIgnoreCase(method, "edge.personality.profile")) return false;
     if (std.ascii.eqlIgnoreCase(method, "edge.handoff.plan")) return false;
@@ -5983,6 +6222,20 @@ fn envTruthy(name: []const u8) bool {
 fn envValue(allocator: std.mem.Allocator, name: []const u8, fallback: []const u8) ![]u8 {
     if (try envLookupAlloc(allocator, name)) |value| return value;
     return allocator.dupe(u8, fallback);
+}
+
+fn edgeLoraTrainerTimeoutMs(allocator: std.mem.Allocator) !u32 {
+    const raw = try envValue(allocator, "OPENCLAW_ZIG_LORA_TRAINER_TIMEOUT_MS", "1800000");
+    defer allocator.free(raw);
+    const parsed = std.fmt.parseInt(u32, std.mem.trim(u8, raw, " \t\r\n"), 10) catch 1_800_000;
+    return std.math.clamp(parsed, @as(u32, 5_000), @as(u32, 86_400_000));
+}
+
+fn previewTailAlloc(allocator: std.mem.Allocator, text: []const u8, max_chars: usize) ![]u8 {
+    const trimmed = std.mem.trim(u8, text, " \t\r\n");
+    if (trimmed.len == 0) return allocator.dupe(u8, "");
+    if (trimmed.len <= max_chars) return allocator.dupe(u8, trimmed);
+    return allocator.dupe(u8, trimmed[trimmed.len - max_chars ..]);
 }
 
 fn parseEnvTruthyValue(raw: []const u8) bool {
@@ -7361,10 +7614,33 @@ test "dispatch advanced edge methods return parity contracts" {
     const finetune_run = try dispatch(allocator, "{\"id\":\"edge-ft-run\",\"method\":\"edge.finetune.run\",\"params\":{\"dryRun\":true,\"autoIngestMemory\":true}}");
     defer allocator.free(finetune_run);
     try std.testing.expect(std.mem.indexOf(u8, finetune_run, "\"jobId\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, finetune_run, "\"statusReason\"") != null);
 
     const finetune_status = try dispatch(allocator, "{\"id\":\"edge-ft-status\",\"method\":\"edge.finetune.status\",\"params\":{}}");
     defer allocator.free(finetune_status);
     try std.testing.expect(std.mem.indexOf(u8, finetune_status, "\"jobs\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, finetune_status, "\"datasetSources\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, finetune_status, "\"statusReason\"") != null);
+
+    const finetune_job_id = try extractResultStringField(allocator, finetune_run, "jobId");
+    defer allocator.free(finetune_job_id);
+    const finetune_get_frame = try encodeFrame(allocator, "edge-ft-get", "edge.finetune.job.get", .{ .jobId = finetune_job_id });
+    defer allocator.free(finetune_get_frame);
+    const finetune_get = try dispatch(allocator, finetune_get_frame);
+    defer allocator.free(finetune_get);
+    try std.testing.expect(std.mem.indexOf(u8, finetune_get, "\"job\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, finetune_get, "\"statusReason\"") != null);
+
+    const finetune_cancel_frame = try encodeFrame(allocator, "edge-ft-cancel", "edge.finetune.cancel", .{ .jobId = finetune_job_id });
+    defer allocator.free(finetune_cancel_frame);
+    const finetune_cancel = try dispatch(allocator, finetune_cancel_frame);
+    defer allocator.free(finetune_cancel);
+    try std.testing.expect(std.mem.indexOf(u8, finetune_cancel, "\"canceled\"") != null);
+
+    const finetune_alias = try dispatch(allocator, "{\"id\":\"edge-ft-alias\",\"method\":\"edge.finetune.run\",\"params\":{\"provider\":\"copaw\",\"dryRun\":true,\"autoIngestMemory\":true}}");
+    defer allocator.free(finetune_alias);
+    try std.testing.expect(std.mem.indexOf(u8, finetune_alias, "\"provider\":\"qwen\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, finetune_alias, "\"id\":\"qwen-max\"") != null);
 
     const identity = try dispatch(allocator, "{\"id\":\"edge-identity\",\"method\":\"edge.identity.trust.status\",\"params\":{}}");
     defer allocator.free(identity);
