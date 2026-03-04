@@ -1263,10 +1263,7 @@ fn timerTick(current_tick: u64) void {
         timer_state.last_dispatch_tick = current_tick;
         const woke = schedulerWakeTask(entry.task_id, abi.wake_reason_timer, entry.timer_id, 0, current_tick);
         if (periodic and woke) {
-            const period64: u64 = @as(u64, entry.period_ticks);
-            var next_tick = entry.next_fire_tick;
-            while (next_tick <= current_tick) : (next_tick +%= period64) {}
-            entry.next_fire_tick = next_tick;
+            entry.next_fire_tick = advancePeriodicTickSaturating(entry.next_fire_tick, entry.period_ticks, current_tick);
             entry.state = abi.timer_entry_state_armed;
         } else if (periodic and !woke) {
             entry.state = abi.timer_entry_state_canceled;
@@ -1321,7 +1318,7 @@ fn timerScheduleTask(task_id: u32, delay_ticks: u32, period_ticks: u32, current_
             .reason = abi.wake_reason_timer,
             .flags = if (period_ticks > 0) abi.timer_entry_flag_periodic else 0,
             .period_ticks = period_ticks,
-            .next_fire_tick = current_tick + delay_ticks,
+            .next_fire_tick = addTicksSaturating(current_tick, delay_ticks),
             .fire_count = 0,
             .last_fire_tick = 0,
         };
@@ -1485,9 +1482,27 @@ fn schedulerSetTaskWaitingInterruptFor(task_id: u32, timeout_ticks: u32, current
         return false;
     }
     task.state = abi.task_state_waiting;
-    schedulerSetWaitConditionWithTimeout(slot, wait_condition_interrupt_any, 0, current_tick + @as(u64, timeout_ticks));
+    schedulerSetWaitConditionWithTimeout(slot, wait_condition_interrupt_any, 0, addTicksSaturating(current_tick, timeout_ticks));
     schedulerRecountTasks();
     return true;
+}
+
+fn addTicksSaturating(base_tick: u64, ticks: u32) u64 {
+    const delta = @as(u64, ticks);
+    const max_tick = std.math.maxInt(u64);
+    if (delta > max_tick - base_tick) return max_tick;
+    return base_tick + delta;
+}
+
+fn advancePeriodicTickSaturating(next_fire_tick: u64, period_ticks: u32, current_tick: u64) u64 {
+    if (period_ticks == 0 or next_fire_tick > current_tick) return next_fire_tick;
+
+    const period = @as(u64, period_ticks);
+    const elapsed = current_tick - next_fire_tick;
+    const periods = elapsed / period + 1;
+    const max_tick = std.math.maxInt(u64);
+    if (periods > (max_tick - next_fire_tick) / period) return max_tick;
+    return next_fire_tick + periods * period;
 }
 
 fn schedulerSetTaskPriority(task_id: u32, priority: u8) bool {
@@ -3078,4 +3093,50 @@ test "baremetal manual wait does not wake on interrupt path" {
     oc_tick();
     try std.testing.expectEqual(@as(u32, 1), oc_scheduler_waiting_count());
     try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
+}
+
+test "baremetal saturating tick helpers clamp overflow" {
+    try std.testing.expectEqual(@as(u64, 15), addTicksSaturating(10, 5));
+    try std.testing.expectEqual(std.math.maxInt(u64), addTicksSaturating(std.math.maxInt(u64) - 2, 5));
+    try std.testing.expectEqual(@as(u64, 120), advancePeriodicTickSaturating(100, 10, 119));
+    try std.testing.expectEqual(std.math.maxInt(u64), advancePeriodicTickSaturating(std.math.maxInt(u64) - 4, 10, std.math.maxInt(u64) - 1));
+}
+
+test "baremetal interrupt wait timeout clamps near max tick without wraparound" {
+    status.mode = abi.mode_running;
+    status.ticks = std.math.maxInt(u64) - 3;
+    status.command_seq_ack = 0;
+    status.last_command_opcode = abi.command_nop;
+    status.last_command_result = abi.result_ok;
+    status.tick_batch_hint = 1;
+    command_mailbox = .{
+        .magic = abi.command_magic,
+        .api_version = abi.api_version,
+        .opcode = abi.command_nop,
+        .seq = 0,
+        .arg0 = 0,
+        .arg1 = 0,
+    };
+    oc_scheduler_reset();
+    oc_timer_reset();
+    oc_wake_queue_clear();
+    x86_bootstrap.oc_reset_interrupt_counters();
+
+    _ = oc_submit_command(abi.command_scheduler_disable, 0, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_task_create, 4, 0);
+    oc_tick();
+    const task_id = oc_scheduler_task(0).task_id;
+    try std.testing.expect(task_id != 0);
+
+    _ = oc_submit_command(abi.command_task_wait_interrupt_for, task_id, 5);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 1), oc_scheduler_wait_timeout_count());
+    try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
+
+    oc_tick();
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u32, 0), oc_scheduler_wait_timeout_count());
+    try std.testing.expectEqual(@as(u8, abi.wake_reason_timer), oc_wake_queue_event(0).reason);
 }

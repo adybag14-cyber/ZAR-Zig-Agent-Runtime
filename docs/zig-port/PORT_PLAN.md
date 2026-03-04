@@ -161,6 +161,9 @@ while maintaining parity-first validation and release gating.
     - new interrupt-wait timeout opcode: `command_task_wait_interrupt_for`.
     - scheduler timeout telemetry export: `oc_scheduler_wait_timeout_count`.
     - runtime now supports deadline-based interrupt waits that wake with timer reason on expiry while still waking immediately on matching interrupts.
+  - Bare-metal tick-overflow hardening shipped:
+    - timer and interrupt wait deadlines now use saturating tick arithmetic to avoid wraparound wake bugs near `u64` tick ceiling.
+    - periodic timer re-arm now uses bounded arithmetic advancement instead of overflow-prone increment loops.
     - runtime now provides contiguous page allocation/free on a bounded heap map and syscall registration/invocation/unregistration with dispatch telemetry.
 - Phase 4 complete:
   - Guard pipeline with prompt-risk scoring + loop-guard enforcement (`src/security/guard.zig`, `src/security/loop_guard.zig`)

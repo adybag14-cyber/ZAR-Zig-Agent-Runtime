@@ -194,7 +194,7 @@ Phase 6 progress notes:
 - [x] `scripts/npm-pack-check.ps1` (validates npm package dry-run for `npm/openclaw-zig-rpc-client`)
 - [x] `scripts/python-pack-check.ps1` (validates python client package tests + wheel/sdist + twine checks for `python/openclaw-zig-rpc-client`)
 - [x] `zig test src/main.zig`
-- [x] `zig test src/baremetal_main.zig` (`35/35` passing; includes mode-history + boot-phase-history + command-result counter + scheduler + allocator/syscall + timer/wake queue telemetry coverage)
+- [x] `zig test src/baremetal_main.zig` (`37/37` passing; includes mode-history + boot-phase-history + command-result counter + scheduler + allocator/syscall + timer/wake queue telemetry coverage)
 - [x] Guest/auth parity tests:
   - `channels.telegram_runtime.test.telegram runtime qwen guest auth lifecycle`
   - `channels.telegram_runtime.test.telegram runtime auth complete infers provider from callback URL`
@@ -328,6 +328,9 @@ Phase 6 progress notes:
   - scheduler export: `oc_scheduler_wait_timeout_count`
   - ABI additions/opcodes: `command_task_wait_interrupt_for`
   - runtime behavior: interrupt waits can now carry tick deadlines; timeout expiry wakes via timer reason while preserving interrupt-first wake semantics.
+- [x] Bare-metal tick overflow hardening added:
+  - runtime behavior: timer and interrupt wait deadlines now use saturating tick arithmetic (no wraparound wake regressions near `u64` tick ceiling).
+  - periodic re-arm behavior now advances using bounded arithmetic instead of overflow-prone increment loops.
 - [x] `scripts/baremetal-smoke-check.ps1` now validates Multiboot2 header fields and checksum (`magic`, `arch`, `header_length`, `checksum`, end-tag tuple) in addition to section/symbol invariants.
 - [x] Cross-target diagnostics matrix (`scripts/zig-cross-target-matrix.ps1`) now covers desktop + Android with per-target logs and JSON summary:
   - Local Windows Zig master result: `4/8` pass (`x86_64-windows`, `x86_64-linux`, `x86_64-macos`, `x86_64-linux-android`)
