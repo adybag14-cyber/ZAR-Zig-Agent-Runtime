@@ -10,6 +10,7 @@ const BaremetalCommandEvent = abi.BaremetalCommandEvent;
 const BaremetalHealthEvent = abi.BaremetalHealthEvent;
 const BaremetalModeEvent = abi.BaremetalModeEvent;
 const BaremetalBootPhaseEvent = abi.BaremetalBootPhaseEvent;
+const BaremetalCommandResultCounters = abi.BaremetalCommandResultCounters;
 
 const multiboot2_magic: u32 = 0xE85250D6;
 const multiboot2_architecture_i386: u32 = 0;
@@ -116,6 +117,20 @@ var boot_phase_history_count: u32 = 0;
 var boot_phase_history_head: u32 = 0;
 var boot_phase_history_overflow: u32 = 0;
 var boot_phase_history_seq: u32 = 0;
+
+var command_result_counters: BaremetalCommandResultCounters = .{
+    .ok_count = 0,
+    .invalid_argument_count = 0,
+    .not_supported_count = 0,
+    .other_error_count = 0,
+    .total_count = 0,
+    .reserved0 = 0,
+    .last_result = abi.result_ok,
+    .reserved1 = 0,
+    .last_opcode = abi.command_nop,
+    .reserved2 = 0,
+    .last_seq = 0,
+};
 
 pub export fn oc_status_ptr() *const abi.BaremetalStatus {
     return &status;
@@ -290,6 +305,46 @@ pub export fn oc_boot_phase_history_clear() void {
     boot_phase_history_seq = 0;
 }
 
+pub export fn oc_command_result_counters_ptr() *const BaremetalCommandResultCounters {
+    return &command_result_counters;
+}
+
+pub export fn oc_command_result_total_count() u32 {
+    return command_result_counters.total_count;
+}
+
+pub export fn oc_command_result_count_ok() u32 {
+    return command_result_counters.ok_count;
+}
+
+pub export fn oc_command_result_count_invalid_argument() u32 {
+    return command_result_counters.invalid_argument_count;
+}
+
+pub export fn oc_command_result_count_not_supported() u32 {
+    return command_result_counters.not_supported_count;
+}
+
+pub export fn oc_command_result_count_other_error() u32 {
+    return command_result_counters.other_error_count;
+}
+
+pub export fn oc_command_result_counters_clear() void {
+    command_result_counters = .{
+        .ok_count = 0,
+        .invalid_argument_count = 0,
+        .not_supported_count = 0,
+        .other_error_count = 0,
+        .total_count = 0,
+        .reserved0 = 0,
+        .last_result = abi.result_ok,
+        .reserved1 = 0,
+        .last_opcode = abi.command_nop,
+        .reserved2 = 0,
+        .last_seq = 0,
+    };
+}
+
 pub export fn oc_submit_command(opcode: u16, arg0: u64, arg1: u64) u32 {
     const next_seq = command_mailbox.seq +% 1;
     command_mailbox.opcode = opcode;
@@ -360,6 +415,7 @@ fn processPendingCommand() void {
         status.last_command_result,
         status.ticks,
     );
+    recordCommandResult(status.command_seq_ack, command_mailbox.opcode, status.last_command_result);
 }
 
 fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
@@ -387,6 +443,7 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
             oc_health_history_clear();
             oc_mode_history_clear();
             oc_boot_phase_history_clear();
+            oc_command_result_counters_clear();
             return abi.result_ok;
         },
         abi.command_set_mode => {
@@ -487,6 +544,10 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
             oc_boot_phase_history_clear();
             return abi.result_ok;
         },
+        abi.command_reset_command_result_counters => {
+            oc_command_result_counters_clear();
+            return abi.result_ok;
+        },
         else => return abi.result_not_supported,
     }
 }
@@ -572,6 +633,19 @@ fn recordBootPhase(previous_phase: u8, new_phase: u8, reason: u8, tick: u64, com
         boot_phase_history_count += 1;
     } else {
         boot_phase_history_overflow +%= 1;
+    }
+}
+
+fn recordCommandResult(seq: u32, opcode: u16, result: i16) void {
+    command_result_counters.total_count +%= 1;
+    command_result_counters.last_result = result;
+    command_result_counters.last_opcode = opcode;
+    command_result_counters.last_seq = seq;
+    switch (result) {
+        abi.result_ok => command_result_counters.ok_count +%= 1,
+        abi.result_invalid_argument => command_result_counters.invalid_argument_count +%= 1,
+        abi.result_not_supported => command_result_counters.not_supported_count +%= 1,
+        else => command_result_counters.other_error_count +%= 1,
     }
 }
 
@@ -677,6 +751,7 @@ test "baremetal diagnostics command flow updates phase and stack snapshot" {
     oc_health_history_clear();
     oc_mode_history_clear();
     oc_boot_phase_history_clear();
+    oc_command_result_counters_clear();
 
     var seq = oc_submit_command(abi.command_capture_stack_pointer, 0, 0);
     oc_tick();
@@ -732,6 +807,7 @@ test "baremetal command history ring keeps newest mailbox entries" {
     oc_command_history_clear();
     oc_mode_history_clear();
     oc_boot_phase_history_clear();
+    oc_command_result_counters_clear();
 
     const cap = oc_command_history_capacity();
     var idx: u32 = 0;
@@ -769,6 +845,7 @@ test "baremetal health history captures tick health and clear control" {
     oc_health_history_clear();
     oc_mode_history_clear();
     oc_boot_phase_history_clear();
+    oc_command_result_counters_clear();
 
     oc_tick();
     oc_tick();
@@ -810,6 +887,7 @@ test "baremetal mode history captures command and panic transitions and clear co
     };
     oc_mode_history_clear();
     oc_boot_phase_history_clear();
+    oc_command_result_counters_clear();
 
     _ = oc_submit_command(abi.command_set_mode, abi.mode_booting, 0);
     oc_tick();
@@ -856,6 +934,7 @@ test "baremetal boot phase history captures command runtime and panic transition
     };
     resetBootDiagnostics();
     oc_boot_phase_history_clear();
+    oc_command_result_counters_clear();
 
     // Runtime -> init via command.
     _ = oc_submit_command(abi.command_set_boot_phase, abi.boot_phase_init, 0);
@@ -887,4 +966,52 @@ test "baremetal boot phase history captures command runtime and panic transition
     _ = oc_submit_command(abi.command_clear_boot_phase_history, 0, 0);
     oc_tick();
     try std.testing.expectEqual(@as(u32, 0), oc_boot_phase_history_len());
+}
+
+test "baremetal command result counters track categories and reset flow" {
+    status.mode = abi.mode_running;
+    status.ticks = 0;
+    status.command_seq_ack = 0;
+    status.last_command_opcode = abi.command_nop;
+    status.last_command_result = abi.result_ok;
+    status.tick_batch_hint = 1;
+    command_mailbox = .{
+        .magic = abi.command_magic,
+        .api_version = abi.api_version,
+        .opcode = abi.command_nop,
+        .seq = 0,
+        .arg0 = 0,
+        .arg1 = 0,
+    };
+    oc_command_result_counters_clear();
+    oc_command_history_clear();
+    oc_mode_history_clear();
+    oc_boot_phase_history_clear();
+    oc_health_history_clear();
+
+    _ = oc_submit_command(abi.command_set_health_code, 123, 0); // ok
+    oc_tick();
+    _ = oc_submit_command(abi.command_set_mode, 77, 0); // invalid argument
+    oc_tick();
+    _ = oc_submit_command(65535, 0, 0); // not supported
+    oc_tick();
+
+    try std.testing.expectEqual(@as(u32, 3), oc_command_result_total_count());
+    try std.testing.expectEqual(@as(u32, 1), oc_command_result_count_ok());
+    try std.testing.expectEqual(@as(u32, 1), oc_command_result_count_invalid_argument());
+    try std.testing.expectEqual(@as(u32, 1), oc_command_result_count_not_supported());
+    try std.testing.expectEqual(@as(u32, 0), oc_command_result_count_other_error());
+    const counters = oc_command_result_counters_ptr().*;
+    try std.testing.expectEqual(@as(i16, abi.result_not_supported), counters.last_result);
+    try std.testing.expectEqual(@as(u16, 65535), counters.last_opcode);
+    try std.testing.expectEqual(status.command_seq_ack, counters.last_seq);
+
+    _ = oc_submit_command(abi.command_reset_command_result_counters, 0, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(u32, 1), oc_command_result_total_count());
+    try std.testing.expectEqual(@as(u32, 1), oc_command_result_count_ok());
+    try std.testing.expectEqual(@as(u32, 0), oc_command_result_count_invalid_argument());
+    try std.testing.expectEqual(@as(u32, 0), oc_command_result_count_not_supported());
+    const reset_counters = oc_command_result_counters_ptr().*;
+    try std.testing.expectEqual(@as(u16, abi.command_reset_command_result_counters), reset_counters.last_opcode);
 }

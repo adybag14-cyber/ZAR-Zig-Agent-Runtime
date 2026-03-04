@@ -194,7 +194,7 @@ Phase 6 progress notes:
 - [x] `scripts/npm-pack-check.ps1` (validates npm package dry-run for `npm/openclaw-zig-rpc-client`)
 - [x] `scripts/python-pack-check.ps1` (validates python client package tests + wheel/sdist + twine checks for `python/openclaw-zig-rpc-client`)
 - [x] `zig test src/main.zig`
-- [x] `zig test src/baremetal_main.zig` (`16/16` passing; includes mode-history + boot-phase-history transition telemetry coverage)
+- [x] `zig test src/baremetal_main.zig` (`17/17` passing; includes mode-history + boot-phase-history + command-result counter telemetry coverage)
 - [x] Guest/auth parity tests:
   - `channels.telegram_runtime.test.telegram runtime qwen guest auth lifecycle`
   - `channels.telegram_runtime.test.telegram runtime auth complete infers provider from callback URL`
@@ -285,6 +285,10 @@ Phase 6 progress notes:
   - exports: `oc_boot_phase_history_capacity`, `oc_boot_phase_history_len`, `oc_boot_phase_history_head_index`, `oc_boot_phase_history_overflow_count`, `oc_boot_phase_history_ptr`, `oc_boot_phase_history_event`, `oc_boot_phase_history_clear`
   - ABI additions: `BaremetalBootPhaseEvent`, `feature_boot_phase_history_export`, `kernel_abi_boot_phase_history`
   - opcode: `command_clear_boot_phase_history`
+- [x] Bare-metal command-result-counter telemetry added:
+  - exports: `oc_command_result_counters_ptr`, `oc_command_result_total_count`, `oc_command_result_count_ok`, `oc_command_result_count_invalid_argument`, `oc_command_result_count_not_supported`, `oc_command_result_count_other_error`, `oc_command_result_counters_clear`
+  - ABI additions: `BaremetalCommandResultCounters`, `feature_command_result_counters_export`, `kernel_abi_command_result_counters`
+  - opcode: `command_reset_command_result_counters`
 - [x] `scripts/baremetal-smoke-check.ps1` now validates Multiboot2 header fields and checksum (`magic`, `arch`, `header_length`, `checksum`, end-tag tuple) in addition to section/symbol invariants.
 - [x] Cross-target diagnostics matrix (`scripts/zig-cross-target-matrix.ps1`) now covers desktop + Android with per-target logs and JSON summary:
   - Local Windows Zig master result: `4/8` pass (`x86_64-windows`, `x86_64-linux`, `x86_64-macos`, `x86_64-linux-android`)

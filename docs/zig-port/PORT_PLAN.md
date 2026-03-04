@@ -118,6 +118,11 @@ while maintaining parity-first validation and release gating.
     - exported boot phase history ring telemetry + clear controls (`oc_boot_phase_history_capacity`, `oc_boot_phase_history_len`, `oc_boot_phase_history_event`, `oc_boot_phase_history_clear`)
     - new mailbox opcode wired: `command_clear_boot_phase_history`
     - runtime now records boot phase transitions across command-driven, runtime-tick, and panic transitions.
+  - Bare-metal command-result-counter depth expansion shipped:
+    - new command result counter ABI contract (`BaremetalCommandResultCounters`) and feature flags (`feature_command_result_counters_export`, `kernel_abi_command_result_counters`)
+    - exported command result telemetry + reset controls (`oc_command_result_total_count`, `oc_command_result_count_ok`, `oc_command_result_count_invalid_argument`, `oc_command_result_count_not_supported`, `oc_command_result_count_other_error`, `oc_command_result_counters_clear`)
+    - new mailbox opcode wired: `command_reset_command_result_counters`
+    - runtime now classifies every processed mailbox command into result categories (`ok`, `invalid_argument`, `not_supported`, `other_error`) with last-result/last-opcode/last-seq tracking.
 - Phase 4 complete:
   - Guard pipeline with prompt-risk scoring + loop-guard enforcement (`src/security/guard.zig`, `src/security/loop_guard.zig`)
   - RPC diagnostics surfaces: `security.audit` and `doctor`

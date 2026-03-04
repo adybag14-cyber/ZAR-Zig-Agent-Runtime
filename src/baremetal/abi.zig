@@ -38,6 +38,7 @@ pub const feature_command_history_export: u32 = 1 << 18;
 pub const feature_health_history_export: u32 = 1 << 19;
 pub const feature_mode_history_export: u32 = 1 << 20;
 pub const feature_boot_phase_history_export: u32 = 1 << 21;
+pub const feature_command_result_counters_export: u32 = 1 << 22;
 
 pub const kernel_abi_multiboot2: u32 = 1 << 0;
 pub const kernel_abi_command_mailbox: u32 = 1 << 1;
@@ -58,6 +59,7 @@ pub const kernel_abi_command_history: u32 = 1 << 15;
 pub const kernel_abi_health_history: u32 = 1 << 16;
 pub const kernel_abi_mode_history: u32 = 1 << 17;
 pub const kernel_abi_boot_phase_history: u32 = 1 << 18;
+pub const kernel_abi_command_result_counters: u32 = 1 << 19;
 
 pub const command_nop: u16 = 0;
 pub const command_set_health_code: u16 = 1;
@@ -82,6 +84,7 @@ pub const command_clear_command_history: u16 = 19;
 pub const command_clear_health_history: u16 = 20;
 pub const command_clear_mode_history: u16 = 21;
 pub const command_clear_boot_phase_history: u16 = 22;
+pub const command_reset_command_result_counters: u16 = 23;
 
 pub const mode_change_reason_boot: u8 = 0;
 pub const mode_change_reason_command: u8 = 1;
@@ -189,6 +192,20 @@ pub const BaremetalBootPhaseEvent = extern struct {
     reserved1: u32,
 };
 
+pub const BaremetalCommandResultCounters = extern struct {
+    ok_count: u32,
+    invalid_argument_count: u32,
+    not_supported_count: u32,
+    other_error_count: u32,
+    total_count: u32,
+    reserved0: u32,
+    last_result: i16,
+    reserved1: u16,
+    last_opcode: u16,
+    reserved2: u16,
+    last_seq: u32,
+};
+
 pub fn defaultFeatureFlags() u32 {
     return feature_os_hosted_runtime |
         feature_baremetal_runtime |
@@ -211,7 +228,8 @@ pub fn defaultFeatureFlags() u32 {
         feature_command_history_export |
         feature_health_history_export |
         feature_mode_history_export |
-        feature_boot_phase_history_export;
+        feature_boot_phase_history_export |
+        feature_command_result_counters_export;
 }
 
 pub fn defaultAbiFlags() u32 {
@@ -233,7 +251,8 @@ pub fn defaultAbiFlags() u32 {
         kernel_abi_command_history |
         kernel_abi_health_history |
         kernel_abi_mode_history |
-        kernel_abi_boot_phase_history;
+        kernel_abi_boot_phase_history |
+        kernel_abi_command_result_counters;
 }
 
 pub fn modeIsValid(mode: u8) bool {
@@ -269,6 +288,7 @@ test "baremetal kernel info size contract stays stable" {
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(BaremetalHealthEvent));
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(BaremetalModeEvent));
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(BaremetalBootPhaseEvent));
+    try std.testing.expectEqual(@as(usize, 36), @sizeOf(BaremetalCommandResultCounters));
 }
 
 test "baremetal mode helper validates supported modes" {
