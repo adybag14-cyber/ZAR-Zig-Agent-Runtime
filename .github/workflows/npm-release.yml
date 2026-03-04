@@ -91,6 +91,19 @@ jobs:
           echo "tarball=$(pwd)/${PACK_FILE}" >> "$GITHUB_OUTPUT"
           echo "Built tarball: ${PACK_FILE}"
 
+      - name: Detect npm token availability
+        id: auth
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${NPM_TOKEN}" ]; then
+            echo "has_npm_token=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_npm_token=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload npm tarball to matching GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -107,7 +120,7 @@ jobs:
           fi
 
       - name: Publish npm package (npmjs)
-        if: ${{ secrets.NPM_TOKEN != '' }}
+        if: ${{ steps.auth.outputs.has_npm_token == 'true' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         shell: bash
@@ -123,14 +136,14 @@ jobs:
           npm publish --access public --tag "${{ steps.meta.outputs.dist_tag }}" --provenance
 
       - name: Setup Node for GitHub Packages fallback
-        if: ${{ secrets.NPM_TOKEN == '' }}
+        if: ${{ steps.auth.outputs.has_npm_token == 'false' }}
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           registry-url: "https://npm.pkg.github.com"
 
       - name: Publish npm package (GitHub Packages fallback)
-        if: ${{ secrets.NPM_TOKEN == '' }}
+        if: ${{ steps.auth.outputs.has_npm_token == 'false' }}
         env:
           NODE_AUTH_TOKEN: ${{ github.token }}
         shell: bash
