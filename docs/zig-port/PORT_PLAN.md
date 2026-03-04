@@ -78,7 +78,12 @@ while maintaining parity-first validation and release gating.
     - deterministic config fingerprint surfaced in diagnostics:
       - `health`, `status`, and `config.get` now include `configHash`
       - `doctor` report now includes `configHash`
-    - validation: `zig build`, `zig build test` (`101/101`), `scripts/runtime-smoke-check.ps1`, `scripts/gateway-auth-smoke-check.ps1`, `scripts/websocket-smoke-check.ps1`, `scripts/web-login-smoke-check.ps1`
+    - validation: `zig build`, `zig build test` (`116/116`), `scripts/runtime-smoke-check.ps1`, `scripts/gateway-auth-smoke-check.ps1`, `scripts/websocket-smoke-check.ps1`, `scripts/web-login-smoke-check.ps1`
+  - PAL v1 extraction shipped:
+    - new PAL modules in `src/pal/`: `fs`, `proc`, `net`, `secrets`, `sandbox`.
+    - runtime tool execution + file sandbox paths now route through PAL interfaces.
+    - Telegram Bot API connector HTTP send path now routes through PAL net interface.
+    - dispatcher env-secret lookup now routes through PAL secrets interface.
   - README refreshed with current parity/validation state and workflow guidance.
   - Local Zig toolchain reference doc refreshed to current local/remote hashes.
   - MkDocs documentation site scaffolded with full feature/domain documentation and GitHub Pages deployment workflow.

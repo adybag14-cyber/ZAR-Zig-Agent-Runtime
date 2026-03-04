@@ -9,6 +9,7 @@ const web_login = @import("../bridge/web_login.zig");
 const telegram_runtime = @import("../channels/telegram_runtime.zig");
 const telegram_bot_api = @import("../channels/telegram_bot_api.zig");
 const memory_store = @import("../memory/store.zig");
+const pal = @import("../pal/mod.zig");
 const tool_runtime = @import("../runtime/tool_runtime.zig");
 const security_guard = @import("../security/guard.zig");
 const security_audit = @import("../security/audit.zig");
@@ -7813,7 +7814,8 @@ fn parseEnvTruthyValue(raw: []const u8) bool {
 }
 
 fn envLookupAlloc(allocator: std.mem.Allocator, name: []const u8) !?[]u8 {
-    if (try loadEnvValueAlloc(allocator, name)) |value| return value;
+    if (!environ_ready) return null;
+    if (try pal.secrets.envLookupAlloc(active_environ, allocator, name)) |value| return value;
 
     const prefix = "OPENCLAW_ZIG_";
     if (!std.mem.startsWith(u8, name, prefix)) return null;
@@ -7823,33 +7825,13 @@ fn envLookupAlloc(allocator: std.mem.Allocator, name: []const u8) !?[]u8 {
 
     const go_name = try std.fmt.allocPrint(allocator, "OPENCLAW_GO_{s}", .{suffix});
     defer allocator.free(go_name);
-    if (try loadEnvValueAlloc(allocator, go_name)) |value| return value;
+    if (try pal.secrets.envLookupAlloc(active_environ, allocator, go_name)) |value| return value;
 
     const rs_name = try std.fmt.allocPrint(allocator, "OPENCLAW_RS_{s}", .{suffix});
     defer allocator.free(rs_name);
-    if (try loadEnvValueAlloc(allocator, rs_name)) |value| return value;
+    if (try pal.secrets.envLookupAlloc(active_environ, allocator, rs_name)) |value| return value;
 
     return null;
-}
-
-fn loadEnvValueAlloc(allocator: std.mem.Allocator, name: []const u8) !?[]u8 {
-    if (!environ_ready) return null;
-
-    const raw = std.process.Environ.getAlloc(active_environ, allocator, name) catch |err| switch (err) {
-        error.EnvironmentVariableMissing => return null,
-        error.InvalidWtf8 => return null,
-        else => return err,
-    };
-
-    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
-    if (trimmed.len == 0) {
-        allocator.free(raw);
-        return null;
-    }
-    if (trimmed.ptr == raw.ptr and trimmed.len == raw.len) return raw;
-    const value = try allocator.dupe(u8, trimmed);
-    allocator.free(raw);
-    return value;
 }
 
 fn parseCiphertexts(

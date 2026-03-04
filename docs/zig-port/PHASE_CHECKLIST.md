@@ -98,6 +98,10 @@ Phase 5 enhancement notes:
 - [x] Port wasm runtime/sandbox lifecycle contracts
 
 Phase 6 progress notes:
+- PAL v1 extraction shipped (`src/pal/*`) with concrete interfaces for fs/proc/net/secrets/sandbox:
+  - runtime tool execution and file sandbox flows now route through PAL (`runtime/tool_runtime.zig` -> `pal.proc`, `pal.fs`, `pal.sandbox`).
+  - Telegram Bot API connector now routes outbound POST delivery through PAL network interface (`channels/telegram_bot_api.zig` -> `pal.net`).
+  - dispatcher env secret lookup now routes through PAL secrets interface (`gateway/dispatcher.zig` -> `pal.secrets`).
 - Implemented persistent memory store (`src/memory/store.zig`) with session/channel history handlers: `sessions.history`, `chat.history`, and `doctor.memory.status`.
 - Optimization hardening for Phase 6 shipped:
   - `memory/store.zig`: batched front-removal helper applied to overflow + trim, and `removeSession` rewritten to linear compaction while preserving order.
@@ -198,7 +202,7 @@ Phase 6 progress notes:
 ## Latest Validation Snapshot
 - [x] `zig build`
 - [x] `zig build test`
-- [x] `zig build test --summary all` -> `101/101` passing (includes gateway auth/rate-limit hardening tests, runtime file/exec policy hardening tests, config-hash diagnostics coverage, bind-policy token enforcement checks, TTS/completion execution-path coverage, and bare-metal ABI v2 contract tests)
+- [x] `zig build test --summary all` -> `116/116` passing (includes gateway auth/rate-limit hardening tests, runtime file/exec policy hardening tests, config-hash diagnostics coverage, bind-policy token enforcement checks, TTS/completion execution-path coverage, PAL extraction coverage, and bare-metal ABI v2 contract tests)
 - [x] Runtime policy hardening slice shipped:
   - `file.read` / `file.write` optional sandbox enforcement with traversal + symlink denial paths:
     - `OPENCLAW_ZIG_RUNTIME_FILE_SANDBOX_ENABLED`

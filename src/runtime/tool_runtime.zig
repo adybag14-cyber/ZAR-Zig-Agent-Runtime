@@ -1,6 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const config = @import("../config.zig");
+const pal = @import("../pal/mod.zig");
 const state = @import("state.zig");
 const time_util = @import("../util/time.zig");
 
@@ -166,7 +167,7 @@ pub const ToolRuntime = struct {
         command: []const u8,
         timeout_ms: u32,
     ) !ExecResult {
-        if (!self.exec_enabled or !isCommandAllowed(command, self.exec_allowlist)) {
+        if (!self.exec_enabled or !pal.proc.isCommandAllowed(command, self.exec_allowlist)) {
             return error.CommandDenied;
         }
 
@@ -178,30 +179,17 @@ pub const ToolRuntime = struct {
             .windows => [_][]const u8{ "C:\\Windows\\System32\\cmd.exe", "/C", command },
             else => [_][]const u8{ "/bin/sh", "-lc", command },
         };
-        const timeout: std.Io.Timeout = switch (builtin.os.tag) {
-            .windows => .none,
-            else => .{
-                .duration = std.Io.Clock.Duration{
-                    .clock = .awake,
-                    .raw = std.Io.Duration.fromMilliseconds(timeout_ms),
-                },
-            },
-        };
+        var run_result = try pal.proc.runCapture(
+            self.allocator,
+            self.io,
+            &argv,
+            timeout_ms,
+            max_exec_output_bytes,
+            max_exec_output_bytes,
+        );
+        defer run_result.deinit(self.allocator);
 
-        const run_result = try std.process.run(self.allocator, self.io, .{
-            .argv = &argv,
-            .timeout = timeout,
-            .stdout_limit = .limited(max_exec_output_bytes),
-            .stderr_limit = .limited(max_exec_output_bytes),
-        });
-        defer self.allocator.free(run_result.stdout);
-        defer self.allocator.free(run_result.stderr);
-
-        const exit_code: i32 = switch (run_result.term) {
-            .exited => |code| code,
-            .signal => |sig| -@as(i32, @intCast(@intFromEnum(sig))),
-            .stopped, .unknown => -1,
-        };
+        const exit_code: i32 = pal.proc.termExitCode(run_result.term);
 
         const session_copy = try allocator.dupe(u8, session_id);
         errdefer allocator.free(session_copy);
@@ -240,7 +228,7 @@ pub const ToolRuntime = struct {
         const queued = self.runtime_state.dequeueJob() orelse return error.JobQueueInvariant;
         defer self.runtime_state.releaseJob(queued);
 
-        const content = try std.Io.Dir.cwd().readFileAlloc(self.io, effective_path, allocator, .limited(max_file_read_bytes));
+        const content = try pal.fs.readFileAlloc(self.io, allocator, effective_path, max_file_read_bytes);
         errdefer allocator.free(content);
         const session_copy = try allocator.dupe(u8, session_id);
         errdefer allocator.free(session_copy);
@@ -280,17 +268,14 @@ pub const ToolRuntime = struct {
         var created_dirs = false;
         if (std.fs.path.dirname(effective_path)) |dir_name| {
             if (dir_name.len > 0) {
-                try std.Io.Dir.cwd().createDirPath(self.io, dir_name);
+                try pal.fs.createDirPath(self.io, dir_name);
                 created_dirs = true;
             }
         }
 
         try self.verifyWritePathAfterMkdir(allocator, effective_path);
 
-        try std.Io.Dir.cwd().writeFile(self.io, .{
-            .sub_path = effective_path,
-            .data = content,
-        });
+        try pal.fs.writeFile(self.io, effective_path, content);
 
         const session_copy = try allocator.dupe(u8, session_id);
         errdefer allocator.free(session_copy);
@@ -325,20 +310,20 @@ pub const ToolRuntime = struct {
             return allocator.dupe(u8, path);
         }
 
-        if (hasParentTraversal(path)) {
+        if (pal.sandbox.hasParentTraversal(path)) {
             return error.PathTraversalDetected;
         }
 
-        const absolute_path = try resolveAbsolutePath(self.io, allocator, path);
+        const absolute_path = try pal.sandbox.resolveAbsolutePath(self.io, allocator, path);
         errdefer allocator.free(absolute_path);
 
-        var roots = try parseAllowedRoots(self.io, allocator, self.file_allowed_roots);
-        defer freePathList(allocator, &roots);
+        var roots = try pal.sandbox.parseAllowedRoots(self.io, allocator, self.file_allowed_roots);
+        defer pal.sandbox.freePathList(allocator, &roots);
         if (roots.items.len == 0) {
             return error.PathAccessDenied;
         }
 
-        if (!isWithinAnyRoot(absolute_path, roots.items)) {
+        if (!pal.sandbox.isWithinAnyRoot(absolute_path, roots.items)) {
             return error.PathAccessDenied;
         }
 
@@ -347,14 +332,14 @@ pub const ToolRuntime = struct {
                 const target_real_z = std.Io.Dir.realPathFileAbsoluteAlloc(self.io, absolute_path, allocator) catch return error.PathAccessDenied;
                 defer allocator.free(target_real_z);
                 const target_real = std.mem.sliceTo(target_real_z, 0);
-                if (!isWithinAnyRoot(target_real, roots.items)) {
+                if (!pal.sandbox.isWithinAnyRoot(target_real, roots.items)) {
                     return error.PathAccessDenied;
                 }
-                const stat = std.Io.Dir.cwd().statFile(self.io, absolute_path, .{ .follow_symlinks = false }) catch return error.PathAccessDenied;
+                const stat = pal.fs.statNoFollow(self.io, absolute_path) catch return error.PathAccessDenied;
                 if (stat.kind == .sym_link) return error.PathSymlinkDisallowed;
             },
             .write => {
-                const stat = std.Io.Dir.cwd().statFile(self.io, absolute_path, .{ .follow_symlinks = false }) catch |err| switch (err) {
+                const stat = pal.fs.statNoFollow(self.io, absolute_path) catch |err| switch (err) {
                     error.FileNotFound => null,
                     else => return error.PathAccessDenied,
                 };
@@ -363,9 +348,9 @@ pub const ToolRuntime = struct {
                 }
 
                 const parent = std.fs.path.dirname(absolute_path) orelse return error.PathAccessDenied;
-                const parent_real = try resolveNearestExistingPath(self.io, allocator, parent);
+                const parent_real = try pal.sandbox.resolveNearestExistingPath(self.io, allocator, parent);
                 defer allocator.free(parent_real);
-                if (!isWithinAnyRoot(parent_real, roots.items)) {
+                if (!pal.sandbox.isWithinAnyRoot(parent_real, roots.items)) {
                     return error.PathAccessDenied;
                 }
             },
@@ -381,15 +366,15 @@ pub const ToolRuntime = struct {
     ) !void {
         if (!self.file_sandbox_enabled) return;
 
-        var roots = try parseAllowedRoots(self.io, allocator, self.file_allowed_roots);
-        defer freePathList(allocator, &roots);
+        var roots = try pal.sandbox.parseAllowedRoots(self.io, allocator, self.file_allowed_roots);
+        defer pal.sandbox.freePathList(allocator, &roots);
         if (roots.items.len == 0) return error.PathAccessDenied;
 
         const parent = std.fs.path.dirname(path) orelse return error.PathAccessDenied;
         const parent_real_z = std.Io.Dir.realPathFileAbsoluteAlloc(self.io, parent, allocator) catch return error.PathAccessDenied;
         defer allocator.free(parent_real_z);
         const parent_real = std.mem.sliceTo(parent_real_z, 0);
-        if (!isWithinAnyRoot(parent_real, roots.items)) {
+        if (!pal.sandbox.isWithinAnyRoot(parent_real, roots.items)) {
             return error.PathAccessDenied;
         }
     }
@@ -463,156 +448,6 @@ fn getOptionalU32(
 fn nowUnixMilliseconds(io: std.Io) i64 {
     _ = io;
     return time_util.nowMs();
-}
-
-fn hasParentTraversal(path: []const u8) bool {
-    var it = std.mem.tokenizeAny(u8, path, "/\\");
-    while (it.next()) |segment| {
-        if (std.mem.eql(u8, segment, "..")) return true;
-    }
-    return false;
-}
-
-fn resolveAbsolutePath(io: std.Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-    const trimmed = std.mem.trim(u8, path, " \t\r\n");
-    if (trimmed.len == 0) return error.PathAccessDenied;
-
-    if (std.fs.path.isAbsolute(trimmed)) {
-        return std.fs.path.resolve(allocator, &.{trimmed});
-    }
-
-    const cwd_real_z = try std.Io.Dir.cwd().realPathFileAlloc(io, ".", allocator);
-    defer allocator.free(cwd_real_z);
-    const cwd_real = std.mem.sliceTo(cwd_real_z, 0);
-    return std.fs.path.resolve(allocator, &.{ cwd_real, trimmed });
-}
-
-fn parseAllowedRoots(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    csv: []const u8,
-) !std.ArrayList([]u8) {
-    var roots: std.ArrayList([]u8) = .empty;
-    errdefer freePathList(allocator, &roots);
-
-    const trimmed = std.mem.trim(u8, csv, " \t\r\n");
-    if (trimmed.len == 0) {
-        const cwd_real_z = try std.Io.Dir.cwd().realPathFileAlloc(io, ".", allocator);
-        defer allocator.free(cwd_real_z);
-        try roots.append(allocator, try allocator.dupe(u8, std.mem.sliceTo(cwd_real_z, 0)));
-        return roots;
-    }
-
-    var it = std.mem.tokenizeAny(u8, trimmed, ",;");
-    while (it.next()) |entry_raw| {
-        const entry = std.mem.trim(u8, entry_raw, " \t\r\n");
-        if (entry.len == 0) continue;
-        const absolute_root = try resolveAbsolutePath(io, allocator, entry);
-        defer allocator.free(absolute_root);
-        const real_root_z = std.Io.Dir.realPathFileAbsoluteAlloc(io, absolute_root, allocator) catch continue;
-        defer allocator.free(real_root_z);
-        const real_root = std.mem.sliceTo(real_root_z, 0);
-        const stat = std.Io.Dir.cwd().statFile(io, real_root, .{ .follow_symlinks = false }) catch continue;
-        if (stat.kind == .sym_link) continue;
-        if (stat.kind != .directory) continue;
-        try roots.append(allocator, try allocator.dupe(u8, real_root));
-    }
-
-    return roots;
-}
-
-fn resolveNearestExistingPath(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-    path: []const u8,
-) ![]u8 {
-    var current = try allocator.dupe(u8, path);
-    errdefer allocator.free(current);
-
-    while (true) {
-        const current_real_z = std.Io.Dir.realPathFileAbsoluteAlloc(io, current, allocator) catch |err| switch (err) {
-            error.FileNotFound => {
-                const parent = std.fs.path.dirname(current) orelse return error.PathAccessDenied;
-                if (parent.len == 0 or std.mem.eql(u8, parent, current)) return error.PathAccessDenied;
-                const next = try allocator.dupe(u8, parent);
-                allocator.free(current);
-                current = next;
-                continue;
-            },
-            else => return error.PathAccessDenied,
-        };
-        defer allocator.free(current_real_z);
-
-        const current_real = try allocator.dupe(u8, std.mem.sliceTo(current_real_z, 0));
-        allocator.free(current);
-        return current_real;
-    }
-}
-
-fn freePathList(allocator: std.mem.Allocator, list: *std.ArrayList([]u8)) void {
-    for (list.items) |entry| allocator.free(entry);
-    list.deinit(allocator);
-}
-
-fn isWithinAnyRoot(path: []const u8, roots: []const []const u8) bool {
-    for (roots) |root| {
-        if (pathWithinRoot(path, root)) return true;
-    }
-    return false;
-}
-
-fn pathWithinRoot(path: []const u8, root: []const u8) bool {
-    const root_norm = trimTrailingSeparators(root);
-    const path_norm = trimTrailingSeparators(path);
-    if (path_norm.len < root_norm.len) return false;
-    if (!pathPrefixEqual(path_norm, root_norm)) return false;
-    if (path_norm.len == root_norm.len) return true;
-    return isPathSeparator(path_norm[root_norm.len]);
-}
-
-fn trimTrailingSeparators(path: []const u8) []const u8 {
-    var end = path.len;
-    while (end > 1 and isPathSeparator(path[end - 1])) : (end -= 1) {}
-    if (builtin.os.tag == .windows and path.len >= 2 and path[1] == ':') {
-        if (end < 3) return path[0..3];
-    }
-    return path[0..end];
-}
-
-fn pathPrefixEqual(path: []const u8, prefix: []const u8) bool {
-    for (prefix, 0..) |expected, idx| {
-        if (!pathCharEq(path[idx], expected)) return false;
-    }
-    return true;
-}
-
-fn isPathSeparator(ch: u8) bool {
-    return if (builtin.os.tag == .windows)
-        (ch == '/' or ch == '\\')
-    else
-        ch == '/';
-}
-
-fn pathCharEq(lhs: u8, rhs: u8) bool {
-    if (builtin.os.tag != .windows) return lhs == rhs;
-    const a = if (isPathSeparator(lhs)) '\\' else std.ascii.toLower(lhs);
-    const b = if (isPathSeparator(rhs)) '\\' else std.ascii.toLower(rhs);
-    return a == b;
-}
-
-fn isCommandAllowed(command: []const u8, allowlist_csv: []const u8) bool {
-    const trimmed_command = std.mem.trim(u8, command, " \t\r\n");
-    if (trimmed_command.len == 0) return false;
-    const trimmed_allowlist = std.mem.trim(u8, allowlist_csv, " \t\r\n");
-    if (trimmed_allowlist.len == 0) return true;
-
-    var it = std.mem.tokenizeAny(u8, trimmed_allowlist, ",;");
-    while (it.next()) |entry_raw| {
-        const entry = std.mem.trim(u8, entry_raw, " \t\r\n");
-        if (entry.len == 0) continue;
-        if (std.ascii.startsWithIgnoreCase(trimmed_command, entry)) return true;
-    }
-    return false;
 }
 
 test "tool runtime file write/read lifecycle with session state" {

@@ -1,5 +1,5 @@
 const std = @import("std");
-const time_util = @import("../util/time.zig");
+const pal = @import("../pal/mod.zig");
 
 pub const IncomingUpdate = struct {
     update_id: i64,
@@ -155,26 +155,12 @@ pub fn sendMessage(
     const request_payload = try request_body.toOwnedSlice();
     defer allocator.free(request_payload);
 
-    var client: std.http.Client = .{
-        .allocator = allocator,
-        .io = std.Io.Threaded.global_single_threaded.io(),
-    };
-    defer client.deinit();
-
-    var response_body: std.Io.Writer.Allocating = .init(allocator);
-    defer response_body.deinit();
-
-    const started_ms = time_util.nowMs();
-    const fetch_result = client.fetch(.{
-        .location = .{ .url = request_url },
-        .method = .POST,
-        .payload = request_payload,
-        .keep_alive = false,
-        .extra_headers = &.{
-            .{ .name = "content-type", .value = "application/json" },
-        },
-        .response_writer = &response_body.writer,
-    }) catch |err| {
+    var fetch_response = pal.net.post(
+        allocator,
+        request_url,
+        request_payload,
+        &.{.{ .name = "content-type", .value = "application/json" }},
+    ) catch |err| {
         return .{
             .attempted = true,
             .ok = false,
@@ -183,14 +169,14 @@ pub fn sendMessage(
             .errorText = try std.fmt.allocPrint(allocator, "telegram sendMessage request failed: {s}", .{@errorName(err)}),
             .messageId = null,
             .responseBytes = 0,
-            .latencyMs = time_util.nowMs() - started_ms,
+            .latencyMs = 0,
             .requestTimeoutMs = request_timeout_ms,
         };
     };
+    defer fetch_response.deinit(allocator);
 
-    const status_code: u16 = @intCast(@intFromEnum(fetch_result.status));
-    const response_payload = try response_body.toOwnedSlice();
-    defer allocator.free(response_payload);
+    const status_code = fetch_response.status_code;
+    const response_payload = fetch_response.body;
 
     if (status_code < 200 or status_code >= 300) {
         return .{
@@ -201,7 +187,7 @@ pub fn sendMessage(
             .errorText = try allocErrorSnippet(allocator, response_payload, status_code),
             .messageId = null,
             .responseBytes = response_payload.len,
-            .latencyMs = time_util.nowMs() - started_ms,
+            .latencyMs = fetch_response.latency_ms,
             .requestTimeoutMs = request_timeout_ms,
         };
     }
@@ -215,7 +201,7 @@ pub fn sendMessage(
             .errorText = try std.fmt.allocPrint(allocator, "invalid telegram sendMessage JSON: {s}", .{@errorName(err)}),
             .messageId = null,
             .responseBytes = response_payload.len,
-            .latencyMs = time_util.nowMs() - started_ms,
+            .latencyMs = fetch_response.latency_ms,
             .requestTimeoutMs = request_timeout_ms,
         };
     };
@@ -243,7 +229,7 @@ pub fn sendMessage(
         .errorText = try allocator.dupe(u8, error_text),
         .messageId = message_id,
         .responseBytes = response_payload.len,
-        .latencyMs = time_util.nowMs() - started_ms,
+        .latencyMs = fetch_response.latency_ms,
         .requestTimeoutMs = request_timeout_ms,
     };
 }
