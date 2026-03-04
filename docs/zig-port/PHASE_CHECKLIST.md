@@ -229,6 +229,10 @@ Phase 6 progress notes:
     - `oc_descriptor_tables_ready`, `oc_interrupt_stub`, `oc_trigger_interrupt`
     - `oc_interrupt_count`, `oc_last_interrupt_vector`
 - [x] `scripts/baremetal-qemu-smoke-check.ps1` added for optional boot smoke with debug-exit validation (`zig build baremetal -Dbaremetal-qemu-smoke=true`); script auto-skips when QEMU is unavailable.
+- [x] Bare-metal command mailbox depth expanded with interrupt control opcodes:
+  - `command_trigger_interrupt`
+  - `command_reset_interrupt_counters`
+  - `command_reinit_descriptor_tables`
 - [x] `scripts/baremetal-smoke-check.ps1` now validates Multiboot2 header fields and checksum (`magic`, `arch`, `header_length`, `checksum`, end-tag tuple) in addition to section/symbol invariants.
 - [x] Cross-target diagnostics matrix (`scripts/zig-cross-target-matrix.ps1`) now covers desktop + Android with per-target logs and JSON summary:
   - Local Windows Zig master result: `4/8` pass (`x86_64-windows`, `x86_64-linux`, `x86_64-macos`, `x86_64-linux-android`)

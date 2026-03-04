@@ -20,6 +20,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - smoke gate also validates Multiboot2 header field contract and checksum
   - optional QEMU boot smoke path available via `zig build baremetal -Dbaremetal-qemu-smoke=true` and `scripts/baremetal-qemu-smoke-check.ps1` (auto-skips when QEMU is unavailable)
   - bare-metal ABI now includes exported kernel info + command mailbox hooks (`oc_kernel_info_ptr`, `oc_command_ptr`, `oc_submit_command`, `oc_tick_n`)
+  - command mailbox interrupt controls are available (`trigger_interrupt`, `reset_interrupt_counters`, `reinit_descriptor_tables`)
   - x86 bootstrap exports now include descriptor table pointers and interrupt-tracking hooks (`oc_gdtr_ptr`, `oc_idtr_ptr`, `oc_gdt_ptr`, `oc_idt_ptr`, `oc_interrupt_count`, `oc_last_interrupt_vector`)
 - Recent optimization slices (2026-03-04):
   - memory/runtime/channel queue compaction and retention hardening

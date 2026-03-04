@@ -128,6 +128,11 @@ pub export fn oc_interrupt_count() u64 {
     return interrupt_counter;
 }
 
+pub export fn oc_reset_interrupt_counters() void {
+    last_interrupt_vector = 0;
+    interrupt_counter = 0;
+}
+
 pub export fn oc_trigger_interrupt(vector: u8) void {
     oc_interrupt_stub(vector);
 }
@@ -152,4 +157,7 @@ test "x86 bootstrap interrupt tracking updates counters" {
     oc_trigger_interrupt(42);
     try std.testing.expectEqual(@as(u8, 42), last_interrupt_vector);
     try std.testing.expect(interrupt_counter == before + 1);
+    oc_reset_interrupt_counters();
+    try std.testing.expectEqual(@as(u8, 0), last_interrupt_vector);
+    try std.testing.expectEqual(@as(u64, 0), interrupt_counter);
 }

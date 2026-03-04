@@ -149,6 +149,7 @@ fn executeCommand(opcode: u16, arg0: u64, _: u64) i16 {
         abi.command_reset_counters => {
             status.ticks = 0;
             status.panic_count = 0;
+            x86_bootstrap.oc_reset_interrupt_counters();
             return abi.result_ok;
         },
         abi.command_set_mode => {
@@ -166,6 +167,19 @@ fn executeCommand(opcode: u16, arg0: u64, _: u64) i16 {
         abi.command_set_tick_batch_hint => {
             if (arg0 == 0 or arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
             status.tick_batch_hint = @as(u32, @truncate(arg0));
+            return abi.result_ok;
+        },
+        abi.command_trigger_interrupt => {
+            if (arg0 > std.math.maxInt(u8)) return abi.result_invalid_argument;
+            x86_bootstrap.oc_trigger_interrupt(@as(u8, @truncate(arg0)));
+            return abi.result_ok;
+        },
+        abi.command_reset_interrupt_counters => {
+            x86_bootstrap.oc_reset_interrupt_counters();
+            return abi.result_ok;
+        },
+        abi.command_reinit_descriptor_tables => {
+            x86_bootstrap.init();
             return abi.result_ok;
         },
         else => return abi.result_not_supported,

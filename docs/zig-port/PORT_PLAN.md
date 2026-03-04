@@ -263,6 +263,9 @@ while maintaining parity-first validation and release gating.
   - bare-metal QEMU boot smoke expansion shipped:
     - new optional build flag: `-Dbaremetal-qemu-smoke=true` to trigger debug-exit path for deterministic boot-smoke checks.
     - new script: `scripts/baremetal-qemu-smoke-check.ps1` (uses `isa-debug-exit`; auto-skips when QEMU is unavailable).
+  - bare-metal mailbox interrupt-control expansion shipped:
+    - new command opcodes wired in runtime: `command_trigger_interrupt`, `command_reset_interrupt_counters`, `command_reinit_descriptor_tables`.
+    - reset path now clears runtime interrupt counters via bootstrap export to keep command-driven diagnostics deterministic.
   - CI recovery note (2026-03-04):
     - fixed Zig master API regression in Telegram runtime env lookup (`.block = .global` on `std.process.Environ`), which broke `zig-ci` validate and all cross-target jobs on run `22668754695`.
     - implemented injected environ wiring (`telegram_runtime.setEnviron`) and switched env lookup to `std.process.Environ.getAlloc(process_environ, ...)`.
