@@ -2,11 +2,17 @@ const std = @import("std");
 const web_login = @import("../bridge/web_login.zig");
 const time_util = @import("../util/time.zig");
 
+var process_environ: std.process.Environ = std.process.Environ.empty;
+
 pub const RuntimeError = error{
     InvalidParamsFrame,
     MissingMessage,
     UnsupportedChannel,
 };
+
+pub fn setEnviron(environ: std.process.Environ) void {
+    process_environ = environ;
+}
 
 pub const SendResult = struct {
     status: []const u8,
@@ -1548,8 +1554,7 @@ fn isSupportedTtsProvider(raw: []const u8) bool {
 }
 
 fn envHasValue(allocator: std.mem.Allocator, name: []const u8) bool {
-    const environ: std.process.Environ = .{ .block = .global };
-    const raw = std.process.Environ.getAlloc(environ, allocator, name) catch |err| switch (err) {
+    const raw = std.process.Environ.getAlloc(process_environ, allocator, name) catch |err| switch (err) {
         error.EnvironmentVariableMissing => return false,
         error.InvalidWtf8 => return false,
         else => return false,

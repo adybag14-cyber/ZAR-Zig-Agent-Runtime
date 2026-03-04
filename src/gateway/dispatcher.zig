@@ -1728,6 +1728,7 @@ pub fn setConfig(cfg: config.Config) void {
 
 pub fn setEnviron(environ: std.process.Environ) void {
     active_environ = environ;
+    telegram_runtime.setEnviron(environ);
     environ_ready = true;
 }
 
