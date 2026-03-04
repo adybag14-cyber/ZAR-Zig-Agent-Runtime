@@ -225,3 +225,4 @@ while maintaining parity-first validation and release gating.
   - release-preview packaging now ships the freestanding image artifact (`openclaw-zig-<version>-x86_64-freestanding-none.elf`) alongside desktop/android zips + checksums.
   - bare-metal runtime now embeds Multiboot2 header and smoke gate checks ELF magic + Multiboot2 magic bytes to reduce boot-regression risk.
   - bare-metal smoke gate now parses ELF section/symbol tables to enforce `.multiboot` section presence and required runtime exports (`_start`, `oc_tick`, `oc_status_ptr`, `multiboot2_header`).
+  - bare-metal smoke gate now enforces full Multiboot2 header invariants (field values + checksum + end-tag contract), reducing false-positive magic-only matches.

@@ -83,6 +83,41 @@ function Find-BytePatternIndex {
     return -1
 }
 
+function Find-BytePatternIndexInRange {
+    param(
+        [byte[]] $Bytes,
+        [byte[]] $Pattern,
+        [int] $StartOffset,
+        [int] $EndOffsetExclusive
+    )
+    if ($Pattern.Length -eq 0 -or $Bytes.Length -lt $Pattern.Length) {
+        return -1
+    }
+    if ($StartOffset -lt 0) {
+        $StartOffset = 0
+    }
+    if ($EndOffsetExclusive -gt $Bytes.Length) {
+        $EndOffsetExclusive = $Bytes.Length
+    }
+    $maxStart = $EndOffsetExclusive - $Pattern.Length
+    if ($maxStart -lt $StartOffset) {
+        return -1
+    }
+    for ($i = $StartOffset; $i -le $maxStart; $i++) {
+        $matched = $true
+        for ($j = 0; $j -lt $Pattern.Length; $j++) {
+            if ($Bytes[$i + $j] -ne $Pattern[$j]) {
+                $matched = $false
+                break
+            }
+        }
+        if ($matched) {
+            return $i
+        }
+    }
+    return -1
+}
+
 Set-Location $repo
 $zig = Resolve-ZigExecutable
 
@@ -144,6 +179,36 @@ if (($multibootOffset % 8) -ne 0) {
     throw "multiboot2 header is not 8-byte aligned (offset=$multibootOffset)"
 }
 
+$multibootMagicValue = Read-UInt32LE -Bytes $bytes -Offset $multibootOffset
+$multibootMagicHex = "{0:X8}" -f ([uint32]$multibootMagicValue)
+$multibootArchitecture = Read-UInt32LE -Bytes $bytes -Offset ($multibootOffset + 4)
+$multibootHeaderLength = Read-UInt32LE -Bytes $bytes -Offset ($multibootOffset + 8)
+$multibootChecksum = Read-UInt32LE -Bytes $bytes -Offset ($multibootOffset + 12)
+$multibootEndTagType = Read-UInt16LE -Bytes $bytes -Offset ($multibootOffset + 16)
+$multibootEndTagFlags = Read-UInt16LE -Bytes $bytes -Offset ($multibootOffset + 18)
+$multibootEndTagSize = Read-UInt32LE -Bytes $bytes -Offset ($multibootOffset + 20)
+
+if ($multibootMagicHex -ne "E85250D6") {
+    throw "invalid multiboot2 magic value: 0x$multibootMagicHex"
+}
+if ($multibootArchitecture -ne 0) {
+    throw "unsupported multiboot2 architecture value: $multibootArchitecture (expected 0)"
+}
+if ($multibootHeaderLength -ne 24) {
+    throw "unexpected multiboot2 header length: $multibootHeaderLength (expected 24)"
+}
+if (($multibootOffset + $multibootHeaderLength) -gt $bytes.Length) {
+    throw "multiboot2 header exceeds file bounds"
+}
+$multibootChecksumRaw = [uint64]$multibootMagicValue + [uint64]$multibootArchitecture + [uint64]$multibootHeaderLength + [uint64]$multibootChecksum
+$multibootChecksumSum = $multibootChecksumRaw % 4294967296
+if ($multibootChecksumSum -ne 0) {
+    throw ("invalid multiboot2 checksum (sum mod 2^32 = 0x{0:X8})" -f $multibootChecksumSum)
+}
+if ($multibootEndTagType -ne 0 -or $multibootEndTagFlags -ne 0 -or $multibootEndTagSize -ne 8) {
+    throw "invalid multiboot2 end tag values (type=$multibootEndTagType flags=$multibootEndTagFlags size=$multibootEndTagSize)"
+}
+
 $sectionHeaderOffset = [int](Read-UInt64LE -Bytes $bytes -Offset 0x28)
 $sectionHeaderEntrySize = [int](Read-UInt16LE -Bytes $bytes -Offset 0x3A)
 $sectionHeaderCount = [int](Read-UInt16LE -Bytes $bytes -Offset 0x3C)
@@ -200,6 +265,21 @@ $multibootSection = $sections | Where-Object { $_.Name -eq ".multiboot" } | Sele
 if ($null -eq $multibootSection) {
     throw "ELF section '.multiboot' not found"
 }
+if (($multibootSection.Offset % 8) -ne 0) {
+    throw ".multiboot section offset is not 8-byte aligned ($($multibootSection.Offset))"
+}
+$multibootSectionEnd = $multibootSection.Offset + $multibootSection.Size
+$multibootSectionHeaderOffset = Find-BytePatternIndexInRange -Bytes $bytes -Pattern $multiboot2Magic -StartOffset $multibootSection.Offset -EndOffsetExclusive $multibootSectionEnd
+if ($multibootSectionHeaderOffset -lt 0) {
+    throw "multiboot2 magic not found in .multiboot section bytes"
+}
+if (($multibootSectionHeaderOffset % 8) -ne 0) {
+    throw "multiboot2 header inside .multiboot is not 8-byte aligned (offset=$multibootSectionHeaderOffset)"
+}
+$multibootSectionHeaderLength = Read-UInt32LE -Bytes $bytes -Offset ($multibootSectionHeaderOffset + 8)
+if (($multibootSectionHeaderOffset + $multibootSectionHeaderLength) -gt $multibootSectionEnd) {
+    throw "multiboot2 header bytes are not fully contained in .multiboot section"
+}
 
 $symtab = $sections | Where-Object { $_.Name -eq ".symtab" } | Select-Object -First 1
 if ($null -eq $symtab) {
@@ -253,6 +333,11 @@ Write-Output "BAREMETAL_SIZE_BYTES=$($info.Length)"
 Write-Output "BAREMETAL_ELF_MAGIC_PRESENT=True"
 Write-Output "BAREMETAL_MULTIBOOT2_MAGIC_PRESENT=True"
 Write-Output "BAREMETAL_MULTIBOOT2_OFFSET=$multibootOffset"
+Write-Output "BAREMETAL_MULTIBOOT2_ARCH=$multibootArchitecture"
+Write-Output "BAREMETAL_MULTIBOOT2_LENGTH=$multibootHeaderLength"
+Write-Output "BAREMETAL_MULTIBOOT2_CHECKSUM=0x$("{0:X8}" -f $multibootChecksum)"
+Write-Output "BAREMETAL_MULTIBOOT2_END_TAG_TYPE=$multibootEndTagType"
+Write-Output "BAREMETAL_MULTIBOOT2_END_TAG_SIZE=$multibootEndTagSize"
 Write-Output "BAREMETAL_MULTIBOOT_SECTION_PRESENT=True"
 Write-Output "BAREMETAL_SYMTAB_PRESENT=True"
 Write-Output "BAREMETAL_REQUIRED_SYMBOLS_PRESENT=True"

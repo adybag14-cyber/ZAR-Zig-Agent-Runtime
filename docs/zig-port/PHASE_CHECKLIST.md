@@ -164,6 +164,7 @@ Phase 6 progress notes:
 - [x] `scripts/baremetal-smoke-check.ps1` (`zig build baremetal` + artifact presence/size checks for freestanding image)
 - [x] `scripts/baremetal-smoke-check.ps1` now validates ELF + Multiboot2 magic in the freestanding image.
 - [x] `scripts/baremetal-smoke-check.ps1` now validates `.multiboot` section + required exported symbols (`_start`, `oc_tick`, `oc_status_ptr`, `multiboot2_header`) from ELF symtab.
+- [x] `scripts/baremetal-smoke-check.ps1` now validates Multiboot2 header fields and checksum (`magic`, `arch`, `header_length`, `checksum`, end-tag tuple) in addition to section/symbol invariants.
 - [x] Cross-target diagnostics matrix (`scripts/zig-cross-target-matrix.ps1`) now covers desktop + Android with per-target logs and JSON summary:
   - Local Windows Zig master result: `4/8` pass (`x86_64-windows`, `x86_64-linux`, `x86_64-macos`, `x86_64-linux-android`)
   - Local failures: `aarch64-linux`, `aarch64-macos`, `aarch64-linux-android`, `arm-linux-androideabi`
