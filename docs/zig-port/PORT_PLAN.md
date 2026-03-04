@@ -123,6 +123,11 @@ while maintaining parity-first validation and release gating.
     - exported command result telemetry + reset controls (`oc_command_result_total_count`, `oc_command_result_count_ok`, `oc_command_result_count_invalid_argument`, `oc_command_result_count_not_supported`, `oc_command_result_count_other_error`, `oc_command_result_counters_clear`)
     - new mailbox opcode wired: `command_reset_command_result_counters`
     - runtime now classifies every processed mailbox command into result categories (`ok`, `invalid_argument`, `not_supported`, `other_error`) with last-result/last-opcode/last-seq tracking.
+  - Bare-metal scheduler/task depth expansion shipped:
+    - new scheduler contracts (`BaremetalSchedulerState`, `BaremetalTask`) and feature flags (`feature_scheduler_export`, `kernel_abi_scheduler`)
+    - exported scheduler/task telemetry and reset controls (`oc_scheduler_state_ptr`, `oc_scheduler_enabled`, `oc_scheduler_task_capacity`, `oc_scheduler_task_count`, `oc_scheduler_task`, `oc_scheduler_tasks_ptr`, `oc_scheduler_reset`)
+    - new scheduler mailbox controls wired: `command_scheduler_enable`, `command_scheduler_disable`, `command_scheduler_reset`, `command_task_create`, `command_task_terminate`, `command_scheduler_set_timeslice`, `command_scheduler_set_default_budget`
+    - runtime now performs cooperative round-robin task dispatch on tick with budget depletion and task-state transitions (`ready -> running -> ready/completed`).
 - Phase 4 complete:
   - Guard pipeline with prompt-risk scoring + loop-guard enforcement (`src/security/guard.zig`, `src/security/loop_guard.zig`)
   - RPC diagnostics surfaces: `security.audit` and `doctor`

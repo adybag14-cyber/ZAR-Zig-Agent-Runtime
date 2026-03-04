@@ -11,6 +11,8 @@ const BaremetalHealthEvent = abi.BaremetalHealthEvent;
 const BaremetalModeEvent = abi.BaremetalModeEvent;
 const BaremetalBootPhaseEvent = abi.BaremetalBootPhaseEvent;
 const BaremetalCommandResultCounters = abi.BaremetalCommandResultCounters;
+const BaremetalSchedulerState = abi.BaremetalSchedulerState;
+const BaremetalTask = abi.BaremetalTask;
 
 const multiboot2_magic: u32 = 0xE85250D6;
 const multiboot2_architecture_i386: u32 = 0;
@@ -131,6 +133,24 @@ var command_result_counters: BaremetalCommandResultCounters = .{
     .reserved2 = 0,
     .last_seq = 0,
 };
+
+const scheduler_task_capacity: usize = 16;
+const scheduler_no_slot: u8 = 255;
+var scheduler_tasks: [scheduler_task_capacity]BaremetalTask = std.mem.zeroes([scheduler_task_capacity]BaremetalTask);
+var scheduler_state: BaremetalSchedulerState = .{
+    .enabled = abi.scheduler_state_disabled,
+    .task_count = 0,
+    .running_slot = scheduler_no_slot,
+    .reserved0 = 0,
+    .next_task_id = 1,
+    .dispatch_count = 0,
+    .last_dispatch_tick = 0,
+    .timeslice_ticks = 1,
+    .default_budget_ticks = 8,
+    .ready_scans = 0,
+    .reserved1 = 0,
+};
+var scheduler_rr_cursor: u8 = 0;
 
 pub export fn oc_status_ptr() *const abi.BaremetalStatus {
     return &status;
@@ -345,6 +365,49 @@ pub export fn oc_command_result_counters_clear() void {
     };
 }
 
+pub export fn oc_scheduler_state_ptr() *const BaremetalSchedulerState {
+    return &scheduler_state;
+}
+
+pub export fn oc_scheduler_enabled() bool {
+    return scheduler_state.enabled == abi.scheduler_state_enabled;
+}
+
+pub export fn oc_scheduler_task_capacity() u32 {
+    return @as(u32, scheduler_task_capacity);
+}
+
+pub export fn oc_scheduler_task_count() u32 {
+    return scheduler_state.task_count;
+}
+
+pub export fn oc_scheduler_task(index: u32) BaremetalTask {
+    if (index >= @as(u32, scheduler_task_capacity)) return std.mem.zeroes(BaremetalTask);
+    return scheduler_tasks[@as(usize, @intCast(index))];
+}
+
+pub export fn oc_scheduler_tasks_ptr() *const [scheduler_task_capacity]BaremetalTask {
+    return &scheduler_tasks;
+}
+
+pub export fn oc_scheduler_reset() void {
+    @memset(&scheduler_tasks, std.mem.zeroes(BaremetalTask));
+    scheduler_state = .{
+        .enabled = abi.scheduler_state_disabled,
+        .task_count = 0,
+        .running_slot = scheduler_no_slot,
+        .reserved0 = 0,
+        .next_task_id = 1,
+        .dispatch_count = 0,
+        .last_dispatch_tick = status.ticks,
+        .timeslice_ticks = 1,
+        .default_budget_ticks = 8,
+        .ready_scans = 0,
+        .reserved1 = 0,
+    };
+    scheduler_rr_cursor = 0;
+}
+
 pub export fn oc_submit_command(opcode: u16, arg0: u64, arg1: u64) u32 {
     const next_seq = command_mailbox.seq +% 1;
     command_mailbox.opcode = opcode;
@@ -366,6 +429,7 @@ pub export fn oc_tick() void {
         recordMode(previous_mode, status.mode, abi.mode_change_reason_runtime_tick, status.ticks, status.command_seq_ack);
         setBootPhase(abi.boot_phase_runtime, abi.boot_phase_change_reason_runtime_tick);
     }
+    schedulerTick(status.ticks);
     if (status.mode != abi.mode_panicked) {
         status.last_health_code = 200;
     }
@@ -444,6 +508,7 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
             oc_mode_history_clear();
             oc_boot_phase_history_clear();
             oc_command_result_counters_clear();
+            oc_scheduler_reset();
             return abi.result_ok;
         },
         abi.command_set_mode => {
@@ -548,6 +613,48 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
             oc_command_result_counters_clear();
             return abi.result_ok;
         },
+        abi.command_scheduler_enable => {
+            scheduler_state.enabled = abi.scheduler_state_enabled;
+            if (scheduler_state.running_slot == scheduler_no_slot) {
+                scheduler_state.running_slot = scheduler_rr_cursor;
+            }
+            return abi.result_ok;
+        },
+        abi.command_scheduler_disable => {
+            scheduler_state.enabled = abi.scheduler_state_disabled;
+            scheduler_state.running_slot = scheduler_no_slot;
+            return abi.result_ok;
+        },
+        abi.command_scheduler_reset => {
+            oc_scheduler_reset();
+            return abi.result_ok;
+        },
+        abi.command_task_create => {
+            const budget = if (arg0 == 0) scheduler_state.default_budget_ticks else blk: {
+                if (arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
+                break :blk @as(u32, @truncate(arg0));
+            };
+            if (budget == 0) return abi.result_invalid_argument;
+            const priority = if (arg1 > std.math.maxInt(u8)) @as(u8, 0) else @as(u8, @truncate(arg1));
+            if (!schedulerCreateTask(budget, priority, status.ticks)) return abi.result_no_space;
+            return abi.result_ok;
+        },
+        abi.command_task_terminate => {
+            if (arg0 == 0 or arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
+            const task_id: u32 = @as(u32, @truncate(arg0));
+            if (!schedulerTerminateTask(task_id)) return abi.result_not_found;
+            return abi.result_ok;
+        },
+        abi.command_scheduler_set_timeslice => {
+            if (arg0 == 0 or arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
+            scheduler_state.timeslice_ticks = @as(u32, @truncate(arg0));
+            return abi.result_ok;
+        },
+        abi.command_scheduler_set_default_budget => {
+            if (arg0 == 0 or arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
+            scheduler_state.default_budget_ticks = @as(u32, @truncate(arg0));
+            return abi.result_ok;
+        },
         else => return abi.result_not_supported,
     }
 }
@@ -646,6 +753,108 @@ fn recordCommandResult(seq: u32, opcode: u16, result: i16) void {
         abi.result_invalid_argument => command_result_counters.invalid_argument_count +%= 1,
         abi.result_not_supported => command_result_counters.not_supported_count +%= 1,
         else => command_result_counters.other_error_count +%= 1,
+    }
+}
+
+fn schedulerTick(current_tick: u64) void {
+    if (status.mode == abi.mode_panicked) {
+        scheduler_state.running_slot = scheduler_no_slot;
+        return;
+    }
+    if (scheduler_state.enabled != abi.scheduler_state_enabled) {
+        scheduler_state.running_slot = scheduler_no_slot;
+        return;
+    }
+    const selected_slot = schedulerSelectReadySlot() orelse {
+        scheduler_state.running_slot = scheduler_no_slot;
+        return;
+    };
+    scheduler_state.running_slot = selected_slot;
+    scheduler_state.dispatch_count +%= 1;
+    scheduler_state.last_dispatch_tick = current_tick;
+
+    var task = &scheduler_tasks[selected_slot];
+    task.state = abi.task_state_running;
+    task.run_count +%= 1;
+    task.last_run_tick = current_tick;
+
+    const consume = if (scheduler_state.timeslice_ticks == 0) @as(u32, 1) else scheduler_state.timeslice_ticks;
+    if (task.budget_remaining <= consume) {
+        task.budget_remaining = 0;
+        task.state = abi.task_state_completed;
+    } else {
+        task.budget_remaining -= consume;
+        task.state = abi.task_state_ready;
+    }
+    schedulerRecountTasks();
+}
+
+fn schedulerSelectReadySlot() ?u8 {
+    if (scheduler_state.task_count == 0) return null;
+    const cap_u8: u8 = @as(u8, scheduler_task_capacity);
+    var scans: u8 = 0;
+    while (scans < cap_u8) : (scans += 1) {
+        const slot = @mod(scheduler_rr_cursor + scans, cap_u8);
+        scheduler_state.ready_scans +%= 1;
+        const task = scheduler_tasks[slot];
+        if (task.state == abi.task_state_ready and task.task_id != 0 and task.budget_remaining > 0) {
+            scheduler_rr_cursor = @mod(slot + 1, cap_u8);
+            return slot;
+        }
+    }
+    return null;
+}
+
+fn schedulerCreateTask(budget_ticks: u32, priority: u8, created_tick: u64) bool {
+    var slot: usize = 0;
+    while (slot < scheduler_task_capacity) : (slot += 1) {
+        if (scheduler_tasks[slot].state == abi.task_state_unused or
+            scheduler_tasks[slot].state == abi.task_state_completed or
+            scheduler_tasks[slot].state == abi.task_state_terminated)
+        {
+            scheduler_tasks[slot] = .{
+                .task_id = scheduler_state.next_task_id,
+                .state = abi.task_state_ready,
+                .priority = priority,
+                .reserved0 = 0,
+                .run_count = 0,
+                .budget_ticks = budget_ticks,
+                .budget_remaining = budget_ticks,
+                .created_tick = created_tick,
+                .last_run_tick = 0,
+            };
+            scheduler_state.next_task_id +%= 1;
+            schedulerRecountTasks();
+            return true;
+        }
+    }
+    return false;
+}
+
+fn schedulerTerminateTask(task_id: u32) bool {
+    var slot: usize = 0;
+    while (slot < scheduler_task_capacity) : (slot += 1) {
+        var task = &scheduler_tasks[slot];
+        if (task.task_id == task_id and task.state != abi.task_state_unused) {
+            task.state = abi.task_state_terminated;
+            task.budget_remaining = 0;
+            schedulerRecountTasks();
+            return true;
+        }
+    }
+    return false;
+}
+
+fn schedulerRecountTasks() void {
+    var count: u8 = 0;
+    for (scheduler_tasks) |task| {
+        if (task.state == abi.task_state_ready or task.state == abi.task_state_running) {
+            count +%= 1;
+        }
+    }
+    scheduler_state.task_count = count;
+    if (count == 0) {
+        scheduler_state.running_slot = scheduler_no_slot;
     }
 }
 
@@ -752,6 +961,7 @@ test "baremetal diagnostics command flow updates phase and stack snapshot" {
     oc_mode_history_clear();
     oc_boot_phase_history_clear();
     oc_command_result_counters_clear();
+    oc_scheduler_reset();
 
     var seq = oc_submit_command(abi.command_capture_stack_pointer, 0, 0);
     oc_tick();
@@ -808,6 +1018,7 @@ test "baremetal command history ring keeps newest mailbox entries" {
     oc_mode_history_clear();
     oc_boot_phase_history_clear();
     oc_command_result_counters_clear();
+    oc_scheduler_reset();
 
     const cap = oc_command_history_capacity();
     var idx: u32 = 0;
@@ -846,6 +1057,7 @@ test "baremetal health history captures tick health and clear control" {
     oc_mode_history_clear();
     oc_boot_phase_history_clear();
     oc_command_result_counters_clear();
+    oc_scheduler_reset();
 
     oc_tick();
     oc_tick();
@@ -888,6 +1100,7 @@ test "baremetal mode history captures command and panic transitions and clear co
     oc_mode_history_clear();
     oc_boot_phase_history_clear();
     oc_command_result_counters_clear();
+    oc_scheduler_reset();
 
     _ = oc_submit_command(abi.command_set_mode, abi.mode_booting, 0);
     oc_tick();
@@ -935,6 +1148,7 @@ test "baremetal boot phase history captures command runtime and panic transition
     resetBootDiagnostics();
     oc_boot_phase_history_clear();
     oc_command_result_counters_clear();
+    oc_scheduler_reset();
 
     // Runtime -> init via command.
     _ = oc_submit_command(abi.command_set_boot_phase, abi.boot_phase_init, 0);
@@ -988,6 +1202,7 @@ test "baremetal command result counters track categories and reset flow" {
     oc_mode_history_clear();
     oc_boot_phase_history_clear();
     oc_health_history_clear();
+    oc_scheduler_reset();
 
     _ = oc_submit_command(abi.command_set_health_code, 123, 0); // ok
     oc_tick();
@@ -1014,4 +1229,62 @@ test "baremetal command result counters track categories and reset flow" {
     try std.testing.expectEqual(@as(u32, 0), oc_command_result_count_not_supported());
     const reset_counters = oc_command_result_counters_ptr().*;
     try std.testing.expectEqual(@as(u16, abi.command_reset_command_result_counters), reset_counters.last_opcode);
+}
+
+test "baremetal scheduler command flow creates dispatches and completes tasks" {
+    status.mode = abi.mode_running;
+    status.ticks = 0;
+    status.command_seq_ack = 0;
+    status.last_command_opcode = abi.command_nop;
+    status.last_command_result = abi.result_ok;
+    status.tick_batch_hint = 1;
+    command_mailbox = .{
+        .magic = abi.command_magic,
+        .api_version = abi.api_version,
+        .opcode = abi.command_nop,
+        .seq = 0,
+        .arg0 = 0,
+        .arg1 = 0,
+    };
+    oc_scheduler_reset();
+    oc_command_result_counters_clear();
+
+    _ = oc_submit_command(abi.command_scheduler_enable, 0, 0);
+    oc_tick();
+    try std.testing.expect(oc_scheduler_enabled());
+
+    _ = oc_submit_command(abi.command_task_create, 3, 2);
+    oc_tick();
+    try std.testing.expectEqual(@as(u32, 1), oc_scheduler_task_count());
+    var task = oc_scheduler_task(0);
+    try std.testing.expect(task.task_id != 0);
+    try std.testing.expectEqual(@as(u8, abi.task_state_ready), task.state);
+    try std.testing.expectEqual(@as(u8, 2), task.priority);
+    try std.testing.expectEqual(@as(u32, 3), task.budget_ticks);
+    const created_task_id = task.task_id;
+
+    // Consume full budget and verify completion.
+    oc_tick();
+    oc_tick();
+    oc_tick();
+    try std.testing.expectEqual(@as(u32, 0), oc_scheduler_task_count());
+    task = oc_scheduler_task(0);
+    try std.testing.expectEqual(created_task_id, task.task_id);
+    try std.testing.expectEqual(@as(u8, abi.task_state_completed), task.state);
+    try std.testing.expectEqual(@as(u32, 0), task.budget_remaining);
+    const sched_state = oc_scheduler_state_ptr().*;
+    try std.testing.expect(sched_state.dispatch_count >= 3);
+    try std.testing.expect(sched_state.ready_scans > 0);
+
+    _ = oc_submit_command(abi.command_task_terminate, created_task_id + 100, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
+
+    _ = oc_submit_command(abi.command_task_create, 0, 0); // uses default budget
+    oc_tick();
+    try std.testing.expectEqual(@as(u32, 1), oc_scheduler_task_count());
+    _ = oc_submit_command(abi.command_task_terminate, oc_scheduler_task(0).task_id, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 0), oc_scheduler_task_count());
 }

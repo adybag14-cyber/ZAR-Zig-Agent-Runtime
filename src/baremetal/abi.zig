@@ -39,6 +39,7 @@ pub const feature_health_history_export: u32 = 1 << 19;
 pub const feature_mode_history_export: u32 = 1 << 20;
 pub const feature_boot_phase_history_export: u32 = 1 << 21;
 pub const feature_command_result_counters_export: u32 = 1 << 22;
+pub const feature_scheduler_export: u32 = 1 << 23;
 
 pub const kernel_abi_multiboot2: u32 = 1 << 0;
 pub const kernel_abi_command_mailbox: u32 = 1 << 1;
@@ -60,6 +61,7 @@ pub const kernel_abi_health_history: u32 = 1 << 16;
 pub const kernel_abi_mode_history: u32 = 1 << 17;
 pub const kernel_abi_boot_phase_history: u32 = 1 << 18;
 pub const kernel_abi_command_result_counters: u32 = 1 << 19;
+pub const kernel_abi_scheduler: u32 = 1 << 20;
 
 pub const command_nop: u16 = 0;
 pub const command_set_health_code: u16 = 1;
@@ -85,6 +87,13 @@ pub const command_clear_health_history: u16 = 20;
 pub const command_clear_mode_history: u16 = 21;
 pub const command_clear_boot_phase_history: u16 = 22;
 pub const command_reset_command_result_counters: u16 = 23;
+pub const command_scheduler_enable: u16 = 24;
+pub const command_scheduler_disable: u16 = 25;
+pub const command_scheduler_reset: u16 = 26;
+pub const command_task_create: u16 = 27;
+pub const command_task_terminate: u16 = 28;
+pub const command_scheduler_set_timeslice: u16 = 29;
+pub const command_scheduler_set_default_budget: u16 = 30;
 
 pub const mode_change_reason_boot: u8 = 0;
 pub const mode_change_reason_command: u8 = 1;
@@ -101,6 +110,18 @@ pub const boot_phase_change_reason_reset: u8 = 4;
 pub const result_ok: i16 = 0;
 pub const result_invalid_argument: i16 = -22;
 pub const result_not_supported: i16 = -38;
+pub const result_no_space: i16 = -28;
+pub const result_not_found: i16 = -2;
+
+pub const scheduler_state_disabled: u8 = 0;
+pub const scheduler_state_enabled: u8 = 1;
+
+pub const task_state_unused: u8 = 0;
+pub const task_state_ready: u8 = 1;
+pub const task_state_running: u8 = 2;
+pub const task_state_completed: u8 = 3;
+pub const task_state_terminated: u8 = 4;
+pub const task_state_faulted: u8 = 5;
 
 pub const BaremetalStatus = extern struct {
     magic: u32,
@@ -206,6 +227,32 @@ pub const BaremetalCommandResultCounters = extern struct {
     last_seq: u32,
 };
 
+pub const BaremetalSchedulerState = extern struct {
+    enabled: u8,
+    task_count: u8,
+    running_slot: u8,
+    reserved0: u8,
+    next_task_id: u32,
+    dispatch_count: u64,
+    last_dispatch_tick: u64,
+    timeslice_ticks: u32,
+    default_budget_ticks: u32,
+    ready_scans: u32,
+    reserved1: u32,
+};
+
+pub const BaremetalTask = extern struct {
+    task_id: u32,
+    state: u8,
+    priority: u8,
+    reserved0: u16,
+    run_count: u32,
+    budget_ticks: u32,
+    budget_remaining: u32,
+    created_tick: u64,
+    last_run_tick: u64,
+};
+
 pub fn defaultFeatureFlags() u32 {
     return feature_os_hosted_runtime |
         feature_baremetal_runtime |
@@ -229,7 +276,8 @@ pub fn defaultFeatureFlags() u32 {
         feature_health_history_export |
         feature_mode_history_export |
         feature_boot_phase_history_export |
-        feature_command_result_counters_export;
+        feature_command_result_counters_export |
+        feature_scheduler_export;
 }
 
 pub fn defaultAbiFlags() u32 {
@@ -252,7 +300,8 @@ pub fn defaultAbiFlags() u32 {
         kernel_abi_health_history |
         kernel_abi_mode_history |
         kernel_abi_boot_phase_history |
-        kernel_abi_command_result_counters;
+        kernel_abi_command_result_counters |
+        kernel_abi_scheduler;
 }
 
 pub fn modeIsValid(mode: u8) bool {
@@ -289,6 +338,8 @@ test "baremetal kernel info size contract stays stable" {
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(BaremetalModeEvent));
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(BaremetalBootPhaseEvent));
     try std.testing.expectEqual(@as(usize, 36), @sizeOf(BaremetalCommandResultCounters));
+    try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalSchedulerState));
+    try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalTask));
 }
 
 test "baremetal mode helper validates supported modes" {
