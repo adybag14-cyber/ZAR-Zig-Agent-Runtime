@@ -6,12 +6,10 @@ on:
       version:
         description: Python package version (PEP 440, for example 0.2.0.dev12)
         required: true
-        type: string
       release_tag:
         description: Optional GitHub release tag to attach artifacts to (for example v0.2.0-zig-edge.12)
         required: false
         default: ""
-        type: string
   release:
     types:
       - published
