@@ -2,7 +2,7 @@
 
 ## Current Snapshot
 
-- Latest edge release: `v0.2.0-zig-edge.12`
+- Latest edge release: `v0.2.0-zig-edge.14`
 - Latest local test gate: `zig build test --summary all` -> `77/77` passing
 - Latest parity gate: `scripts/check-go-method-parity.ps1` -> `MISSING_IN_ZIG=0`, `ZIG_COUNT=153`
 

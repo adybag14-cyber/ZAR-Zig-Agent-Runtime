@@ -10,7 +10,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - Original OpenClaw baseline (`v2026.3.2`): `94/94` covered
   - Union baseline: `135/135` covered (`MISSING_IN_ZIG=0`)
 - Latest local validation: `zig build test --summary all` -> `77/77` passing
-- Latest edge release tag: `v0.2.0-zig-edge.12`
+- Latest edge release tag: `v0.2.0-zig-edge.14`
 - Dual runtime profiles available:
   - OS-hosted profile: `openclaw-zig` (`--serve`, doctor, security audit, full RPC stack)
 - Bare-metal profile: `openclaw-zig-baremetal.elf` (`zig build baremetal`, freestanding runtime loop + Multiboot2 header)
@@ -378,5 +378,5 @@ gh workflow run npm-release.yml -R adybag14-cyber/openclaw-zig-port -f version=v
 Manual python release trigger:
 
 ```powershell
-gh workflow run python-release.yml -R adybag14-cyber/openclaw-zig-port -f version=0.2.0.dev13 -f release_tag=v0.2.0-zig-edge.13
+gh workflow run python-release.yml -R adybag14-cyber/openclaw-zig-port -f version=0.2.0.dev14 -f release_tag=v0.2.0-zig-edge.14
 ```
