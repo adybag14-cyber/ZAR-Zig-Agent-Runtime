@@ -100,7 +100,9 @@ pub fn routeRequest(
     body: []const u8,
     should_shutdown: *bool,
 ) !RouteResponse {
-    if (method == .GET and std.mem.eql(u8, target, "/health")) {
+    const target_path = pathFromTarget(target);
+
+    if (method == .GET and std.mem.eql(u8, target_path, "/health")) {
         return .{
             .status = .ok,
             .content_type = "application/json",
@@ -112,7 +114,7 @@ pub fn routeRequest(
         };
     }
 
-    if (std.mem.eql(u8, target, "/rpc")) {
+    if (std.mem.eql(u8, target_path, "/rpc")) {
         if (method != .POST) {
             return .{
                 .status = .method_not_allowed,
@@ -152,7 +154,7 @@ pub fn routeRequest(
         };
     }
 
-    if (isWebSocketPath(target)) {
+    if (isWebSocketPath(target_path)) {
         if (method != .GET) {
             return .{
                 .status = .method_not_allowed,
@@ -173,7 +175,7 @@ pub fn routeRequest(
     return .{
         .status = .not_found,
         .content_type = "application/json",
-        .body = try encodeJson(allocator, .{ .@"error" = "not_found", .path = target }),
+        .body = try encodeJson(allocator, .{ .@"error" = "not_found", .path = target_path }),
     };
 }
 
@@ -185,8 +187,9 @@ fn serveRequest(
     should_shutdown: *bool,
 ) !bool {
     const method = request.head.method;
-    const target = try allocator.dupe(u8, request.head.target);
-    defer allocator.free(target);
+    const raw_target = try allocator.dupe(u8, request.head.target);
+    defer allocator.free(raw_target);
+    const target = pathFromTarget(raw_target);
 
     if (isWebSocketPath(target)) {
         return try serveWebSocket(allocator, cfg, rate_limiter, request, should_shutdown);
@@ -372,6 +375,11 @@ fn isWebSocketPath(target: []const u8) bool {
     return std.mem.eql(u8, target, "/ws") or std.mem.eql(u8, target, "/");
 }
 
+fn pathFromTarget(target: []const u8) []const u8 {
+    const end = std.mem.indexOfAny(u8, target, "?#") orelse target.len;
+    return target[0..end];
+}
+
 fn readRequestBody(allocator: std.mem.Allocator, request: *std.http.Server.Request) ![]u8 {
     var body_reader = try request.readerExpectContinue(&.{});
     return body_reader.allocRemaining(allocator, .limited(max_rpc_body_bytes));
@@ -475,6 +483,26 @@ test "routeRequest root path requires websocket upgrade compatibility" {
     const cfg = config.defaults();
     var should_shutdown = false;
     const result = try routeRequest(allocator, cfg, .{}, .GET, "/", "", &should_shutdown);
+    defer allocator.free(result.body);
+    try std.testing.expectEqual(std.http.Status.upgrade_required, result.status);
+    try std.testing.expect(std.mem.indexOf(u8, result.body, "upgrade_required") != null);
+}
+
+test "routeRequest handles query-bearing health path" {
+    const allocator = std.testing.allocator;
+    const cfg = config.defaults();
+    var should_shutdown = false;
+    const result = try routeRequest(allocator, cfg, .{}, .GET, "/health?probe=1", "", &should_shutdown);
+    defer allocator.free(result.body);
+    try std.testing.expectEqual(std.http.Status.ok, result.status);
+    try std.testing.expect(std.mem.indexOf(u8, result.body, "\"status\":\"ok\"") != null);
+}
+
+test "routeRequest handles query-bearing websocket path" {
+    const allocator = std.testing.allocator;
+    const cfg = config.defaults();
+    var should_shutdown = false;
+    const result = try routeRequest(allocator, cfg, .{}, .GET, "/ws?mode=compat", "", &should_shutdown);
     defer allocator.free(result.body);
     try std.testing.expectEqual(std.http.Status.upgrade_required, result.status);
     try std.testing.expect(std.mem.indexOf(u8, result.body, "upgrade_required") != null);

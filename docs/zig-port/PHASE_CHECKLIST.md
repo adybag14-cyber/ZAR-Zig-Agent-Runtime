@@ -14,6 +14,7 @@ Release lock: no release tag is allowed until all phases are complete and parity
 - [x] Implement HTTP RPC route + graceful shutdown
 - [x] Add contract tests for error codes and method routing
 - [x] Implement WebSocket routes (`GET /ws` + root compatibility `GET /`) with upgrade handling and RPC frame dispatch
+- [x] Normalize gateway route matching for query-bearing targets (`/health?`, `/rpc?`, `/ws?`) to preserve transport compatibility
 
 ## Phase 3 - Runtime + Tooling
 - [x] Add runtime state/session primitives
