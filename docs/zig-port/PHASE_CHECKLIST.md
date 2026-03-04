@@ -63,6 +63,9 @@ Phase 6 progress notes:
 - Diagnostics perf hardening shipped:
   - `security/audit.zig`: `doctor` now uses cached docker binary probe (`dockerAvailableCached`) to reduce repeated process-spawn cost on repeated diagnostics invocations.
   - Added regression test: `security.audit.test.doctor includes docker binary check`.
+- Channel retention hardening shipped:
+  - `channels/telegram_runtime.zig`: bounded queue retention (`max_queue_entries=4096`) now drops oldest queued messages with single-pass front compaction.
+  - Added regression test: `channels.telegram_runtime.test.telegram runtime queue retention keeps newest entries under cap`.
 - Implemented edge contract slice in dispatcher: `edge.wasm.marketplace.list`, `edge.router.plan`, `edge.swarm.plan`, `edge.multimodal.inspect`, and `edge.voice.transcribe`.
 - Implemented advanced edge contract slice in dispatcher: `edge.enclave.status`, `edge.enclave.prove`, `edge.mesh.status`, `edge.homomorphic.compute`, `edge.finetune.status`, `edge.finetune.run`, `edge.identity.trust.status`, `edge.personality.profile`, `edge.handoff.plan`, `edge.marketplace.revenue.preview`, `edge.finetune.cluster.plan`, `edge.alignment.evaluate`, `edge.quantum.status`, and `edge.collaboration.plan`.
 - Added `edge.acceleration.status` parity handler with contract coverage.

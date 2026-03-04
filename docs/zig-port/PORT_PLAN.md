@@ -97,6 +97,9 @@ while maintaining parity-first validation and release gating.
   - Diagnostics optimization slice shipped:
     - `doctor` now uses a process-local cached docker binary probe to avoid repeated `docker --version` process spawns during repeated diagnostics calls (`src/security/audit.zig`).
     - Added doctor check-presence regression coverage for `docker.binary`.
+  - Channel retention hardening shipped:
+    - Telegram runtime now enforces bounded queue retention (`max_queue_entries`, default `4096`) and drops oldest entries via single-pass compaction to prevent unbounded memory growth under delayed polling (`src/channels/telegram_runtime.zig`).
+    - Added regression coverage to verify newest-entry retention ordering under queue cap.
   - Dispatcher memory parity slice shipped: `sessions.history`, `chat.history`, and `doctor.memory.status`.
   - Edge handler parity slice shipped: `edge.wasm.marketplace.list`, `edge.router.plan`, `edge.swarm.plan`, `edge.multimodal.inspect`, and `edge.voice.transcribe`.
   - Advanced edge handler parity slice shipped: `edge.enclave.status`, `edge.enclave.prove`, `edge.mesh.status`, `edge.homomorphic.compute`, `edge.finetune.status`, `edge.finetune.run`, `edge.identity.trust.status`, `edge.personality.profile`, `edge.handoff.plan`, `edge.marketplace.revenue.preview`, `edge.finetune.cluster.plan`, `edge.alignment.evaluate`, `edge.quantum.status`, and `edge.collaboration.plan`.

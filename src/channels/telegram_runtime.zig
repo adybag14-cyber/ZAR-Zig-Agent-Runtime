@@ -102,6 +102,7 @@ pub const TelegramRuntime = struct {
     allocator: std.mem.Allocator,
     login_manager: *web_login.LoginManager,
     queue: std.ArrayList(QueuedMessage),
+    max_queue_entries: usize,
     target_models: std.StringHashMap([]u8),
     auth_bindings: std.StringHashMap([]u8),
     next_update_id: u64,
@@ -111,6 +112,7 @@ pub const TelegramRuntime = struct {
             .allocator = allocator,
             .login_manager = login_manager,
             .queue = .empty,
+            .max_queue_entries = 4096,
             .target_models = std.StringHashMap([]u8).init(allocator),
             .auth_bindings = std.StringHashMap([]u8).init(allocator),
             .next_update_id = 1,
@@ -931,6 +933,9 @@ pub const TelegramRuntime = struct {
             .message = try self.allocator.dupe(u8, message),
             .created_at_ms = time_util.nowMs(),
         });
+        if (self.max_queue_entries > 0 and self.queue.items.len > self.max_queue_entries) {
+            self.compactQueueFront(self.queue.items.len - self.max_queue_entries);
+        }
     }
 
     fn setTargetModel(self: *TelegramRuntime, target: []const u8, provider: []const u8, model: []const u8) !void {
@@ -1267,6 +1272,29 @@ test "telegram runtime poll compacts queue front in one pass and keeps ordering"
     try std.testing.expectEqual(@as(usize, 1), poll_second.count);
     try std.testing.expectEqual(@as(usize, 0), poll_second.remaining);
     try std.testing.expect(std.mem.eql(u8, poll_second.updates[0].message, "m3"));
+}
+
+test "telegram runtime queue retention keeps newest entries under cap" {
+    var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
+    defer login.deinit();
+    var runtime = TelegramRuntime.init(std.testing.allocator, &login);
+    defer runtime.deinit();
+    runtime.max_queue_entries = 3;
+
+    const allocator = std.testing.allocator;
+    try runtime.enqueue("room-cap", "sess-cap", "assistant", "assistant_reply", "m1");
+    try runtime.enqueue("room-cap", "sess-cap", "assistant", "assistant_reply", "m2");
+    try runtime.enqueue("room-cap", "sess-cap", "assistant", "assistant_reply", "m3");
+    try runtime.enqueue("room-cap", "sess-cap", "assistant", "assistant_reply", "m4");
+    try runtime.enqueue("room-cap", "sess-cap", "assistant", "assistant_reply", "m5");
+
+    var poll = try runtime.pollFromFrame(allocator, "{\"id\":\"tg-poll-cap\",\"method\":\"poll\",\"params\":{\"channel\":\"telegram\",\"limit\":10}}");
+    defer poll.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 3), poll.count);
+    try std.testing.expectEqual(@as(usize, 0), poll.remaining);
+    try std.testing.expect(std.mem.eql(u8, poll.updates[0].message, "m3"));
+    try std.testing.expect(std.mem.eql(u8, poll.updates[1].message, "m4"));
+    try std.testing.expect(std.mem.eql(u8, poll.updates[2].message, "m5"));
 }
 
 test "telegram runtime qwen guest auth lifecycle" {
