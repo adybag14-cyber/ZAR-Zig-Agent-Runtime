@@ -85,7 +85,8 @@ pub fn serve(allocator: std.mem.Allocator, cfg: config.Config, options: ServeOpt
                 error.HttpConnectionClosing => break,
                 else => |e| return e,
             };
-            try serveRequest(allocator, cfg, &rate_limiter, &request, &should_shutdown);
+            const upgraded = try serveRequest(allocator, cfg, &rate_limiter, &request, &should_shutdown);
+            if (upgraded) break;
         }
     }
 }
@@ -151,6 +152,24 @@ pub fn routeRequest(
         };
     }
 
+    if (std.mem.eql(u8, target, "/ws")) {
+        if (method != .GET) {
+            return .{
+                .status = .method_not_allowed,
+                .content_type = "application/json",
+                .body = try encodeJson(allocator, .{ .@"error" = "method_not_allowed", .allowed = "GET /ws (websocket upgrade)" }),
+            };
+        }
+        return .{
+            .status = .upgrade_required,
+            .content_type = "application/json",
+            .body = try encodeJson(allocator, .{
+                .@"error" = "upgrade_required",
+                .detail = "use websocket upgrade for /ws endpoint",
+            }),
+        };
+    }
+
     return .{
         .status = .not_found,
         .content_type = "application/json",
@@ -164,10 +183,14 @@ fn serveRequest(
     rate_limiter: *RateLimiter,
     request: *std.http.Server.Request,
     should_shutdown: *bool,
-) !void {
+) !bool {
     const method = request.head.method;
     const target = try allocator.dupe(u8, request.head.target);
     defer allocator.free(target);
+
+    if (std.mem.eql(u8, target, "/ws")) {
+        return try serveWebSocket(allocator, cfg, rate_limiter, request, should_shutdown);
+    }
 
     var route_context: RouteContext = .{};
     if (method == .POST and std.mem.eql(u8, target, "/rpc")) {
@@ -202,6 +225,147 @@ fn serveRequest(
             .{ .name = "content-type", .value = routed.content_type },
         },
     });
+    return false;
+}
+
+fn serveWebSocket(
+    allocator: std.mem.Allocator,
+    cfg: config.Config,
+    rate_limiter: *RateLimiter,
+    request: *std.http.Server.Request,
+    should_shutdown: *bool,
+) !bool {
+    if (request.head.method != .GET) {
+        const body = try encodeJson(allocator, .{ .@"error" = "method_not_allowed", .allowed = "GET /ws (websocket upgrade)" });
+        defer allocator.free(body);
+        try request.respond(body, .{
+            .status = .method_not_allowed,
+            .keep_alive = !should_shutdown.*,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "application/json" },
+            },
+        });
+        return false;
+    }
+
+    const upgrade = request.upgradeRequested();
+    const ws_key = switch (upgrade) {
+        .websocket => |key| key orelse {
+            const body = try encodeJson(allocator, .{ .@"error" = "bad_request", .detail = "missing sec-websocket-key header" });
+            defer allocator.free(body);
+            try request.respond(body, .{
+                .status = .bad_request,
+                .keep_alive = !should_shutdown.*,
+                .extra_headers = &.{
+                    .{ .name = "content-type", .value = "application/json" },
+                },
+            });
+            return false;
+        },
+        .other, .none => {
+            const body = try encodeJson(allocator, .{
+                .@"error" = "upgrade_required",
+                .detail = "websocket upgrade required for /ws endpoint",
+            });
+            defer allocator.free(body);
+            try request.respond(body, .{
+                .status = .upgrade_required,
+                .keep_alive = !should_shutdown.*,
+                .extra_headers = &.{
+                    .{ .name = "content-type", .value = "application/json" },
+                },
+            });
+            return false;
+        },
+    };
+
+    if (cfg.gateway.require_token and !requestHasGatewayToken(request, cfg.gateway.auth_token)) {
+        const body = try encodeJson(allocator, .{ .@"error" = "unauthorized", .detail = "missing or invalid gateway token" });
+        defer allocator.free(body);
+        try request.respond(body, .{
+            .status = .unauthorized,
+            .keep_alive = false,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "application/json" },
+            },
+        });
+        return false;
+    }
+
+    if (!rate_limiter.allow(time_util.nowMs())) {
+        const body = try encodeJson(allocator, .{ .@"error" = "rate_limited", .detail = "gateway websocket rate limit exceeded" });
+        defer allocator.free(body);
+        try request.respond(body, .{
+            .status = .too_many_requests,
+            .keep_alive = false,
+            .extra_headers = &.{
+                .{ .name = "content-type", .value = "application/json" },
+            },
+        });
+        return false;
+    }
+
+    var ws = try request.respondWebSocket(.{ .key = ws_key });
+    try ws.flush();
+
+    while (!should_shutdown.*) {
+        if (!rate_limiter.allow(time_util.nowMs())) {
+            const over = try encodeJson(allocator, .{ .@"error" = "rate_limited", .detail = "gateway websocket rate limit exceeded" });
+            defer allocator.free(over);
+            ws.writeMessage(over, .text) catch break;
+            break;
+        }
+
+        const message = ws.readSmallMessage() catch |err| switch (err) {
+            error.ConnectionClose => break,
+            error.EndOfStream => break,
+            error.ReadFailed => break,
+            else => {
+                const parse_error = try encodeJson(allocator, .{
+                    .@"error" = "invalid_websocket_frame",
+                    .detail = @errorName(err),
+                });
+                defer allocator.free(parse_error);
+                ws.writeMessage(parse_error, .text) catch break;
+                continue;
+            },
+        };
+
+        switch (message.opcode) {
+            .ping => {
+                ws.writeMessage(message.data, .pong) catch break;
+                continue;
+            },
+            .text => {},
+            else => continue,
+        }
+
+        const frame = std.mem.trim(u8, message.data, " \t\r\n");
+        if (frame.len == 0) {
+            const empty = try encodeJson(allocator, .{ .@"error" = "invalid_request", .detail = "empty websocket rpc frame" });
+            defer allocator.free(empty);
+            ws.writeMessage(empty, .text) catch break;
+            continue;
+        }
+
+        var parsed = protocol.parseRequest(allocator, frame) catch null;
+        defer if (parsed) |*req| req.deinit(allocator);
+        if (parsed) |req| {
+            if (std.ascii.eqlIgnoreCase(req.method, "shutdown")) {
+                should_shutdown.* = true;
+            }
+        }
+
+        const response = dispatcher.dispatch(allocator, frame) catch |err| blk: {
+            break :blk try encodeJson(allocator, .{
+                .@"error" = "dispatch_failed",
+                .detail = @errorName(err),
+            });
+        };
+        defer allocator.free(response);
+        ws.writeMessage(response, .text) catch break;
+    }
+    return true;
 }
 
 fn readRequestBody(allocator: std.mem.Allocator, request: *std.http.Server.Request) ![]u8 {
@@ -290,6 +454,16 @@ test "routeRequest rejects non-POST /rpc" {
     defer allocator.free(result.body);
     try std.testing.expectEqual(std.http.Status.method_not_allowed, result.status);
     try std.testing.expect(std.mem.indexOf(u8, result.body, "method_not_allowed") != null);
+}
+
+test "routeRequest /ws requires websocket upgrade" {
+    const allocator = std.testing.allocator;
+    const cfg = config.defaults();
+    var should_shutdown = false;
+    const result = try routeRequest(allocator, cfg, .{}, .GET, "/ws", "", &should_shutdown);
+    defer allocator.free(result.body);
+    try std.testing.expectEqual(std.http.Status.upgrade_required, result.status);
+    try std.testing.expect(std.mem.indexOf(u8, result.body, "upgrade_required") != null);
 }
 
 test "routeRequest rpc lifecycle file.write then file.read returns expected payload" {

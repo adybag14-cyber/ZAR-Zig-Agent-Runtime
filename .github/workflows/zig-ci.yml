@@ -76,6 +76,10 @@ jobs:
         shell: pwsh
         run: ./scripts/runtime-smoke-check.ps1 -SkipBuild
 
+      - name: WebSocket smoke check (/ws rpc frames)
+        shell: pwsh
+        run: ./scripts/websocket-smoke-check.ps1 -SkipBuild
+
       - name: Update lifecycle smoke check (plan/run/status)
         shell: pwsh
         run: ./scripts/update-lifecycle-smoke-check.ps1 -SkipBuild
