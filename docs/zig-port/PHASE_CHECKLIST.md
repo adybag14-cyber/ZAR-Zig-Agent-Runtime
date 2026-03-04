@@ -194,7 +194,7 @@ Phase 6 progress notes:
 - [x] `scripts/npm-pack-check.ps1` (validates npm package dry-run for `npm/openclaw-zig-rpc-client`)
 - [x] `scripts/python-pack-check.ps1` (validates python client package tests + wheel/sdist + twine checks for `python/openclaw-zig-rpc-client`)
 - [x] `zig test src/main.zig`
-- [x] `zig test src/baremetal_main.zig` (`26/26` passing; includes mode-history + boot-phase-history + command-result counter + scheduler + allocator/syscall + timer/wake queue telemetry coverage)
+- [x] `zig test src/baremetal_main.zig` (`28/28` passing; includes mode-history + boot-phase-history + command-result counter + scheduler + allocator/syscall + timer/wake queue telemetry coverage)
 - [x] Guest/auth parity tests:
   - `channels.telegram_runtime.test.telegram runtime qwen guest auth lifecycle`
   - `channels.telegram_runtime.test.telegram runtime auth complete infers provider from callback URL`
@@ -312,6 +312,10 @@ Phase 6 progress notes:
   - scheduler/timer telemetry exports: `oc_scheduler_waiting_count`, `oc_timer_fire_total_count`
   - ABI additions/opcodes: `command_task_wait`, `command_task_resume`, `command_timer_cancel_task`
   - runtime behavior: explicit task wait/resume command path now drives runnable vs waiting transitions with manual wake telemetry, and task-targeted timer cancellation clears all armed timers for a task.
+- [x] Bare-metal deadline-wait + wake-queue consumption depth added:
+  - wake queue exports: `oc_wake_queue_tail_index`, `oc_wake_queue_pop`
+  - ABI additions/opcodes: `command_task_wait_for`, `command_wake_queue_pop`
+  - runtime behavior: `task_wait_for` now atomically transitions a task to waiting with a one-shot timer deadline, and wake queue pop semantics remove oldest entries in-order with ring-buffer tail tracking.
 - [x] `scripts/baremetal-smoke-check.ps1` now validates Multiboot2 header fields and checksum (`magic`, `arch`, `header_length`, `checksum`, end-tag tuple) in addition to section/symbol invariants.
 - [x] Cross-target diagnostics matrix (`scripts/zig-cross-target-matrix.ps1`) now covers desktop + Android with per-target logs and JSON summary:
   - Local Windows Zig master result: `4/8` pass (`x86_64-windows`, `x86_64-linux`, `x86_64-macos`, `x86_64-linux-android`)

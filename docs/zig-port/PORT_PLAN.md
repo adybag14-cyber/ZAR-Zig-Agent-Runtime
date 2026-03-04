@@ -145,6 +145,10 @@ while maintaining parity-first validation and release gating.
     - new control opcodes: `command_task_wait`, `command_task_resume`, `command_timer_cancel_task`.
     - scheduler/timer telemetry exports extended: `oc_scheduler_waiting_count`, `oc_timer_fire_total_count`.
     - runtime now supports explicit task waiting/resume transitions with manual wake events and cancellation of all armed timers associated with a task.
+  - Bare-metal deadline-wait + wake-queue consumption depth expansion shipped:
+    - new opcodes: `command_task_wait_for`, `command_wake_queue_pop`.
+    - wake queue exports extended: `oc_wake_queue_tail_index`, `oc_wake_queue_pop`.
+    - runtime now supports atomic wait-with-deadline command flow and in-order wake queue consumption via explicit ring tail tracking.
     - runtime now provides contiguous page allocation/free on a bounded heap map and syscall registration/invocation/unregistration with dispatch telemetry.
 - Phase 4 complete:
   - Guard pipeline with prompt-risk scoring + loop-guard enforcement (`src/security/guard.zig`, `src/security/loop_guard.zig`)

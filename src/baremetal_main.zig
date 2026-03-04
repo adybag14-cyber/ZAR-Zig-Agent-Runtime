@@ -212,6 +212,7 @@ var timer_state: BaremetalTimerState = .{
 var wake_queue: [wake_queue_capacity]BaremetalWakeEvent = std.mem.zeroes([wake_queue_capacity]BaremetalWakeEvent);
 var wake_queue_count: u32 = 0;
 var wake_queue_head: u32 = 0;
+var wake_queue_tail: u32 = 0;
 var wake_queue_overflow: u32 = 0;
 var wake_queue_seq: u32 = 0;
 
@@ -616,6 +617,10 @@ pub export fn oc_wake_queue_head_index() u32 {
     return wake_queue_head;
 }
 
+pub export fn oc_wake_queue_tail_index() u32 {
+    return wake_queue_tail;
+}
+
 pub export fn oc_wake_queue_overflow_count() u32 {
     return wake_queue_overflow;
 }
@@ -629,15 +634,19 @@ pub export fn oc_wake_queue_event(index: u32) BaremetalWakeEvent {
         return std.mem.zeroes(BaremetalWakeEvent);
     }
     const cap_u32: u32 = @as(u32, wake_queue_capacity);
-    const oldest = if (wake_queue_count == cap_u32) wake_queue_head else 0;
-    const pos = @mod(oldest + index, cap_u32);
+    const pos = @mod(wake_queue_tail + index, cap_u32);
     return wake_queue[pos];
+}
+
+pub export fn oc_wake_queue_pop() BaremetalWakeEvent {
+    return wakeQueuePopOne() orelse std.mem.zeroes(BaremetalWakeEvent);
 }
 
 pub export fn oc_wake_queue_clear() void {
     @memset(&wake_queue, std.mem.zeroes(BaremetalWakeEvent));
     wake_queue_count = 0;
     wake_queue_head = 0;
+    wake_queue_tail = 0;
     wake_queue_overflow = 0;
     wake_queue_seq = 0;
     timer_state.pending_wake_count = 0;
@@ -906,6 +915,12 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
             if (!schedulerSetTaskWaiting(@as(u32, @truncate(arg0)))) return abi.result_not_found;
             return abi.result_ok;
         },
+        abi.command_task_wait_for => {
+            if (arg0 == 0 or arg0 > std.math.maxInt(u32) or arg1 == 0 or arg1 > std.math.maxInt(u32)) {
+                return abi.result_invalid_argument;
+            }
+            return timerScheduleTask(@as(u32, @truncate(arg0)), @as(u32, @truncate(arg1)), 0, status.ticks);
+        },
         abi.command_task_resume => {
             if (arg0 == 0 or arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
             if (!schedulerWakeTask(@as(u32, @truncate(arg0)), abi.wake_reason_manual, 0, 0, status.ticks)) {
@@ -1016,6 +1031,11 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
         },
         abi.command_wake_queue_clear => {
             oc_wake_queue_clear();
+            return abi.result_ok;
+        },
+        abi.command_wake_queue_pop => {
+            if (arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
+            if (!wakeQueuePopMany(@as(u32, @truncate(arg0)))) return abi.result_not_found;
             return abi.result_ok;
         },
         abi.command_scheduler_wake_task => {
@@ -1272,9 +1292,35 @@ fn wakeQueuePush(task_id: u32, timer_id: u32, reason: u8, vector: u8, tick: u64,
     if (wake_queue_count < cap_u32) {
         wake_queue_count += 1;
     } else {
+        wake_queue_tail = @mod(wake_queue_tail + 1, cap_u32);
         wake_queue_overflow +%= 1;
     }
     timer_state.pending_wake_count = @as(u16, @intCast(wake_queue_count));
+}
+
+fn wakeQueuePopOne() ?BaremetalWakeEvent {
+    if (wake_queue_count == 0) return null;
+    const cap_u32: u32 = @as(u32, wake_queue_capacity);
+    const read_index = wake_queue_tail;
+    const event = wake_queue[read_index];
+    wake_queue[read_index] = std.mem.zeroes(BaremetalWakeEvent);
+    wake_queue_tail = @mod(wake_queue_tail + 1, cap_u32);
+    wake_queue_count -= 1;
+    if (wake_queue_count == 0) {
+        wake_queue_head = wake_queue_tail;
+    }
+    timer_state.pending_wake_count = @as(u16, @intCast(wake_queue_count));
+    return event;
+}
+
+fn wakeQueuePopMany(requested: u32) bool {
+    if (wake_queue_count == 0) return false;
+    var to_pop = if (requested == 0) @as(u32, 1) else requested;
+    if (to_pop > wake_queue_count) to_pop = wake_queue_count;
+    while (to_pop > 0) : (to_pop -= 1) {
+        _ = wakeQueuePopOne();
+    }
+    return true;
 }
 
 fn schedulerFindTaskSlot(task_id: u32) ?usize {
@@ -2456,6 +2502,107 @@ test "baremetal timer cancel task command cancels armed task timers" {
     try std.testing.expectEqual(@as(u8, abi.timer_entry_state_canceled), oc_timer_entry(0).state);
 
     _ = oc_submit_command(abi.command_timer_cancel_task, task_id, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
+}
+
+test "baremetal task wait for command arms deadline and wakes on timer fire" {
+    status.mode = abi.mode_running;
+    status.ticks = 0;
+    status.command_seq_ack = 0;
+    status.last_command_opcode = abi.command_nop;
+    status.last_command_result = abi.result_ok;
+    status.tick_batch_hint = 1;
+    command_mailbox = .{
+        .magic = abi.command_magic,
+        .api_version = abi.api_version,
+        .opcode = abi.command_nop,
+        .seq = 0,
+        .arg0 = 0,
+        .arg1 = 0,
+    };
+    oc_scheduler_reset();
+    oc_timer_reset();
+    oc_wake_queue_clear();
+
+    _ = oc_submit_command(abi.command_scheduler_disable, 0, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_task_create, 6, 0);
+    oc_tick();
+    const task_id = oc_scheduler_task(0).task_id;
+    try std.testing.expect(task_id != 0);
+
+    _ = oc_submit_command(abi.command_task_wait_for, task_id, 2);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u8, abi.task_state_waiting), oc_scheduler_task(0).state);
+    try std.testing.expectEqual(@as(u32, 1), oc_scheduler_waiting_count());
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_entry_count());
+
+    oc_tick();
+    try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
+    oc_tick();
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u32, 0), oc_scheduler_waiting_count());
+    try std.testing.expectEqual(@as(u32, 0), oc_timer_entry_count());
+    const evt = oc_wake_queue_event(0);
+    try std.testing.expectEqual(task_id, evt.task_id);
+    try std.testing.expectEqual(@as(u8, abi.wake_reason_timer), evt.reason);
+}
+
+test "baremetal wake queue pop command removes oldest entries in order" {
+    status.mode = abi.mode_running;
+    status.ticks = 0;
+    status.command_seq_ack = 0;
+    status.last_command_opcode = abi.command_nop;
+    status.last_command_result = abi.result_ok;
+    status.tick_batch_hint = 1;
+    command_mailbox = .{
+        .magic = abi.command_magic,
+        .api_version = abi.api_version,
+        .opcode = abi.command_nop,
+        .seq = 0,
+        .arg0 = 0,
+        .arg1 = 0,
+    };
+    oc_scheduler_reset();
+    oc_timer_reset();
+    oc_wake_queue_clear();
+
+    _ = oc_submit_command(abi.command_scheduler_disable, 0, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_task_create, 5, 0);
+    oc_tick();
+    const task_id = oc_scheduler_task(0).task_id;
+    try std.testing.expect(task_id != 0);
+
+    _ = oc_submit_command(abi.command_task_wait, task_id, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_task_resume, task_id, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_task_wait, task_id, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_task_resume, task_id, 0);
+    oc_tick();
+
+    try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_len());
+    const first_before = oc_wake_queue_event(0);
+    const second_before = oc_wake_queue_event(1);
+    try std.testing.expect(second_before.seq > first_before.seq);
+
+    _ = oc_submit_command(abi.command_wake_queue_pop, 1, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+    const first_after = oc_wake_queue_event(0);
+    try std.testing.expectEqual(second_before.seq, first_after.seq);
+
+    _ = oc_submit_command(abi.command_wake_queue_pop, 0, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
+
+    _ = oc_submit_command(abi.command_wake_queue_pop, 1, 0);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
 }

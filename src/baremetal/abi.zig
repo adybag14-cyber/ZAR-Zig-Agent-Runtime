@@ -126,6 +126,8 @@ pub const command_timer_schedule_periodic: u16 = 49;
 pub const command_task_wait: u16 = 50;
 pub const command_task_resume: u16 = 51;
 pub const command_timer_cancel_task: u16 = 52;
+pub const command_task_wait_for: u16 = 53;
+pub const command_wake_queue_pop: u16 = 54;
 
 pub const mode_change_reason_boot: u8 = 0;
 pub const mode_change_reason_command: u8 = 1;
