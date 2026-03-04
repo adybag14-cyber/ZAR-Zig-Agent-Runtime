@@ -243,6 +243,10 @@ Phase 6 progress notes:
 - [x] Added system maintenance smoke gate (`scripts/system-maintenance-smoke-check.ps1`) and wired it into `zig-ci` + `release-preview` validate jobs (`system.maintenance.plan`, `system.maintenance.run`, `system.maintenance.status` contract checks).
 - [x] Added bare-metal smoke gate (`scripts/baremetal-smoke-check.ps1`) and wired it into `zig-ci` + `release-preview` validate jobs.
 - [x] Added bare-metal release packaging to `release-preview` (publishes `openclaw-zig-<version>-x86_64-freestanding-none.elf` with checksums).
+- [x] CI regression fixed for Zig master environ API mismatch (`std.process.Environ`):
+  - failing run: `zig-ci` `22668754695` (compile failure in `telegram_runtime.zig` from `.block = .global` on posix targets).
+  - fix commit: `e204e60` (`fix(ci): inject process environ for telegram runtime env checks`), wiring dispatcher environ into telegram runtime (`telegram_runtime.setEnviron`).
+  - verification run: `zig-ci` `22669040232` passed validate + full cross-target matrix.
 - [x] Tracking/docs refresh:
   - README updated with current parity + validation + workflow status.
   - `docs/zig-port/ZIG_TOOLCHAIN_LOCAL.md` updated to current local/remote Zig hash state.
@@ -250,3 +254,4 @@ Phase 6 progress notes:
   - full MkDocs docs site added (`mkdocs.yml` + `docs/*.md`) and GitHub Pages deployment workflow added (`.github/workflows/docs-pages.yml`), with local `mkdocs build --strict` validation.
   - GitHub Pages publish verified successful via Actions run `22653680203` with both build and deploy jobs green.
   - RPC docs drift guard added with generated reference script (`scripts/generate-rpc-reference.ps1`) and workflow enforcement in `zig-ci`, `release-preview`, and `docs-pages`.
+  - current workflow head status re-verified: `docs-pages` rerun `22669207780` success; latest `zig-ci`, `release-preview`, and `npm-release` are all success.

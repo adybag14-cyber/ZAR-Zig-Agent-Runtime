@@ -239,3 +239,8 @@ while maintaining parity-first validation and release gating.
   - bare-metal runtime now embeds Multiboot2 header and smoke gate checks ELF magic + Multiboot2 magic bytes to reduce boot-regression risk.
   - bare-metal smoke gate now parses ELF section/symbol tables to enforce `.multiboot` section presence and required runtime exports (`_start`, `oc_tick`, `oc_status_ptr`, `multiboot2_header`).
   - bare-metal smoke gate now enforces full Multiboot2 header invariants (field values + checksum + end-tag contract), reducing false-positive magic-only matches.
+  - CI recovery note (2026-03-04):
+    - fixed Zig master API regression in Telegram runtime env lookup (`.block = .global` on `std.process.Environ`), which broke `zig-ci` validate and all cross-target jobs on run `22668754695`.
+    - implemented injected environ wiring (`telegram_runtime.setEnviron`) and switched env lookup to `std.process.Environ.getAlloc(process_environ, ...)`.
+    - fix commit `e204e60`; validation run `22669040232` fully green across validate + cross-target matrix.
+    - docs-pages re-verified by manual dispatch run `22669207780` with build+deploy success.
