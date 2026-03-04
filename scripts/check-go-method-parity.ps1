@@ -8,10 +8,16 @@ param(
     [string] $OriginalRepo = "openclaw/openclaw",
     [string] $OriginalRef = "",
     [string] $OriginalMethodsRelativePath = "src/gateway/server-methods-list.ts",
+    [string] $OriginalBetaMethodsPath = "",
+    [string] $OriginalBetaMethodsUrl = "",
+    [string] $OriginalBetaRepo = "openclaw/openclaw",
+    [string] $OriginalBetaRef = "",
+    [string] $OriginalBetaMethodsRelativePath = "src/gateway/server-methods-list.ts",
     [string] $ZigRegistryPath = "",
     [string] $OutputJsonPath = "",
     [string] $OutputMarkdownPath = "",
     [string] $GitHubToken = "",
+    [switch] $NoOriginalBetaBaseline,
     [switch] $FailOnExtra
 )
 
@@ -89,6 +95,35 @@ function Resolve-LatestReleaseTag {
     throw "Could not resolve latest release/tag for repository: $Repo"
 }
 
+function Resolve-LatestPreReleaseTag {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Repo
+    )
+
+    $releasesUrl = "https://api.github.com/repos/$Repo/releases?per_page=100"
+    try {
+        $releases = Invoke-RestMethod -Headers $ApiHeaders -Uri $releasesUrl
+        if ($null -eq $releases) {
+            throw "No release payload returned."
+        }
+
+        foreach ($release in $releases) {
+            if ($release.draft -eq $true) {
+                continue
+            }
+            if ($release.prerelease -eq $true -and -not [string]::IsNullOrWhiteSpace($release.tag_name)) {
+                return [string] $release.tag_name
+            }
+        }
+    }
+    catch {
+        throw "Failed to resolve prereleases for $Repo via ${releasesUrl}`n$($_.Exception.Message)"
+    }
+
+    throw "Could not resolve latest prerelease tag for repository: $Repo"
+}
+
 function Resolve-GoRegistry {
     param(
         [string] $Path,
@@ -157,6 +192,43 @@ function Resolve-OriginalMethods {
         url = $Url
         repo = if ([string]::IsNullOrWhiteSpace($Ref)) { $null } else { $Repo }
         ref = $Ref
+    }
+}
+
+function Resolve-OriginalBetaMethods {
+    param(
+        [string] $Path,
+        [string] $Url,
+        [string] $Repo,
+        [string] $Ref,
+        [string] $RelativePath
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($Path)) {
+        return [ordered]@{
+            source = Read-ContentChecked -Path $Path
+            origin = "path"
+            path = $Path
+            url = $null
+            repo = $null
+            ref = $null
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($Url)) {
+        $resolvedRef = if ([string]::IsNullOrWhiteSpace($Ref)) { Resolve-LatestPreReleaseTag -Repo $Repo } else { $Ref }
+        $Url = "https://raw.githubusercontent.com/$Repo/$resolvedRef/$RelativePath"
+        $Ref = $resolvedRef
+    }
+
+    return [ordered]@{
+        source = Fetch-Text -Url $Url
+        origin = if ([string]::IsNullOrWhiteSpace($Ref)) { "url" } else { "latest_prerelease_or_ref" }
+        path = $null
+        url = $Url
+        repo = if ([string]::IsNullOrWhiteSpace($Ref)) { $null } else { $Repo }
+        ref = $Ref
+        relativePath = $RelativePath
     }
 }
 
@@ -278,17 +350,57 @@ function Compare-BaselineToZig {
 
 $goRegistry = Resolve-GoRegistry -Path $GoRegistryPath -Url $GoRegistryUrl -Repo $GoRepo -Tag $GoTag
 $originalMethods = Resolve-OriginalMethods -Path $OriginalMethodsPath -Url $OriginalMethodsUrl -Repo $OriginalRepo -Ref $OriginalRef -RelativePath $OriginalMethodsRelativePath
+$originalBetaMethods = $null
+if (-not $NoOriginalBetaBaseline) {
+    $originalBetaMethods = Resolve-OriginalBetaMethods -Path $OriginalBetaMethodsPath -Url $OriginalBetaMethodsUrl -Repo $OriginalBetaRepo -Ref $OriginalBetaRef -RelativePath $OriginalBetaMethodsRelativePath
+}
 $zigSource = Read-ContentChecked -Path $ZigRegistryPath
 
 $goMethods = Extract-GoMethods -Source $goRegistry.source
 $originalMethodSet = Extract-OriginalMethods -Source $originalMethods.source
+$originalBetaMethodSet = @()
+if ($null -ne $originalBetaMethods) {
+    $originalBetaMethodSet = Extract-OriginalMethods -Source $originalBetaMethods.source
+}
 $zigMethods = Extract-ZigMethods -Source $zigSource
 
 $goVsZig = Compare-BaselineToZig -BaselineMethods $goMethods -ZigMethods $zigMethods
 $originalVsZig = Compare-BaselineToZig -BaselineMethods $originalMethodSet -ZigMethods $zigMethods
+$originalBetaVsZig = [ordered]@{
+    missingInZig = @()
+    extraInZig = @()
+}
+if ($originalBetaMethodSet.Count -gt 0) {
+    $originalBetaVsZig = Compare-BaselineToZig -BaselineMethods $originalBetaMethodSet -ZigMethods $zigMethods
+}
 
-$unionBaselineMethods = @($goMethods + $originalMethodSet | Sort-Object -Unique)
+$unionSources = @($goMethods + $originalMethodSet)
+if ($originalBetaMethodSet.Count -gt 0) {
+    $unionSources += $originalBetaMethodSet
+}
+$unionBaselineMethods = @($unionSources | Sort-Object -Unique)
 $unionVsZig = Compare-BaselineToZig -BaselineMethods $unionBaselineMethods -ZigMethods $zigMethods
+
+$originalBetaBaselineReport = [ordered]@{
+    enabled = $false
+    origin = $null
+    path = $null
+    url = $null
+    repo = $null
+    ref = $null
+    relativePath = $null
+}
+if ($null -ne $originalBetaMethods) {
+    $originalBetaBaselineReport = [ordered]@{
+        enabled = $true
+        origin = $originalBetaMethods.origin
+        path = $originalBetaMethods.path
+        url = $originalBetaMethods.url
+        repo = $originalBetaMethods.repo
+        ref = $originalBetaMethods.ref
+        relativePath = $OriginalBetaMethodsRelativePath
+    }
+}
 
 $report = [ordered]@{
     baseline = [ordered]@{
@@ -307,6 +419,7 @@ $report = [ordered]@{
             ref = $originalMethods.ref
             relativePath = $OriginalMethodsRelativePath
         }
+        originalBeta = $originalBetaBaselineReport
         zig = [ordered]@{
             path = $ZigRegistryPath
         }
@@ -314,24 +427,29 @@ $report = [ordered]@{
     counts = [ordered]@{
         go = $goMethods.Count
         original = $originalMethodSet.Count
+        originalBeta = $originalBetaMethodSet.Count
         union = $unionBaselineMethods.Count
         zig = $zigMethods.Count
         goMissingInZig = $goVsZig.missingInZig.Count
         originalMissingInZig = $originalVsZig.missingInZig.Count
+        originalBetaMissingInZig = $originalBetaVsZig.missingInZig.Count
         unionMissingInZig = $unionVsZig.missingInZig.Count
         goExtraInZig = $goVsZig.extraInZig.Count
         originalExtraInZig = $originalVsZig.extraInZig.Count
+        originalBetaExtraInZig = $originalBetaVsZig.extraInZig.Count
         unionExtraInZig = $unionVsZig.extraInZig.Count
     }
     methods = [ordered]@{
         missingInZig = [ordered]@{
             go = $goVsZig.missingInZig
             original = $originalVsZig.missingInZig
+            originalBeta = $originalBetaVsZig.missingInZig
             union = $unionVsZig.missingInZig
         }
         extraInZig = [ordered]@{
             go = $goVsZig.extraInZig
             original = $originalVsZig.extraInZig
+            originalBeta = $originalBetaVsZig.extraInZig
             union = $unionVsZig.extraInZig
         }
     }
@@ -343,8 +461,12 @@ if (-not [string]::IsNullOrWhiteSpace($goRegistry.ref)) {
 if (-not [string]::IsNullOrWhiteSpace($originalMethods.ref)) {
     Write-Output "ORIGINAL_BASELINE_REF=$($originalMethods.ref)"
 }
+if ($null -ne $originalBetaMethods -and -not [string]::IsNullOrWhiteSpace($originalBetaMethods.ref)) {
+    Write-Output "ORIGINAL_BETA_BASELINE_REF=$($originalBetaMethods.ref)"
+}
 Write-Output "GO_COUNT=$($goMethods.Count)"
 Write-Output "ORIGINAL_COUNT=$($originalMethodSet.Count)"
+Write-Output "ORIGINAL_BETA_COUNT=$($originalBetaMethodSet.Count)"
 Write-Output "UNION_BASELINE_COUNT=$($unionBaselineMethods.Count)"
 Write-Output "ZIG_COUNT=$($zigMethods.Count)"
 
@@ -372,6 +494,14 @@ if ($originalVsZig.missingInZig.Count -gt 0) {
     Write-Output "ORIGINAL_MISSING_METHODS_END"
 }
 Write-Output "ORIGINAL_EXTRA_IN_ZIG=$($originalVsZig.extraInZig.Count)"
+
+Write-Output "ORIGINAL_BETA_MISSING_IN_ZIG=$($originalBetaVsZig.missingInZig.Count)"
+if ($originalBetaVsZig.missingInZig.Count -gt 0) {
+    Write-Output "ORIGINAL_BETA_MISSING_METHODS_START"
+    $originalBetaVsZig.missingInZig | Sort-Object | ForEach-Object { Write-Output $_ }
+    Write-Output "ORIGINAL_BETA_MISSING_METHODS_END"
+}
+Write-Output "ORIGINAL_BETA_EXTRA_IN_ZIG=$($originalBetaVsZig.extraInZig.Count)"
 
 Write-Output "UNION_MISSING_IN_ZIG=$($unionVsZig.missingInZig.Count)"
 if ($unionVsZig.missingInZig.Count -gt 0) {
@@ -427,6 +557,17 @@ if (-not [string]::IsNullOrWhiteSpace($OutputMarkdownPath)) {
     if (-not [string]::IsNullOrWhiteSpace($originalMethods.ref)) {
         $md.Add("- Original baseline ref: $tick$($originalMethods.ref)$tick") | Out-Null
     }
+    if ($null -ne $originalBetaMethods) {
+        if (-not [string]::IsNullOrWhiteSpace($originalBetaMethods.path)) {
+            $md.Add("- Original beta baseline path: $tick$($originalBetaMethods.path)$tick") | Out-Null
+        }
+        else {
+            $md.Add("- Original beta baseline URL: $tick$($originalBetaMethods.url)$tick") | Out-Null
+        }
+        if (-not [string]::IsNullOrWhiteSpace($originalBetaMethods.ref)) {
+            $md.Add("- Original beta baseline ref: $tick$($originalBetaMethods.ref)$tick") | Out-Null
+        }
+    }
     $md.Add("- Zig registry path: $tick$ZigRegistryPath$tick") | Out-Null
     $md.Add("") | Out-Null
     $md.Add("## Counts") | Out-Null
@@ -434,13 +575,16 @@ if (-not [string]::IsNullOrWhiteSpace($OutputMarkdownPath)) {
     $md.Add("| --- | ---: |") | Out-Null
     $md.Add("| Go methods | $($goMethods.Count) |") | Out-Null
     $md.Add("| Original methods | $($originalMethodSet.Count) |") | Out-Null
+    $md.Add("| Original beta methods | $($originalBetaMethodSet.Count) |") | Out-Null
     $md.Add("| Union baseline methods | $($unionBaselineMethods.Count) |") | Out-Null
     $md.Add("| Zig methods | $($zigMethods.Count) |") | Out-Null
     $md.Add("| Missing in Zig (Go baseline) | $($goVsZig.missingInZig.Count) |") | Out-Null
     $md.Add("| Missing in Zig (Original baseline) | $($originalVsZig.missingInZig.Count) |") | Out-Null
+    $md.Add("| Missing in Zig (Original beta baseline) | $($originalBetaVsZig.missingInZig.Count) |") | Out-Null
     $md.Add("| Missing in Zig (Union baseline) | $($unionVsZig.missingInZig.Count) |") | Out-Null
     $md.Add("| Extra in Zig (Go baseline) | $($goVsZig.extraInZig.Count) |") | Out-Null
     $md.Add("| Extra in Zig (Original baseline) | $($originalVsZig.extraInZig.Count) |") | Out-Null
+    $md.Add("| Extra in Zig (Original beta baseline) | $($originalBetaVsZig.extraInZig.Count) |") | Out-Null
     $md.Add("| Extra in Zig (Union baseline) | $($unionVsZig.extraInZig.Count) |") | Out-Null
     $md.Add("") | Out-Null
     $md.Add("## Missing In Zig (Go Baseline)") | Out-Null
@@ -459,6 +603,16 @@ if (-not [string]::IsNullOrWhiteSpace($OutputMarkdownPath)) {
     }
     else {
         foreach ($m in $originalVsZig.missingInZig) {
+            $md.Add("- $tick$m$tick") | Out-Null
+        }
+    }
+    $md.Add("") | Out-Null
+    $md.Add("## Missing In Zig (Original Beta Baseline)") | Out-Null
+    if ($originalBetaVsZig.missingInZig.Count -eq 0) {
+        $md.Add("- None") | Out-Null
+    }
+    else {
+        foreach ($m in $originalBetaVsZig.missingInZig) {
             $md.Add("- $tick$m$tick") | Out-Null
         }
     }
@@ -493,9 +647,17 @@ if ($goVsZig.missingInZig.Count -gt 0) {
 if ($originalVsZig.missingInZig.Count -gt 0) {
     throw "Original->Zig parity check failed: missing methods in Zig = $($originalVsZig.missingInZig.Count)"
 }
+if ($originalBetaVsZig.missingInZig.Count -gt 0) {
+    throw "Original beta->Zig parity check failed: missing methods in Zig = $($originalBetaVsZig.missingInZig.Count)"
+}
 
 if ($FailOnExtra -and $unionVsZig.extraInZig.Count -gt 0) {
     throw "Union baseline parity check failed: extra methods in Zig = $($unionVsZig.extraInZig.Count)"
 }
 
-Write-Output "Go + Original -> Zig parity check passed."
+if ($null -eq $originalBetaMethods) {
+    Write-Output "Go + Original -> Zig parity check passed."
+}
+else {
+    Write-Output "Go + Original + Original Beta -> Zig parity check passed."
+}

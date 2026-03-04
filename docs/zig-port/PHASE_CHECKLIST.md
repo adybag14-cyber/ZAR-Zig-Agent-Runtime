@@ -162,9 +162,10 @@ Phase 6 progress notes:
   - added `update.plan` (channel-aware update planning) and `update.status` (job/queue observability).
   - `update.run` now resolves channel aliases (`stable/latest/lts`, `edge/nightly/preview`) and surfaces npm release metadata.
   - added npm client package at `npm/openclaw-zig-rpc-client` and release workflow `.github/workflows/npm-release.yml`.
-- Method surface now at `153` Zig methods; dual-baseline method-set parity is complete:
+- Method surface now at `153` Zig methods; tri-baseline method-set parity is complete:
   - Go latest release baseline: `134/134` covered in Zig.
   - Original OpenClaw latest release baseline: `94/94` covered in Zig.
+  - Original OpenClaw latest beta baseline: `94/94` covered in Zig.
   - Union baseline: `135/135` covered in Zig.
   - Zig-only extras vs union baseline: `18` (`shutdown`, `doctor`, `security.audit`, `exec.run`, `file.read`, `file.write`, `web.login.complete`, `web.login.status`, `edge.wasm.install`, `edge.wasm.execute`, `edge.wasm.remove`, `edge.finetune.job.get`, `edge.finetune.cancel`, `system.maintenance.plan`, `system.maintenance.run`, `system.maintenance.status`, `update.plan`, `update.status`).
 
@@ -194,7 +195,7 @@ Phase 6 progress notes:
 - [x] `scripts/zig-syntax-check.ps1`
 - [x] `zig build baremetal` (freestanding image build: `openclaw-zig-baremetal.elf`)
 - [x] `scripts/zig-codeberg-master-check.ps1` (reports local vs remote master hash)
-- [x] Multi-baseline method diff check: `Go(latest)=134`, `Original(latest)=94`, `Union=135`, `Zig=153`, `missing_in_zig=0`, `union_extras=18`
+- [x] Multi-baseline method diff check: `Go(latest)=134`, `Original(latest)=94`, `OriginalBeta(latest)=94`, `Union=135`, `Zig=153`, `missing_in_zig=0`, `union_extras=18`
 - [x] Rust-vs-Zig method diff check: `Rust=124`, `Zig=143`, `missing_in_zig=0`, `zig_extras=19`
 - [x] Smoke scripts now run against built binary (`zig-out/bin/openclaw-zig.exe`) with readiness loops + early-exit diagnostics:
   - `scripts/docker-smoke-check.ps1` -> host+docker HTTP 200
@@ -250,9 +251,10 @@ Phase 6 progress notes:
 - [x] CI confirmation after ARMv7 fix: GitHub Actions run `22651999994` succeeded with Android cross-target jobs all green (`x86_64-android`, `aarch64-android`, `armv7-android`).
 - [x] Release workflow smoke validated: Actions run `22645353103` published `v0.1.0-zig-preview.ci-smoke` with full 5-target artifact set + `SHA256SUMS.txt`.
 - [x] Added cross-repo method parity gate script (`scripts/check-go-method-parity.ps1`) and wired it into CI + release workflows as a blocking check.
-- [x] Parity gate now resolves and checks both latest release baselines on each run:
+- [x] Parity gate now resolves and checks all required latest baselines on each run:
   - `adybag14-cyber/openclaw-go-port` latest release tag
   - `openclaw/openclaw` latest release tag
+  - `openclaw/openclaw` latest prerelease tag
 - [x] Release workflow hardened with upfront validate job (`build` + `test` + parity gate) and duplicate-tag guard before publish.
 - [x] Parity gate now emits machine-readable report (`parity-go-zig.json`) and CI/release workflows publish it as audit evidence.
 - [x] Release workflow evidence update: run `22646343174` published `v0.1.0-zig-preview.ci-parityjson` including `parity-go-zig.json` alongside all target zips + `SHA256SUMS.txt`.

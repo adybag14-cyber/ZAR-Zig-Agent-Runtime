@@ -73,11 +73,11 @@ try {
     }
     & $parityScript @parityArgs
     if (-not $?) {
-        throw "Go->Zig parity gate failed in release-preview flow."
+        throw "Multi-baseline parity gate failed in release-preview flow."
     }
 }
 catch {
-    throw "Go->Zig parity gate failed in release-preview flow. $($_.Exception.Message)"
+    throw "Multi-baseline parity gate failed in release-preview flow. $($_.Exception.Message)"
 }
 $assets.Add($parityJsonPath) | Out-Null
 $assets.Add($parityMdPath) | Out-Null

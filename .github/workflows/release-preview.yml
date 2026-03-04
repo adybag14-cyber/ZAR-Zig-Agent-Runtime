@@ -55,7 +55,7 @@ jobs:
       - name: Verify RPC reference is up to date
         run: git diff --exit-code -- docs/rpc-reference.md
 
-      - name: Method parity gate (Go latest release + original latest release)
+      - name: Method parity gate (Go latest release + original latest release + original latest beta)
         shell: pwsh
         run: ./scripts/check-go-method-parity.ps1 -GitHubToken "${{ github.token }}" -OutputJsonPath parity-go-zig.json -OutputMarkdownPath parity-go-zig.md
 

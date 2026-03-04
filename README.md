@@ -5,9 +5,10 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
 ## Current Status
 
 - RPC method surface in Zig: `153`
-- Latest parity gate (dual-baseline):
+- Latest parity gate (tri-baseline):
   - Go baseline (`v2.14.0-go`): `134/134` covered
   - Original OpenClaw baseline (`v2026.3.2`): `94/94` covered
+  - Original OpenClaw beta baseline (`v2026.3.2-beta.1`): `94/94` covered
   - Union baseline: `135/135` covered (`MISSING_IN_ZIG=0`)
 - Latest local validation: `zig build test --summary all` -> `79/79` passing
 - Latest edge release tag: `v0.2.0-zig-edge.14`
@@ -37,9 +38,10 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
 ## Baselines
 
 - Historical bootstrap commit: Go baseline `65c974b528e2` (`v2.10.2-go` line)
-- Active parity baselines are resolved to latest releases by gate script:
+- Active parity baselines are resolved by gate script:
   - `adybag14-cyber/openclaw-go-port`
-  - `openclaw/openclaw`
+  - `openclaw/openclaw` latest stable release
+  - `openclaw/openclaw` latest prerelease (beta)
 
 ## Tracking
 
@@ -331,7 +333,7 @@ Validate python package publishability:
 `zig-ci` workflow (`.github/workflows/zig-ci.yml`):
 
 - Zig master build/test gates
-- dual-baseline parity enforcement
+- tri-baseline parity enforcement (Go latest + original stable latest + original beta latest)
 - freestanding bare-metal artifact smoke gate
 - runtime smoke gate
 - parity evidence artifact publication (`parity-go-zig.json`, `parity-go-zig.md`)
