@@ -33,6 +33,7 @@ Recommended sequence:
 - parity evidence artifacts
   - websocket smoke validates `/ws` and root compatibility route `/`, including binary-frame RPC dispatch
   - gateway-auth and websocket smokes use bounded receive timeouts to prevent hanging CI jobs
+  - dispatcher coverage test now fails on both missing methods (`-32601`) and registered-method dispatcher gaps (`-32603` fallback guard)
 
 ### `release-preview.yml`
 

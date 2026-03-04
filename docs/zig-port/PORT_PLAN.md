@@ -16,6 +16,7 @@ while maintaining parity-first validation and release gating.
 - Block release until parity gates and smoke checks pass.
 - Push each completed parity slice to GitHub immediately; release artifacts remain blocked until parity is 100%.
 - Keep security, browser bridge, and Telegram flows first-class (no stubs).
+- Disallow success-path dispatcher scaffolds for registered methods; missing handler paths must fail fast and be caught by coverage tests.
 
 ## Phases
 

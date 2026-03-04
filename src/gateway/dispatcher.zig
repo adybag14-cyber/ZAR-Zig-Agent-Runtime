@@ -6194,10 +6194,9 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         return protocol.encodeResult(allocator, req.id, write_result);
     }
 
-    return protocol.encodeResult(allocator, req.id, .{
-        .ok = true,
-        .method = req.method,
-        .note = "method scaffold routed through zig dispatcher",
+    return protocol.encodeError(allocator, req.id, .{
+        .code = -32603,
+        .message = "dispatcher gap: registered method lacks implementation",
     });
 }
 
@@ -8648,6 +8647,11 @@ test "dispatch covers every registered method name" {
 
         if (std.mem.indexOf(u8, out, "\"code\":-32601") != null) {
             std.debug.print("registry method is missing in dispatcher switch: {s}\n", .{method});
+            std.debug.print("response: {s}\n", .{out});
+            return error.TestUnexpectedResult;
+        }
+        if (std.mem.indexOf(u8, out, "dispatcher gap: registered method lacks implementation") != null) {
+            std.debug.print("registry method hit dispatcher gap fallback: {s}\n", .{method});
             std.debug.print("response: {s}\n", .{out});
             return error.TestUnexpectedResult;
         }
