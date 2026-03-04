@@ -694,6 +694,16 @@ pub export fn oc_wake_queue_vector_count(vector: u8) u32 {
     return count;
 }
 
+pub export fn oc_wake_queue_before_tick_count(max_tick: u64) u32 {
+    var count: u32 = 0;
+    var idx: u32 = 0;
+    while (idx < wake_queue_count) : (idx += 1) {
+        const event = oc_wake_queue_event(idx);
+        if (event.tick <= max_tick) count +%= 1;
+    }
+    return count;
+}
+
 pub export fn oc_wake_queue_pop() BaremetalWakeEvent {
     return wakeQueuePopOne() orelse std.mem.zeroes(BaremetalWakeEvent);
 }
@@ -1143,6 +1153,11 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
             if (!wakeQueuePopVector(vector, @as(u32, @truncate(arg1)))) return abi.result_not_found;
             return abi.result_ok;
         },
+        abi.command_wake_queue_pop_before_tick => {
+            if (arg1 > std.math.maxInt(u32)) return abi.result_invalid_argument;
+            if (!wakeQueuePopBeforeTick(arg0, @as(u32, @truncate(arg1)))) return abi.result_not_found;
+            return abi.result_ok;
+        },
         abi.command_scheduler_wake_task => {
             if (arg0 == 0 or arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
             if (!schedulerWakeTask(@as(u32, @truncate(arg0)), abi.wake_reason_manual, 0, 0, status.ticks)) {
@@ -1511,6 +1526,42 @@ fn wakeQueuePopVector(vector: u8, requested: u32) bool {
     while (idx < wake_queue_count) : (idx += 1) {
         const event = oc_wake_queue_event(idx);
         if (event.vector == vector and removed < to_pop) {
+            removed += 1;
+            continue;
+        }
+        kept[kept_count] = event;
+        kept_count += 1;
+    }
+    if (removed == 0) return false;
+
+    @memset(&wake_queue, std.mem.zeroes(BaremetalWakeEvent));
+    var write_idx: u32 = 0;
+    while (write_idx < kept_count) : (write_idx += 1) {
+        wake_queue[@as(usize, @intCast(write_idx))] = kept[write_idx];
+    }
+    wake_queue_tail = 0;
+    wake_queue_count = kept_count;
+    wake_queue_head = if (kept_count == 0) 0 else @mod(kept_count, @as(u32, wake_queue_capacity));
+    timer_state.pending_wake_count = @as(u16, @intCast(wake_queue_count));
+    return true;
+}
+
+fn wakeQueuePopBeforeTick(max_tick: u64, requested: u32) bool {
+    if (wake_queue_count == 0) return false;
+
+    const available = oc_wake_queue_before_tick_count(max_tick);
+    if (available == 0) return false;
+
+    var to_pop = if (requested == 0) @as(u32, 1) else requested;
+    if (to_pop > available) to_pop = available;
+
+    var kept: [wake_queue_capacity]BaremetalWakeEvent = std.mem.zeroes([wake_queue_capacity]BaremetalWakeEvent);
+    var kept_count: u32 = 0;
+    var removed: u32 = 0;
+    var idx: u32 = 0;
+    while (idx < wake_queue_count) : (idx += 1) {
+        const event = oc_wake_queue_event(idx);
+        if (event.tick <= max_tick and removed < to_pop) {
             removed += 1;
             continue;
         }
@@ -3015,6 +3066,54 @@ test "baremetal wake queue vector pop command removes only matching vectors" {
     try std.testing.expectEqual(@as(u32, 2004), oc_wake_queue_event(1).task_id);
 
     _ = oc_submit_command(abi.command_wake_queue_pop_vector, 255, 1);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
+}
+
+test "baremetal wake queue before-tick pop command removes stale entries" {
+    status.mode = abi.mode_running;
+    status.ticks = 0;
+    status.command_seq_ack = 0;
+    status.last_command_opcode = abi.command_nop;
+    status.last_command_result = abi.result_ok;
+    status.tick_batch_hint = 1;
+    command_mailbox = .{
+        .magic = abi.command_magic,
+        .api_version = abi.api_version,
+        .opcode = abi.command_nop,
+        .seq = 0,
+        .arg0 = 0,
+        .arg1 = 0,
+    };
+    oc_scheduler_reset();
+    oc_timer_reset();
+    oc_wake_queue_clear();
+
+    wakeQueuePush(3001, 31, abi.wake_reason_timer, 0, 10, 0);
+    wakeQueuePush(3002, 32, abi.wake_reason_interrupt, 4, 20, 5);
+    wakeQueuePush(3003, 33, abi.wake_reason_interrupt, 4, 30, 6);
+    wakeQueuePush(3004, 34, abi.wake_reason_manual, 0, 40, 6);
+
+    try std.testing.expectEqual(@as(u32, 4), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_before_tick_count(20));
+    try std.testing.expectEqual(@as(u32, 3), oc_wake_queue_before_tick_count(30));
+    try std.testing.expectEqual(@as(u32, 4), oc_wake_queue_before_tick_count(40));
+
+    _ = oc_submit_command(abi.command_wake_queue_pop_before_tick, 20, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 3), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_before_tick_count(20));
+    try std.testing.expectEqual(@as(u32, 3002), oc_wake_queue_event(0).task_id);
+
+    _ = oc_submit_command(abi.command_wake_queue_pop_before_tick, 30, 99);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_before_tick_count(30));
+    try std.testing.expectEqual(@as(u32, 3004), oc_wake_queue_event(0).task_id);
+
+    _ = oc_submit_command(abi.command_wake_queue_pop_before_tick, 30, 1);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
 }
