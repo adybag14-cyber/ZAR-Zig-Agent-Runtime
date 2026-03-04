@@ -20,6 +20,7 @@ const BaremetalSyscallEntry = abi.BaremetalSyscallEntry;
 const BaremetalTimerState = abi.BaremetalTimerState;
 const BaremetalTimerEntry = abi.BaremetalTimerEntry;
 const BaremetalWakeEvent = abi.BaremetalWakeEvent;
+const BaremetalWakeQueueSummary = abi.BaremetalWakeQueueSummary;
 
 const multiboot2_magic: u32 = 0xE85250D6;
 const multiboot2_architecture_i386: u32 = 0;
@@ -713,6 +714,41 @@ pub export fn oc_wake_queue_reason_vector_count(reason: u8, vector: u8) u32 {
         if (event.reason == reason and event.vector == vector) count +%= 1;
     }
     return count;
+}
+
+pub export fn oc_wake_queue_summary() BaremetalWakeQueueSummary {
+    var summary: BaremetalWakeQueueSummary = .{
+        .len = wake_queue_count,
+        .overflow_count = wake_queue_overflow,
+        .reason_timer_count = 0,
+        .reason_interrupt_count = 0,
+        .reason_manual_count = 0,
+        .nonzero_vector_count = 0,
+        .stale_count = 0,
+        .reserved0 = 0,
+        .oldest_tick = 0,
+        .newest_tick = 0,
+    };
+    if (wake_queue_count == 0) return summary;
+
+    summary.oldest_tick = oc_wake_queue_event(0).tick;
+    summary.newest_tick = summary.oldest_tick;
+
+    var idx: u32 = 0;
+    while (idx < wake_queue_count) : (idx += 1) {
+        const event = oc_wake_queue_event(idx);
+        switch (event.reason) {
+            abi.wake_reason_timer => summary.reason_timer_count +%= 1,
+            abi.wake_reason_interrupt => summary.reason_interrupt_count +%= 1,
+            abi.wake_reason_manual => summary.reason_manual_count +%= 1,
+            else => {},
+        }
+        if (event.vector != 0) summary.nonzero_vector_count +%= 1;
+        if (event.tick <= status.ticks) summary.stale_count +%= 1;
+        if (event.tick < summary.oldest_tick) summary.oldest_tick = event.tick;
+        if (event.tick > summary.newest_tick) summary.newest_tick = event.tick;
+    }
+    return summary;
 }
 
 pub export fn oc_wake_queue_pop() BaremetalWakeEvent {
@@ -3197,10 +3233,20 @@ test "baremetal wake queue reason-vector pop command removes only exact pairs" {
     wakeQueuePush(4003, 43, abi.wake_reason_interrupt, 19, 12, 3);
     wakeQueuePush(4004, 44, abi.wake_reason_timer, 13, 13, 3);
 
+    status.ticks = 12;
     try std.testing.expectEqual(@as(u32, 4), oc_wake_queue_len());
     try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_reason_vector_count(abi.wake_reason_interrupt, 13));
     try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_reason_vector_count(abi.wake_reason_interrupt, 19));
     try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_reason_vector_count(abi.wake_reason_timer, 13));
+    const summary_before = oc_wake_queue_summary();
+    try std.testing.expectEqual(@as(u32, 4), summary_before.len);
+    try std.testing.expectEqual(@as(u32, 3), summary_before.reason_interrupt_count);
+    try std.testing.expectEqual(@as(u32, 1), summary_before.reason_timer_count);
+    try std.testing.expectEqual(@as(u32, 0), summary_before.reason_manual_count);
+    try std.testing.expectEqual(@as(u32, 4), summary_before.nonzero_vector_count);
+    try std.testing.expectEqual(@as(u32, 3), summary_before.stale_count);
+    try std.testing.expectEqual(@as(u64, 10), summary_before.oldest_tick);
+    try std.testing.expectEqual(@as(u64, 13), summary_before.newest_tick);
 
     const pair_interrupt_13: u64 = @as(u64, abi.wake_reason_interrupt) | (@as(u64, 13) << 8);
     _ = oc_submit_command(abi.command_wake_queue_pop_reason_vector, pair_interrupt_13, 0);
@@ -3217,6 +3263,10 @@ test "baremetal wake queue reason-vector pop command removes only exact pairs" {
     try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_reason_vector_count(abi.wake_reason_interrupt, 13));
     try std.testing.expectEqual(@as(u32, 4003), oc_wake_queue_event(0).task_id);
     try std.testing.expectEqual(@as(u32, 4004), oc_wake_queue_event(1).task_id);
+    const summary_after = oc_wake_queue_summary();
+    try std.testing.expectEqual(@as(u32, 2), summary_after.len);
+    try std.testing.expectEqual(@as(u32, 1), summary_after.reason_interrupt_count);
+    try std.testing.expectEqual(@as(u32, 1), summary_after.reason_timer_count);
 
     _ = oc_submit_command(abi.command_wake_queue_pop_reason_vector, 0, 1);
     oc_tick();

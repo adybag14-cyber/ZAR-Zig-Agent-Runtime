@@ -261,6 +261,10 @@ Phase 6 progress notes:
   - new mailbox opcode: `command_wake_queue_pop_reason_vector` (`arg0=reason|(vector<<8)`, `arg1=count`, `count=0` defaults to one)
   - new export telemetry: `oc_wake_queue_reason_vector_count(reason, vector)` for exact-pair wake backlog checks
   - regression coverage added for exact-pair pop ordering and invalid-reason rejection behavior
+- [x] Bare-metal wake queue summary snapshot slice shipped:
+  - new export telemetry: `oc_wake_queue_summary()` (len/overflow, reason mix, nonzero-vector count, stale count, oldest/newest tick)
+  - ABI contract extended with `BaremetalWakeQueueSummary`
+  - regression coverage added for summary field correctness before/after selective drains
 - [x] `scripts/zig-codeberg-master-check.ps1` (reports local vs remote master hash)
 - [x] Multi-baseline method diff check: `Go(latest)=134`, `Original(latest)=94`, `OriginalBeta(latest)=94`, `Union=135`, `Zig=160`, `missing_in_zig=0`, `union_extras=25`
 - [x] Multi-baseline gateway event diff check: `OriginalEvents(latest)=19`, `OriginalBetaEvents(latest)=19`, `UnionEvents=19`, `ZigEvents=19`, `union_events_missing_in_zig=0`

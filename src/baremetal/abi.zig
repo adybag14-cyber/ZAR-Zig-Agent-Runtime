@@ -409,6 +409,19 @@ pub const BaremetalWakeEvent = extern struct {
     interrupt_count: u64,
 };
 
+pub const BaremetalWakeQueueSummary = extern struct {
+    len: u32,
+    overflow_count: u32,
+    reason_timer_count: u32,
+    reason_interrupt_count: u32,
+    reason_manual_count: u32,
+    nonzero_vector_count: u32,
+    stale_count: u32,
+    reserved0: u32,
+    oldest_tick: u64,
+    newest_tick: u64,
+};
+
 pub fn defaultFeatureFlags() u32 {
     return feature_os_hosted_runtime |
         feature_baremetal_runtime |
@@ -521,6 +534,7 @@ test "baremetal kernel info size contract stays stable" {
     try std.testing.expectEqual(@as(usize, 48), @sizeOf(BaremetalTimerState));
     try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalTimerEntry));
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalWakeEvent));
+    try std.testing.expectEqual(@as(usize, 48), @sizeOf(BaremetalWakeQueueSummary));
 }
 
 test "baremetal mode helper validates supported modes" {
