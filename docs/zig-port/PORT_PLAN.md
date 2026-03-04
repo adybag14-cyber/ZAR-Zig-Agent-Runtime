@@ -103,6 +103,9 @@ while maintaining parity-first validation and release gating.
   - Gateway registry lookup optimization shipped:
     - `registry.supports` now fast-paths exact lowercase method matches using `std.mem.eql` and only runs case-insensitive fallback scans when uppercase input is present (`src/gateway/registry.zig`).
     - Added mixed-case compatibility regression check (`supports(\"HeAlTh\")`).
+  - Dispatcher bounded-history compaction shipped:
+    - Added shared front-compaction helper for owned bounded lists in dispatcher state and replaced repeated front `orderedRemove(0)` retention paths for events/update jobs/agent jobs/cron runs/node events/finetune jobs (`src/gateway/dispatcher.zig`).
+    - Added retention regression tests for compat event history and edge finetune history caps.
   - Dispatcher memory parity slice shipped: `sessions.history`, `chat.history`, and `doctor.memory.status`.
   - Edge handler parity slice shipped: `edge.wasm.marketplace.list`, `edge.router.plan`, `edge.swarm.plan`, `edge.multimodal.inspect`, and `edge.voice.transcribe`.
   - Advanced edge handler parity slice shipped: `edge.enclave.status`, `edge.enclave.prove`, `edge.mesh.status`, `edge.homomorphic.compute`, `edge.finetune.status`, `edge.finetune.run`, `edge.identity.trust.status`, `edge.personality.profile`, `edge.handoff.plan`, `edge.marketplace.revenue.preview`, `edge.finetune.cluster.plan`, `edge.alignment.evaluate`, `edge.quantum.status`, and `edge.collaboration.plan`.

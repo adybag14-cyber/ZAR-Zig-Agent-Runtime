@@ -322,6 +322,22 @@ const ConfigOverlayEntry = struct {
     value: []const u8,
 };
 
+fn trimFrontOwnedList(comptime T: type, allocator: std.mem.Allocator, list: *std.ArrayList(T), max_len: usize) void {
+    if (max_len == 0) {
+        for (list.items) |*entry| entry.deinit(allocator);
+        list.items.len = 0;
+        return;
+    }
+    if (list.items.len <= max_len) return;
+    const to_remove = list.items.len - max_len;
+    for (list.items[0..to_remove]) |*entry| entry.deinit(allocator);
+    const remaining = list.items.len - to_remove;
+    if (remaining > 0) {
+        std.mem.copyForwards(T, list.items[0..remaining], list.items[to_remove..]);
+    }
+    list.items.len = remaining;
+}
+
 const CompatState = struct {
     const HeartbeatSnapshot = struct {
         enabled: bool,
@@ -635,10 +651,7 @@ const CompatState = struct {
         };
         self.next_event_id += 1;
         try self.events.append(self.allocator, event);
-        if (self.events.items.len > 256) {
-            var removed = self.events.orderedRemove(0);
-            removed.deinit(self.allocator);
-        }
+        trimFrontOwnedList(CompatEvent, self.allocator, &self.events, 256);
         return self.events.items[self.events.items.len - 1];
     }
 
@@ -665,10 +678,7 @@ const CompatState = struct {
             .created_at_ms = now,
             .updated_at_ms = now,
         });
-        if (self.update_jobs.items.len > 256) {
-            var removed = self.update_jobs.orderedRemove(0);
-            removed.deinit(self.allocator);
-        }
+        trimFrontOwnedList(CompatUpdateJob, self.allocator, &self.update_jobs, 256);
         return self.update_jobs.items[self.update_jobs.items.len - 1];
     }
 
@@ -910,10 +920,7 @@ const CompatState = struct {
             .done = true,
             .updated_at_ms = now,
         });
-        if (self.agent_jobs.items.len > 1024) {
-            var removed = self.agent_jobs.orderedRemove(0);
-            removed.deinit(self.allocator);
-        }
+        trimFrontOwnedList(CompatAgentJob, self.allocator, &self.agent_jobs, 1024);
         return self.agent_jobs.items[self.agent_jobs.items.len - 1];
     }
 
@@ -1013,10 +1020,7 @@ const CompatState = struct {
             self.allocator.free(run_id);
             return null;
         };
-        if (self.cron_runs.items.len > 256) {
-            var removed = self.cron_runs.orderedRemove(0);
-            removed.deinit(self.allocator);
-        }
+        trimFrontOwnedList(CompatCronRun, self.allocator, &self.cron_runs, 256);
 
         var job = &self.cron_jobs.items[idx];
         job.last_run_at_ms = now;
@@ -1214,10 +1218,7 @@ const CompatState = struct {
             .result_id = try self.allocator.dupe(u8, result_id),
             .created_at_ms = now,
         });
-        if (self.node_events.items.len > 256) {
-            var removed = self.node_events.orderedRemove(0);
-            removed.deinit(self.allocator);
-        }
+        trimFrontOwnedList(CompatNodeEvent, self.allocator, &self.node_events, 256);
         return self.node_events.items[self.node_events.items.len - 1];
     }
 
@@ -1426,10 +1427,7 @@ const EdgeState = struct {
             .created_at_ms = created_at_ms,
             .updated_at_ms = updated_at_ms,
         });
-        if (self.finetune_jobs.items.len > 64) {
-            var removed = self.finetune_jobs.orderedRemove(0);
-            removed.deinit(self.allocator);
-        }
+        trimFrontOwnedList(FinetuneJob, self.allocator, &self.finetune_jobs, 64);
         return id;
     }
 
@@ -8162,6 +8160,47 @@ test "dispatch advanced edge methods return parity contracts" {
     const collaboration = try dispatch(allocator, "{\"id\":\"edge-collab\",\"method\":\"edge.collaboration.plan\",\"params\":{\"team\":\"platform\",\"goal\":\"shipping\"}}");
     defer allocator.free(collaboration);
     try std.testing.expect(std.mem.indexOf(u8, collaboration, "\"checkpoints\"") != null);
+}
+
+test "compat state bounded history keeps newest events" {
+    const allocator = std.testing.allocator;
+    var compat = try CompatState.init(allocator);
+    defer compat.deinit();
+
+    var i: usize = 0;
+    while (i < 300) : (i += 1) {
+        _ = try compat.addEvent("tick");
+    }
+
+    try std.testing.expectEqual(@as(usize, 256), compat.events.items.len);
+    try std.testing.expectEqual(@as(u64, 45), compat.events.items[0].id);
+    try std.testing.expectEqual(@as(u64, 300), compat.events.items[compat.events.items.len - 1].id);
+}
+
+test "edge state bounded finetune history keeps newest jobs" {
+    const allocator = std.testing.allocator;
+    var edge = EdgeState.init(allocator);
+    defer edge.deinit();
+
+    var i: usize = 0;
+    while (i < 70) : (i += 1) {
+        _ = try edge.appendFinetuneJob(
+            "queued",
+            "",
+            "adapter",
+            "out",
+            "chatgpt",
+            "gpt-5.2",
+            "manifest",
+            true,
+            @as(i64, @intCast(i + 1)),
+            @as(i64, @intCast(i + 1)),
+        );
+    }
+
+    try std.testing.expectEqual(@as(usize, 64), edge.finetune_jobs.items.len);
+    try std.testing.expect(std.mem.eql(u8, edge.finetune_jobs.items[0].id, "finetune-7"));
+    try std.testing.expect(std.mem.eql(u8, edge.finetune_jobs.items[edge.finetune_jobs.items.len - 1].id, "finetune-70"));
 }
 
 test "wildcard path match supports compat secret patterns" {
