@@ -4,10 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Python package version (PEP 440, for example 0.2.0.dev13)
         required: true
+        default: "0.2.0.dev0"
       release_tag:
-        description: Optional GitHub release tag to attach artifacts to (for example v0.2.0-zig-edge.13)
         required: false
         default: ""
 
@@ -80,21 +79,8 @@ PY
             echo "Release ${TAG} not found. Skipping release upload."
           fi
 
-      - name: Detect PyPI token availability
-        id: auth
-        shell: bash
-        env:
-          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -n "${PYPI_API_TOKEN}" ]; then
-            echo "has_pypi_token=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_pypi_token=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Publish to PyPI
-        if: ${{ steps.auth.outputs.has_pypi_token == 'true' }}
+        if: ${{ secrets.PYPI_API_TOKEN != '' }}
         shell: bash
         env:
           TWINE_USERNAME: __token__
