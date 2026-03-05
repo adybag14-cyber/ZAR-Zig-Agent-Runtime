@@ -45,6 +45,7 @@ Recommended sequence:
 - validate stage before artifact matrix
 - duplicate release-tag protection
 - preview artifact publishing with parity evidence
+- docs status drift gate (`scripts/docs-status-check.ps1`) in validate stage
 - zig master freshness snapshot capture + publish (`zig-master-freshness.json`)
 - release trust evidence generation and publishing (`release-manifest.json`, `sbom.spdx.json`, `provenance.intoto.json`)
 - gateway-auth + websocket smoke checks in validate stage

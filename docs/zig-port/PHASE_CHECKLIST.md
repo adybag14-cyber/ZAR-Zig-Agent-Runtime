@@ -478,6 +478,7 @@ Phase 6 progress notes:
     - `scripts/zig-codeberg-master-check.ps1` is now cross-platform (`-ZigExePath`/`OPENCLAW_ZIG_EXE`/PATH fallback) and can emit JSON evidence (`-OutputJsonPath`).
     - `zig-ci` now captures freshness snapshot as non-blocking evidence artifact (`zig-master-freshness.json`) with Codeberg->GitHub mirror fallback semantics.
     - `release-preview` now captures/publishes the same freshness evidence artifact and attaches `zig-master-freshness.json` to release assets.
+    - `release-preview` validate stage now also enforces `scripts/docs-status-check.ps1` to prevent stale status docs in release cuts.
   - python package release lane added:
     - `python/openclaw-zig-rpc-client` package scaffold + tests + CLI.
     - `scripts/python-pack-check.ps1` added to local/CI/release validation gates.

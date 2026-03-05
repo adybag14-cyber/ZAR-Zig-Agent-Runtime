@@ -376,6 +376,7 @@ Validate python package publishability:
 `release-preview` workflow (`.github/workflows/release-preview.yml`):
 
 - upfront validate job (build + test + parity)
+- docs status drift gate (`scripts/docs-status-check.ps1`) in release validate stage
 - zig master freshness snapshot + artifact publication (`zig-master-freshness.json`)
 - freestanding bare-metal smoke validation
 - full preview artifact matrix build and publish
