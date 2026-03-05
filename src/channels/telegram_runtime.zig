@@ -37,6 +37,7 @@ pub const SendResult = struct {
     reply: []u8,
     replySource: []u8,
     providerFailover: bool,
+    providerApiKeyUsed: bool,
     provider: []u8,
     model: []u8,
     loginSessionId: []u8,
@@ -355,6 +356,7 @@ pub const TelegramRuntime = struct {
         auth_status: []const u8,
         bridge_used: bool = false,
         provider_failover: bool = false,
+        provider_api_key_used: bool = false,
         audio_base64: ?[]u8 = null,
         audio_format: []const u8 = "",
         audio_bytes: usize = 0,
@@ -391,6 +393,7 @@ pub const TelegramRuntime = struct {
         var response_provider: []const u8 = provider;
         var response_model: []const u8 = model;
         var provider_failover = false;
+        var provider_api_key_used = false;
         var auth_status: []const u8 = "pending";
         var authorized = false;
         var bound_session = try self.getAuthBinding(allocator, target, provider, "default");
@@ -417,6 +420,7 @@ pub const TelegramRuntime = struct {
                 if (try self.tryGenerateBridgeReply(allocator, provider, model, login_session, session_id, message)) |generated| {
                     bridge_used = true;
                     provider_failover = generated.failover;
+                    provider_api_key_used = generated.used_api_key;
                     response_provider = generated.provider;
                     response_model = generated.model;
                     login_session = generated.login_session_id;
@@ -468,6 +472,7 @@ pub const TelegramRuntime = struct {
             .auth_status = if (authorized) "authorized" else auth_status,
             .bridge_used = bridge_used,
             .provider_failover = provider_failover,
+            .provider_api_key_used = provider_api_key_used,
             .audio_base64 = audio_base64,
             .audio_format = audio_format,
             .audio_bytes = audio_bytes,
@@ -501,6 +506,7 @@ pub const TelegramRuntime = struct {
             .reply = try allocator.dupe(u8, outcome.reply),
             .replySource = try allocator.dupe(u8, reply_source),
             .providerFailover = outcome.provider_failover,
+            .providerApiKeyUsed = outcome.provider_api_key_used,
             .provider = try allocator.dupe(u8, outcome.provider),
             .model = try allocator.dupe(u8, outcome.model),
             .loginSessionId = try allocator.dupe(u8, outcome.login_session_id),
@@ -530,6 +536,7 @@ pub const TelegramRuntime = struct {
         model: []const u8,
         login_session_id: []const u8,
         failover: bool,
+        used_api_key: bool,
     };
 
     fn tryGenerateBridgeReply(
@@ -665,6 +672,7 @@ pub const TelegramRuntime = struct {
                 .model = attempt.model,
                 .login_session_id = attempt_login,
                 .failover = idx > 0,
+                .used_api_key = attempt_api_key.len > 0,
             };
         }
         return null;
@@ -2518,6 +2526,11 @@ test "telegram runtime uses provider api key when no authorized browser session 
     defer chat.deinit(allocator);
     try std.testing.expect(!std.mem.eql(u8, chat.replySource, "auth_required"));
     try std.testing.expect(std.mem.eql(u8, chat.authStatus, "authorized"));
+    if (std.mem.eql(u8, chat.replySource, "bridge_completion")) {
+        try std.testing.expect(chat.providerApiKeyUsed);
+    } else {
+        try std.testing.expect(!chat.providerApiKeyUsed);
+    }
     try std.testing.expect(std.mem.eql(u8, chat.provider, "chatgpt"));
 }
 

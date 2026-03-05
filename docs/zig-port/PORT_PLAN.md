@@ -93,6 +93,9 @@ Full-stack replacement execution reference:
       - regression tests added:
         - `bridge.provider_http.test.direct provider openrouter requires api key and reports openrouter endpoint`
         - `gateway.dispatcher.test.dispatch browser.request supports direct provider path for openrouter with missing key telemetry`
+    - Telegram bridge response telemetry now includes API-key usage flag:
+      - `send` result now emits `providerApiKeyUsed` when bridge completion succeeds using provider API-key credentials.
+      - regression test updated: `channels.telegram_runtime.test.telegram runtime uses provider api key when no authorized browser session exists`.
 
 - Tracking and documentation refresh (2026-03-04):
   - Gateway hardening slice shipped:
