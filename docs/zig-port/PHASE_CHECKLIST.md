@@ -11,6 +11,10 @@ Historical note: milestone validation counts below are preserved as captured at 
     - Telegram `/model` and `/tts` command receipts now expose a Go-compatible nested `metadata` object while preserving Zig's existing top-level command fields:
       - `send` results now include `result.metadata` for `/model status|list|list <provider>|next|reset|<provider>|<model>|<provider>/<model>` and `/tts status|providers|provider|on|off|say|speak|help`.
       - `/tts` now accepts Go-compatible `/tts say <text>` in addition to Zig's existing `/tts speak <text>` path, and a bare `/tts` now routes to `status` instead of `help`.
+      - Telegram TTS reply text now follows the Go surface more closely:
+        - status replies now use the compact Go-style `TTS is <enabled> via <provider> (available=<bool>)` phrasing.
+        - provider replies now emit canonical provider IDs (`native`, `openai-voice`, `kittentts`, `elevenlabs`) instead of Zig-only internal aliases like `edge` or `openai`.
+        - `/tts providers` now renders the Go-style compact provider summary list (`id (enabled)`), and `/tts say` success replies now surface synthesized byte counts instead of Zig-specific clip wording.
       - model metadata now carries `currentProvider`, `currentModel`, `modelRef`, `requestedProvider`, `requestedModel`, `requested`, `aliasUsed`, `matchedCatalogModel`, `customOverride`, `providers`, `availableModels`, and catalog descriptor payloads.
       - TTS metadata now carries Go-style provider IDs (`native`, `openai-voice`, `kittentts`, `elevenlabs`), provider catalog state, enable/disable status, availability/reason telemetry, and `tts.say` audio envelope fields (`audioRef`, `bytes`, `outputFormat`, `realAudio`, `fallback`, `engine`).
       - regression coverage added:

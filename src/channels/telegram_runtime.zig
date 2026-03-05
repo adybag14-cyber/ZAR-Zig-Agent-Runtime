@@ -1427,7 +1427,7 @@ pub const TelegramRuntime = struct {
             return .{
                 .is_command = true,
                 .command_name = "tts",
-                .reply = try allocator.dupe(u8, "TTS command usage:\n/tts status\n/tts providers\n/tts provider <openai|elevenlabs|kittentts|edge>\n/tts on\n/tts off\n/tts say <text>\n/tts speak <text>\n/tts help"),
+                .reply = try allocator.dupe(u8, "TTS command usage:\n`/tts status`\n`/tts providers`\n`/tts provider <name>`\n`/tts on`\n`/tts off`\n`/tts say <text>`"),
                 .provider = model_sel.provider,
                 .model = model_sel.model,
                 .login_session_id = "",
@@ -1441,9 +1441,6 @@ pub const TelegramRuntime = struct {
             const provider_id = ttsProviderMetadataId(self.tts_provider);
             const available = ttsProviderAvailable(allocator, self.tts_provider);
             const reason = ttsProviderReason(allocator, self.tts_provider);
-            const has_openai_key = ttsProviderApiKeyAvailable(allocator, "openai");
-            const has_elevenlabs_key = ttsProviderApiKeyAvailable(allocator, "elevenlabs");
-            const has_kittentts_bin = kittenttsBinaryAvailable(allocator);
             const metadata_json = try stringifyJsonAlloc(allocator, TtsCommandMetadata{
                 .type = "tts.status",
                 .target = trimmed_target,
@@ -1455,17 +1452,7 @@ pub const TelegramRuntime = struct {
             return .{
                 .is_command = true,
                 .command_name = "tts",
-                .reply = try std.fmt.allocPrint(
-                    allocator,
-                    "TTS status: {s}\nProvider: {s}\nFallback: edge\nOpenAI key: {s}\nElevenLabs key: {s}\nKittenTTS binary: {s}",
-                    .{
-                        if (self.tts_enabled) "enabled" else "disabled",
-                        self.tts_provider,
-                        if (has_openai_key) "yes" else "no",
-                        if (has_elevenlabs_key) "yes" else "no",
-                        if (has_kittentts_bin) "yes" else "no",
-                    },
-                ),
+                .reply = try std.fmt.allocPrint(allocator, "TTS is `{any}` via `{s}` (available={any}).", .{ self.tts_enabled, provider_id, available }),
                 .provider = model_sel.provider,
                 .model = model_sel.model,
                 .login_session_id = "",
@@ -1478,9 +1465,8 @@ pub const TelegramRuntime = struct {
         if (std.ascii.eqlIgnoreCase(action, "providers")) {
             const providers_catalog = try buildTtsProviderCatalogAlloc(allocator);
             defer allocator.free(providers_catalog);
-            const has_openai_key = ttsProviderApiKeyAvailable(allocator, "openai");
-            const has_elevenlabs_key = ttsProviderApiKeyAvailable(allocator, "elevenlabs");
-            const has_kittentts_bin = kittenttsBinaryAvailable(allocator);
+            const providers_summary = try formatTtsProviderSummaryAlloc(allocator, providers_catalog);
+            defer allocator.free(providers_summary);
             const metadata_json = try stringifyJsonAlloc(allocator, TtsCommandMetadata{
                 .type = "tts.providers",
                 .target = trimmed_target,
@@ -1489,16 +1475,7 @@ pub const TelegramRuntime = struct {
             return .{
                 .is_command = true,
                 .command_name = "tts",
-                .reply = try std.fmt.allocPrint(
-                    allocator,
-                    "TTS providers (active: {s}):\n- openai ({s})\n- elevenlabs ({s})\n- kittentts ({s})\n- edge (configured)",
-                    .{
-                        self.tts_provider,
-                        if (has_openai_key) "configured" else "not configured",
-                        if (has_elevenlabs_key) "configured" else "not configured",
-                        if (has_kittentts_bin) "configured" else "not configured",
-                    },
-                ),
+                .reply = try std.fmt.allocPrint(allocator, "TTS providers: {s}", .{providers_summary}),
                 .provider = model_sel.provider,
                 .model = model_sel.model,
                 .login_session_id = "",
@@ -1523,7 +1500,7 @@ pub const TelegramRuntime = struct {
             return .{
                 .is_command = true,
                 .command_name = "tts",
-                .reply = try allocator.dupe(u8, "TTS enabled. New replies will include a Telegram audio clip when synthesis succeeds."),
+                .reply = try std.fmt.allocPrint(allocator, "TTS enabled via `{s}`.", .{provider_id}),
                 .provider = model_sel.provider,
                 .model = model_sel.model,
                 .login_session_id = "",
@@ -1548,7 +1525,7 @@ pub const TelegramRuntime = struct {
             return .{
                 .is_command = true,
                 .command_name = "tts",
-                .reply = try allocator.dupe(u8, "TTS disabled."),
+                .reply = try std.fmt.allocPrint(allocator, "TTS disabled (provider `{s}`).", .{provider_id}),
                 .provider = model_sel.provider,
                 .model = model_sel.model,
                 .login_session_id = "",
@@ -1562,16 +1539,20 @@ pub const TelegramRuntime = struct {
             const requested_provider = if (rest.len > 0) std.mem.trim(u8, rest[0], " \t\r\n") else "";
             const provider = normalizeTtsProvider(requested_provider);
             if (!isSupportedTtsProvider(provider)) {
+                const provider_error = if (requested_provider.len == 0) "missing_provider" else "unsupported_provider";
                 const metadata_json = try stringifyJsonAlloc(allocator, TtsCommandMetadata{
                     .type = "tts.provider",
                     .target = trimmed_target,
                     .provider = if (requested_provider.len > 0) ttsProviderMetadataId(requested_provider) else null,
-                    .@"error" = "missing_provider",
+                    .@"error" = provider_error,
                 });
                 return .{
                     .is_command = true,
                     .command_name = "tts",
-                    .reply = try allocator.dupe(u8, "Usage: /tts provider <openai|elevenlabs|kittentts|edge>"),
+                    .reply = if (requested_provider.len == 0)
+                        try allocator.dupe(u8, "Missing provider. Usage: `/tts provider <NAME>`")
+                    else
+                        try std.fmt.allocPrint(allocator, "Failed to set provider: unsupported provider `{s}`.", .{requested_provider}),
                     .provider = model_sel.provider,
                     .model = model_sel.model,
                     .login_session_id = "",
@@ -1596,7 +1577,7 @@ pub const TelegramRuntime = struct {
             return .{
                 .is_command = true,
                 .command_name = "tts",
-                .reply = try std.fmt.allocPrint(allocator, "TTS provider set: {s}", .{self.tts_provider}),
+                .reply = try std.fmt.allocPrint(allocator, "TTS provider set to `{s}` (available={any}).", .{ provider_id, available }),
                 .provider = model_sel.provider,
                 .model = model_sel.model,
                 .login_session_id = "",
@@ -1619,7 +1600,7 @@ pub const TelegramRuntime = struct {
                 return .{
                     .is_command = true,
                     .command_name = "tts",
-                    .reply = try allocator.dupe(u8, "Usage: /tts say <text>"),
+                    .reply = try allocator.dupe(u8, "Missing text. Usage: `/tts say <text>`"),
                     .provider = model_sel.provider,
                     .model = model_sel.model,
                     .login_session_id = "",
@@ -1674,7 +1655,7 @@ pub const TelegramRuntime = struct {
             return .{
                 .is_command = true,
                 .command_name = "tts",
-                .reply = try std.fmt.allocPrint(allocator, "TTS clip sent (providerUsed: {s}, source: {s}).", .{ provider_used, source }),
+                .reply = try std.fmt.allocPrint(allocator, "TTS synthesized `{d}` bytes (real={any}).", .{ base64DecodedLen(audio_base64), real_audio }),
                 .provider = model_sel.provider,
                 .model = model_sel.model,
                 .login_session_id = "",
@@ -1697,7 +1678,7 @@ pub const TelegramRuntime = struct {
         return .{
             .is_command = true,
             .command_name = "tts",
-            .reply = try std.fmt.allocPrint(allocator, "Unknown /tts subcommand `{s}`.\n\nTTS command usage:\n/tts status\n/tts providers\n/tts provider <openai|elevenlabs|kittentts|edge>\n/tts on\n/tts off\n/tts say <text>\n/tts speak <text>\n/tts help", .{action}),
+            .reply = try allocator.dupe(u8, "Unknown `/tts` action. Use `/tts status|providers|on|off|provider|say|help`."),
             .provider = model_sel.provider,
             .model = model_sel.model,
             .login_session_id = "",
@@ -3950,6 +3931,23 @@ fn buildTelegramTtsAudioRefAlloc(allocator: std.mem.Allocator, provider_raw: []c
     return std.fmt.allocPrint(allocator, "memory://tts/{s}-{d}.{s}", .{ provider, time_util.nowMs(), format });
 }
 
+fn formatTtsProviderSummaryAlloc(
+    allocator: std.mem.Allocator,
+    providers: []const TtsProviderMetadataEntry,
+) ![]u8 {
+    var lines: std.ArrayList([]u8) = .empty;
+    defer {
+        for (lines.items) |entry| allocator.free(entry);
+        lines.deinit(allocator);
+    }
+
+    for (providers) |provider| {
+        try lines.append(allocator, try std.fmt.allocPrint(allocator, "{s} ({any})", .{ provider.id, provider.enabled }));
+    }
+
+    return std.mem.join(allocator, ", ", lines.items);
+}
+
 fn ttsProviderApiKeyAvailable(allocator: std.mem.Allocator, provider_raw: []const u8) bool {
     const provider = normalizeTtsProvider(provider_raw);
     if (std.ascii.eqlIgnoreCase(provider, "openai")) {
@@ -4103,11 +4101,11 @@ test "telegram runtime tts command lifecycle" {
     const allocator = std.testing.allocator;
     var status = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-tts-status\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-tts\",\"sessionId\":\"sess-tts\",\"message\":\"/tts status\"}}");
     defer status.deinit(allocator);
-    try std.testing.expect(std.mem.indexOf(u8, status.reply, "TTS status:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, status.reply, "TTS is `") != null);
 
     var provider = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-tts-provider\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-tts\",\"sessionId\":\"sess-tts\",\"message\":\"/tts provider kittentts\"}}");
     defer provider.deinit(allocator);
-    try std.testing.expect(std.mem.indexOf(u8, provider.reply, "TTS provider set: kittentts") != null);
+    try std.testing.expect(std.mem.indexOf(u8, provider.reply, "TTS provider set to `kittentts`") != null);
 
     var off = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-tts-off\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-tts\",\"sessionId\":\"sess-tts\",\"message\":\"/tts off\"}}");
     defer off.deinit(allocator);
@@ -4123,7 +4121,7 @@ test "telegram runtime tts command lifecycle" {
 
     var speak = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-tts-speak\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-tts\",\"sessionId\":\"sess-tts\",\"message\":\"/tts speak hello from zig\"}}");
     defer speak.deinit(allocator);
-    try std.testing.expect(std.mem.indexOf(u8, speak.reply, "TTS clip sent") != null);
+    try std.testing.expect(std.mem.indexOf(u8, speak.reply, "TTS synthesized `") != null);
     try std.testing.expect(std.mem.eql(u8, speak.commandName, "tts"));
     try std.testing.expect(speak.audioAvailable);
     try std.testing.expect(std.mem.eql(u8, speak.audioFormat, "wav"));

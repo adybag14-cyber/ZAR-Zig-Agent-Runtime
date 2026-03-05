@@ -81,6 +81,11 @@ Full-stack replacement execution reference:
     - `/tts` command compatibility improved:
       - bare `/tts` now resolves to `status`
       - `/tts say <text>` is now accepted as a first-class alias for `/tts speak <text>`
+      - TTS reply text now aligns more closely with Go-visible command UX:
+        - compact status phrasing (`TTS is <enabled> via <provider> (available=<bool>)`)
+        - canonical provider IDs in replies (`native`, `openai-voice`, `kittentts`, `elevenlabs`)
+        - compact provider summary lines for `/tts providers`
+        - synthesized-byte success wording for `/tts say`
     - dispatcher regression coverage added:
       - `gateway.dispatcher.test.dispatch send model and tts commands expose go-compatible metadata envelope`
   - Phase 5 Telegram auth envelope parity expanded:
