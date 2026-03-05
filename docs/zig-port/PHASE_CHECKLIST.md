@@ -1,13 +1,15 @@
 # Phase Checklist
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
-Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `165/165`.
+Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `166/166`.
 
 ## Full-Stack Replacement Track (FS0..FS7)
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)
 - [ ] FS1 - Runtime/core consolidation
 - [ ] FS2 - Provider + channel completion
   - Latest delivered slice:
+    - Telegram `/model` command depth now covers provider-aware status, `list`, `list <provider>`, `next`, provider-default selection, slash-scoped catalog IDs, alias resolution (`pro`, `thinking`, provider aliases), and custom override handling while preserving the existing send/poll transport contract.
+    - provider-scoped catalog lookups now recognize provider-trimmed slash-scoped model IDs such as `openrouter/qwen/qwen3-coder:free`, and custom override selections now round-trip safely without transient-buffer corruption in command results.
     - `auth.oauth.providers` now exposes a richer provider catalog aligned with Go parity, including `codex` and `opencode`, browser-session support flags, alias sets, verification URLs, and provider-scoped filtering with invalid-param rejection.
     - `auth.oauth.import` now canonicalizes provider aliases, rejects unknown providers deterministically, supports existing `loginSessionId` completion reuse, and returns `providerId` plus `providerDisplayName` for downstream UX parity.
     - provider API-key detection now covers the broader browser/auth matrix: `qwen`, `zai`, `inception`, `minimax`, `kimi`, and `zhipuai`, alongside existing OpenAI/Claude/Gemini/OpenRouter/OpenCode families.

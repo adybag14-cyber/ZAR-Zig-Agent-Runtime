@@ -56,7 +56,7 @@ Full-stack replacement execution reference:
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `165/165`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `166/166`.
 - Full-stack replacement kickoff (2026-03-05):
   - master tracking issue refreshed with FS0..FS7 execution gates.
   - FS0 execution issue opened (`#2`) and linked from master issue.
@@ -115,6 +115,13 @@ Full-stack replacement execution reference:
       - `bridge.provider_http.test.direct provider gemini requires api key and reports gemini endpoint`
       - `gateway.dispatcher.test.dispatch browser.request direct provider gemini missing key uses api-key auth semantics`
   - Phase 5 provider-catalog parity expanded:
+    - Telegram `/model` command parity depth expanded:
+      - `telegram_runtime` now supports `/model`, `/model status`, `/model list`, `/model list <provider>`, `/model next`, provider-default selection via `/model <provider>`, provider-scoped catalog IDs, alias-driven model selection (`pro`, `thinking`, etc.), and custom override messaging for non-catalog provider models.
+      - provider-scoped model resolution now accepts provider-trimmed slash-scoped model IDs, so commands like `/model openrouter/qwen/qwen3-coder:free` resolve back to the full catalog ID deterministically.
+      - custom override result handling now re-reads the persisted target model after selection, eliminating transient-buffer corruption in command responses for non-catalog models.
+      - regression tests added:
+        - `channels.telegram_runtime.test.telegram runtime model command lifecycle`
+        - `channels.telegram_runtime.test.telegram runtime model command supports custom overrides and provider scoped catalog ids`
     - `auth.oauth.providers` now returns a richer OAuth/browser catalog aligned with Go parity, including `codex` and `opencode`, verification URLs, browser-session support flags, alias lists, provider-filtering, and deterministic invalid-param rejection.
     - `auth.oauth.import` now canonicalizes provider aliases, rejects unknown providers with `-32602`, supports existing `loginSessionId` completion reuse, and returns `providerId` plus `providerDisplayName` for downstream UX parity.
     - browser/provider API-key resolution now covers the extended auth matrix:
