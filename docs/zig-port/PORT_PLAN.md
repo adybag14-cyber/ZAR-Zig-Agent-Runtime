@@ -56,8 +56,14 @@ Full-stack replacement execution reference:
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `182/182`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `183/183`.
 - Full-stack replacement kickoff (2026-03-05):
+  - Phase 5 Telegram auth URL stale-binding parity hardened:
+    - `/auth url` now clears the scoped auth binding when the referenced login session is missing, matching the Go cleanup behavior for expired/missing URL lookups.
+    - missing-session URL lookups now return the Go-style reply:
+      - `Auth session expired or missing. Run \`/auth\` again.`
+    - regression test added:
+      - `channels.telegram_runtime.test.telegram runtime auth url clears stale binding when session is missing`
   - Phase 5 Telegram cancel parity hardened:
     - invalid `/auth cancel|logout` parser branches now preserve structured `auth.cancel` metadata with `error=invalid_cancel_args`.
     - `/auth cancel` with no active scoped session now returns the Go-style `status=none` outcome and `revoked=false` metadata instead of reporting a synthetic cancellation.

@@ -2082,6 +2082,9 @@ pub const TelegramRuntime = struct {
             }
 
             const view = self.login_manager.get(login_session) orelse {
+                if (std.ascii.eqlIgnoreCase(action, "url")) {
+                    try self.clearAuthBinding(allocator, target, provider, account);
+                }
                 const scope = try authScopeAlloc(allocator, provider, account);
                 defer allocator.free(scope);
                 const metadata_json = try stringifyJsonAlloc(allocator, AuthCommandMetadata{
@@ -2096,7 +2099,10 @@ pub const TelegramRuntime = struct {
                 return .{
                     .is_command = true,
                     .command_name = "auth",
-                    .reply = try allocator.dupe(u8, "Auth session not found."),
+                    .reply = if (std.ascii.eqlIgnoreCase(action, "url"))
+                        try allocator.dupe(u8, "Auth session expired or missing. Run `/auth` again.")
+                    else
+                        try allocator.dupe(u8, "Auth session not found."),
                     .provider = provider,
                     .model = defaultModelForProvider(provider),
                     .login_session_id = login_session,
@@ -5040,6 +5046,28 @@ test "telegram runtime auth url alias surfaces session details" {
     try std.testing.expect(std.mem.indexOf(u8, url.reply, "Scope: `qwen/mobile`") != null);
     try std.testing.expect(std.mem.indexOf(u8, url.reply, "Guest mode: supported (`stay_logged_out`)") != null);
     try std.testing.expect(std.mem.indexOf(u8, url.reply, start.loginCode) != null);
+}
+
+test "telegram runtime auth url clears stale binding when session is missing" {
+    var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
+    defer login.deinit();
+    var runtime = TelegramRuntime.init(std.testing.allocator, &login);
+    defer runtime.deinit();
+
+    const allocator = std.testing.allocator;
+    try runtime.setAuthBinding("room-url-missing", "qwen", "mobile", "web-login-stale");
+
+    var url = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-url-missing\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-url-missing\",\"sessionId\":\"sess-url-missing\",\"message\":\"/auth url qwen mobile\"}}");
+    defer url.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, url.authStatus, "missing"));
+    try std.testing.expect(std.mem.indexOf(u8, url.reply, "Auth session expired or missing. Run `/auth` again.") != null);
+    try std.testing.expect(url.metadataJson != null);
+    try std.testing.expect(std.mem.indexOf(u8, url.metadataJson.?, "\"type\":\"auth.url\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, url.metadataJson.?, "\"status\":\"missing\"") != null);
+
+    const cleared = try runtime.getAuthBinding(allocator, "room-url-missing", "qwen", "mobile");
+    defer if (cleared.len > 0) allocator.free(cleared);
+    try std.testing.expect(cleared.len == 0);
 }
 
 test "telegram runtime auth cancel revokes scoped session" {
