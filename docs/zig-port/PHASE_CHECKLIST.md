@@ -1,7 +1,7 @@
 # Phase Checklist
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
-Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `150/150`.
+Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `151/151`.
 
 ## Full-Stack Replacement Track (FS0..FS7)
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)
@@ -192,6 +192,9 @@ Phase 5 enhancement notes:
     - runtime accepts provider API-key resolver injection from dispatcher and uses those credentials in bridge completion attempts.
     - fallback env aliases are also supported for `chatgpt|codex`, `claude`, `gemini`, `openrouter`, and `opencode`.
     - regression test added: `telegram runtime uses provider api key when no authorized browser session exists`.
+  - Dispatcher provider-key resolution now includes extended provider matrix parity:
+    - resolver covers `codex`, `gemini`, `openrouter`, and `opencode` alongside `chatgpt` and `claude`.
+    - regression test added: `resolve browser provider api key supports extended provider matrix`.
   - regression tests added:
     - `bridge.web_login.test.latest authorized session supports provider filter and summary status`
     - `channels.telegram_runtime.test.telegram runtime uses latest authorized session fallback when selected provider is unauthenticated`

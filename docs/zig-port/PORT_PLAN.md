@@ -56,7 +56,7 @@ Full-stack replacement execution reference:
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `150/150`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `151/151`.
 - Full-stack replacement kickoff (2026-03-05):
   - master tracking issue refreshed with FS0..FS7 execution gates.
   - FS0 execution issue opened (`#2`) and linked from master issue.
@@ -84,6 +84,9 @@ Full-stack replacement execution reference:
       - selected and fallback attempts now attach provider API key credentials when available via dispatcher resolver (config/secret/env) or environment aliases.
       - non-command replies can now avoid false `auth_required` when browser login is absent but provider API key credentials are present.
       - regression test added: `channels.telegram_runtime.test.telegram runtime uses provider api key when no authorized browser session exists`.
+    - Dispatcher provider-key resolver matrix expanded for provider/channel parity depth:
+      - resolver now covers `codex` (OpenAI key family), `gemini`, `openrouter`, and `opencode` in addition to existing `chatgpt` and `claude`.
+      - regression test added: `gateway.dispatcher.test.resolve browser provider api key supports extended provider matrix`.
 
 - Tracking and documentation refresh (2026-03-04):
   - Gateway hardening slice shipped:

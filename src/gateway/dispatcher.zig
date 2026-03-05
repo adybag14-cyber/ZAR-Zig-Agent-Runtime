@@ -9614,14 +9614,16 @@ fn resolveBrowserProviderApiKeyAlloc(
     provider_raw: []const u8,
 ) !?[]u8 {
     const normalized = lightpanda.normalizeProvider(provider_raw) catch std.mem.trim(u8, provider_raw, " \t\r\n");
-    if (std.ascii.eqlIgnoreCase(normalized, "chatgpt")) {
+    if (std.ascii.eqlIgnoreCase(normalized, "chatgpt") or std.ascii.eqlIgnoreCase(normalized, "codex")) {
         return resolveFirstSecretCandidateAlloc(
             allocator,
             compat,
             &.{
                 "talk.providers.chatgpt.apiKey",
+                "talk.providers.codex.apiKey",
                 "talk.providers.openai.apiKey",
                 "models.providers.chatgpt.apiKey",
+                "models.providers.codex.apiKey",
                 "models.providers.openai.apiKey",
                 "talk.apiKey",
             },
@@ -9650,6 +9652,59 @@ fn resolveBrowserProviderApiKeyAlloc(
                 "OPENCLAW_GO_ANTHROPIC_API_KEY",
                 "OPENCLAW_RS_ANTHROPIC_API_KEY",
                 "OPENCLAW_ZIG_BROWSER_ANTHROPIC_API_KEY",
+            },
+        );
+    }
+    if (std.ascii.eqlIgnoreCase(normalized, "gemini")) {
+        return resolveFirstSecretCandidateAlloc(
+            allocator,
+            compat,
+            &.{
+                "talk.providers.gemini.apiKey",
+                "models.providers.gemini.apiKey",
+            },
+            &.{
+                "GOOGLE_API_KEY",
+                "GEMINI_API_KEY",
+                "OPENCLAW_ZIG_GEMINI_API_KEY",
+                "OPENCLAW_GO_GEMINI_API_KEY",
+                "OPENCLAW_RS_GEMINI_API_KEY",
+                "OPENCLAW_ZIG_BROWSER_GEMINI_API_KEY",
+            },
+        );
+    }
+    if (std.ascii.eqlIgnoreCase(normalized, "openrouter")) {
+        return resolveFirstSecretCandidateAlloc(
+            allocator,
+            compat,
+            &.{
+                "talk.providers.openrouter.apiKey",
+                "models.providers.openrouter.apiKey",
+                "talk.apiKey",
+            },
+            &.{
+                "OPENROUTER_API_KEY",
+                "OPENROUTER_KEY",
+                "OPENCLAW_ZIG_OPENROUTER_API_KEY",
+                "OPENCLAW_GO_OPENROUTER_API_KEY",
+                "OPENCLAW_RS_OPENROUTER_API_KEY",
+            },
+        );
+    }
+    if (std.ascii.eqlIgnoreCase(normalized, "opencode")) {
+        return resolveFirstSecretCandidateAlloc(
+            allocator,
+            compat,
+            &.{
+                "talk.providers.opencode.apiKey",
+                "models.providers.opencode.apiKey",
+            },
+            &.{
+                "OPENCODE_API_KEY",
+                "OPENCODE_ZEN_API_KEY",
+                "OPENCLAW_ZIG_OPENCODE_API_KEY",
+                "OPENCLAW_GO_OPENCODE_API_KEY",
+                "OPENCLAW_RS_OPENCODE_API_KEY",
             },
         );
     }
@@ -13074,6 +13129,37 @@ test "wildcard path match supports compat secret patterns" {
     try std.testing.expect(wildcardPathMatch("talk.providers.*.apiKey", "talk.providers.openrouter.apiKey"));
     try std.testing.expect(wildcardPathMatch("channels.telegram.accounts.*.botToken", "channels.telegram.accounts.primary.botToken"));
     try std.testing.expect(!wildcardPathMatch("talk.providers.*.apiKey", "talk.providers.openrouter.model"));
+}
+
+test "resolve browser provider api key supports extended provider matrix" {
+    const allocator = std.testing.allocator;
+    var compat = try CompatState.init(allocator);
+    defer compat.deinit();
+
+    try compat.mergeConfigEntry("talk.providers.codex.apiKey", "sk-codex-local");
+    try compat.mergeConfigEntry("talk.providers.gemini.apiKey", "gm-local");
+    try compat.mergeConfigEntry("talk.providers.openrouter.apiKey", "or-local");
+    try compat.mergeConfigEntry("talk.providers.opencode.apiKey", "oc-local");
+
+    const codex = try resolveBrowserProviderApiKeyAlloc(allocator, &compat, "openai-codex-cli");
+    defer if (codex) |value| allocator.free(value);
+    try std.testing.expect(codex != null);
+    try std.testing.expect(std.mem.eql(u8, codex.?, "sk-codex-local"));
+
+    const gemini = try resolveBrowserProviderApiKeyAlloc(allocator, &compat, "gemini");
+    defer if (gemini) |value| allocator.free(value);
+    try std.testing.expect(gemini != null);
+    try std.testing.expect(std.mem.eql(u8, gemini.?, "gm-local"));
+
+    const openrouter = try resolveBrowserProviderApiKeyAlloc(allocator, &compat, "openrouter");
+    defer if (openrouter) |value| allocator.free(value);
+    try std.testing.expect(openrouter != null);
+    try std.testing.expect(std.mem.eql(u8, openrouter.?, "or-local"));
+
+    const opencode = try resolveBrowserProviderApiKeyAlloc(allocator, &compat, "opencode");
+    defer if (opencode) |value| allocator.free(value);
+    try std.testing.expect(opencode != null);
+    try std.testing.expect(std.mem.eql(u8, opencode.?, "oc-local"));
 }
 
 test "parse env truthy value handles falsey and default truthy forms" {
