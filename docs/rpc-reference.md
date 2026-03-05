@@ -21,7 +21,7 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 
 ## Summary
 
-- Total methods: **166**
+- Total methods: **168**
 - Prefix groups: **33**
 
 ## Prefix Overview
@@ -52,7 +52,7 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 | session | 1 |
 | sessions | 12 |
 | skills | 4 |
-| system | 9 |
+| system | 11 |
 | talk | 2 |
 | tools | 1 |
 | tts | 6 |
@@ -271,6 +271,7 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 
 ### system
 
+- system.boot.attest
 - system.boot.policy.get
 - system.boot.policy.set
 - system.boot.status
@@ -278,6 +279,7 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 - system.maintenance.plan
 - system.maintenance.run
 - system.maintenance.status
+- system.rollback.cancel
 - system.rollback.plan
 - system.rollback.run
 

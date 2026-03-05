@@ -3879,6 +3879,110 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         });
     }
 
+    if (std.ascii.eqlIgnoreCase(req.method, "system.boot.attest")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const compat = try getCompatState();
+        const now_ms = time_util.nowMs();
+        const gate = compat.bootGateStatus(now_ms);
+
+        const nonce = try parseBootAttestationNonce(allocator, params);
+        defer allocator.free(nonce);
+
+        const measurement = std.mem.trim(
+            u8,
+            firstParamString(params, "measurement", compat.boot_last_measurement),
+            " \t\r\n",
+        );
+        const signer = std.mem.trim(
+            u8,
+            firstParamString(params, "signer", compat.boot_signer),
+            " \t\r\n",
+        );
+        const config_hash = config.fingerprintHex(currentConfig());
+        const statement = try std.fmt.allocPrint(
+            allocator,
+            "v=1;policy={s};enforced={d};verified={d};verifiedAtMs={d};measurement={s};signer={s};requiredSigner={s};slotActive={s};slotPrevious={s};configHash={s};nonce={s};timestamp={d}",
+            .{
+                compat.boot_policy,
+                @as(u8, if (compat.boot_secure_enabled and compat.boot_enforce_update_gate) 1 else 0),
+                @as(u8, if (compat.boot_last_verified) 1 else 0),
+                compat.boot_last_verified_at_ms,
+                if (measurement.len > 0) measurement else "unverified",
+                if (signer.len > 0) signer else "unknown",
+                compat.boot_required_signer,
+                compat.boot_active_slot,
+                compat.boot_previous_slot,
+                config_hash,
+                nonce,
+                now_ms,
+            },
+        );
+        defer allocator.free(statement);
+
+        const digest_hex = computeSha256Hex(statement);
+        const attest_key = try envLookupAlloc(allocator, "OPENCLAW_ZIG_BOOT_ATTEST_KEY");
+        defer if (attest_key) |value| allocator.free(value);
+
+        var signature_owned: ?[]u8 = null;
+        defer if (signature_owned) |value| allocator.free(value);
+        var signature: []const u8 = "";
+        var signature_algorithm: []const u8 = "unsigned";
+        var key_configured = false;
+        if (attest_key) |raw_key| {
+            const key = std.mem.trim(u8, raw_key, " \t\r\n");
+            if (key.len > 0) {
+                key_configured = true;
+                signature_owned = try computeWasmModuleSignatureHexAlloc(allocator, digest_hex[0..], key);
+                signature = signature_owned.?;
+                signature_algorithm = "hmac-sha256";
+            }
+        }
+
+        const evt = try compat.addEvent("system.boot.attested");
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .attestation = .{
+                .version = 1,
+                .timestampMs = now_ms,
+                .statement = statement,
+                .statementDigest = digest_hex,
+                .signature = signature,
+                .signatureAlgorithm = signature_algorithm,
+                .keyConfigured = key_configured,
+                .nonce = nonce,
+                .configHash = config_hash,
+            },
+            .secureBoot = .{
+                .enabled = compat.boot_secure_enabled,
+                .policy = compat.boot_policy,
+                .enforceUpdateGate = compat.boot_enforce_update_gate,
+                .verificationMaxAgeMs = compat.boot_verification_max_age_ms,
+                .requiredSigner = compat.boot_required_signer,
+                .lastMeasurement = compat.boot_last_measurement,
+                .lastSigner = compat.boot_signer,
+                .lastVerified = compat.boot_last_verified,
+                .lastVerifiedAtMs = compat.boot_last_verified_at_ms,
+                .activeSlot = compat.boot_active_slot,
+                .previousSlot = compat.boot_previous_slot,
+            },
+            .updateGate = .{
+                .enforced = compat.boot_secure_enabled and compat.boot_enforce_update_gate,
+                .allowed = gate.allowed,
+                .reason = gate.reason,
+                .ageMs = gate.age_ms,
+                .stale = gate.stale,
+                .checkedAtMs = now_ms,
+            },
+            .event = .{
+                .id = evt.id,
+                .kind = evt.kind,
+                .createdAtMs = evt.created_at_ms,
+            },
+        });
+    }
+
     if (std.ascii.eqlIgnoreCase(req.method, "system.boot.policy.get")) {
         const compat = try getCompatState();
         const now_ms = time_util.nowMs();
@@ -4090,6 +4194,41 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
                 .phase = "rollback-applied",
                 .progress = 100,
             },
+            .event = .{
+                .id = evt.id,
+                .kind = evt.kind,
+                .createdAtMs = evt.created_at_ms,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "system.rollback.cancel")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        _ = getParamsObjectOrNull(parsed.value);
+        const compat = try getCompatState();
+        const had_pending = compat.rollback_pending;
+
+        const cancelled_target = try allocator.dupe(u8, if (had_pending) compat.rollback_target_slot else "");
+        defer allocator.free(cancelled_target);
+        const cancelled_reason = try allocator.dupe(u8, if (had_pending) compat.rollback_reason else "");
+        defer allocator.free(cancelled_reason);
+
+        if (had_pending) {
+            try compat.clearRollbackPlan();
+        }
+        const evt = try compat.addEvent(if (had_pending) "system.rollback.cancelled" else "system.rollback.cancel.noop");
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .status = if (had_pending) "cancelled" else "idle",
+            .cancelled = had_pending,
+            .pending = compat.rollback_pending,
+            .cancelledTarget = cancelled_target,
+            .cancelledReason = cancelled_reason,
+            .activeSlot = compat.boot_active_slot,
+            .previousSlot = compat.boot_previous_slot,
+            .plannedAtMs = compat.rollback_planned_at_ms,
+            .lastRunAtMs = compat.rollback_last_run_at_ms,
             .event = .{
                 .id = evt.id,
                 .kind = evt.kind,
@@ -7534,10 +7673,12 @@ fn shouldEnforceGuard(method: []const u8) bool {
     if (std.ascii.eqlIgnoreCase(method, "system.maintenance.status")) return false;
     if (std.ascii.eqlIgnoreCase(method, "system.boot.status")) return false;
     if (std.ascii.eqlIgnoreCase(method, "system.boot.verify")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "system.boot.attest")) return false;
     if (std.ascii.eqlIgnoreCase(method, "system.boot.policy.get")) return false;
     if (std.ascii.eqlIgnoreCase(method, "system.boot.policy.set")) return false;
     if (std.ascii.eqlIgnoreCase(method, "system.rollback.plan")) return false;
     if (std.ascii.eqlIgnoreCase(method, "system.rollback.run")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "system.rollback.cancel")) return false;
     if (std.ascii.eqlIgnoreCase(method, "security.audit")) return false;
     if (std.ascii.eqlIgnoreCase(method, "doctor")) return false;
     if (std.ascii.eqlIgnoreCase(method, "doctor.memory.status")) return false;
@@ -8285,6 +8426,28 @@ fn normalizeBootPolicy(raw: []const u8, fallback: []const u8) []const u8 {
         return "disabled";
     }
     return trimmed;
+}
+
+fn parseBootAttestationNonce(
+    allocator: std.mem.Allocator,
+    params: ?std.json.ObjectMap,
+) ![]u8 {
+    const raw = firstParamString(params, "nonce", firstParamString(params, "challenge", ""));
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    if (trimmed.len == 0) {
+        return std.fmt.allocPrint(allocator, "nonce-{d}", .{time_util.nowMs()});
+    }
+    const max_len: usize = 256;
+    if (trimmed.len <= max_len) return allocator.dupe(u8, trimmed);
+    return allocator.dupe(u8, trimmed[0..max_len]);
+}
+
+fn computeSha256Hex(input: []const u8) [64]u8 {
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher.update(input);
+    var digest: [32]u8 = undefined;
+    hasher.final(&digest);
+    return std.fmt.bytesToHex(digest, .lower);
 }
 
 fn normalizeBootSlot(raw: []const u8, fallback: []const u8) []const u8 {
@@ -10665,6 +10828,12 @@ test "dispatch compat talk tts models and control methods return contracts" {
     try std.testing.expect(std.mem.indexOf(u8, boot_verify, "\"verified\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, boot_verify, "\"measurement\":\"abc123\"") != null);
 
+    const boot_attest = try dispatch(allocator, "{\"id\":\"compat-boot-attest\",\"method\":\"system.boot.attest\",\"params\":{\"nonce\":\"compat-nonce-1\"}}");
+    defer allocator.free(boot_attest);
+    try std.testing.expect(std.mem.indexOf(u8, boot_attest, "\"attestation\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, boot_attest, "\"statementDigest\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, boot_attest, "\"nonce\":\"compat-nonce-1\"") != null);
+
     const boot_policy_set = try dispatch(allocator, "{\"id\":\"compat-boot-policy-set\",\"method\":\"system.boot.policy.set\",\"params\":{\"policy\":\"signature-required\",\"enforceUpdateGate\":true,\"verificationMaxAgeMs\":300000,\"requiredSigner\":\"sigstore\"}}");
     defer allocator.free(boot_policy_set);
     try std.testing.expect(std.mem.indexOf(u8, boot_policy_set, "\"enforceUpdateGate\":true") != null);
@@ -10673,6 +10842,17 @@ test "dispatch compat talk tts models and control methods return contracts" {
     defer allocator.free(rollback_plan);
     try std.testing.expect(std.mem.indexOf(u8, rollback_plan, "\"status\":\"planned\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, rollback_plan, "\"pending\":true") != null);
+
+    const rollback_cancel = try dispatch(allocator, "{\"id\":\"compat-rollback-cancel\",\"method\":\"system.rollback.cancel\",\"params\":{}}");
+    defer allocator.free(rollback_cancel);
+    try std.testing.expect(std.mem.indexOf(u8, rollback_cancel, "\"status\":\"cancelled\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rollback_cancel, "\"pending\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rollback_cancel, "\"cancelledTarget\":\"B\"") != null);
+
+    const rollback_plan_again = try dispatch(allocator, "{\"id\":\"compat-rollback-plan-again\",\"method\":\"system.rollback.plan\",\"params\":{\"targetSlot\":\"B\",\"reason\":\"canary-failure-2\"}}");
+    defer allocator.free(rollback_plan_again);
+    try std.testing.expect(std.mem.indexOf(u8, rollback_plan_again, "\"status\":\"planned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rollback_plan_again, "\"pending\":true") != null);
 
     const rollback_dry_run = try dispatch(allocator, "{\"id\":\"compat-rollback-dry-run\",\"method\":\"system.rollback.run\",\"params\":{\"targetSlot\":\"B\",\"dryRun\":true}}");
     defer allocator.free(rollback_dry_run);
@@ -10731,6 +10911,19 @@ test "dispatch update.run enforces secure boot gate when configured" {
     defer allocator.free(allowed_update);
     try std.testing.expect(std.mem.indexOf(u8, allowed_update, "\"ok\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, allowed_update, "\"status\":\"completed\"") != null);
+}
+
+test "dispatch system.rollback.cancel settles to idle when no pending rollback exists" {
+    const allocator = std.testing.allocator;
+
+    const first = try dispatch(allocator, "{\"id\":\"rollback-cancel-1\",\"method\":\"system.rollback.cancel\",\"params\":{}}");
+    defer allocator.free(first);
+
+    const second = try dispatch(allocator, "{\"id\":\"rollback-cancel-2\",\"method\":\"system.rollback.cancel\",\"params\":{}}");
+    defer allocator.free(second);
+    try std.testing.expect(std.mem.indexOf(u8, second, "\"status\":\"idle\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, second, "\"cancelled\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, second, "\"pending\":false") != null);
 }
 
 test "dispatch tts.convert validates output format and requireRealAudio constraints" {
