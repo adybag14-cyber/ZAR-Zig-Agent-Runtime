@@ -301,6 +301,9 @@ Full-stack replacement execution reference:
     - pulse cadence is now controlled by runtime/request typing interval (`runtime.telegram_typing_interval_ms`, `typingIntervalMs|typing_interval_ms`).
     - delivery telemetry now includes `typingPulseCount` and `typingIntervalMs` for transport diagnostics.
     - added regression tests for config-default typing interval and explicit typing interval override.
+  - Added Telegram channel-status config telemetry parity:
+    - `channels.status` now reports Telegram runtime stream/typing config state (`liveStreaming`, `streamChunkChars`, `streamChunkDelayMs`, `typingIndicators`, `typingIntervalMs`).
+    - dispatcher status contract tests now assert these fields to prevent future drift.
   - Dispatcher `channels.status` now includes telegram queue/target/auth telemetry
   - Added auth + reply-loop smokes (`scripts/web-login-smoke-check.ps1`, `scripts/telegram-reply-loop-smoke-check.ps1`)
   - Telegram reply-loop smoke now asserts `/auth link` parity guidance includes active code/session identifiers and completion command hints.

@@ -5719,6 +5719,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
     if (std.ascii.eqlIgnoreCase(req.method, "channels.status")) {
         const summary = (try getLoginManager()).status();
         const telegram_status = (try getTelegramRuntime()).status();
+        const cfg = currentConfig();
         return protocol.encodeResult(allocator, req.id, .{
             .channels = .{
                 .telegram = .{
@@ -5727,6 +5728,11 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
                     .queueDepth = telegram_status.queueDepth,
                     .targetCount = telegram_status.targetCount,
                     .authBindingCount = telegram_status.authBindingCount,
+                    .liveStreaming = cfg.runtime.telegram_live_streaming,
+                    .streamChunkChars = cfg.runtime.telegram_stream_chunk_chars,
+                    .streamChunkDelayMs = cfg.runtime.telegram_stream_chunk_delay_ms,
+                    .typingIndicators = cfg.runtime.telegram_typing_indicators,
+                    .typingIntervalMs = cfg.runtime.telegram_typing_interval_ms,
                 },
             },
             .webLogin = summary,
@@ -11477,6 +11483,9 @@ test "dispatch channels.status returns channel and web login summary" {
     try std.testing.expect(std.mem.indexOf(u8, out, "\"channels\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"webLogin\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"queueDepth\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"liveStreaming\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"typingIndicators\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"typingIntervalMs\"") != null);
 }
 
 test "dispatch send/poll handles auth command and assistant reply loop" {

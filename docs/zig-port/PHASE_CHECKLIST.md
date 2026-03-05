@@ -147,6 +147,9 @@ Phase 5 enhancement notes:
   - typing cadence now honors runtime/request defaults via `runtime.telegram_typing_interval_ms` and `typingIntervalMs|typing_interval_ms`.
   - `deliveryBatch` now includes typing telemetry (`typingPulseCount`, `typingIntervalMs`) for deterministic transport diagnostics.
   - regression tests added for config-default typing interval behavior and explicit typing interval override.
+- Telegram channel-status config telemetry slice:
+  - `channels.status` now includes Telegram runtime streaming/typing config fields (`liveStreaming`, `streamChunkChars`, `streamChunkDelayMs`, `typingIndicators`, `typingIntervalMs`) for parity with Go status surfaces.
+  - regression coverage extended to assert these fields are always present in `channels.status` responses.
 - Completion semantics hardening:
   - Top-level `ok/status/message` for `browser.request` now reflect live completion outcome when completion execution is requested (`status=failed` on bridge failure).
   - Assistant text extraction now supports additional response shapes: `output_text`, `output[].content[]`, and array-based `choices[].message.content`.
