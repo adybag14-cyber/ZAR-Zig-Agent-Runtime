@@ -44,15 +44,20 @@ try {
     $originalBetaRef = $report.baseline.originalBeta.ref
 
     $releaseTag = $null
-    $gh = Get-Command gh -ErrorAction SilentlyContinue
-    if ($gh) {
-        try {
-            $releaseTag = (gh release view --repo adybag14-cyber/openclaw-zig-port --json tagName --jq .tagName 2>$null).Trim()
-        } catch {
-            Write-Warning "Unable to resolve latest GitHub release tag via gh CLI. Release-tag docs checks will be skipped."
+    $releaseHeaders = @{
+        "User-Agent" = "openclaw-zig-docs-status-check"
+        "Accept" = "application/vnd.github+json"
+    }
+    if ($GitHubToken) {
+        $releaseHeaders["Authorization"] = "Bearer $GitHubToken"
+    }
+    try {
+        $release = Invoke-RestMethod -Headers $releaseHeaders -Uri "https://api.github.com/repos/adybag14-cyber/openclaw-zig-port/releases/latest"
+        if ($null -ne $release -and -not [string]::IsNullOrWhiteSpace($release.tag_name)) {
+            $releaseTag = [string]$release.tag_name
         }
-    } else {
-        Write-Warning "gh CLI not found. Release-tag docs checks will be skipped."
+    } catch {
+        Write-Warning "Unable to resolve latest GitHub release tag via GitHub API. Release-tag docs checks will be skipped."
     }
 
     $failures = @()
@@ -96,6 +101,7 @@ try {
     if ($releaseTag) {
         Write-Host ("Release tag token check passed: {0}" -f $releaseTag)
     }
+    $global:LASTEXITCODE = 0
 } finally {
     Pop-Location
 }
