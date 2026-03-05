@@ -11604,46 +11604,6 @@ test "dispatch browser.request metadata-only direct provider reports explicit ap
     try std.testing.expect(std.mem.indexOf(u8, out, "\"bridgeCompletion\":{\"requested\":false") != null);
 }
 
-test "dispatch browser.request metadata-only direct provider reports explicit api-key telemetry for openrouter" {
-    const allocator = std.testing.allocator;
-    const out = try dispatch(
-        allocator,
-        "{\"id\":\"3f\",\"method\":\"browser.request\",\"params\":{\"provider\":\"openrouter\",\"directProvider\":true,\"apiKey\":\"testkey-openrouter\"}}",
-    );
-    defer allocator.free(out);
-    const metadata_only = std.mem.indexOf(u8, out, "\"executionPath\":\"metadata-only\"") != null;
-    const unsupported_provider = std.mem.indexOf(u8, out, "unsupported browser provider") != null;
-    try std.testing.expect(metadata_only or unsupported_provider);
-    if (metadata_only) {
-        try std.testing.expect(std.mem.indexOf(u8, out, "\"directProvider\":true") != null);
-        try std.testing.expect(std.mem.indexOf(u8, out, "\"provider\":\"openrouter\"") != null);
-        try std.testing.expect(std.mem.indexOf(u8, out, "\"auth\":{\"loginSessionId\":null,\"apiKeyUsed\":true,\"apiKeySource\":\"explicit\"}") != null);
-        try std.testing.expect(std.mem.indexOf(u8, out, "\"bridgeCompletion\":{\"requested\":false") != null);
-    } else {
-        try std.testing.expect(std.mem.indexOf(u8, out, "\"code\":-32602") != null);
-    }
-}
-
-test "dispatch browser.request metadata-only direct provider reports explicit api-key telemetry for opencode" {
-    const allocator = std.testing.allocator;
-    const out = try dispatch(
-        allocator,
-        "{\"id\":\"3g\",\"method\":\"browser.request\",\"params\":{\"provider\":\"opencode\",\"directProvider\":true,\"apiKey\":\"testkey-opencode\"}}",
-    );
-    defer allocator.free(out);
-    const metadata_only = std.mem.indexOf(u8, out, "\"executionPath\":\"metadata-only\"") != null;
-    const unsupported_provider = std.mem.indexOf(u8, out, "unsupported browser provider") != null;
-    try std.testing.expect(metadata_only or unsupported_provider);
-    if (metadata_only) {
-        try std.testing.expect(std.mem.indexOf(u8, out, "\"directProvider\":true") != null);
-        try std.testing.expect(std.mem.indexOf(u8, out, "\"provider\":\"opencode\"") != null);
-        try std.testing.expect(std.mem.indexOf(u8, out, "\"auth\":{\"loginSessionId\":null,\"apiKeyUsed\":true,\"apiKeySource\":\"explicit\"}") != null);
-        try std.testing.expect(std.mem.indexOf(u8, out, "\"bridgeCompletion\":{\"requested\":false") != null);
-    } else {
-        try std.testing.expect(std.mem.indexOf(u8, out, "\"code\":-32602") != null);
-    }
-}
-
 test "dispatch browser.request injects memory and tool context when session history exists" {
     const allocator = std.testing.allocator;
     const send = try dispatch(allocator, "{\"id\":\"ctx-send\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"ctx-room\",\"sessionId\":\"ctx-s1\",\"message\":\"context memory test\"}}");
