@@ -246,6 +246,10 @@ while maintaining parity-first validation and release gating.
     - `browser.request` now accepts session-aware context controls (`sessionId|session_id`, `includeToolContext`, `includeMemoryContext`, `memoryContextLimit`).
     - completion path now injects OpenClaw runtime tool-capability context plus session memory recap before bridge/direct-provider execution.
     - response payload now includes `context` telemetry (`toolContextInjected`, `memoryContextInjected`, `memoryEntriesUsed`, `error`) to diagnose remote model claims about missing tools or memory.
+  - Added Telegram authorized-chat bridge-completion hardening:
+    - authorized non-command Telegram messages now attempt live Lightpanda completion (`provider/model/loginSession`) before echo fallback.
+    - fallback remains deterministic for unavailable bridge paths, preserving queue/reply continuity.
+    - `send` response now includes `replySource` telemetry (`bridge_completion`, `runtime_echo`, `auth_required`, `command`) for downstream transport validation and smoke diagnostics.
   - Added Telegram Bot API connector path (receive -> route -> reply) alongside runtime model:
     - new webhook ingress method: `channels.telegram.webhook.receive` (accepts Telegram update payloads, routes through runtime command handling, records memory history, and optionally delivers reply via Bot API).
     - new direct delivery method: `channels.telegram.bot.send` (sends chat text to Telegram Bot API with dry-run + token fallback support).

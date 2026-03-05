@@ -7689,6 +7689,8 @@ fn getTelegramRuntime() !*telegram_runtime.TelegramRuntime {
         const manager = try getLoginManager();
         telegram_runtime_instance = telegram_runtime.TelegramRuntime.init(std.heap.page_allocator, manager);
     }
+    const cfg = currentConfig();
+    try telegram_runtime_instance.?.setBridgeConfig(cfg.lightpanda_endpoint, cfg.lightpanda_timeout_ms);
     return &telegram_runtime_instance.?;
 }
 

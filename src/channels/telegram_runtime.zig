@@ -1,4 +1,5 @@
 const std = @import("std");
+const lightpanda = @import("../bridge/lightpanda.zig");
 const web_login = @import("../bridge/web_login.zig");
 const time_util = @import("../util/time.zig");
 
@@ -23,6 +24,7 @@ pub const SendResult = struct {
     command: bool,
     commandName: []u8,
     reply: []u8,
+    replySource: []u8,
     provider: []u8,
     model: []u8,
     loginSessionId: []u8,
@@ -42,6 +44,7 @@ pub const SendResult = struct {
         allocator.free(self.sessionId);
         allocator.free(self.commandName);
         allocator.free(self.reply);
+        allocator.free(self.replySource);
         allocator.free(self.provider);
         allocator.free(self.model);
         allocator.free(self.loginSessionId);
@@ -123,6 +126,8 @@ pub const TelegramRuntime = struct {
     auth_bindings: std.StringHashMap([]u8),
     tts_enabled: bool,
     tts_provider: []u8,
+    bridge_endpoint: []u8,
+    bridge_timeout_ms: u32,
     next_update_id: u64,
 
     pub fn init(allocator: std.mem.Allocator, login_manager: *web_login.LoginManager) TelegramRuntime {
@@ -135,6 +140,8 @@ pub const TelegramRuntime = struct {
             .auth_bindings = std.StringHashMap([]u8).init(allocator),
             .tts_enabled = true,
             .tts_provider = allocator.dupe(u8, "edge") catch @panic("oom"),
+            .bridge_endpoint = allocator.dupe(u8, "http://127.0.0.1:9222") catch @panic("oom"),
+            .bridge_timeout_ms = 15_000,
             .next_update_id = 1,
         };
     }
@@ -157,6 +164,18 @@ pub const TelegramRuntime = struct {
         }
         self.auth_bindings.deinit();
         self.allocator.free(self.tts_provider);
+        self.allocator.free(self.bridge_endpoint);
+    }
+
+    pub fn setBridgeConfig(self: *TelegramRuntime, endpoint_raw: []const u8, timeout_ms: u32) !void {
+        const trimmed = std.mem.trim(u8, endpoint_raw, " \t\r\n");
+        const resolved_endpoint = if (trimmed.len > 0) trimmed else "http://127.0.0.1:9222";
+        if (!std.mem.eql(u8, self.bridge_endpoint, resolved_endpoint)) {
+            const copied = try self.allocator.dupe(u8, resolved_endpoint);
+            self.allocator.free(self.bridge_endpoint);
+            self.bridge_endpoint = copied;
+        }
+        self.bridge_timeout_ms = std.math.clamp(if (timeout_ms == 0) @as(u32, 15_000) else timeout_ms, @as(u32, 500), @as(u32, 120_000));
     }
 
     pub fn status(self: *TelegramRuntime) StatusView {
@@ -247,6 +266,7 @@ pub const TelegramRuntime = struct {
         login_session_id: []const u8,
         login_code: []const u8,
         auth_status: []const u8,
+        bridge_used: bool = false,
         audio_base64: ?[]u8 = null,
         audio_format: []const u8 = "",
         audio_bytes: usize = 0,
@@ -295,12 +315,20 @@ pub const TelegramRuntime = struct {
             }
         }
 
-        const reply = if (authorized)
-            try std.fmt.allocPrint(allocator, "OpenClaw Zig ({s}/{s}) assistant: {s}", .{ provider, model, message })
-        else if (web_login.supportsGuestBypass(provider))
-            try std.fmt.allocPrint(allocator, "Auth required for `{s}/{s}`. Run `/auth start {s}`, choose 'Stay logged out' in browser popup, then run `/auth guest {s}` (or `/auth complete {s} guest`).", .{ provider, model, provider, provider, provider })
-        else
-            try std.fmt.allocPrint(allocator, "Auth required for `{s}/{s}`. Run `/auth start {s}` then `/auth complete {s} <code_or_url>`.", .{ provider, model, provider, provider });
+        var bridge_used = false;
+        const reply = blk: {
+            if (authorized) {
+                if (try self.tryGenerateBridgeReply(allocator, provider, model, login_session, message)) |generated| {
+                    bridge_used = true;
+                    break :blk generated;
+                }
+                break :blk try std.fmt.allocPrint(allocator, "OpenClaw Zig ({s}/{s}) assistant: {s}", .{ provider, model, message });
+            }
+            if (web_login.supportsGuestBypass(provider)) {
+                break :blk try std.fmt.allocPrint(allocator, "Auth required for `{s}/{s}`. Run `/auth start {s}`, choose 'Stay logged out' in browser popup, then run `/auth guest {s}` (or `/auth complete {s} guest`).", .{ provider, model, provider, provider, provider });
+            }
+            break :blk try std.fmt.allocPrint(allocator, "Auth required for `{s}/{s}`. Run `/auth start {s}` then `/auth complete {s} <code_or_url>`.", .{ provider, model, provider, provider });
+        };
 
         const provider_used = normalizeTtsProvider(self.tts_provider);
         var audio_base64: ?[]u8 = null;
@@ -336,6 +364,7 @@ pub const TelegramRuntime = struct {
             .login_session_id = login_session,
             .login_code = "",
             .auth_status = if (authorized) "authorized" else auth_status,
+            .bridge_used = bridge_used,
             .audio_base64 = audio_base64,
             .audio_format = audio_format,
             .audio_bytes = audio_bytes,
@@ -352,6 +381,12 @@ pub const TelegramRuntime = struct {
         session_id: []const u8,
         outcome: SendOutcome,
     ) !SendResult {
+        const reply_source = if (outcome.is_command)
+            "command"
+        else if (std.ascii.eqlIgnoreCase(outcome.auth_status, "authorized"))
+            if (outcome.bridge_used) "bridge_completion" else "runtime_echo"
+        else
+            "auth_required";
         return .{
             .status = "accepted",
             .accepted = true,
@@ -361,6 +396,7 @@ pub const TelegramRuntime = struct {
             .command = outcome.is_command,
             .commandName = try allocator.dupe(u8, outcome.command_name),
             .reply = try allocator.dupe(u8, outcome.reply),
+            .replySource = try allocator.dupe(u8, reply_source),
             .provider = try allocator.dupe(u8, outcome.provider),
             .model = try allocator.dupe(u8, outcome.model),
             .loginSessionId = try allocator.dupe(u8, outcome.login_session_id),
@@ -374,6 +410,57 @@ pub const TelegramRuntime = struct {
             .audioSource = try allocator.dupe(u8, outcome.audio_source),
             .queueDepth = self.queue.items.len,
         };
+    }
+
+    fn tryGenerateBridgeReply(
+        self: *TelegramRuntime,
+        allocator: std.mem.Allocator,
+        provider: []const u8,
+        model: []const u8,
+        login_session_id: []const u8,
+        message: []const u8,
+    ) !?[]u8 {
+        const trimmed_message = std.mem.trim(u8, message, " \t\r\n");
+        if (trimmed_message.len == 0) return null;
+
+        const completion = lightpanda.complete("lightpanda", provider, model, "") catch return null;
+
+        var completion_messages: std.ArrayList(lightpanda.CompletionMessage) = .empty;
+        defer {
+            for (completion_messages.items) |entry| {
+                allocator.free(entry.role);
+                allocator.free(entry.content);
+            }
+            completion_messages.deinit(allocator);
+        }
+
+        const role_copy = try allocator.dupe(u8, "user");
+        errdefer allocator.free(role_copy);
+        const content_copy = try allocator.dupe(u8, trimmed_message);
+        errdefer allocator.free(content_copy);
+        try completion_messages.append(allocator, .{
+            .role = role_copy,
+            .content = content_copy,
+        });
+
+        var execution = lightpanda.executeCompletion(
+            allocator,
+            self.bridge_endpoint,
+            self.bridge_timeout_ms,
+            completion.provider,
+            completion.model,
+            completion_messages.items,
+            null,
+            null,
+            login_session_id,
+            "",
+        ) catch return null;
+        defer execution.deinit(allocator);
+
+        if (!execution.ok) return null;
+        const assistant_text = std.mem.trim(u8, execution.assistantText, " \t\r\n");
+        if (assistant_text.len == 0) return null;
+        return try allocator.dupe(u8, assistant_text);
     }
 
     fn handleCommand(
@@ -1664,6 +1751,7 @@ test "telegram runtime model command lifecycle" {
     defer set_result.deinit(allocator);
     try std.testing.expect(set_result.command);
     try std.testing.expect(std.mem.eql(u8, set_result.commandName, "model"));
+    try std.testing.expect(std.mem.eql(u8, set_result.replySource, "command"));
     try std.testing.expect(std.mem.eql(u8, set_result.provider, "qwen"));
     try std.testing.expect(std.mem.eql(u8, set_result.model, "qwen3-coder"));
 }
@@ -1744,7 +1832,11 @@ test "telegram runtime auth command and reply poll lifecycle" {
     ;
     var chat_result = try runtime.sendFromFrame(allocator, chat_frame);
     defer chat_result.deinit(allocator);
-    try std.testing.expect(std.mem.indexOf(u8, chat_result.reply, "OpenClaw Zig") != null);
+    const bridge_or_echo = std.mem.eql(u8, chat_result.replySource, "bridge_completion") or std.mem.eql(u8, chat_result.replySource, "runtime_echo");
+    try std.testing.expect(bridge_or_echo);
+    if (std.mem.eql(u8, chat_result.replySource, "runtime_echo")) {
+        try std.testing.expect(std.mem.indexOf(u8, chat_result.reply, "OpenClaw Zig") != null);
+    }
     try std.testing.expect(chat_result.audioAvailable);
     try std.testing.expect(chat_result.audioBase64.len > 0);
     try std.testing.expect(std.mem.eql(u8, chat_result.audioFormat, "wav"));
@@ -1763,6 +1855,19 @@ test "telegram runtime auth command and reply poll lifecycle" {
         }
     }
     try std.testing.expect(saw_audio_clip);
+}
+
+test "telegram runtime unauthorized chat marks auth_required reply source" {
+    var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
+    defer login.deinit();
+    var runtime = TelegramRuntime.init(std.testing.allocator, &login);
+    defer runtime.deinit();
+
+    const allocator = std.testing.allocator;
+    var chat = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-required\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-auth-required\",\"sessionId\":\"sess-auth-required\",\"message\":\"hello before auth\"}}");
+    defer chat.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, chat.replySource, "auth_required"));
+    try std.testing.expect(std.mem.indexOf(u8, chat.reply, "Auth required") != null);
 }
 
 test "telegram runtime poll compacts queue front in one pass and keeps ordering" {
@@ -1847,7 +1952,11 @@ test "telegram runtime qwen guest auth lifecycle" {
     ;
     var chat_result = try runtime.sendFromFrame(allocator, chat_frame);
     defer chat_result.deinit(allocator);
-    try std.testing.expect(std.mem.indexOf(u8, chat_result.reply, "OpenClaw Zig (qwen/") != null);
+    const bridge_or_echo = std.mem.eql(u8, chat_result.replySource, "bridge_completion") or std.mem.eql(u8, chat_result.replySource, "runtime_echo");
+    try std.testing.expect(bridge_or_echo);
+    if (std.mem.eql(u8, chat_result.replySource, "runtime_echo")) {
+        try std.testing.expect(std.mem.indexOf(u8, chat_result.reply, "OpenClaw Zig (qwen/") != null);
+    }
 }
 
 test "telegram runtime auth complete infers provider from callback URL" {

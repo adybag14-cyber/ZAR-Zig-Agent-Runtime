@@ -96,6 +96,10 @@ Phase 5 enhancement notes:
   - `browser.request` now parses `sessionId`, `includeToolContext`, `includeMemoryContext`, and `memoryContextLimit` (aliases supported).
   - completion payload path now injects runtime tool capability context and per-session memory recap into completion messages before bridge/direct-provider execution.
   - browser responses now expose explicit context telemetry (`context.toolContextInjected`, `context.memoryContextInjected`, `context.memoryEntriesUsed`, `context.error`) to debug "no tools/no memory" regressions from remote model replies.
+- Telegram authorized reply bridge hardening:
+  - Telegram runtime now attempts real Lightpanda completion for authorized non-command chat messages using active provider/model/login-session context.
+  - fallback behavior is preserved (`runtime_echo`) when bridge completion is unavailable or returns empty output.
+  - `send` response payload now includes `replySource` telemetry (`bridge_completion`, `runtime_echo`, `auth_required`, `command`) for transport-safe reply provenance checks.
 
 ## Phase 6 - Memory + Edge
 - [x] Port memory persistence primitives
