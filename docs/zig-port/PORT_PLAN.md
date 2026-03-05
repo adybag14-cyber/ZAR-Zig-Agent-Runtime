@@ -242,6 +242,10 @@ while maintaining parity-first validation and release gating.
   - Added completion semantics hardening:
     - Top-level `ok/status/message` now reflect bridge execution success/failure for completion requests (failure surfaces as `status=failed` with bridge error context).
     - Assistant text extraction expanded to additional response shapes (`output_text`, `output[].content[]`, and array-form message content) to reduce empty-response false negatives.
+  - Added browser completion context-injection hardening:
+    - `browser.request` now accepts session-aware context controls (`sessionId|session_id`, `includeToolContext`, `includeMemoryContext`, `memoryContextLimit`).
+    - completion path now injects OpenClaw runtime tool-capability context plus session memory recap before bridge/direct-provider execution.
+    - response payload now includes `context` telemetry (`toolContextInjected`, `memoryContextInjected`, `memoryEntriesUsed`, `error`) to diagnose remote model claims about missing tools or memory.
   - Added Telegram Bot API connector path (receive -> route -> reply) alongside runtime model:
     - new webhook ingress method: `channels.telegram.webhook.receive` (accepts Telegram update payloads, routes through runtime command handling, records memory history, and optionally delivers reply via Bot API).
     - new direct delivery method: `channels.telegram.bot.send` (sends chat text to Telegram Bot API with dry-run + token fallback support).

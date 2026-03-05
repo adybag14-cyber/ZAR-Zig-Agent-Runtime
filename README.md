@@ -11,7 +11,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - Original OpenClaw beta baseline (`v2026.3.2-beta.1`): `94/94` covered
   - Union baseline: `135/135` covered (`MISSING_IN_ZIG=0`)
   - Gateway events: stable `19/19`, beta `19/19`, union `19/19` (`UNION_EVENTS_MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> `124/124` passing
+- Latest local validation: `zig build test --summary all` -> `126/126` passing
 - Latest published edge release tag: `v0.2.0-zig-edge.24`
 - Dual runtime profiles available:
   - OS-hosted profile: `openclaw-zig` (`--serve`, doctor, security audit, full RPC stack)
@@ -43,6 +43,10 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - registry lookup hot-path optimization
   - dispatcher bounded-history one-pass compaction
   - browser completion execution telemetry hardening (`bridgeCompletion` failure/success semantics)
+  - browser context-injection hardening for completion payloads:
+    - new request controls: `sessionId|session_id`, `includeToolContext`, `includeMemoryContext`, `memoryContextLimit`
+    - completion path now injects runtime tool capability context + session memory recap
+    - response telemetry now exposes injection status (`context.toolContextInjected`, `context.memoryContextInjected`, `context.memoryEntriesUsed`, `context.error`)
   - runtime policy hardening:
     - configurable filesystem sandbox for `file.read` / `file.write` (`OPENCLAW_ZIG_RUNTIME_FILE_SANDBOX_ENABLED`, `OPENCLAW_ZIG_RUNTIME_FILE_ALLOWED_ROOTS`)
     - configurable `exec.run` gate + allowlist (`OPENCLAW_ZIG_RUNTIME_EXEC_ENABLED`, `OPENCLAW_ZIG_RUNTIME_EXEC_ALLOWLIST`)

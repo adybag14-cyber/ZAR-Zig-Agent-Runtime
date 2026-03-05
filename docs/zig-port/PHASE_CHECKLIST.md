@@ -92,6 +92,10 @@ Phase 5 enhancement notes:
 - Completion semantics hardening:
   - Top-level `ok/status/message` for `browser.request` now reflect live completion outcome when completion execution is requested (`status=failed` on bridge failure).
   - Assistant text extraction now supports additional response shapes: `output_text`, `output[].content[]`, and array-based `choices[].message.content`.
+- Browser bridge context-injection hardening:
+  - `browser.request` now parses `sessionId`, `includeToolContext`, `includeMemoryContext`, and `memoryContextLimit` (aliases supported).
+  - completion payload path now injects runtime tool capability context and per-session memory recap into completion messages before bridge/direct-provider execution.
+  - browser responses now expose explicit context telemetry (`context.toolContextInjected`, `context.memoryContextInjected`, `context.memoryEntriesUsed`, `context.error`) to debug "no tools/no memory" regressions from remote model replies.
 
 ## Phase 6 - Memory + Edge
 - [x] Port memory persistence primitives

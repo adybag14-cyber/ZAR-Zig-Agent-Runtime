@@ -7403,7 +7403,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
 
     if (std.ascii.eqlIgnoreCase(req.method, "browser.request") or std.ascii.eqlIgnoreCase(req.method, "browser.open")) {
         const cfg = currentConfig();
-        const browser_params = try parseBrowserRequestFromFrame(
+        var browser_params = try parseBrowserRequestFromFrame(
             allocator,
             frame_json,
             cfg.lightpanda_endpoint,
@@ -7420,6 +7420,10 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
                 .code = -32602,
                 .message = message,
             });
+        };
+
+        const context_status = applyBrowserCompletionContext(allocator, &browser_params) catch |err| BrowserCompletionContext{
+            .error_text = @errorName(err),
         };
 
         const direct_provider_requested = browser_params.direct_provider and browser_params.has_completion_payload;
@@ -7514,6 +7518,16 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
                     .latencyMs = bridge_completion.latencyMs,
                     .@"error" = bridge_completion.errorText,
                 },
+                .context = .{
+                    .sessionId = if (browser_params.session_id.len == 0) null else browser_params.session_id,
+                    .includeToolContext = browser_params.include_tool_context,
+                    .includeMemoryContext = browser_params.include_memory_context,
+                    .memoryContextLimit = browser_params.memory_context_limit,
+                    .toolContextInjected = context_status.tool_context_injected,
+                    .memoryContextInjected = context_status.memory_context_injected,
+                    .memoryEntriesUsed = context_status.memory_entries_used,
+                    .@"error" = context_status.error_text,
+                },
             });
         }
 
@@ -7551,6 +7565,16 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
                 .assistantText = "",
                 .latencyMs = 0,
                 .@"error" = "",
+            },
+            .context = .{
+                .sessionId = if (browser_params.session_id.len == 0) null else browser_params.session_id,
+                .includeToolContext = browser_params.include_tool_context,
+                .includeMemoryContext = browser_params.include_memory_context,
+                .memoryContextLimit = browser_params.memory_context_limit,
+                .toolContextInjected = context_status.tool_context_injected,
+                .memoryContextInjected = context_status.memory_context_injected,
+                .memoryEntriesUsed = context_status.memory_entries_used,
+                .@"error" = context_status.error_text,
             },
         });
     }
@@ -7593,10 +7617,14 @@ const BrowserRequestParams = struct {
     provider: []u8,
     model: []u8,
     auth_mode: []u8,
+    session_id: []u8,
     endpoint: []u8,
     request_timeout_ms: u32,
     direct_provider: bool,
     completion_stream: bool,
+    include_tool_context: bool,
+    include_memory_context: bool,
+    memory_context_limit: usize,
     completion_messages: std.ArrayList(lightpanda.CompletionMessage),
     temperature: ?f64,
     max_tokens: ?u32,
@@ -7609,6 +7637,7 @@ const BrowserRequestParams = struct {
         allocator.free(self.provider);
         allocator.free(self.model);
         allocator.free(self.auth_mode);
+        allocator.free(self.session_id);
         allocator.free(self.endpoint);
         allocator.free(self.login_session_id);
         allocator.free(self.api_key);
@@ -7619,6 +7648,13 @@ const BrowserRequestParams = struct {
         var messages = self.completion_messages;
         messages.deinit(allocator);
     }
+};
+
+const BrowserCompletionContext = struct {
+    tool_context_injected: bool = false,
+    memory_context_injected: bool = false,
+    memory_entries_used: usize = 0,
+    error_text: []const u8 = "",
 };
 
 fn currentConfig() config.Config {
@@ -10108,10 +10144,14 @@ fn parseBrowserRequestFromFrame(
     var provider: []const u8 = "chatgpt";
     var model: []const u8 = "";
     var auth_mode: []const u8 = "";
+    var session_id: []const u8 = "";
     var endpoint: []const u8 = default_endpoint;
     var request_timeout_ms: u32 = default_timeout_ms;
     var direct_provider = false;
     var completion_stream = false;
+    var include_tool_context = true;
+    var include_memory_context = true;
+    var memory_context_limit: usize = 6;
     var completion_messages: std.ArrayList(lightpanda.CompletionMessage) = .empty;
     errdefer {
         for (completion_messages.items) |entry| {
@@ -10174,6 +10214,18 @@ fn parseBrowserRequestFromFrame(
                 }
                 if (params_value.object.get("targetModel")) |value| {
                     if (value == .string and std.mem.trim(u8, model, " \t\r\n").len == 0) model = value.string;
+                }
+                if (params_value.object.get("sessionId")) |value| {
+                    if (value == .string) {
+                        const trimmed = std.mem.trim(u8, value.string, " \t\r\n");
+                        if (trimmed.len > 0) session_id = trimmed;
+                    }
+                }
+                if (params_value.object.get("session_id")) |value| {
+                    if (value == .string and session_id.len == 0) {
+                        const trimmed = std.mem.trim(u8, value.string, " \t\r\n");
+                        if (trimmed.len > 0) session_id = trimmed;
+                    }
                 }
                 if (params_value.object.get("messages")) |value| {
                     if (value == .array) {
@@ -10272,6 +10324,28 @@ fn parseBrowserRequestFromFrame(
                 if (params_value.object.get("stream")) |value| {
                     if (parseOptionalBool(value)) |enabled| completion_stream = enabled;
                 }
+                if (params_value.object.get("includeToolContext")) |value| {
+                    if (parseOptionalBool(value)) |enabled| include_tool_context = enabled;
+                }
+                if (params_value.object.get("include_tool_context")) |value| {
+                    if (parseOptionalBool(value)) |enabled| include_tool_context = enabled;
+                }
+                if (params_value.object.get("includeMemoryContext")) |value| {
+                    if (parseOptionalBool(value)) |enabled| include_memory_context = enabled;
+                }
+                if (params_value.object.get("include_memory_context")) |value| {
+                    if (parseOptionalBool(value)) |enabled| include_memory_context = enabled;
+                }
+                if (params_value.object.get("memoryContextLimit")) |value| {
+                    if (parseOptionalPositiveU32(value)) |parsed_limit| {
+                        memory_context_limit = @as(usize, @intCast(std.math.clamp(parsed_limit, @as(u32, 1), @as(u32, 32))));
+                    }
+                }
+                if (params_value.object.get("memory_context_limit")) |value| {
+                    if (parseOptionalPositiveU32(value)) |parsed_limit| {
+                        memory_context_limit = @as(usize, @intCast(std.math.clamp(parsed_limit, @as(u32, 1), @as(u32, 32))));
+                    }
+                }
             }
         }
     }
@@ -10292,10 +10366,14 @@ fn parseBrowserRequestFromFrame(
         .provider = try allocator.dupe(u8, std.mem.trim(u8, provider, " \t\r\n")),
         .model = try allocator.dupe(u8, std.mem.trim(u8, model, " \t\r\n")),
         .auth_mode = try allocator.dupe(u8, std.mem.trim(u8, auth_mode, " \t\r\n")),
+        .session_id = try allocator.dupe(u8, session_id),
         .endpoint = try allocator.dupe(u8, std.mem.trim(u8, endpoint, " \t\r\n")),
         .request_timeout_ms = request_timeout_ms,
         .direct_provider = direct_provider,
         .completion_stream = completion_stream,
+        .include_tool_context = include_tool_context,
+        .include_memory_context = include_memory_context,
+        .memory_context_limit = memory_context_limit,
         .completion_messages = completion_messages,
         .temperature = temperature,
         .max_tokens = max_tokens,
@@ -10303,6 +10381,84 @@ fn parseBrowserRequestFromFrame(
         .api_key = try allocator.dupe(u8, api_key),
         .has_completion_payload = completion_messages.items.len > 0,
     };
+}
+
+fn applyBrowserCompletionContext(
+    allocator: std.mem.Allocator,
+    browser_params: *BrowserRequestParams,
+) !BrowserCompletionContext {
+    var context = BrowserCompletionContext{};
+    if (!browser_params.has_completion_payload or browser_params.completion_messages.items.len == 0) return context;
+
+    if (browser_params.include_memory_context and browser_params.session_id.len > 0) {
+        const memory = try getMemoryStore();
+        var history = try memory.historyBySession(allocator, browser_params.session_id, browser_params.memory_context_limit);
+        defer history.deinit(allocator);
+        if (history.count > 0) {
+            const memory_context = try buildBrowserMemoryContextMessage(allocator, browser_params.session_id, history.items);
+            defer allocator.free(memory_context);
+            try appendSystemCompletionMessage(allocator, &browser_params.completion_messages, memory_context);
+            context.memory_context_injected = true;
+            context.memory_entries_used = history.count;
+        }
+    }
+
+    if (browser_params.include_tool_context) {
+        const tool_context = try buildBrowserToolContextMessage(allocator);
+        defer allocator.free(tool_context);
+        try appendSystemCompletionMessage(allocator, &browser_params.completion_messages, tool_context);
+        context.tool_context_injected = true;
+    }
+
+    return context;
+}
+
+fn appendSystemCompletionMessage(
+    allocator: std.mem.Allocator,
+    completion_messages: *std.ArrayList(lightpanda.CompletionMessage),
+    content: []const u8,
+) !void {
+    const role_copy = try allocator.dupe(u8, "system");
+    errdefer allocator.free(role_copy);
+    const content_copy = try allocator.dupe(u8, content);
+    errdefer allocator.free(content_copy);
+    try completion_messages.append(allocator, .{
+        .role = role_copy,
+        .content = content_copy,
+    });
+}
+
+fn buildBrowserToolContextMessage(allocator: std.mem.Allocator) ![]u8 {
+    return allocator.dupe(
+        u8,
+        "OpenClaw Zig runtime tool capabilities are available via RPC methods: tools.catalog, exec.run, file.read, file.write, send, poll, sessions.history, chat.history, doctor.memory.status, tts.convert, web.login.start, web.login.wait, web.login.complete, web.login.status. Do not claim there are no tools or no memory when these RPC surfaces are available.",
+    );
+}
+
+fn buildBrowserMemoryContextMessage(
+    allocator: std.mem.Allocator,
+    session_id: []const u8,
+    history_items: []memory_store.MessageView,
+) ![]u8 {
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    const header = try std.fmt.allocPrint(allocator, "OpenClaw memory recap for session \"{s}\" (latest {d} entries):\n", .{ session_id, history_items.len });
+    defer allocator.free(header);
+    try out.appendSlice(allocator, header);
+
+    for (history_items) |entry| {
+        const text = std.mem.trim(u8, entry.text, " \t\r\n");
+        if (text.len == 0) continue;
+        const role = if (entry.role.len > 0) entry.role else "unknown";
+        const snippet_len = @min(text.len, @as(usize, 220));
+        const line = try std.fmt.allocPrint(allocator, "- [{s}] {s}", .{ role, text[0..snippet_len] });
+        defer allocator.free(line);
+        try out.appendSlice(allocator, line);
+        if (text.len > snippet_len) try out.appendSlice(allocator, "...");
+        try out.append(allocator, '\n');
+    }
+    return out.toOwnedSlice(allocator);
 }
 
 fn parseOptionalFloat(value: std.json.Value) ?f64 {
@@ -10450,6 +10606,9 @@ test "dispatch browser.request executes completion payload path with failure tel
     try std.testing.expect(std.mem.indexOf(u8, out, "\"bridgeCompletion\":{\"requested\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"requestUrl\":\"http://127.0.0.1:1/v1/chat/completions\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"assistantText\":\"\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"toolContextInjected\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"memoryContextInjected\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"memoryEntriesUsed\":0") != null);
 }
 
 test "dispatch browser.request supports direct provider path for chatgpt with missing key telemetry" {
@@ -10465,6 +10624,35 @@ test "dispatch browser.request supports direct provider path for chatgpt with mi
     try std.testing.expect(std.mem.indexOf(u8, out, "\"stream\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"requestUrl\":\"https://api.openai.com/v1/chat/completions\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "missing API key for direct provider request") != null);
+}
+
+test "dispatch browser.request injects memory and tool context when session history exists" {
+    const allocator = std.testing.allocator;
+    const send = try dispatch(allocator, "{\"id\":\"ctx-send\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"ctx-room\",\"sessionId\":\"ctx-s1\",\"message\":\"context memory test\"}}");
+    defer allocator.free(send);
+
+    const out = try dispatch(
+        allocator,
+        "{\"id\":\"ctx-browser\",\"method\":\"browser.request\",\"params\":{\"provider\":\"chatgpt\",\"endpoint\":\"http://127.0.0.1:1\",\"sessionId\":\"ctx-s1\",\"prompt\":\"summarize this context\"}}",
+    );
+    defer allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"sessionId\":\"ctx-s1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"toolContextInjected\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"memoryContextInjected\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"memoryEntriesUsed\":2") != null);
+}
+
+test "dispatch browser.request can disable tool and memory context injection" {
+    const allocator = std.testing.allocator;
+    const out = try dispatch(
+        allocator,
+        "{\"id\":\"ctx-disable\",\"method\":\"browser.request\",\"params\":{\"provider\":\"chatgpt\",\"endpoint\":\"http://127.0.0.1:1\",\"sessionId\":\"ctx-off\",\"prompt\":\"plain\",\"includeToolContext\":false,\"includeMemoryContext\":false}}",
+    );
+    defer allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"includeToolContext\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"includeMemoryContext\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"toolContextInjected\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"memoryContextInjected\":false") != null);
 }
 
 test "dispatch config.get and tools.catalog expose runtime + wasm contracts" {
