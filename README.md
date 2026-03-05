@@ -325,6 +325,7 @@ Run parity gate and emit evidence artifacts:
 ```powershell
 ./scripts/check-go-method-parity.ps1
 ./scripts/check-go-method-parity.ps1 -OutputJsonPath .\release\parity-go-zig.json -OutputMarkdownPath .\release\parity-go-zig.md
+./scripts/docs-status-check.ps1 -ParityJsonPath .\release\parity-go-zig.json
 ```
 
 Run smoke checks:
@@ -357,6 +358,7 @@ Validate python package publishability:
 
 - Zig master build/test gates
 - tri-baseline method/event parity enforcement (Go latest + original stable latest + original beta latest)
+- docs status drift gate (`scripts/docs-status-check.ps1`) against parity snapshot + latest release tag
 - freestanding bare-metal artifact smoke gate
 - runtime smoke gate
 - parity evidence artifact publication (`parity-go-zig.json`, `parity-go-zig.md`)
@@ -364,6 +366,7 @@ Validate python package publishability:
 `docs-pages` workflow (`.github/workflows/docs-pages.yml`):
 
 - regenerates and verifies `docs/rpc-reference.md` from `src/gateway/registry.zig`
+- runs parity snapshot + docs status drift gate before publish
 - builds MkDocs docs (`mkdocs build --strict`)
 - publishes docs to GitHub Pages from `site/`
 - triggers on `docs/**`, `mkdocs.yml`, and docs workflow changes

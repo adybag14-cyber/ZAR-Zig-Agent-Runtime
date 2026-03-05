@@ -78,6 +78,10 @@ jobs:
         shell: pwsh
         run: ./scripts/check-go-method-parity.ps1 -GitHubToken "${{ github.token }}" -OutputJsonPath parity-go-zig.json -OutputMarkdownPath parity-go-zig.md
 
+      - name: Docs status drift gate
+        shell: pwsh
+        run: ./scripts/docs-status-check.ps1 -ParityJsonPath parity-go-zig.json -GitHubToken "${{ github.token }}"
+
       - name: Upload parity report
         uses: actions/upload-artifact@v4
         with:

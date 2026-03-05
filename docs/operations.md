@@ -13,6 +13,7 @@ Recommended sequence:
 ```powershell
 ./scripts/zig-syntax-check.ps1
 ./scripts/check-go-method-parity.ps1
+./scripts/docs-status-check.ps1 -RefreshParity
 ./scripts/docker-smoke-check.ps1
 ./scripts/runtime-smoke-check.ps1
 ./scripts/baremetal-smoke-check.ps1
@@ -31,6 +32,7 @@ Recommended sequence:
 
 - Zig master build/test gates
 - parity gate enforcement (Go latest + original stable latest + original beta latest, including gateway event parity)
+- docs status drift gate (`scripts/docs-status-check.ps1`)
 - runtime + gateway-auth + websocket smoke checks
 - parity evidence artifacts
   - websocket smoke validates `/ws` and root compatibility route `/`, including binary-frame RPC dispatch

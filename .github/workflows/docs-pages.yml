@@ -51,6 +51,14 @@ jobs:
       - name: Verify RPC reference is up to date
         run: git diff --exit-code -- docs/rpc-reference.md
 
+      - name: Method parity gate snapshot (for docs status checks)
+        shell: pwsh
+        run: ./scripts/check-go-method-parity.ps1 -GitHubToken "${{ github.token }}" -OutputJsonPath parity-go-zig.json
+
+      - name: Docs status drift gate
+        shell: pwsh
+        run: ./scripts/docs-status-check.ps1 -ParityJsonPath parity-go-zig.json -GitHubToken "${{ github.token }}"
+
       - name: Build docs
         run: mkdocs build --strict
 
