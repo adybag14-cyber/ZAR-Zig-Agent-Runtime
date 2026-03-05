@@ -33,6 +33,9 @@ var secret_store_instance: ?secret_store.SecretStore = null;
 var edge_state_instance: ?EdgeState = null;
 var compat_state_instance: ?CompatState = null;
 
+const telegram_stream_default_chunk_chars: usize = 700;
+const telegram_stream_default_chunk_delay_ms: u32 = 250;
+
 const WasmMarketplaceModule = struct {
     id: []const u8,
     version: []const u8,
@@ -5818,6 +5821,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             break :blk out;
         };
         const typing_action = firstParamString(params, "typingAction", "typing");
+        const chunking = parseTelegramChunkingOptions(params);
 
         const compat = try getCompatState();
         const maybe_token = try resolveTelegramBotTokenForParamsAlloc(allocator, compat, params);
@@ -5845,32 +5849,25 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             };
         defer typing.deinit(allocator);
 
-        var delivery = if (deliver)
-            try telegram_bot_api.sendMessage(
-                allocator,
-                maybe_token orelse "",
-                incoming.chat_id,
-                send_result.reply,
-                incoming.message_id,
-                timeout_ms,
-            )
+        var delivery_batch = try deliverTelegramMessageBatch(
+            allocator,
+            maybe_token orelse "",
+            incoming.chat_id,
+            send_result.reply,
+            incoming.message_id,
+            timeout_ms,
+            deliver,
+            chunking,
+        );
+        defer delivery_batch.deinit(allocator);
+        const delivery_ok = if (deliver)
+            (delivery_batch.delivery.ok and delivery_batch.deliveredChunkCount == delivery_batch.chunkCount)
         else
-            telegram_bot_api.BotDeliveryResult{
-                .attempted = false,
-                .ok = true,
-                .statusCode = 0,
-                .requestUrl = try allocator.dupe(u8, ""),
-                .errorText = try allocator.dupe(u8, "delivery skipped"),
-                .messageId = null,
-                .responseBytes = 0,
-                .latencyMs = 0,
-                .requestTimeoutMs = timeout_ms,
-            };
-        defer delivery.deinit(allocator);
+            true;
 
         return protocol.encodeResult(allocator, req.id, .{
             .handled = true,
-            .status = if (delivery.ok) "processed" else "processed_with_delivery_error",
+            .status = if (delivery_ok) "processed" else "processed_with_delivery_error",
             .updateId = incoming.update_id,
             .source = incoming.source,
             .chatId = incoming.chat_id,
@@ -5878,7 +5875,19 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             .text = incoming.text,
             .send = send_result,
             .typing = typing,
-            .delivery = delivery,
+            .delivery = delivery_batch.delivery,
+            .deliveryBatch = .{
+                .stream = chunking.stream,
+                .chunked = delivery_batch.chunked,
+                .chunkCount = delivery_batch.chunkCount,
+                .deliveredChunkCount = delivery_batch.deliveredChunkCount,
+                .failedChunkIndex = delivery_batch.failedChunkIndex,
+                .messageIds = delivery_batch.messageIds,
+                .firstMessageId = if (delivery_batch.messageIds.len > 0) delivery_batch.messageIds[0] else null,
+                .lastMessageId = if (delivery_batch.messageIds.len > 0) delivery_batch.messageIds[delivery_batch.messageIds.len - 1] else null,
+                .maxChunkRunes = delivery_batch.maxChunkRunes,
+                .chunkDelayMs = delivery_batch.chunkDelayMs,
+            },
         });
     }
 
@@ -5924,6 +5933,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             break :blk out;
         };
         const typing_action = firstParamString(params, "typingAction", firstParamString(params, "typing", ""));
+        const chunking = parseTelegramChunkingOptions(params);
 
         const compat = try getCompatState();
         const maybe_token = try resolveTelegramBotTokenForParamsAlloc(allocator, compat, params);
@@ -5951,36 +5961,41 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             };
         defer typing.deinit(allocator);
 
-        var delivery = if (deliver)
-            try telegram_bot_api.sendMessage(
-                allocator,
-                maybe_token orelse "",
-                chat_id,
-                message,
-                null,
-                timeout_ms,
-            )
+        var delivery_batch = try deliverTelegramMessageBatch(
+            allocator,
+            maybe_token orelse "",
+            chat_id,
+            message,
+            null,
+            timeout_ms,
+            deliver,
+            chunking,
+        );
+        defer delivery_batch.deinit(allocator);
+        const delivery_ok = if (deliver)
+            (delivery_batch.delivery.ok and delivery_batch.deliveredChunkCount == delivery_batch.chunkCount)
         else
-            telegram_bot_api.BotDeliveryResult{
-                .attempted = false,
-                .ok = true,
-                .statusCode = 0,
-                .requestUrl = try allocator.dupe(u8, ""),
-                .errorText = try allocator.dupe(u8, "delivery skipped"),
-                .messageId = null,
-                .responseBytes = 0,
-                .latencyMs = 0,
-                .requestTimeoutMs = timeout_ms,
-            };
-        defer delivery.deinit(allocator);
+            true;
 
         return protocol.encodeResult(allocator, req.id, .{
             .channel = "telegram",
             .chatId = chat_id,
             .message = message,
             .typing = typing,
-            .delivery = delivery,
-            .status = if (delivery.ok) "ok" else "delivery_failed",
+            .delivery = delivery_batch.delivery,
+            .deliveryBatch = .{
+                .stream = chunking.stream,
+                .chunked = delivery_batch.chunked,
+                .chunkCount = delivery_batch.chunkCount,
+                .deliveredChunkCount = delivery_batch.deliveredChunkCount,
+                .failedChunkIndex = delivery_batch.failedChunkIndex,
+                .messageIds = delivery_batch.messageIds,
+                .firstMessageId = if (delivery_batch.messageIds.len > 0) delivery_batch.messageIds[0] else null,
+                .lastMessageId = if (delivery_batch.messageIds.len > 0) delivery_batch.messageIds[delivery_batch.messageIds.len - 1] else null,
+                .maxChunkRunes = delivery_batch.maxChunkRunes,
+                .chunkDelayMs = delivery_batch.chunkDelayMs,
+            },
+            .status = if (delivery_ok) "ok" else "delivery_failed",
         });
     }
 
@@ -8469,6 +8484,143 @@ fn parseTimeout(value: std.json.Value, fallback: u32) u32 {
             break :blk std.fmt.parseInt(u32, trimmed, 10) catch fallback;
         },
         else => fallback,
+    };
+}
+
+const TelegramChunkingOptions = struct {
+    stream: bool,
+    max_chunk_runes: usize,
+    chunk_delay_ms: u32,
+};
+
+const TelegramDeliveryBatch = struct {
+    delivery: telegram_bot_api.BotDeliveryResult,
+    chunked: bool,
+    chunkCount: usize,
+    deliveredChunkCount: usize,
+    failedChunkIndex: ?usize,
+    messageIds: []i64,
+    maxChunkRunes: usize,
+    chunkDelayMs: u32,
+
+    fn deinit(self: *TelegramDeliveryBatch, allocator: std.mem.Allocator) void {
+        self.delivery.deinit(allocator);
+        allocator.free(self.messageIds);
+    }
+};
+
+fn parseTelegramChunkingOptions(params: ?std.json.ObjectMap) TelegramChunkingOptions {
+    const stream_enabled = firstParamBool(params, "stream", firstParamBool(params, "liveStreaming", false));
+    const default_chunk_chars = if (stream_enabled)
+        telegram_stream_default_chunk_chars
+    else
+        telegram_bot_api.maxTelegramMessageRunes;
+    const requested_chunk_chars = firstParamInt(
+        params,
+        "streamChunkChars",
+        firstParamInt(params, "chunkChars", @as(i64, @intCast(default_chunk_chars))),
+    );
+    const normalized_chunk_chars = std.math.clamp(
+        if (requested_chunk_chars <= 0) @as(i64, @intCast(default_chunk_chars)) else requested_chunk_chars,
+        @as(i64, 1),
+        @as(i64, @intCast(telegram_bot_api.maxTelegramMessageRunes)),
+    );
+
+    const default_delay_ms: i64 = if (stream_enabled) telegram_stream_default_chunk_delay_ms else 0;
+    const requested_delay_ms = firstParamInt(
+        params,
+        "streamChunkDelayMs",
+        firstParamInt(params, "chunkDelayMs", default_delay_ms),
+    );
+    const normalized_delay_ms = std.math.clamp(requested_delay_ms, 0, 60_000);
+
+    return .{
+        .stream = stream_enabled,
+        .max_chunk_runes = @as(usize, @intCast(normalized_chunk_chars)),
+        .chunk_delay_ms = @as(u32, @intCast(normalized_delay_ms)),
+    };
+}
+
+fn makeTelegramSkippedDeliveryResult(
+    allocator: std.mem.Allocator,
+    timeout_ms: u32,
+    message: []const u8,
+) !telegram_bot_api.BotDeliveryResult {
+    return .{
+        .attempted = false,
+        .ok = true,
+        .statusCode = 0,
+        .requestUrl = try allocator.dupe(u8, ""),
+        .errorText = try allocator.dupe(u8, message),
+        .messageId = null,
+        .responseBytes = 0,
+        .latencyMs = 0,
+        .requestTimeoutMs = timeout_ms,
+    };
+}
+
+fn deliverTelegramMessageBatch(
+    allocator: std.mem.Allocator,
+    token: []const u8,
+    chat_id: i64,
+    message: []const u8,
+    reply_to_message_id: ?i64,
+    timeout_ms: u32,
+    deliver: bool,
+    options: TelegramChunkingOptions,
+) !TelegramDeliveryBatch {
+    const chunks = try telegram_bot_api.splitMessageAlloc(allocator, message, options.max_chunk_runes);
+    defer telegram_bot_api.freeSplitChunks(allocator, chunks);
+
+    var message_ids = std.ArrayList(i64).empty;
+    defer message_ids.deinit(allocator);
+
+    var delivery = try makeTelegramSkippedDeliveryResult(
+        allocator,
+        timeout_ms,
+        "delivery skipped",
+    );
+    errdefer delivery.deinit(allocator);
+
+    var delivered_chunk_count: usize = 0;
+    var failed_chunk_index: ?usize = null;
+    if (deliver and chunks.len > 0) {
+        delivery.deinit(allocator);
+        delivery = try makeTelegramSkippedDeliveryResult(allocator, timeout_ms, "delivery pending");
+        var idx: usize = 0;
+        while (idx < chunks.len) : (idx += 1) {
+            const reply_to = if (idx == 0) reply_to_message_id else null;
+            var chunk_delivery = try telegram_bot_api.sendMessage(
+                allocator,
+                token,
+                chat_id,
+                chunks[idx],
+                reply_to,
+                timeout_ms,
+            );
+            delivery.deinit(allocator);
+            delivery = chunk_delivery;
+            if (chunk_delivery.messageId) |message_id| {
+                try message_ids.append(allocator, message_id);
+            }
+            if (!chunk_delivery.ok) {
+                failed_chunk_index = idx;
+                break;
+            }
+            delivered_chunk_count += 1;
+        }
+    }
+
+    const owned_ids = try message_ids.toOwnedSlice(allocator);
+    return .{
+        .delivery = delivery,
+        .chunked = chunks.len > 1,
+        .chunkCount = chunks.len,
+        .deliveredChunkCount = delivered_chunk_count,
+        .failedChunkIndex = failed_chunk_index,
+        .messageIds = owned_ids,
+        .maxChunkRunes = options.max_chunk_runes,
+        .chunkDelayMs = options.chunk_delay_ms,
     };
 }
 
@@ -11363,6 +11515,37 @@ test "dispatch channels.telegram.bot.send typing action reports missing token wh
     try std.testing.expect(std.mem.indexOf(u8, out, "\"typing\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"status\":\"delivery_failed\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "missing bot token") != null);
+}
+
+test "dispatch channels.telegram.bot.send dryRun exposes chunking metadata for streamed long message" {
+    const allocator = std.testing.allocator;
+    const message = "This is a long dry run telegram message that should be split into multiple stream chunks for parity-safe delivery telemetry without hitting the network.";
+    const frame = try std.fmt.allocPrint(
+        allocator,
+        "{{\"id\":\"tg-bot-send-stream\",\"method\":\"channels.telegram.bot.send\",\"params\":{{\"chatId\":12345,\"message\":\"{s}\",\"dryRun\":true,\"stream\":true,\"streamChunkChars\":40,\"streamChunkDelayMs\":0}}}}",
+        .{message},
+    );
+    defer allocator.free(frame);
+
+    const out = try dispatch(allocator, frame);
+    defer allocator.free(out);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, out, .{});
+    defer parsed.deinit();
+    const result = parsed.value.object.get("result") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(result == .object);
+
+    const status = result.object.get("status") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(status == .string and std.mem.eql(u8, status.string, "ok"));
+
+    const delivery_batch = result.object.get("deliveryBatch") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(delivery_batch == .object);
+    const chunked = delivery_batch.object.get("chunked") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(chunked == .bool and chunked.bool);
+    const chunk_count = delivery_batch.object.get("chunkCount") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(chunk_count == .integer and chunk_count.integer > 1);
+    const delivered_count = delivery_batch.object.get("deliveredChunkCount") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(delivered_count == .integer and delivered_count.integer == 0);
 }
 
 test "dispatch memory history handlers return persisted send activity" {

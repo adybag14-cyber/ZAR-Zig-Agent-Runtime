@@ -32,6 +32,8 @@ pub const BotDeliveryResult = struct {
     }
 };
 
+pub const maxTelegramMessageRunes: usize = 4096;
+
 pub fn parseIncomingUpdateFromValue(
     allocator: std.mem.Allocator,
     value: std.json.Value,
@@ -92,6 +94,85 @@ pub fn buildRuntimeSendFrameAlloc(
         },
     }, .{ .emit_null_optional_fields = false }, &writer.writer);
     return writer.toOwnedSlice();
+}
+
+pub fn splitMessageAlloc(
+    allocator: std.mem.Allocator,
+    text_raw: []const u8,
+    max_runes_raw: usize,
+) ![][]u8 {
+    const trimmed = std.mem.trim(u8, text_raw, " \t\r\n");
+    if (trimmed.len == 0) return allocator.alloc([]u8, 0);
+
+    const max_runes = if (max_runes_raw == 0) maxTelegramMessageRunes else max_runes_raw;
+    if (max_runes == 0) {
+        var single = try allocator.alloc([]u8, 1);
+        errdefer allocator.free(single);
+        single[0] = try allocator.dupe(u8, trimmed);
+        return single;
+    }
+
+    const rune_count = std.unicode.utf8CountCodepoints(trimmed) catch trimmed.len;
+    if (rune_count <= max_runes) {
+        var single = try allocator.alloc([]u8, 1);
+        errdefer allocator.free(single);
+        single[0] = try allocator.dupe(u8, trimmed);
+        return single;
+    }
+
+    var chunks = std.ArrayList([]u8).empty;
+    errdefer {
+        for (chunks.items) |entry| allocator.free(entry);
+        chunks.deinit(allocator);
+    }
+
+    var chunk_start: usize = 0;
+    var cursor: usize = 0;
+    var chunk_runes: usize = 0;
+    var last_boundary: usize = 0;
+    var runes_at_boundary: usize = 0;
+
+    while (cursor < trimmed.len) {
+        const cp_len = utf8CodepointLen(trimmed, cursor);
+        const next_cursor = cursor + cp_len;
+        const cp_slice = trimmed[cursor..next_cursor];
+        cursor = next_cursor;
+        chunk_runes += 1;
+
+        if (isChunkBoundaryRune(cp_slice)) {
+            last_boundary = cursor;
+            runes_at_boundary = chunk_runes;
+        }
+
+        if (chunk_runes >= max_runes and cursor < trimmed.len) {
+            var split_at = cursor;
+            const min_split = max_runes / 2;
+            if (last_boundary > chunk_start and runes_at_boundary >= min_split) split_at = last_boundary;
+            if (split_at <= chunk_start) split_at = cursor;
+
+            const part = std.mem.trim(u8, trimmed[chunk_start..split_at], " \t\r\n");
+            if (part.len > 0) try chunks.append(allocator, try allocator.dupe(u8, part));
+
+            chunk_start = split_at;
+            cursor = split_at;
+            chunk_runes = 0;
+            last_boundary = 0;
+            runes_at_boundary = 0;
+        }
+    }
+
+    const tail = std.mem.trim(u8, trimmed[chunk_start..], " \t\r\n");
+    if (tail.len > 0) try chunks.append(allocator, try allocator.dupe(u8, tail));
+
+    if (chunks.items.len == 0) {
+        try chunks.append(allocator, try allocator.dupe(u8, trimmed));
+    }
+    return chunks.toOwnedSlice(allocator);
+}
+
+pub fn freeSplitChunks(allocator: std.mem.Allocator, chunks: [][]u8) void {
+    for (chunks) |entry| allocator.free(entry);
+    allocator.free(chunks);
 }
 
 pub fn sendMessage(
@@ -184,7 +265,7 @@ pub fn sendMessage(
             .ok = false,
             .statusCode = status_code,
             .requestUrl = request_url,
-            .errorText = try allocErrorSnippet(allocator, response_payload, status_code),
+            .errorText = try allocErrorSnippet(allocator, "sendMessage", response_payload, status_code),
             .messageId = null,
             .responseBytes = response_payload.len,
             .latencyMs = fetch_response.latency_ms,
@@ -314,7 +395,7 @@ pub fn sendChatAction(
             .ok = false,
             .statusCode = status_code,
             .requestUrl = request_url,
-            .errorText = try allocErrorSnippet(allocator, response_payload, status_code),
+            .errorText = try allocErrorSnippet(allocator, "sendChatAction", response_payload, status_code),
             .messageId = null,
             .responseBytes = response_payload.len,
             .latencyMs = fetch_response.latency_ms,
@@ -457,15 +538,34 @@ fn boolFromMap(value: std.json.Value, key: []const u8) ?bool {
     return child.bool;
 }
 
-fn allocErrorSnippet(allocator: std.mem.Allocator, body: []const u8, status_code: u16) ![]u8 {
+fn utf8CodepointLen(text: []const u8, index: usize) usize {
+    if (index >= text.len) return 0;
+    const seq_len_raw = std.unicode.utf8ByteSequenceLength(text[index]) catch return 1;
+    const seq_len: usize = @intCast(seq_len_raw);
+    if (seq_len == 0 or index + seq_len > text.len) return 1;
+    _ = std.unicode.utf8Decode(text[index .. index + seq_len]) catch return 1;
+    return seq_len;
+}
+
+fn isChunkBoundaryRune(rune_slice: []const u8) bool {
+    if (rune_slice.len != 1) return false;
+    return rune_slice[0] == ' ' or rune_slice[0] == '\n' or rune_slice[0] == '\r' or rune_slice[0] == '\t';
+}
+
+fn allocErrorSnippet(
+    allocator: std.mem.Allocator,
+    operation: []const u8,
+    body: []const u8,
+    status_code: u16,
+) ![]u8 {
     const trimmed = std.mem.trim(u8, body, " \t\r\n");
-    if (trimmed.len == 0) return std.fmt.allocPrint(allocator, "telegram sendMessage status {d} (empty body)", .{status_code});
+    if (trimmed.len == 0) return std.fmt.allocPrint(allocator, "telegram {s} status {d} (empty body)", .{ operation, status_code });
     const max_len: usize = 200;
     const prefix = if (trimmed.len > max_len) trimmed[0..max_len] else trimmed;
     if (trimmed.len > max_len) {
-        return std.fmt.allocPrint(allocator, "telegram sendMessage status {d}: {s}...", .{ status_code, prefix });
+        return std.fmt.allocPrint(allocator, "telegram {s} status {d}: {s}...", .{ operation, status_code, prefix });
     }
-    return std.fmt.allocPrint(allocator, "telegram sendMessage status {d}: {s}", .{ status_code, prefix });
+    return std.fmt.allocPrint(allocator, "telegram {s} status {d}: {s}", .{ operation, status_code, prefix });
 }
 
 test "parse incoming update handles message payload" {
@@ -526,4 +626,20 @@ test "sendChatAction returns deterministic error when bot token missing" {
     try std.testing.expect(!result.attempted);
     try std.testing.expect(!result.ok);
     try std.testing.expect(std.mem.indexOf(u8, result.errorText, "missing bot token") != null);
+}
+
+test "splitMessageAlloc chunks long messages under rune cap" {
+    const allocator = std.testing.allocator;
+    const long = "first chunk line with spaces " ++
+        "second chunk line with spaces " ++
+        "third chunk line with spaces " ++
+        "fourth chunk line with spaces";
+    const chunks = try splitMessageAlloc(allocator, long, 24);
+    defer freeSplitChunks(allocator, chunks);
+    try std.testing.expect(chunks.len >= 2);
+    for (chunks) |entry| {
+        const rune_count = std.unicode.utf8CountCodepoints(entry) catch entry.len;
+        try std.testing.expect(rune_count <= 24);
+        try std.testing.expect(std.mem.trim(u8, entry, " \t\r\n").len > 0);
+    }
 }

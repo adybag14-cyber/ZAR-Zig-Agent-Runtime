@@ -123,6 +123,11 @@ Phase 5 enhancement notes:
   - `channels.telegram.webhook.receive` now emits optional typing action (`typingAction`, default `typing`) before reply delivery when `deliver=true`.
   - `channels.telegram.bot.send` now supports optional typing action hints (`typingAction`/`typing`) with structured typing telemetry in the RPC response.
   - regression tests added for typing action error path and bot-send typing contract surface.
+- Telegram long-reply chunking parity slice:
+  - `src/channels/telegram_bot_api.zig` now exposes UTF-8-aware `splitMessageAlloc` with Telegram-safe rune caps (`maxTelegramMessageRunes=4096`) and whitespace-aware split preference.
+  - `channels.telegram.webhook.receive` and `channels.telegram.bot.send` now deliver replies through chunk batches with structured `deliveryBatch` telemetry (`chunkCount`, `deliveredChunkCount`, `messageIds`, `maxChunkRunes`, `chunkDelayMs`, `failedChunkIndex`).
+  - stream-style overrides are now supported on both Telegram Bot API methods: `stream`, `streamChunkChars|chunkChars`, `streamChunkDelayMs|chunkDelayMs`.
+  - regression tests added for chunk splitting (`telegram_bot_api`) and dry-run streamed chunk telemetry (`dispatcher`).
 - Completion semantics hardening:
   - Top-level `ok/status/message` for `browser.request` now reflect live completion outcome when completion execution is requested (`status=failed` on bridge failure).
   - Assistant text extraction now supports additional response shapes: `output_text`, `output[].content[]`, and array-based `choices[].message.content`.
