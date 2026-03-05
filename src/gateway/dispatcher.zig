@@ -519,6 +519,16 @@ const CompatState = struct {
     rollback_reason: []u8,
     rollback_planned_at_ms: i64,
     rollback_last_run_at_ms: i64,
+    dynamic_models: std.ArrayList(OwnedModelDescriptor),
+    qwen_model_catalog_refreshed_at_ms: i64,
+    qwen_model_catalog_count: usize,
+    qwen_model_catalog_last_error: []u8,
+    openrouter_model_catalog_refreshed_at_ms: i64,
+    openrouter_model_catalog_count: usize,
+    openrouter_model_catalog_last_error: []u8,
+    opencode_model_catalog_refreshed_at_ms: i64,
+    opencode_model_catalog_count: usize,
+    opencode_model_catalog_last_error: []u8,
     config_overlay: std.StringHashMap([]u8),
     session_channels: std.StringHashMap(SessionChannelState),
     next_event_id: u64,
@@ -610,6 +620,16 @@ const CompatState = struct {
             .rollback_reason = try allocator.dupe(u8, ""),
             .rollback_planned_at_ms = 0,
             .rollback_last_run_at_ms = 0,
+            .dynamic_models = .empty,
+            .qwen_model_catalog_refreshed_at_ms = 0,
+            .qwen_model_catalog_count = 0,
+            .qwen_model_catalog_last_error = try allocator.dupe(u8, ""),
+            .openrouter_model_catalog_refreshed_at_ms = 0,
+            .openrouter_model_catalog_count = 0,
+            .openrouter_model_catalog_last_error = try allocator.dupe(u8, ""),
+            .opencode_model_catalog_refreshed_at_ms = 0,
+            .opencode_model_catalog_count = 0,
+            .opencode_model_catalog_last_error = try allocator.dupe(u8, ""),
             .config_overlay = std.StringHashMap([]u8).init(allocator),
             .session_channels = std.StringHashMap(SessionChannelState).init(allocator),
             .next_event_id = 1,
@@ -677,6 +697,12 @@ const CompatState = struct {
         self.allocator.free(self.boot_previous_slot);
         self.allocator.free(self.rollback_target_slot);
         self.allocator.free(self.rollback_reason);
+        for (self.dynamic_models.items) |*entry| entry.deinit(self.allocator);
+        self.dynamic_models.deinit(self.allocator);
+        self.allocator.free(self.qwen_model_catalog_last_error);
+        self.allocator.free(self.openrouter_model_catalog_last_error);
+        self.allocator.free(self.opencode_model_catalog_last_error);
+
         var overlay_it = self.config_overlay.iterator();
         while (overlay_it.next()) |entry| {
             self.allocator.free(entry.key_ptr.*);
@@ -2785,12 +2811,36 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
         defer parsed.deinit();
         const params = getParamsObjectOrNull(parsed.value);
-        const provider_filter = firstParamString(params, "provider", "");
-        const models = try filteredModelCatalog(allocator, provider_filter);
+        if (params) |obj| {
+            var it = obj.iterator();
+            while (it.next()) |entry| {
+                if (!std.mem.eql(u8, entry.key_ptr.*, "provider") and !std.mem.eql(u8, entry.key_ptr.*, "limit")) {
+                    const message = try std.fmt.allocPrint(allocator, "invalid models.list params: unknown field \"{s}\"", .{entry.key_ptr.*});
+                    defer allocator.free(message);
+                    return protocol.encodeError(allocator, req.id, .{
+                        .code = -32602,
+                        .message = message,
+                    });
+                }
+            }
+        }
+        const compat = try getCompatState();
+        const provider_filter = normalizeModelCatalogProvider(firstParamString(params, "provider", ""));
+        const limit_i64 = firstParamInt(params, "limit", 0);
+        const limit: usize = if (limit_i64 > 0) @intCast(limit_i64) else 0;
+        const refresh = try refreshCompatModelCatalog(allocator, compat, provider_filter);
+        defer allocator.free(refresh.providers);
+        const models = try filteredModelCatalog(allocator, compat, provider_filter, limit);
         defer allocator.free(models);
+        const providers = try collectModelCatalogProviders(allocator, models);
+        defer allocator.free(providers);
         return protocol.encodeResult(allocator, req.id, .{
             .count = models.len,
             .items = models,
+            .models = models,
+            .providers = providers,
+            .catalogRefresh = refresh,
+            .providerRequested = if (provider_filter.len == 0) null else provider_filter,
         });
     }
 
@@ -10167,42 +10217,589 @@ fn buildMultimodalSummary(
     );
 }
 
+const default_openrouter_models_url = "https://openrouter.ai/api/v1/models";
+const default_opencode_models_url = "https://opencode.ai/zen/v1/models";
+
+const ModelCatalogProviderStatus = struct {
+    provider: []const u8,
+    supported: bool,
+    skipped: bool,
+    reason: []const u8,
+    refreshedAtMs: i64,
+    lastError: []const u8,
+    count: usize,
+    ok: bool,
+    fetched: usize,
+    added: usize,
+    ttlSeconds: u32,
+};
+
+const ModelCatalogRefreshPayload = struct {
+    providers: []const ModelCatalogProviderStatus,
+};
+
 const ModelDescriptor = struct {
     id: []const u8,
     provider: []const u8,
     name: []const u8,
     mode: []const u8,
+    capability: []const u8 = "",
+};
+
+const OwnedModelDescriptor = struct {
+    id: []u8,
+    provider: []u8,
+    name: []u8,
+    mode: []u8,
+    capability: []u8,
+
+    fn deinit(self: *OwnedModelDescriptor, allocator: std.mem.Allocator) void {
+        allocator.free(self.id);
+        allocator.free(self.provider);
+        allocator.free(self.name);
+        allocator.free(self.mode);
+        allocator.free(self.capability);
+    }
+
+    fn view(self: *const OwnedModelDescriptor) ModelDescriptor {
+        return .{
+            .id = self.id,
+            .provider = self.provider,
+            .name = self.name,
+            .mode = self.mode,
+            .capability = self.capability,
+        };
+    }
 };
 
 fn modelCatalog() []const ModelDescriptor {
     return &[_]ModelDescriptor{
-        .{ .id = "gpt-5.2", .provider = "chatgpt", .name = "GPT-5.2", .mode = "auto" },
-        .{ .id = "gpt-5.2-thinking", .provider = "chatgpt", .name = "GPT-5.2 Thinking", .mode = "thinking" },
-        .{ .id = "gpt-5.2-pro", .provider = "chatgpt", .name = "GPT-5.2 Pro", .mode = "pro" },
-        .{ .id = "qwen-max", .provider = "qwen", .name = "Qwen Max", .mode = "auto" },
-        .{ .id = "glm-5", .provider = "zai", .name = "GLM-5", .mode = "auto" },
-        .{ .id = "mercury-2", .provider = "inception", .name = "Mercury 2", .mode = "auto" },
-        .{ .id = "openai/gpt-5.2-mini", .provider = "openrouter", .name = "OpenRouter GPT-5.2 Mini", .mode = "instant" },
-        .{ .id = "opencode/gpt-oss-20b", .provider = "opencode", .name = "OpenCode GPT-OSS 20B", .mode = "auto" },
+        .{ .id = "gpt-5.2", .provider = "chatgpt", .name = "GPT-5.2", .mode = "auto", .capability = "reasoning" },
+        .{ .id = "gpt-5.2-thinking", .provider = "chatgpt", .name = "GPT-5.2 Thinking", .mode = "thinking", .capability = "reasoning" },
+        .{ .id = "gpt-5.2-pro", .provider = "chatgpt", .name = "GPT-5.2 Pro", .mode = "pro", .capability = "reasoning" },
+        .{ .id = "qwen-max", .provider = "qwen", .name = "Qwen Max", .mode = "auto", .capability = "reasoning" },
+        .{ .id = "gemini-2.5-pro", .provider = "gemini", .name = "Gemini 2.5 Pro", .mode = "pro", .capability = "reasoning" },
+        .{ .id = "glm-5", .provider = "zai", .name = "GLM-5", .mode = "auto", .capability = "reasoning" },
+        .{ .id = "mercury-2", .provider = "inception", .name = "Mercury 2", .mode = "auto", .capability = "reasoning" },
+        .{ .id = "openai/gpt-5.2-mini", .provider = "openrouter", .name = "OpenRouter GPT-5.2 Mini", .mode = "instant", .capability = "fast-response" },
+        .{ .id = "opencode/gpt-oss-20b", .provider = "opencode", .name = "OpenCode GPT-OSS 20B", .mode = "auto", .capability = "coding" },
     };
 }
 
-fn filteredModelCatalog(allocator: std.mem.Allocator, provider_filter: []const u8) ![]ModelDescriptor {
-    const all = modelCatalog();
-    if (std.mem.trim(u8, provider_filter, " \t\r\n").len == 0) {
-        const out = try allocator.alloc(ModelDescriptor, all.len);
-        @memcpy(out, all);
-        return out;
-    }
+fn normalizeModelCatalogProvider(provider_raw: []const u8) []const u8 {
+    const trimmed = std.mem.trim(u8, provider_raw, " \t\r\n");
+    if (trimmed.len == 0) return "";
+    return web_login.normalizeProviderAlias(trimmed);
+}
 
+fn modelCatalogRefreshTTLSeconds() u32 {
+    const ttl = currentConfig().runtime.model_catalog_refresh_ttl_seconds;
+    return if (ttl == 0) 300 else ttl;
+}
+
+fn providerSupportsDynamicModelCatalog(provider_raw: []const u8) bool {
+    const provider = normalizeModelCatalogProvider(provider_raw);
+    return std.ascii.eqlIgnoreCase(provider, "qwen") or
+        std.ascii.eqlIgnoreCase(provider, "openrouter") or
+        std.ascii.eqlIgnoreCase(provider, "opencode");
+}
+
+fn modelCatalogRefreshMetadata(compat: *CompatState, provider_raw: []const u8) struct { refreshed_at_ms: i64, count: usize, last_error: []const u8 } {
+    const provider = normalizeModelCatalogProvider(provider_raw);
+    if (std.ascii.eqlIgnoreCase(provider, "qwen")) {
+        return .{
+            .refreshed_at_ms = compat.qwen_model_catalog_refreshed_at_ms,
+            .count = compat.qwen_model_catalog_count,
+            .last_error = compat.qwen_model_catalog_last_error,
+        };
+    }
+    if (std.ascii.eqlIgnoreCase(provider, "openrouter")) {
+        return .{
+            .refreshed_at_ms = compat.openrouter_model_catalog_refreshed_at_ms,
+            .count = compat.openrouter_model_catalog_count,
+            .last_error = compat.openrouter_model_catalog_last_error,
+        };
+    }
+    if (std.ascii.eqlIgnoreCase(provider, "opencode")) {
+        return .{
+            .refreshed_at_ms = compat.opencode_model_catalog_refreshed_at_ms,
+            .count = compat.opencode_model_catalog_count,
+            .last_error = compat.opencode_model_catalog_last_error,
+        };
+    }
+    return .{
+        .refreshed_at_ms = 0,
+        .count = 0,
+        .last_error = "",
+    };
+}
+
+fn setOwnedSlice(allocator: std.mem.Allocator, target: *[]u8, value: []const u8) !void {
+    allocator.free(target.*);
+    target.* = try allocator.dupe(u8, value);
+}
+
+fn markModelCatalogRefresh(compat: *CompatState, provider_raw: []const u8, count: usize, err_text_raw: []const u8) !void {
+    const now = time_util.nowMs();
+    const provider = normalizeModelCatalogProvider(provider_raw);
+    const err_text = std.mem.trim(u8, err_text_raw, " \t\r\n");
+    if (std.ascii.eqlIgnoreCase(provider, "qwen")) {
+        compat.qwen_model_catalog_refreshed_at_ms = now;
+        compat.qwen_model_catalog_count = count;
+        try setOwnedSlice(compat.allocator, &compat.qwen_model_catalog_last_error, err_text);
+        return;
+    }
+    if (std.ascii.eqlIgnoreCase(provider, "openrouter")) {
+        compat.openrouter_model_catalog_refreshed_at_ms = now;
+        compat.openrouter_model_catalog_count = count;
+        try setOwnedSlice(compat.allocator, &compat.openrouter_model_catalog_last_error, err_text);
+        return;
+    }
+    if (std.ascii.eqlIgnoreCase(provider, "opencode")) {
+        compat.opencode_model_catalog_refreshed_at_ms = now;
+        compat.opencode_model_catalog_count = count;
+        try setOwnedSlice(compat.allocator, &compat.opencode_model_catalog_last_error, err_text);
+        return;
+    }
+}
+
+fn shouldRefreshModelCatalog(compat: *CompatState, provider_raw: []const u8, ttl_seconds: u32) bool {
+    const meta = modelCatalogRefreshMetadata(compat, provider_raw);
+    if (meta.refreshed_at_ms <= 0) return true;
+    const ttl_ms: i64 = @as(i64, ttl_seconds) * 1000;
+    if (ttl_ms <= 0) return true;
+    return (time_util.nowMs() - meta.refreshed_at_ms) >= ttl_ms;
+}
+
+fn countFilteredModels(compat: *CompatState, provider_filter: []const u8) usize {
+    const requested = normalizeModelCatalogProvider(provider_filter);
+    var count: usize = 0;
+    for (modelCatalog()) |model| {
+        if (requested.len > 0 and !std.ascii.eqlIgnoreCase(model.provider, requested)) continue;
+        count += 1;
+    }
+    for (compat.dynamic_models.items) |*model| {
+        if (requested.len > 0 and !std.ascii.eqlIgnoreCase(model.provider, requested)) continue;
+        if (!containsStaticModelDescriptor(model.view())) count += 1;
+    }
+    return count;
+}
+
+fn containsStaticModelDescriptor(candidate: ModelDescriptor) bool {
+    for (modelCatalog()) |model| {
+        if (std.ascii.eqlIgnoreCase(model.provider, candidate.provider) and std.ascii.eqlIgnoreCase(model.id, candidate.id)) return true;
+    }
+    return false;
+}
+
+fn containsModelDescriptor(items: []const ModelDescriptor, candidate: ModelDescriptor) bool {
+    for (items) |model| {
+        if (std.ascii.eqlIgnoreCase(model.provider, candidate.provider) and std.ascii.eqlIgnoreCase(model.id, candidate.id)) return true;
+    }
+    return false;
+}
+
+fn collectModelCatalogProviders(allocator: std.mem.Allocator, models: []const ModelDescriptor) ![]const []const u8 {
+    var providers: std.ArrayList([]const u8) = .empty;
+    defer providers.deinit(allocator);
+    for (models) |model| {
+        const provider = normalizeModelCatalogProvider(model.provider);
+        if (provider.len == 0) continue;
+        var seen = false;
+        for (providers.items) |entry| {
+            if (std.mem.eql(u8, entry, provider)) {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen) try providers.append(allocator, provider);
+    }
+    std.mem.sort([]const u8, providers.items, {}, struct {
+        fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
+            return std.mem.lessThan(u8, lhs, rhs);
+        }
+    }.lessThan);
+    return providers.toOwnedSlice(allocator);
+}
+
+fn filteredModelCatalog(allocator: std.mem.Allocator, compat: *CompatState, provider_filter: []const u8, limit: usize) ![]ModelDescriptor {
+    const requested = normalizeModelCatalogProvider(provider_filter);
     var items: std.ArrayList(ModelDescriptor) = .empty;
     defer items.deinit(allocator);
-    for (all) |model| {
-        if (std.ascii.eqlIgnoreCase(model.provider, provider_filter)) {
-            try items.append(allocator, model);
+
+    for (compat.dynamic_models.items) |*model| {
+        const view = model.view();
+        if (requested.len > 0 and !std.ascii.eqlIgnoreCase(view.provider, requested)) continue;
+        if (!containsModelDescriptor(items.items, view)) try items.append(allocator, view);
+    }
+
+    for (modelCatalog()) |model| {
+        if (requested.len > 0 and !std.ascii.eqlIgnoreCase(model.provider, requested)) continue;
+        if (!containsModelDescriptor(items.items, model)) try items.append(allocator, model);
+    }
+
+    std.mem.sort(ModelDescriptor, items.items, {}, struct {
+        fn lessThan(_: void, lhs: ModelDescriptor, rhs: ModelDescriptor) bool {
+            const lhs_provider = normalizeModelCatalogProvider(lhs.provider);
+            const rhs_provider = normalizeModelCatalogProvider(rhs.provider);
+            if (!std.mem.eql(u8, lhs_provider, rhs_provider)) {
+                return std.mem.lessThan(u8, lhs_provider, rhs_provider);
+            }
+            return std.mem.lessThan(u8, lhs.id, rhs.id);
+        }
+    }.lessThan);
+
+    if (limit > 0 and items.items.len > limit) items.items.len = limit;
+    return items.toOwnedSlice(allocator);
+}
+
+fn modelCatalogRefreshStatus(compat: *CompatState, provider_raw: []const u8, ttl_seconds: u32) ModelCatalogProviderStatus {
+    const provider = normalizeModelCatalogProvider(provider_raw);
+    const meta = modelCatalogRefreshMetadata(compat, provider);
+    return .{
+        .provider = provider,
+        .supported = providerSupportsDynamicModelCatalog(provider),
+        .skipped = false,
+        .reason = "",
+        .refreshedAtMs = meta.refreshed_at_ms,
+        .lastError = meta.last_error,
+        .count = meta.count,
+        .ok = meta.last_error.len == 0,
+        .fetched = 0,
+        .added = 0,
+        .ttlSeconds = ttl_seconds,
+    };
+}
+
+fn refreshCompatModelCatalog(allocator: std.mem.Allocator, compat: *CompatState, requested_provider: []const u8) !ModelCatalogRefreshPayload {
+    var providers: std.ArrayList(ModelCatalogProviderStatus) = .empty;
+    defer providers.deinit(allocator);
+
+    if (normalizeModelCatalogProvider(requested_provider).len > 0) {
+        try providers.append(allocator, try refreshCompatModelCatalogProvider(allocator, compat, requested_provider));
+    } else {
+        for ([_][]const u8{ "qwen", "openrouter", "opencode" }) |provider| {
+            try providers.append(allocator, try refreshCompatModelCatalogProvider(allocator, compat, provider));
         }
     }
-    return items.toOwnedSlice(allocator);
+
+    return .{
+        .providers = try providers.toOwnedSlice(allocator),
+    };
+}
+
+fn refreshCompatModelCatalogProvider(_: std.mem.Allocator, compat: *CompatState, provider_raw: []const u8) !ModelCatalogProviderStatus {
+    const provider = normalizeModelCatalogProvider(provider_raw);
+    const ttl_seconds = modelCatalogRefreshTTLSeconds();
+    var status = modelCatalogRefreshStatus(compat, provider, ttl_seconds);
+    const state_allocator = compat.allocator;
+
+    if (!providerSupportsDynamicModelCatalog(provider)) {
+        status.supported = false;
+        status.skipped = true;
+        status.reason = "provider-not-supported";
+        return status;
+    }
+
+    if (!shouldRefreshModelCatalog(compat, provider, ttl_seconds)) {
+        status.skipped = true;
+        status.reason = "ttl-not-expired";
+        return status;
+    }
+
+    if (builtin.is_test and !std.ascii.eqlIgnoreCase(provider, "qwen")) {
+        status.skipped = true;
+        status.reason = "network-disabled-in-tests";
+        return status;
+    }
+
+    var fetched = switch (provider[0]) {
+        'q' => buildQwenSmallModelCatalogOwned(state_allocator),
+        else => if (std.ascii.eqlIgnoreCase(provider, "openrouter"))
+            fetchOpenRouterModelCatalogOwned(state_allocator, compat)
+        else
+            fetchOpenCodeModelCatalogOwned(state_allocator, compat),
+    } catch |err| {
+        const count = countFilteredModels(compat, provider);
+        try markModelCatalogRefresh(compat, provider, count, @errorName(err));
+        status = modelCatalogRefreshStatus(compat, provider, ttl_seconds);
+        status.ok = false;
+        return status;
+    };
+    defer {
+        for (fetched.items) |*entry| entry.deinit(state_allocator);
+        fetched.deinit(state_allocator);
+    }
+
+    const fetched_count = fetched.items.len;
+    const added = try replaceDynamicModelsForProvider(compat, provider, &fetched);
+    const count = countFilteredModels(compat, provider);
+    try markModelCatalogRefresh(compat, provider, count, "");
+    status = modelCatalogRefreshStatus(compat, provider, ttl_seconds);
+    status.fetched = fetched_count;
+    status.added = added;
+    return status;
+}
+
+fn replaceDynamicModelsForProvider(compat: *CompatState, provider_raw: []const u8, incoming: *std.ArrayList(OwnedModelDescriptor)) !usize {
+    const provider = normalizeModelCatalogProvider(provider_raw);
+    var added: usize = 0;
+
+    var write_index: usize = 0;
+    for (compat.dynamic_models.items, 0..) |*entry, index| {
+        if (std.ascii.eqlIgnoreCase(entry.provider, provider)) {
+            entry.deinit(compat.allocator);
+            continue;
+        }
+        if (write_index != index) compat.dynamic_models.items[write_index] = compat.dynamic_models.items[index];
+        write_index += 1;
+    }
+    compat.dynamic_models.items.len = write_index;
+
+    for (incoming.items) |entry| {
+        var seen = false;
+        for (compat.dynamic_models.items) |*existing| {
+            if (std.ascii.eqlIgnoreCase(existing.provider, entry.provider) and std.ascii.eqlIgnoreCase(existing.id, entry.id)) {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen and !containsStaticModelDescriptor(entry.view())) added += 1;
+        try compat.dynamic_models.append(compat.allocator, entry);
+    }
+    incoming.items.len = 0;
+    return added;
+}
+
+fn buildQwenSmallModelCatalogOwned(allocator: std.mem.Allocator) !std.ArrayList(OwnedModelDescriptor) {
+    var items: std.ArrayList(OwnedModelDescriptor) = .empty;
+    errdefer {
+        for (items.items) |*entry| entry.deinit(allocator);
+        items.deinit(allocator);
+    }
+    for ([_]ModelDescriptor{
+        .{ .id = "qwen3-0.6b", .provider = "qwen", .name = "Qwen 3 0.6B", .mode = "instant", .capability = "small-fast" },
+        .{ .id = "qwen3-1.7b", .provider = "qwen", .name = "Qwen 3 1.7B", .mode = "instant", .capability = "small-fast" },
+        .{ .id = "qwen3-4b", .provider = "qwen", .name = "Qwen 3 4B", .mode = "instant", .capability = "small-balanced" },
+        .{ .id = "qwen3-8b", .provider = "qwen", .name = "Qwen 3 8B", .mode = "thinking", .capability = "balanced" },
+    }) |descriptor| {
+        try items.append(allocator, try allocOwnedModelDescriptor(allocator, descriptor));
+    }
+    return items;
+}
+
+fn fetchOpenRouterModelCatalogOwned(allocator: std.mem.Allocator, compat: *CompatState) !std.ArrayList(OwnedModelDescriptor) {
+    const endpoint = try resolveModelCatalogEndpointAlloc(allocator, "OPENCLAW_ZIG_OPENROUTER_MODELS_URL", default_openrouter_models_url);
+    defer allocator.free(endpoint);
+    const maybe_api_key = try resolveModelCatalogApiKeyAlloc(allocator, compat, "openrouter");
+    defer if (maybe_api_key) |value| allocator.free(value);
+    const payload = try fetchModelCatalogPayloadAlloc(allocator, endpoint, if (maybe_api_key) |value| value else "");
+    defer allocator.free(payload);
+    return parseOpenRouterModelCatalogPayloadOwned(allocator, payload);
+}
+
+fn fetchOpenCodeModelCatalogOwned(allocator: std.mem.Allocator, compat: *CompatState) !std.ArrayList(OwnedModelDescriptor) {
+    const endpoint = try resolveModelCatalogEndpointAlloc(allocator, "OPENCLAW_ZIG_OPENCODE_MODELS_URL", default_opencode_models_url);
+    defer allocator.free(endpoint);
+    const maybe_api_key = try resolveModelCatalogApiKeyAlloc(allocator, compat, "opencode");
+    defer if (maybe_api_key) |value| allocator.free(value);
+    const payload = try fetchModelCatalogPayloadAlloc(allocator, endpoint, if (maybe_api_key) |value| value else "");
+    defer allocator.free(payload);
+    return parseOpenCodeModelCatalogPayloadOwned(allocator, payload);
+}
+
+fn resolveModelCatalogApiKeyAlloc(allocator: std.mem.Allocator, compat: *CompatState, provider_raw: []const u8) !?[]u8 {
+    const provider = normalizeModelCatalogProvider(provider_raw);
+    if (!std.ascii.eqlIgnoreCase(provider, "openrouter") and !std.ascii.eqlIgnoreCase(provider, "opencode")) return null;
+    return resolveBrowserProviderApiKeyAlloc(allocator, compat, provider);
+}
+
+fn resolveModelCatalogEndpointAlloc(allocator: std.mem.Allocator, env_name: []const u8, fallback: []const u8) ![]u8 {
+    if (try envLookupAlloc(allocator, env_name)) |value| return value;
+    return allocator.dupe(u8, fallback);
+}
+
+fn fetchModelCatalogPayloadAlloc(allocator: std.mem.Allocator, endpoint: []const u8, api_key_raw: []const u8) ![]u8 {
+    const api_key = std.mem.trim(u8, api_key_raw, " \t\r\n");
+    var client: std.http.Client = .{
+        .allocator = allocator,
+        .io = std.Io.Threaded.global_single_threaded.io(),
+    };
+    defer client.deinit();
+
+    var response_body: std.Io.Writer.Allocating = .init(allocator);
+    defer response_body.deinit();
+
+    const authorization = if (api_key.len > 0) try std.fmt.allocPrint(allocator, "Bearer {s}", .{api_key}) else null;
+    defer if (authorization) |value| allocator.free(value);
+    var headers = [_]std.http.Header{
+        .{ .name = "accept", .value = "application/json" },
+        .{ .name = "authorization", .value = if (authorization) |value| value else "" },
+    };
+    const extra_headers = if (authorization != null) headers[0..2] else headers[0..1];
+
+    const fetch_result = try client.fetch(.{
+        .location = .{ .url = endpoint },
+        .method = .GET,
+        .keep_alive = false,
+        .extra_headers = extra_headers,
+        .response_writer = &response_body.writer,
+    });
+
+    const status_code: u16 = @intCast(@intFromEnum(fetch_result.status));
+    const payload = try response_body.toOwnedSlice();
+    errdefer allocator.free(payload);
+    if (status_code < 200 or status_code >= 300) {
+        return error.ModelCatalogRequestFailed;
+    }
+    return payload;
+}
+
+fn allocOwnedModelDescriptor(allocator: std.mem.Allocator, descriptor: ModelDescriptor) !OwnedModelDescriptor {
+    const owned_id = try allocator.dupe(u8, descriptor.id);
+    for (owned_id) |*ch| ch.* = std.ascii.toLower(ch.*);
+    return .{
+        .id = owned_id,
+        .provider = try allocator.dupe(u8, normalizeModelCatalogProvider(descriptor.provider)),
+        .name = try allocator.dupe(u8, descriptor.name),
+        .mode = try allocator.dupe(u8, descriptor.mode),
+        .capability = try allocator.dupe(u8, descriptor.capability),
+    };
+}
+
+fn inferModelModeFromId(model_id_raw: []const u8) []const u8 {
+    const model_id = std.mem.trim(u8, model_id_raw, " \t\r\n");
+    if (std.mem.indexOf(u8, model_id, "flash") != null or
+        std.mem.indexOf(u8, model_id, "mini") != null or
+        std.mem.indexOf(u8, model_id, "small") != null or
+        std.mem.indexOf(u8, model_id, "0.6b") != null or
+        std.mem.indexOf(u8, model_id, "1.7b") != null or
+        std.mem.indexOf(u8, model_id, "4b") != null or
+        std.mem.indexOf(u8, model_id, ":free") != null or
+        std.mem.indexOf(u8, model_id, "-free") != null) return "instant";
+    if (std.mem.indexOf(u8, model_id, "pro") != null or std.mem.indexOf(u8, model_id, "plus") != null) return "pro";
+    return "thinking";
+}
+
+fn inferModelCapabilityFromId(model_id_raw: []const u8) []const u8 {
+    const model_id = std.mem.trim(u8, model_id_raw, " \t\r\n");
+    if (std.mem.indexOf(u8, model_id, "coder") != null or std.mem.indexOf(u8, model_id, "code") != null) return "coding";
+    if (std.mem.indexOf(u8, model_id, "vl") != null or
+        std.mem.indexOf(u8, model_id, "vision") != null or
+        std.mem.indexOf(u8, model_id, "image") != null or
+        std.mem.indexOf(u8, model_id, "video") != null or
+        std.mem.indexOf(u8, model_id, "omni") != null) return "multimodal";
+    if (std.mem.indexOf(u8, model_id, "embed") != null) return "embedding";
+    if (std.mem.indexOf(u8, model_id, "free") != null or
+        std.mem.indexOf(u8, model_id, "flash") != null or
+        std.mem.indexOf(u8, model_id, "mini") != null or
+        std.mem.indexOf(u8, model_id, "small") != null) return "fast-response";
+    return "reasoning";
+}
+
+fn parseOpenRouterModelCatalogPayloadOwned(allocator: std.mem.Allocator, payload: []const u8) !std.ArrayList(OwnedModelDescriptor) {
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, payload, .{});
+    defer parsed.deinit();
+    if (parsed.value != .object) return error.InvalidModelCatalogPayload;
+    const data = parsed.value.object.get("data") orelse return error.InvalidModelCatalogPayload;
+    if (data != .array) return error.InvalidModelCatalogPayload;
+
+    var items: std.ArrayList(OwnedModelDescriptor) = .empty;
+    errdefer {
+        for (items.items) |*entry| entry.deinit(allocator);
+        items.deinit(allocator);
+    }
+
+    for (data.array.items) |entry| {
+        if (entry != .object) continue;
+        const id_value = entry.object.get("id") orelse continue;
+        if (id_value != .string) continue;
+        const raw_id = std.mem.trim(u8, id_value.string, " \t\r\n");
+        if (raw_id.len == 0) continue;
+        const name_value = entry.object.get("name");
+        const full_id = try std.fmt.allocPrint(allocator, "openrouter/{s}", .{raw_id});
+        defer allocator.free(full_id);
+        const descriptor: ModelDescriptor = .{
+            .id = full_id,
+            .provider = "openrouter",
+            .name = if (name_value != null and name_value.? == .string and std.mem.trim(u8, name_value.?.string, " \t\r\n").len > 0) name_value.?.string else raw_id,
+            .mode = inferModelModeFromId(full_id),
+            .capability = inferModelCapabilityFromId(full_id),
+        };
+        try items.append(allocator, try allocOwnedModelDescriptor(allocator, descriptor));
+    }
+    return items;
+}
+
+fn parseOpenCodeModelCatalogPayloadOwned(allocator: std.mem.Allocator, payload: []const u8) !std.ArrayList(OwnedModelDescriptor) {
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, payload, .{});
+    defer parsed.deinit();
+    if (parsed.value != .object) return error.InvalidModelCatalogPayload;
+    const data = parsed.value.object.get("data") orelse return error.InvalidModelCatalogPayload;
+    if (data != .array) return error.InvalidModelCatalogPayload;
+
+    var items: std.ArrayList(OwnedModelDescriptor) = .empty;
+    errdefer {
+        for (items.items) |*entry| entry.deinit(allocator);
+        items.deinit(allocator);
+    }
+
+    for (data.array.items) |entry| {
+        if (entry != .object) continue;
+        const id_value = entry.object.get("id") orelse continue;
+        if (id_value != .string) continue;
+        const raw_id = std.mem.trim(u8, id_value.string, " \t\r\n");
+        if (raw_id.len == 0) continue;
+        const full_id = try std.fmt.allocPrint(allocator, "opencode/{s}", .{raw_id});
+        defer allocator.free(full_id);
+        const descriptor: ModelDescriptor = .{
+            .id = full_id,
+            .provider = "opencode",
+            .name = raw_id,
+            .mode = inferModelModeFromId(full_id),
+            .capability = inferModelCapabilityFromId(full_id),
+        };
+        try items.append(allocator, try allocOwnedModelDescriptor(allocator, descriptor));
+    }
+    return items;
+}
+
+test "parse openrouter model catalog payload prefixes provider ids" {
+    const allocator = std.testing.allocator;
+    const payload =
+        \\{"data":[
+        \\  {"id":"qwen/qwen3-0.6b:free","name":"Qwen 3 0.6B Free"},
+        \\  {"id":"google/gemini-2.0-flash-exp:free","name":"Gemini 2.0 Flash Free"}
+        \\]}
+    ;
+    var items = try parseOpenRouterModelCatalogPayloadOwned(allocator, payload);
+    defer {
+        for (items.items) |*entry| entry.deinit(allocator);
+        items.deinit(allocator);
+    }
+    try std.testing.expectEqual(@as(usize, 2), items.items.len);
+    try std.testing.expect(std.mem.eql(u8, items.items[0].provider, "openrouter"));
+    try std.testing.expect(std.mem.eql(u8, items.items[0].id, "openrouter/qwen/qwen3-0.6b:free"));
+    try std.testing.expect(std.mem.eql(u8, items.items[1].id, "openrouter/google/gemini-2.0-flash-exp:free"));
+}
+
+test "parse opencode model catalog payload prefixes provider ids" {
+    const allocator = std.testing.allocator;
+    const payload =
+        \\{"object":"list","data":[
+        \\  {"id":"claude-opus-4-6"},
+        \\  {"id":"qwen3-coder-30b-a3b-instruct"}
+        \\]}
+    ;
+    var items = try parseOpenCodeModelCatalogPayloadOwned(allocator, payload);
+    defer {
+        for (items.items) |*entry| entry.deinit(allocator);
+        items.deinit(allocator);
+    }
+    try std.testing.expectEqual(@as(usize, 2), items.items.len);
+    try std.testing.expect(std.mem.eql(u8, items.items[0].provider, "opencode"));
+    try std.testing.expect(std.mem.eql(u8, items.items[0].id, "opencode/claude-opus-4-6"));
+    try std.testing.expect(std.mem.eql(u8, items.items[1].id, "opencode/qwen3-coder-30b-a3b-instruct"));
 }
 
 const RuntimeFeatureProfile = enum {
@@ -11662,10 +12259,29 @@ test "dispatch browser.request injects memory and tool context when session hist
         "{\"id\":\"ctx-browser\",\"method\":\"browser.request\",\"params\":{\"provider\":\"chatgpt\",\"endpoint\":\"http://127.0.0.1:1\",\"sessionId\":\"ctx-s1\",\"prompt\":\"summarize this context\"}}",
     );
     defer allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"sessionId\":\"ctx-s1\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"toolContextInjected\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"memoryContextInjected\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"memoryEntriesUsed\":2") != null);
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, out, .{});
+    defer parsed.deinit();
+    if (parsed.value != .object) return error.TestUnexpectedResult;
+    const result = parsed.value.object.get("result") orelse return error.TestUnexpectedResult;
+    if (result != .object) return error.TestUnexpectedResult;
+    const context = result.object.get("context") orelse return error.TestUnexpectedResult;
+    if (context != .object) return error.TestUnexpectedResult;
+
+    const session_id = context.object.get("sessionId") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(session_id == .string);
+    try std.testing.expectEqualStrings("ctx-s1", session_id.string);
+
+    const tool_context_injected = context.object.get("toolContextInjected") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(tool_context_injected == .bool);
+    try std.testing.expect(tool_context_injected.bool);
+
+    const memory_context_injected = context.object.get("memoryContextInjected") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(memory_context_injected == .bool);
+    try std.testing.expect(memory_context_injected.bool);
+
+    const memory_entries_used = context.object.get("memoryEntriesUsed") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(memory_entries_used == .integer);
+    try std.testing.expect(memory_entries_used.integer >= 2);
 }
 
 test "dispatch browser.request can disable tool and memory context injection" {
@@ -11679,6 +12295,23 @@ test "dispatch browser.request can disable tool and memory context injection" {
     try std.testing.expect(std.mem.indexOf(u8, out, "\"includeMemoryContext\":false") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"toolContextInjected\":false") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"memoryContextInjected\":false") != null);
+}
+
+test "dispatch models.list rejects unknown params" {
+    const allocator = std.testing.allocator;
+    const out = try dispatch(allocator, "{\"id\":\"models-invalid\",\"method\":\"models.list\",\"params\":{\"unknownField\":true}}");
+    defer allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"code\":-32602") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "invalid models.list params") != null);
+}
+
+test "dispatch models.list provider filter supports copaw alias and qwen refresh" {
+    const allocator = std.testing.allocator;
+    const out = try dispatch(allocator, "{\"id\":\"models-copaw\",\"method\":\"models.list\",\"params\":{\"provider\":\"copaw\",\"limit\":16}}");
+    defer allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"providerRequested\":\"qwen\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"qwen3-0.6b\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"providers\":[\"qwen\"]") != null);
 }
 
 test "dispatch config.get and tools.catalog expose runtime + wasm contracts" {
@@ -12301,11 +12934,15 @@ test "dispatch compat talk tts models and control methods return contracts" {
     const models_all = try dispatch(allocator, "{\"id\":\"compat-models-all\",\"method\":\"models.list\",\"params\":{}}");
     defer allocator.free(models_all);
     try std.testing.expect(std.mem.indexOf(u8, models_all, "\"items\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, models_all, "\"models\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, models_all, "\"catalogRefresh\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, models_all, "\"gpt-5.2\"") != null);
 
     const models_qwen = try dispatch(allocator, "{\"id\":\"compat-models-qwen\",\"method\":\"models.list\",\"params\":{\"provider\":\"qwen\"}}");
     defer allocator.free(models_qwen);
+    try std.testing.expect(std.mem.indexOf(u8, models_qwen, "\"providerRequested\":\"qwen\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, models_qwen, "\"qwen-max\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, models_qwen, "\"qwen3-0.6b\"") != null);
 
     const update_plan = try dispatch(allocator, "{\"id\":\"compat-update-plan\",\"method\":\"update.plan\",\"params\":{\"channel\":\"stable\"}}");
     defer allocator.free(update_plan);

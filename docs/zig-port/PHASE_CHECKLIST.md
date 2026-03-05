@@ -1,12 +1,16 @@
 # Phase Checklist
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
-Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `157/157`.
+Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `161/161`.
 
 ## Full-Stack Replacement Track (FS0..FS7)
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)
 - [ ] FS1 - Runtime/core consolidation
 - [ ] FS2 - Provider + channel completion
+  - Latest delivered slice:
+    - `models.list` now supports provider-scoped dynamic catalog refresh metadata for `qwen`, `openrouter`, and `opencode`, with TTL control via `OPENCLAW_ZIG_RUNTIME_MODEL_CATALOG_REFRESH_TTL_SECONDS`.
+    - dynamic catalog ownership now stays inside the compat allocator, preventing cross-allocator leaks/crashes during long-lived dispatcher state.
+    - regression coverage added for invalid params, provider alias normalization (`copaw -> qwen`), and JSON-parsed browser-context assertions to avoid brittle exact-count failures in stateful suites.
 - [ ] FS3 - Memory/knowledge depth
 - [ ] FS4 - Security + trust hardening
 - [ ] FS5 - Edge/WASM/marketplace depth

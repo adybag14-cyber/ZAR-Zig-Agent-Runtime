@@ -56,7 +56,7 @@ Full-stack replacement execution reference:
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `157/157`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `161/161`.
 - Full-stack replacement kickoff (2026-03-05):
   - master tracking issue refreshed with FS0..FS7 execution gates.
   - FS0 execution issue opened (`#2`) and linked from master issue.
@@ -114,6 +114,16 @@ Full-stack replacement execution reference:
     - regression tests added:
       - `bridge.provider_http.test.direct provider gemini requires api key and reports gemini endpoint`
       - `gateway.dispatcher.test.dispatch browser.request direct provider gemini missing key uses api-key auth semantics`
+  - Phase 5 provider-catalog parity expanded:
+    - `models.list` now refreshes dynamic provider catalogs for `qwen`, `openrouter`, and `opencode`, while preserving static fallback models and provider alias normalization (`copaw -> qwen`).
+    - catalog refresh state is TTL-bound via `runtime.model_catalog_refresh_ttl_seconds` / `OPENCLAW_ZIG_RUNTIME_MODEL_CATALOG_REFRESH_TTL_SECONDS`.
+    - dynamic model ownership now uses the compat allocator instead of the transient request allocator, fixing a cross-allocator lifetime bug that surfaced as test leaks and an alignment panic on Windows Zig master.
+    - regression tests added/updated:
+      - `gateway.dispatcher.test.dispatch models.list rejects unknown params`
+      - `gateway.dispatcher.test.dispatch models.list provider filter supports copaw alias and qwen refresh`
+      - `gateway.dispatcher.test.parse openrouter model catalog payload prefixes provider ids`
+      - `gateway.dispatcher.test.parse opencode model catalog payload prefixes provider ids`
+      - `gateway.dispatcher.test.dispatch browser.request injects memory and tool context when session history exists` now parses JSON and asserts the behavior contract instead of a brittle exact string count.
 
 - Tracking and documentation refresh (2026-03-04):
   - Gateway hardening slice shipped:
