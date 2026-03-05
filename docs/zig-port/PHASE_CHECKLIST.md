@@ -470,6 +470,10 @@ Phase 6 progress notes:
   - GitHub Pages publish verified successful via Actions run `22653680203` with both build and deploy jobs green.
   - RPC docs drift guard added with generated reference script (`scripts/generate-rpc-reference.ps1`) and workflow enforcement in `zig-ci`, `release-preview`, and `docs-pages`.
   - current workflow head status re-verified: `docs-pages` rerun `22669207780` success; latest `zig-ci`, `release-preview`, and `npm-release` are all success.
+  - current workflow head status re-verified again (2026-03-05):
+    - `zig-ci` run `22699044422` success (validate + full cross-target matrix)
+    - `docs-pages` run `22699044418` success
+    - manual docs-pages dispatch run `22698975595` success (build + deploy)
   - python package release lane added:
     - `python/openclaw-zig-rpc-client` package scaffold + tests + CLI.
     - `scripts/python-pack-check.ps1` added to local/CI/release validation gates.
