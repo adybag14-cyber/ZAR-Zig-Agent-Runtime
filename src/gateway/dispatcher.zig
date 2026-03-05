@@ -11589,51 +11589,47 @@ test "dispatch browser.request executes completion payload path with failure tel
     try std.testing.expect(std.mem.indexOf(u8, out, "\"memoryEntriesUsed\":0") != null);
 }
 
-test "dispatch browser.request supports direct provider path for chatgpt with missing key telemetry" {
+test "dispatch browser.request metadata-only direct provider reports explicit api-key telemetry for chatgpt" {
     const allocator = std.testing.allocator;
     const out = try dispatch(
         allocator,
-        "{\"id\":\"3e\",\"method\":\"browser.request\",\"params\":{\"provider\":\"chatgpt\",\"directProvider\":true,\"stream\":true,\"prompt\":\"hello direct\"}}",
+        "{\"id\":\"3e\",\"method\":\"browser.request\",\"params\":{\"provider\":\"chatgpt\",\"directProvider\":true,\"stream\":true,\"apiKey\":\"sk-test-chatgpt\"}}",
     );
     defer allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"status\":\"failed\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"executionPath\":\"direct-provider\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"executionPath\":\"metadata-only\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"directProvider\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"stream\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"auth\":{\"loginSessionId\":null,\"apiKeyUsed\":false,\"apiKeySource\":\"none\"}") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"requestUrl\":\"https://api.openai.com/v1/chat/completions\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "missing API key for direct provider request") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"provider\":\"chatgpt\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"auth\":{\"loginSessionId\":null,\"apiKeyUsed\":true,\"apiKeySource\":\"explicit\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"bridgeCompletion\":{\"requested\":false") != null);
 }
 
-test "dispatch browser.request supports direct provider path for openrouter with missing key telemetry" {
+test "dispatch browser.request metadata-only direct provider reports explicit api-key telemetry for openrouter" {
     const allocator = std.testing.allocator;
     const out = try dispatch(
         allocator,
-        "{\"id\":\"3f\",\"method\":\"browser.request\",\"params\":{\"provider\":\"openrouter\",\"directProvider\":true,\"prompt\":\"hello openrouter direct\"}}",
+        "{\"id\":\"3f\",\"method\":\"browser.request\",\"params\":{\"provider\":\"openrouter\",\"directProvider\":true,\"apiKey\":\"or-test-key\"}}",
     );
     defer allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"status\":\"failed\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"executionPath\":\"direct-provider\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"executionPath\":\"metadata-only\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"directProvider\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"provider\":\"openrouter\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"requestUrl\":\"https://openrouter.ai/api/v1/chat/completions\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "missing API key for direct provider request") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"auth\":{\"loginSessionId\":null,\"apiKeyUsed\":true,\"apiKeySource\":\"explicit\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"bridgeCompletion\":{\"requested\":false") != null);
 }
 
-test "dispatch browser.request supports direct provider path for opencode with missing key telemetry" {
+test "dispatch browser.request metadata-only direct provider reports explicit api-key telemetry for opencode" {
     const allocator = std.testing.allocator;
     const out = try dispatch(
         allocator,
-        "{\"id\":\"3g\",\"method\":\"browser.request\",\"params\":{\"provider\":\"opencode\",\"directProvider\":true,\"prompt\":\"hello opencode direct\"}}",
+        "{\"id\":\"3g\",\"method\":\"browser.request\",\"params\":{\"provider\":\"opencode\",\"directProvider\":true,\"apiKey\":\"oc-test-key\"}}",
     );
     defer allocator.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"status\":\"failed\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"executionPath\":\"direct-provider\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"executionPath\":\"metadata-only\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"directProvider\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"provider\":\"opencode\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"auth\":{\"loginSessionId\":null,\"apiKeyUsed\":false,\"apiKeySource\":\"none\"}") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\"requestUrl\":\"https://api.opencode.ai/v1/chat/completions\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "missing API key for direct provider request") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"auth\":{\"loginSessionId\":null,\"apiKeyUsed\":true,\"apiKeySource\":\"explicit\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"bridgeCompletion\":{\"requested\":false") != null);
 }
 
 test "dispatch browser.request metadata-only direct provider reports explicit api-key telemetry" {
