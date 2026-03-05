@@ -56,7 +56,7 @@ Full-stack replacement execution reference:
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `149/149`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `150/150`.
 - Full-stack replacement kickoff (2026-03-05):
   - master tracking issue refreshed with FS0..FS7 execution gates.
   - FS0 execution issue opened (`#2`) and linked from master issue.
@@ -80,6 +80,10 @@ Full-stack replacement execution reference:
     - Telegram bridge attempt logic now includes latest-authorized fallback across providers:
       - if selected provider/session is unavailable, runtime attempts completion using the most recent authorized session from login manager.
       - runtime now exposes `providerFailover` in send responses to signal fallback usage when bridge completion succeeds via alternate authorized provider/session.
+    - Telegram bridge attempt logic now includes provider API-key credential fallback:
+      - selected and fallback attempts now attach provider API key credentials when available via dispatcher resolver (config/secret/env) or environment aliases.
+      - non-command replies can now avoid false `auth_required` when browser login is absent but provider API key credentials are present.
+      - regression test added: `channels.telegram_runtime.test.telegram runtime uses provider api key when no authorized browser session exists`.
 
 - Tracking and documentation refresh (2026-03-04):
   - Gateway hardening slice shipped:

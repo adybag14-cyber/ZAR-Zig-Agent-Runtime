@@ -16,6 +16,12 @@ pub const RuntimeError = error{
     UnsupportedChannel,
 };
 
+pub const ProviderApiKeyResolver = *const fn (
+    ctx: *anyopaque,
+    allocator: std.mem.Allocator,
+    provider: []const u8,
+) anyerror!?[]u8;
+
 pub fn setEnviron(environ: std.process.Environ) void {
     process_environ = environ;
 }
@@ -165,6 +171,8 @@ pub const TelegramRuntime = struct {
     memory_store_ref: ?*memory_store.Store,
     state_path: ?[]u8,
     persistent: bool,
+    provider_api_key_resolver_ctx: ?*anyopaque,
+    provider_api_key_resolver: ?ProviderApiKeyResolver,
 
     pub fn init(allocator: std.mem.Allocator, login_manager: *web_login.LoginManager) TelegramRuntime {
         return .{
@@ -182,6 +190,8 @@ pub const TelegramRuntime = struct {
             .memory_store_ref = null,
             .state_path = null,
             .persistent = false,
+            .provider_api_key_resolver_ctx = null,
+            .provider_api_key_resolver = null,
         };
     }
 
@@ -235,6 +245,15 @@ pub const TelegramRuntime = struct {
 
     pub fn setMemoryStore(self: *TelegramRuntime, store: *memory_store.Store) void {
         self.memory_store_ref = store;
+    }
+
+    pub fn setProviderApiKeyResolver(
+        self: *TelegramRuntime,
+        ctx: ?*anyopaque,
+        resolver: ?ProviderApiKeyResolver,
+    ) void {
+        self.provider_api_key_resolver_ctx = ctx;
+        self.provider_api_key_resolver = resolver;
     }
 
     pub fn status(self: *TelegramRuntime) StatusView {
@@ -388,12 +407,13 @@ pub const TelegramRuntime = struct {
         }
 
         const has_any_authorized = self.login_manager.latestAuthorizedSession("") != null;
-        if (!authorized and has_any_authorized) {
+        const has_provider_api_key = providerApiKeyConfigured(self, allocator, provider);
+        if (!authorized and (has_any_authorized or has_provider_api_key)) {
             auth_status = "authorized";
         }
         var bridge_used = false;
         const reply = blk: {
-            if (authorized or has_any_authorized) {
+            if (authorized or has_any_authorized or has_provider_api_key) {
                 if (try self.tryGenerateBridgeReply(allocator, provider, model, login_session, session_id, message)) |generated| {
                     bridge_used = true;
                     provider_failover = generated.failover;
@@ -500,6 +520,7 @@ pub const TelegramRuntime = struct {
         provider: []const u8,
         model: []const u8,
         login_session_id: []const u8,
+        api_key: []u8,
         reason: []const u8,
     };
 
@@ -584,6 +605,7 @@ pub const TelegramRuntime = struct {
             .provider = completion.provider,
             .model = completion.model,
             .login_session_id = std.mem.trim(u8, login_session_id, " \t\r\n"),
+            .api_key = if (try resolveProviderApiKey(self, allocator, completion.provider)) |value| value else try allocator.dupe(u8, ""),
             .reason = "selected",
         });
 
@@ -592,23 +614,33 @@ pub const TelegramRuntime = struct {
             const fallback_model = if (normalizeModel(latest.model).len > 0) normalizeModel(latest.model) else defaultModelForProvider(fallback_provider);
             const fallback_login = std.mem.trim(u8, latest.loginSessionId, " \t\r\n");
             const selected_login = std.mem.trim(u8, login_session_id, " \t\r\n");
+            const selected_api_key = attempts.items[0].api_key;
+            const fallback_api_key = if (try resolveProviderApiKey(self, allocator, fallback_provider)) |value| value else try allocator.dupe(u8, "");
             const duplicate = std.ascii.eqlIgnoreCase(fallback_provider, completion.provider) and
                 std.mem.eql(u8, fallback_model, completion.model) and
-                std.mem.eql(u8, fallback_login, selected_login);
-            if (!duplicate and fallback_login.len > 0) {
+                std.mem.eql(u8, fallback_login, selected_login) and
+                std.mem.eql(u8, fallback_api_key, selected_api_key);
+            if (!duplicate and (fallback_login.len > 0 or std.mem.trim(u8, fallback_api_key, " \t\r\n").len > 0)) {
                 try attempts.append(allocator, .{
                     .provider = fallback_provider,
                     .model = fallback_model,
                     .login_session_id = fallback_login,
+                    .api_key = fallback_api_key,
                     .reason = "latest-authorized-fallback",
                 });
+            } else {
+                allocator.free(fallback_api_key);
             }
+        }
+        defer {
+            for (attempts.items) |attempt| allocator.free(attempt.api_key);
         }
 
         for (attempts.items, 0..) |attempt, idx| {
             _ = attempt.reason;
             const attempt_login = std.mem.trim(u8, attempt.login_session_id, " \t\r\n");
-            if (attempt_login.len == 0) continue;
+            const attempt_api_key = std.mem.trim(u8, attempt.api_key, " \t\r\n");
+            if (attempt_login.len == 0 and attempt_api_key.len == 0) continue;
 
             var execution = lightpanda.executeCompletion(
                 allocator,
@@ -620,7 +652,7 @@ pub const TelegramRuntime = struct {
                 null,
                 null,
                 attempt_login,
-                "",
+                attempt_api_key,
             ) catch continue;
             defer execution.deinit(allocator);
 
@@ -2110,6 +2142,96 @@ fn providerBridgeGuidance(provider_raw: []const u8) []const u8 {
     return "Browser bridge: lightpanda\nFlow: start auth and complete with callback URL or code.\nCommand: /auth complete <provider> <callback_url_or_code> [session_id] [account]";
 }
 
+fn providerApiKeyConfigured(self: *TelegramRuntime, allocator: std.mem.Allocator, provider_raw: []const u8) bool {
+    const resolved = resolveProviderApiKey(self, allocator, provider_raw) catch return false;
+    if (resolved) |value| {
+        allocator.free(value);
+        return true;
+    }
+    return false;
+}
+
+fn resolveProviderApiKey(self: *TelegramRuntime, allocator: std.mem.Allocator, provider_raw: []const u8) !?[]u8 {
+    const provider = normalizeProvider(provider_raw);
+
+    if (self.provider_api_key_resolver) |resolver| {
+        if (self.provider_api_key_resolver_ctx) |ctx| {
+            if (try resolver(ctx, allocator, provider)) |value| {
+                const trimmed = std.mem.trim(u8, value, " \t\r\n");
+                if (trimmed.len > 0) {
+                    if (trimmed.ptr == value.ptr and trimmed.len == value.len) return value;
+                    defer allocator.free(value);
+                    return try allocator.dupe(u8, trimmed);
+                }
+                allocator.free(value);
+            }
+        }
+    }
+
+    if (std.ascii.eqlIgnoreCase(provider, "chatgpt") or std.ascii.eqlIgnoreCase(provider, "codex")) {
+        return envFirstValueAlloc(allocator, &[_][]const u8{
+            "OPENAI_API_KEY",
+            "OPENCLAW_ZIG_OPENAI_API_KEY",
+            "OPENCLAW_GO_OPENAI_API_KEY",
+            "OPENCLAW_RS_OPENAI_API_KEY",
+            "OPENCLAW_ZIG_BROWSER_OPENAI_API_KEY",
+        });
+    }
+    if (std.ascii.eqlIgnoreCase(provider, "claude")) {
+        return envFirstValueAlloc(allocator, &[_][]const u8{
+            "ANTHROPIC_API_KEY",
+            "OPENCLAW_ZIG_ANTHROPIC_API_KEY",
+            "OPENCLAW_GO_ANTHROPIC_API_KEY",
+            "OPENCLAW_RS_ANTHROPIC_API_KEY",
+            "OPENCLAW_ZIG_BROWSER_ANTHROPIC_API_KEY",
+        });
+    }
+    if (std.ascii.eqlIgnoreCase(provider, "gemini")) {
+        return envFirstValueAlloc(allocator, &[_][]const u8{
+            "GOOGLE_API_KEY",
+            "GEMINI_API_KEY",
+            "OPENCLAW_ZIG_GEMINI_API_KEY",
+            "OPENCLAW_GO_GEMINI_API_KEY",
+            "OPENCLAW_RS_GEMINI_API_KEY",
+            "OPENCLAW_ZIG_BROWSER_GEMINI_API_KEY",
+        });
+    }
+    if (std.ascii.eqlIgnoreCase(provider, "openrouter")) {
+        return envFirstValueAlloc(allocator, &[_][]const u8{
+            "OPENROUTER_API_KEY",
+            "OPENROUTER_KEY",
+            "OPENCLAW_ZIG_OPENROUTER_API_KEY",
+            "OPENCLAW_GO_OPENROUTER_API_KEY",
+            "OPENCLAW_RS_OPENROUTER_API_KEY",
+        });
+    }
+    if (std.ascii.eqlIgnoreCase(provider, "opencode")) {
+        return envFirstValueAlloc(allocator, &[_][]const u8{
+            "OPENCODE_API_KEY",
+            "OPENCODE_ZEN_API_KEY",
+            "OPENCLAW_ZIG_OPENCODE_API_KEY",
+            "OPENCLAW_GO_OPENCODE_API_KEY",
+            "OPENCLAW_RS_OPENCODE_API_KEY",
+        });
+    }
+
+    return null;
+}
+
+fn envFirstValueAlloc(allocator: std.mem.Allocator, names: []const []const u8) !?[]u8 {
+    for (names) |name| {
+        const raw = std.process.Environ.getAlloc(process_environ, allocator, name) catch |err| switch (err) {
+            error.EnvironmentVariableMissing => continue,
+            error.InvalidWtf8 => continue,
+            else => continue,
+        };
+        defer allocator.free(raw);
+        const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+        if (trimmed.len > 0) return try allocator.dupe(u8, trimmed);
+    }
+    return null;
+}
+
 fn normalizeTtsProvider(raw: []const u8) []const u8 {
     const trimmed = std.mem.trim(u8, raw, " \t\r\n");
     if (trimmed.len == 0) return "";
@@ -2355,10 +2477,48 @@ test "telegram runtime unauthorized chat marks auth_required reply source" {
     defer runtime.deinit();
 
     const allocator = std.testing.allocator;
+    var model_set = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-required-model\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-auth-required\",\"sessionId\":\"sess-auth-required\",\"message\":\"/model qwen/qwen-max\"}}");
+    defer model_set.deinit(allocator);
     var chat = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-required\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-auth-required\",\"sessionId\":\"sess-auth-required\",\"message\":\"hello before auth\"}}");
     defer chat.deinit(allocator);
     try std.testing.expect(std.mem.eql(u8, chat.replySource, "auth_required"));
     try std.testing.expect(std.mem.indexOf(u8, chat.reply, "Auth required") != null);
+}
+
+const TestProviderApiKeyContext = struct {
+    provider: []const u8,
+    api_key: []const u8,
+};
+
+fn testProviderApiKeyResolver(
+    ctx: *anyopaque,
+    allocator: std.mem.Allocator,
+    provider_raw: []const u8,
+) !?[]u8 {
+    const typed: *const TestProviderApiKeyContext = @ptrCast(@alignCast(ctx));
+    const provider = normalizeProvider(provider_raw);
+    if (!std.ascii.eqlIgnoreCase(provider, typed.provider)) return null;
+    return try allocator.dupe(u8, typed.api_key);
+}
+
+test "telegram runtime uses provider api key when no authorized browser session exists" {
+    var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
+    defer login.deinit();
+    var runtime = TelegramRuntime.init(std.testing.allocator, &login);
+    defer runtime.deinit();
+
+    var resolver_ctx: TestProviderApiKeyContext = .{
+        .provider = "chatgpt",
+        .api_key = "sk-telegram-test",
+    };
+    runtime.setProviderApiKeyResolver(@ptrCast(&resolver_ctx), testProviderApiKeyResolver);
+
+    const allocator = std.testing.allocator;
+    var chat = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-api-key\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-api-key\",\"sessionId\":\"sess-api-key\",\"message\":\"hello with api key\"}}");
+    defer chat.deinit(allocator);
+    try std.testing.expect(!std.mem.eql(u8, chat.replySource, "auth_required"));
+    try std.testing.expect(std.mem.eql(u8, chat.authStatus, "authorized"));
+    try std.testing.expect(std.mem.eql(u8, chat.provider, "chatgpt"));
 }
 
 test "telegram runtime send accepts webchat and cli channel aliases" {

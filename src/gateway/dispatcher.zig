@@ -8184,7 +8184,9 @@ fn getTelegramRuntime() !*telegram_runtime.TelegramRuntime {
         telegram_runtime_instance = tg_runtime;
     }
     const cfg = currentConfig();
+    const compat = try getCompatState();
     telegram_runtime_instance.?.setMemoryStore(try getMemoryStore());
+    telegram_runtime_instance.?.setProviderApiKeyResolver(@ptrCast(compat), resolveTelegramProviderApiKeyAlloc);
     try telegram_runtime_instance.?.setBridgeConfig(cfg.lightpanda_endpoint, cfg.lightpanda_timeout_ms);
     return &telegram_runtime_instance.?;
 }
@@ -9652,6 +9654,15 @@ fn resolveBrowserProviderApiKeyAlloc(
         );
     }
     return null;
+}
+
+fn resolveTelegramProviderApiKeyAlloc(
+    ctx: *anyopaque,
+    allocator: std.mem.Allocator,
+    provider_raw: []const u8,
+) anyerror!?[]u8 {
+    const compat: *CompatState = @ptrCast(@alignCast(ctx));
+    return resolveBrowserProviderApiKeyAlloc(allocator, compat, provider_raw);
 }
 
 fn resolveFirstSecretCandidateAlloc(
