@@ -56,6 +56,64 @@ function Read-ContentChecked {
     return Get-Content -Raw -Path $Path
 }
 
+function Get-HttpStatusCode {
+    param(
+        [Parameter(Mandatory = $true)]
+        $ErrorRecord
+    )
+
+    if ($null -ne $ErrorRecord.Exception.Response -and $null -ne $ErrorRecord.Exception.Response.StatusCode) {
+        return [int] $ErrorRecord.Exception.Response.StatusCode
+    }
+    return $null
+}
+
+function Invoke-WebRequestWithRetry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Url
+    )
+
+    $delaySeconds = 2
+    for ($attempt = 1; $attempt -le 4; $attempt++) {
+        try {
+            return Invoke-WebRequest -UseBasicParsing -Headers $ApiHeaders -Uri $Url
+        }
+        catch {
+            $statusCode = Get-HttpStatusCode -ErrorRecord $_
+            $retryable = ($statusCode -eq 429) -or ($statusCode -ge 500 -and $statusCode -lt 600)
+            if (-not $retryable -or $attempt -eq 4) {
+                throw
+            }
+            Start-Sleep -Seconds $delaySeconds
+            $delaySeconds *= 2
+        }
+    }
+}
+
+function Invoke-RestMethodWithRetry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Url
+    )
+
+    $delaySeconds = 2
+    for ($attempt = 1; $attempt -le 4; $attempt++) {
+        try {
+            return Invoke-RestMethod -Headers $ApiHeaders -Uri $Url
+        }
+        catch {
+            $statusCode = Get-HttpStatusCode -ErrorRecord $_
+            $retryable = ($statusCode -eq 429) -or ($statusCode -ge 500 -and $statusCode -lt 600)
+            if (-not $retryable -or $attempt -eq 4) {
+                throw
+            }
+            Start-Sleep -Seconds $delaySeconds
+            $delaySeconds *= 2
+        }
+    }
+}
+
 function Fetch-Text {
     param(
         [Parameter(Mandatory = $true)]
@@ -63,7 +121,7 @@ function Fetch-Text {
     )
 
     try {
-        return (Invoke-WebRequest -UseBasicParsing -Headers $ApiHeaders -Uri $Url).Content
+        return (Invoke-WebRequestWithRetry -Url $Url).Content
     }
     catch {
         throw "Failed to fetch URL: $Url`n$($_.Exception.Message)"
@@ -78,7 +136,7 @@ function Resolve-LatestReleaseTag {
 
     $releaseUrl = "https://api.github.com/repos/$Repo/releases/latest"
     try {
-        $release = Invoke-RestMethod -Headers $ApiHeaders -Uri $releaseUrl
+        $release = Invoke-RestMethodWithRetry -Url $releaseUrl
         if ($null -ne $release -and -not [string]::IsNullOrWhiteSpace($release.tag_name)) {
             return [string] $release.tag_name
         }
@@ -89,7 +147,7 @@ function Resolve-LatestReleaseTag {
 
     $tagsUrl = "https://api.github.com/repos/$Repo/tags?per_page=1"
     try {
-        $tags = Invoke-RestMethod -Headers $ApiHeaders -Uri $tagsUrl
+        $tags = Invoke-RestMethodWithRetry -Url $tagsUrl
         if ($null -ne $tags -and $tags.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($tags[0].name)) {
             return [string] $tags[0].name
         }
@@ -109,7 +167,7 @@ function Resolve-LatestPreReleaseTag {
 
     $releasesUrl = "https://api.github.com/repos/$Repo/releases?per_page=100"
     try {
-        $releases = Invoke-RestMethod -Headers $ApiHeaders -Uri $releasesUrl
+        $releases = Invoke-RestMethodWithRetry -Url $releasesUrl
         if ($null -eq $releases) {
             throw "No release payload returned."
         }
