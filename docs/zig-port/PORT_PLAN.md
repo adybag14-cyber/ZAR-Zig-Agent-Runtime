@@ -53,7 +53,7 @@ while maintaining parity-first validation and release gating.
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `124/124`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `127/127`.
 
 - Tracking and documentation refresh (2026-03-04):
   - Gateway hardening slice shipped:
