@@ -7910,6 +7910,8 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         };
 
         const direct_provider_requested = browser_params.direct_provider and browser_params.has_completion_payload;
+        var auth_api_key_used = std.mem.trim(u8, browser_params.api_key, " \t\r\n").len > 0;
+        var auth_api_key_source: []const u8 = if (auth_api_key_used) "explicit" else "none";
         var probe: ?lightpanda.BridgeProbe = null;
         defer if (probe) |value| value.deinit(allocator);
         if (!direct_provider_requested) {
@@ -7920,14 +7922,22 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             var bridge_completion = blk: {
                 if (direct_provider_requested) {
                     const compat = try getCompatState();
-                    const maybe_api_key = if (browser_params.api_key.len > 0)
-                        try allocator.dupe(u8, browser_params.api_key)
-                    else
-                        try resolveBrowserProviderApiKeyAlloc(allocator, compat, completion.provider);
+                    var api_key_source: []const u8 = "none";
+                    const maybe_api_key = if (browser_params.api_key.len > 0) api_key_blk: {
+                        api_key_source = "explicit";
+                        break :api_key_blk try allocator.dupe(u8, browser_params.api_key);
+                    } else resolver_blk: {
+                        const resolved = try resolveBrowserProviderApiKeyAlloc(allocator, compat, completion.provider);
+                        if (resolved != null) api_key_source = "resolver";
+                        break :resolver_blk resolved;
+                    };
                     defer if (maybe_api_key) |value| allocator.free(value);
 
                     const resolved_api_key = maybe_api_key orelse try allocator.dupe(u8, "");
                     defer allocator.free(resolved_api_key);
+                    const trimmed_key = std.mem.trim(u8, resolved_api_key, " \t\r\n");
+                    auth_api_key_used = trimmed_key.len > 0;
+                    auth_api_key_source = if (auth_api_key_used) api_key_source else "none";
                     break :blk try provider_http.executeCompletion(
                         allocator,
                         completion.provider,
@@ -7981,6 +7991,11 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
                 .message = completion_message,
                 .endpoint = endpoint_out,
                 .requestTimeoutMs = browser_params.request_timeout_ms,
+                .auth = .{
+                    .loginSessionId = if (browser_params.login_session_id.len == 0) null else browser_params.login_session_id,
+                    .apiKeyUsed = auth_api_key_used,
+                    .apiKeySource = auth_api_key_source,
+                },
                 .probe = .{
                     .ok = probe_ok,
                     .url = probe_url,
@@ -8029,6 +8044,11 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             .message = completion.message,
             .endpoint = if (probe) |value| value.endpoint else browser_params.endpoint,
             .requestTimeoutMs = browser_params.request_timeout_ms,
+            .auth = .{
+                .loginSessionId = if (browser_params.login_session_id.len == 0) null else browser_params.login_session_id,
+                .apiKeyUsed = auth_api_key_used,
+                .apiKeySource = auth_api_key_source,
+            },
             .probe = .{
                 .ok = if (probe) |value| value.ok else true,
                 .url = if (probe) |value| value.probeUrl else "",
@@ -11580,6 +11600,7 @@ test "dispatch browser.request supports direct provider path for chatgpt with mi
     try std.testing.expect(std.mem.indexOf(u8, out, "\"executionPath\":\"direct-provider\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"directProvider\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"stream\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"auth\":{\"loginSessionId\":null,\"apiKeyUsed\":false,\"apiKeySource\":\"none\"}") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"requestUrl\":\"https://api.openai.com/v1/chat/completions\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "missing API key for direct provider request") != null);
 }
@@ -11610,8 +11631,21 @@ test "dispatch browser.request supports direct provider path for opencode with m
     try std.testing.expect(std.mem.indexOf(u8, out, "\"executionPath\":\"direct-provider\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"directProvider\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"provider\":\"opencode\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"auth\":{\"loginSessionId\":null,\"apiKeyUsed\":false,\"apiKeySource\":\"none\"}") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"requestUrl\":\"https://api.opencode.ai/v1/chat/completions\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "missing API key for direct provider request") != null);
+}
+
+test "dispatch browser.request metadata-only direct provider reports explicit api-key telemetry" {
+    const allocator = std.testing.allocator;
+    const out = try dispatch(
+        allocator,
+        "{\"id\":\"3h\",\"method\":\"browser.request\",\"params\":{\"provider\":\"openrouter\",\"directProvider\":true,\"apiKey\":\"or-test-key\"}}",
+    );
+    defer allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"executionPath\":\"metadata-only\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"directProvider\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"auth\":{\"loginSessionId\":null,\"apiKeyUsed\":true,\"apiKeySource\":\"explicit\"}") != null);
 }
 
 test "dispatch browser.request injects memory and tool context when session history exists" {

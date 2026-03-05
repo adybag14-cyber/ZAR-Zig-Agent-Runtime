@@ -56,7 +56,7 @@ Full-stack replacement execution reference:
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `155/155`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `156/156`.
 - Full-stack replacement kickoff (2026-03-05):
   - master tracking issue refreshed with FS0..FS7 execution gates.
   - FS0 execution issue opened (`#2`) and linked from master issue.
@@ -102,6 +102,11 @@ Full-stack replacement execution reference:
     - Telegram bridge response telemetry now includes API-key usage flag:
       - `send` result now emits `providerApiKeyUsed` when bridge completion succeeds using provider API-key credentials.
       - regression test updated: `channels.telegram_runtime.test.telegram runtime uses provider api key when no authorized browser session exists`.
+    - Browser-request auth telemetry now includes API-key usage/source:
+      - `browser.request` responses now include `auth.apiKeyUsed` and `auth.apiKeySource` (`explicit|resolver|none`) plus `auth.loginSessionId`.
+      - direct-provider missing-key paths now report deterministic `auth` telemetry for debugging parity with Telegram auth flows.
+      - regression test added:
+        - `gateway.dispatcher.test.dispatch browser.request metadata-only direct provider reports explicit api-key telemetry`.
 
 - Tracking and documentation refresh (2026-03-04):
   - Gateway hardening slice shipped:

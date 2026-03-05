@@ -1,7 +1,7 @@
 # Phase Checklist
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
-Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `155/155`.
+Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `156/156`.
 
 ## Full-Stack Replacement Track (FS0..FS7)
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)
@@ -210,6 +210,10 @@ Phase 5 enhancement notes:
   - Telegram send-result bridge telemetry now includes provider API-key usage:
     - `send` response includes `providerApiKeyUsed` to indicate when bridge completion used API-key credentials.
     - regression coverage updated in `telegram runtime uses provider api key when no authorized browser session exists`.
+  - Browser-request auth telemetry now includes API-key usage/source:
+    - `browser.request` now emits `auth.loginSessionId`, `auth.apiKeyUsed`, and `auth.apiKeySource` (`explicit|resolver|none`) in completion and metadata-only responses.
+    - regression coverage added:
+      - `dispatch browser.request metadata-only direct provider reports explicit api-key telemetry`.
   - regression tests added:
     - `bridge.web_login.test.latest authorized session supports provider filter and summary status`
     - `channels.telegram_runtime.test.telegram runtime uses latest authorized session fallback when selected provider is unauthenticated`
