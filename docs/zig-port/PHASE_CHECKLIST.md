@@ -1,7 +1,7 @@
 # Phase Checklist
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
-Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `147/147`.
+Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `149/149`.
 
 ## Full-Stack Replacement Track (FS0..FS7)
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)
@@ -186,6 +186,11 @@ Phase 5 enhancement notes:
   - completion payload assembly now applies role filtering and last-user dedupe to prevent duplicate user turns in bridge requests.
   - completion payloads now apply bounded-context shaping (`12,000` char budget) while preserving system context and newest user turn.
   - regression test added: `telegram runtime completion budget keeps system and newest user turn`.
+  - Telegram completion attempt fallback now reuses latest authorized login session across providers when selected provider binding is missing/stale, reducing false `auth_required` responses after model switching.
+  - send response envelope now includes `providerFailover` flag for bridge-completion provenance.
+  - regression tests added:
+    - `bridge.web_login.test.latest authorized session supports provider filter and summary status`
+    - `channels.telegram_runtime.test.telegram runtime uses latest authorized session fallback when selected provider is unauthenticated`
 
 ## Phase 6 - Memory + Edge
 - [x] Port memory persistence primitives

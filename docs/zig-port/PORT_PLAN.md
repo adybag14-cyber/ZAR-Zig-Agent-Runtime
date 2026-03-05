@@ -56,7 +56,7 @@ Full-stack replacement execution reference:
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `147/147`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `149/149`.
 - Full-stack replacement kickoff (2026-03-05):
   - master tracking issue refreshed with FS0..FS7 execution gates.
   - FS0 execution issue opened (`#2`) and linked from master issue.
@@ -77,6 +77,9 @@ Full-stack replacement execution reference:
     - Telegram `tryGenerateBridgeReply` now injects a runtime tool-capability system prompt plus memory recall context (semantic + graph synthesis) and recent session history into Lightpanda completion messages.
     - Telegram completion message builder now enforces role filtering and last-user dedupe to avoid duplicated user turns in bridge payloads.
     - Telegram completion payload shaping now enforces a bounded context budget (`12,000` chars) while preserving system context and newest user turn.
+    - Telegram bridge attempt logic now includes latest-authorized fallback across providers:
+      - if selected provider/session is unavailable, runtime attempts completion using the most recent authorized session from login manager.
+      - runtime now exposes `providerFailover` in send responses to signal fallback usage when bridge completion succeeds via alternate authorized provider/session.
 
 - Tracking and documentation refresh (2026-03-04):
   - Gateway hardening slice shipped:

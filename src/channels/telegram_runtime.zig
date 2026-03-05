@@ -30,6 +30,7 @@ pub const SendResult = struct {
     commandName: []u8,
     reply: []u8,
     replySource: []u8,
+    providerFailover: bool,
     provider: []u8,
     model: []u8,
     loginSessionId: []u8,
@@ -334,6 +335,7 @@ pub const TelegramRuntime = struct {
         login_code: []const u8,
         auth_status: []const u8,
         bridge_used: bool = false,
+        provider_failover: bool = false,
         audio_base64: ?[]u8 = null,
         audio_format: []const u8 = "",
         audio_bytes: usize = 0,
@@ -367,6 +369,9 @@ pub const TelegramRuntime = struct {
         const provider = model_sel.provider;
         const model = model_sel.model;
         var login_session: []const u8 = "";
+        var response_provider: []const u8 = provider;
+        var response_model: []const u8 = model;
+        var provider_failover = false;
         var auth_status: []const u8 = "pending";
         var authorized = false;
         var bound_session = try self.getAuthBinding(allocator, target, provider, "default");
@@ -382,12 +387,22 @@ pub const TelegramRuntime = struct {
             }
         }
 
+        const has_any_authorized = self.login_manager.latestAuthorizedSession("") != null;
+        if (!authorized and has_any_authorized) {
+            auth_status = "authorized";
+        }
         var bridge_used = false;
         const reply = blk: {
-            if (authorized) {
+            if (authorized or has_any_authorized) {
                 if (try self.tryGenerateBridgeReply(allocator, provider, model, login_session, session_id, message)) |generated| {
                     bridge_used = true;
-                    break :blk generated;
+                    provider_failover = generated.failover;
+                    response_provider = generated.provider;
+                    response_model = generated.model;
+                    login_session = generated.login_session_id;
+                    auth_status = "authorized";
+                    authorized = true;
+                    break :blk generated.text;
                 }
                 break :blk try std.fmt.allocPrint(allocator, "OpenClaw Zig ({s}/{s}) assistant: {s}", .{ provider, model, message });
             }
@@ -426,12 +441,13 @@ pub const TelegramRuntime = struct {
             .is_command = false,
             .command_name = "",
             .reply = reply,
-            .provider = provider,
-            .model = model,
+            .provider = response_provider,
+            .model = response_model,
             .login_session_id = login_session,
             .login_code = "",
             .auth_status = if (authorized) "authorized" else auth_status,
             .bridge_used = bridge_used,
+            .provider_failover = provider_failover,
             .audio_base64 = audio_base64,
             .audio_format = audio_format,
             .audio_bytes = audio_bytes,
@@ -464,6 +480,7 @@ pub const TelegramRuntime = struct {
             .commandName = try allocator.dupe(u8, outcome.command_name),
             .reply = try allocator.dupe(u8, outcome.reply),
             .replySource = try allocator.dupe(u8, reply_source),
+            .providerFailover = outcome.provider_failover,
             .provider = try allocator.dupe(u8, outcome.provider),
             .model = try allocator.dupe(u8, outcome.model),
             .loginSessionId = try allocator.dupe(u8, outcome.login_session_id),
@@ -479,6 +496,21 @@ pub const TelegramRuntime = struct {
         };
     }
 
+    const CompletionAttempt = struct {
+        provider: []const u8,
+        model: []const u8,
+        login_session_id: []const u8,
+        reason: []const u8,
+    };
+
+    const BridgeReply = struct {
+        text: []u8,
+        provider: []const u8,
+        model: []const u8,
+        login_session_id: []const u8,
+        failover: bool,
+    };
+
     fn tryGenerateBridgeReply(
         self: *TelegramRuntime,
         allocator: std.mem.Allocator,
@@ -487,11 +519,13 @@ pub const TelegramRuntime = struct {
         login_session_id: []const u8,
         session_id: []const u8,
         message: []const u8,
-    ) !?[]u8 {
+    ) !?BridgeReply {
         const trimmed_message = std.mem.trim(u8, message, " \t\r\n");
         if (trimmed_message.len == 0) return null;
 
-        const completion = lightpanda.complete("lightpanda", provider, model, "") catch return null;
+        const normalized_provider = normalizeProvider(provider);
+        const normalized_model = if (normalizeModel(model).len > 0) normalizeModel(model) else defaultModelForProvider(normalized_provider);
+        const completion = lightpanda.complete("lightpanda", normalized_provider, normalized_model, "") catch return null;
 
         var completion_messages: std.ArrayList(lightpanda.CompletionMessage) = .empty;
         defer {
@@ -543,24 +577,65 @@ pub const TelegramRuntime = struct {
         }
         try trimCompletionMessagesToBudget(allocator, &completion_messages, telegram_completion_max_chars);
 
-        var execution = lightpanda.executeCompletion(
-            allocator,
-            self.bridge_endpoint,
-            self.bridge_timeout_ms,
-            completion.provider,
-            completion.model,
-            completion_messages.items,
-            null,
-            null,
-            login_session_id,
-            "",
-        ) catch return null;
-        defer execution.deinit(allocator);
+        var attempts: std.ArrayList(CompletionAttempt) = .empty;
+        defer attempts.deinit(allocator);
 
-        if (!execution.ok) return null;
-        const assistant_text = std.mem.trim(u8, execution.assistantText, " \t\r\n");
-        if (assistant_text.len == 0) return null;
-        return try allocator.dupe(u8, assistant_text);
+        try attempts.append(allocator, .{
+            .provider = completion.provider,
+            .model = completion.model,
+            .login_session_id = std.mem.trim(u8, login_session_id, " \t\r\n"),
+            .reason = "selected",
+        });
+
+        if (self.login_manager.latestAuthorizedSession("")) |latest| {
+            const fallback_provider = normalizeProvider(latest.provider);
+            const fallback_model = if (normalizeModel(latest.model).len > 0) normalizeModel(latest.model) else defaultModelForProvider(fallback_provider);
+            const fallback_login = std.mem.trim(u8, latest.loginSessionId, " \t\r\n");
+            const selected_login = std.mem.trim(u8, login_session_id, " \t\r\n");
+            const duplicate = std.ascii.eqlIgnoreCase(fallback_provider, completion.provider) and
+                std.mem.eql(u8, fallback_model, completion.model) and
+                std.mem.eql(u8, fallback_login, selected_login);
+            if (!duplicate and fallback_login.len > 0) {
+                try attempts.append(allocator, .{
+                    .provider = fallback_provider,
+                    .model = fallback_model,
+                    .login_session_id = fallback_login,
+                    .reason = "latest-authorized-fallback",
+                });
+            }
+        }
+
+        for (attempts.items, 0..) |attempt, idx| {
+            _ = attempt.reason;
+            const attempt_login = std.mem.trim(u8, attempt.login_session_id, " \t\r\n");
+            if (attempt_login.len == 0) continue;
+
+            var execution = lightpanda.executeCompletion(
+                allocator,
+                self.bridge_endpoint,
+                self.bridge_timeout_ms,
+                attempt.provider,
+                attempt.model,
+                completion_messages.items,
+                null,
+                null,
+                attempt_login,
+                "",
+            ) catch continue;
+            defer execution.deinit(allocator);
+
+            if (!execution.ok) continue;
+            const assistant_text = std.mem.trim(u8, execution.assistantText, " \t\r\n");
+            if (assistant_text.len == 0) continue;
+            return .{
+                .text = try allocator.dupe(u8, assistant_text),
+                .provider = attempt.provider,
+                .model = attempt.model,
+                .login_session_id = attempt_login,
+                .failover = idx > 0,
+            };
+        }
+        return null;
     }
 
     fn appendCompletionMessage(
@@ -2409,6 +2484,46 @@ test "telegram runtime qwen guest auth lifecycle" {
     if (std.mem.eql(u8, chat_result.replySource, "runtime_echo")) {
         try std.testing.expect(std.mem.indexOf(u8, chat_result.reply, "OpenClaw Zig (qwen/") != null);
     }
+}
+
+test "telegram runtime uses latest authorized session fallback when selected provider is unauthenticated" {
+    var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
+    defer login.deinit();
+    var runtime = TelegramRuntime.init(std.testing.allocator, &login);
+    defer runtime.deinit();
+
+    const allocator = std.testing.allocator;
+    var auth_start = try runtime.sendFromFrame(
+        allocator,
+        "{\"id\":\"tg-fallback-auth-start\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-fallback\",\"sessionId\":\"sess-fallback\",\"message\":\"/auth start chatgpt\"}}",
+    );
+    defer auth_start.deinit(allocator);
+    try std.testing.expect(auth_start.loginCode.len > 0);
+    try std.testing.expect(auth_start.loginSessionId.len > 0);
+
+    const auth_complete_frame = try std.fmt.allocPrint(
+        allocator,
+        "{{\"id\":\"tg-fallback-auth-complete\",\"method\":\"send\",\"params\":{{\"channel\":\"telegram\",\"to\":\"room-fallback\",\"sessionId\":\"sess-fallback\",\"message\":\"/auth complete chatgpt {s} {s}\"}}}}",
+        .{ auth_start.loginCode, auth_start.loginSessionId },
+    );
+    defer allocator.free(auth_complete_frame);
+    var auth_complete = try runtime.sendFromFrame(allocator, auth_complete_frame);
+    defer auth_complete.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, auth_complete.authStatus, "authorized"));
+
+    var model_set = try runtime.sendFromFrame(
+        allocator,
+        "{\"id\":\"tg-fallback-model\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-fallback\",\"sessionId\":\"sess-fallback\",\"message\":\"/model qwen/qwen-max\"}}",
+    );
+    defer model_set.deinit(allocator);
+
+    var chat = try runtime.sendFromFrame(
+        allocator,
+        "{\"id\":\"tg-fallback-chat\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-fallback\",\"sessionId\":\"sess-fallback\",\"message\":\"hello fallback bridge\"}}",
+    );
+    defer chat.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, chat.authStatus, "authorized"));
+    try std.testing.expect(!std.mem.eql(u8, chat.replySource, "auth_required"));
 }
 
 test "telegram runtime auth complete infers provider from callback URL" {

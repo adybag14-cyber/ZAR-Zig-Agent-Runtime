@@ -251,6 +251,25 @@ pub const LoginManager = struct {
         return summary;
     }
 
+    pub fn hasAuthorizedSession(self: *LoginManager) bool {
+        return self.latestAuthorizedSession("") != null;
+    }
+
+    pub fn latestAuthorizedSession(self: *LoginManager, provider_raw: []const u8) ?SessionView {
+        const provider_trimmed = std.mem.trim(u8, provider_raw, " \t\r\n");
+        const provider_filter = if (provider_trimmed.len == 0) "" else std.mem.trim(u8, normalizeProviderAlias(provider_trimmed), " \t\r\n");
+        const filter_enabled = provider_filter.len > 0 and !std.ascii.eqlIgnoreCase(provider_filter, "all");
+        var idx = self.sessions.items.len;
+        while (idx > 0) : (idx -= 1) {
+            var session = &self.sessions.items[idx - 1];
+            self.applyExpiry(session);
+            if (session.status != .authorized) continue;
+            if (filter_enabled and !std.ascii.eqlIgnoreCase(session.provider, provider_filter)) continue;
+            return session.view();
+        }
+        return null;
+    }
+
     fn applyExpiry(self: *LoginManager, session: *Session) void {
         _ = self;
         if (session.status != .pending) return;
@@ -716,6 +735,29 @@ test "extract auth code supports callback urls and fragments" {
     try std.testing.expect(std.mem.eql(u8, extractAuthCode("https://chat.z.ai/oauth#auth_code=OC-GLM5"), "OC-GLM5"));
     try std.testing.expect(std.mem.eql(u8, extractAuthCode("https://chat.inceptionlabs.ai/auth/OC-MERCURY2"), "OC-MERCURY2"));
     try std.testing.expect(std.mem.eql(u8, extractAuthCode("guest"), ""));
+}
+
+test "latest authorized session supports provider filter and summary status" {
+    var manager = LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
+    defer manager.deinit();
+
+    try std.testing.expect(!manager.hasAuthorizedSession());
+
+    const chatgpt = try manager.start("chatgpt", "");
+    _ = try manager.complete(chatgpt.loginSessionId, chatgpt.code);
+    const qwen = try manager.start("qwen", "");
+    _ = try manager.complete(qwen.loginSessionId, "guest");
+
+    try std.testing.expect(manager.hasAuthorizedSession());
+
+    const latest_any = manager.latestAuthorizedSession("") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.ascii.eqlIgnoreCase(latest_any.provider, "qwen"));
+
+    const latest_chatgpt = manager.latestAuthorizedSession("chatgpt") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.ascii.eqlIgnoreCase(latest_chatgpt.provider, "chatgpt"));
+
+    const missing = manager.latestAuthorizedSession("claude");
+    try std.testing.expect(missing == null);
 }
 
 test "web login persistence roundtrip restores authorized session" {
