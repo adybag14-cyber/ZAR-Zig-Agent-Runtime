@@ -1247,6 +1247,11 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
             x86_bootstrap.oc_interrupt_mask_clear_all();
             return abi.result_ok;
         },
+        abi.command_interrupt_mask_reset_ignored_counts => {
+            if (arg0 != 0 or arg1 != 0) return abi.result_invalid_argument;
+            x86_bootstrap.oc_interrupt_mask_reset_ignored_counts();
+            return abi.result_ok;
+        },
         abi.command_scheduler_wake_task => {
             if (arg0 == 0 or arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
             if (!schedulerWakeTask(@as(u32, @truncate(arg0)), abi.wake_reason_manual, 0, 0, status.ticks)) {
@@ -3511,6 +3516,8 @@ test "baremetal interrupt mask commands gate non-exception interrupt wakeups" {
     oc_tick();
     try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
     try std.testing.expectEqual(@as(u64, 1), x86_bootstrap.oc_interrupt_mask_ignored_count());
+    try std.testing.expectEqual(@as(u64, 1), x86_bootstrap.oc_interrupt_mask_ignored_vector_count(200));
+    try std.testing.expectEqual(@as(u8, 200), x86_bootstrap.oc_interrupt_last_masked_vector());
 
     _ = oc_submit_command(abi.command_trigger_interrupt, 13, 0);
     oc_tick();
@@ -3536,6 +3543,25 @@ test "baremetal interrupt mask commands gate non-exception interrupt wakeups" {
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
     try std.testing.expectEqual(@as(u32, 1), x86_bootstrap.oc_interrupt_masked_count());
+
+    _ = oc_submit_command(abi.command_trigger_interrupt, 201, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(u64, 2), x86_bootstrap.oc_interrupt_mask_ignored_count());
+    try std.testing.expectEqual(@as(u64, 1), x86_bootstrap.oc_interrupt_mask_ignored_vector_count(200));
+    try std.testing.expectEqual(@as(u64, 1), x86_bootstrap.oc_interrupt_mask_ignored_vector_count(201));
+    try std.testing.expectEqual(@as(u8, 201), x86_bootstrap.oc_interrupt_last_masked_vector());
+
+    _ = oc_submit_command(abi.command_interrupt_mask_reset_ignored_counts, 0, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u64, 0), x86_bootstrap.oc_interrupt_mask_ignored_count());
+    try std.testing.expectEqual(@as(u64, 0), x86_bootstrap.oc_interrupt_mask_ignored_vector_count(200));
+    try std.testing.expectEqual(@as(u64, 0), x86_bootstrap.oc_interrupt_mask_ignored_vector_count(201));
+    try std.testing.expectEqual(@as(u8, 0), x86_bootstrap.oc_interrupt_last_masked_vector());
+
+    _ = oc_submit_command(abi.command_interrupt_mask_reset_ignored_counts, 1, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_invalid_argument), status.last_command_result);
 
     _ = oc_submit_command(abi.command_interrupt_mask_clear_all, 0, 0);
     oc_tick();

@@ -140,6 +140,7 @@ pub const command_wake_queue_pop_before_tick: u16 = 61;
 pub const command_wake_queue_pop_reason_vector: u16 = 62;
 pub const command_interrupt_mask_set: u16 = 63;
 pub const command_interrupt_mask_clear_all: u16 = 64;
+pub const command_interrupt_mask_reset_ignored_counts: u16 = 65;
 
 pub const mode_change_reason_boot: u8 = 0;
 pub const mode_change_reason_command: u8 = 1;

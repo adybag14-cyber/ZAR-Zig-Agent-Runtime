@@ -274,10 +274,10 @@ Phase 6 progress notes:
   - ABI contract extended with `BaremetalWakeQueueAgeBuckets`
   - regression coverage added for age-bucket field correctness under mixed stale/future wake entries
 - [x] Bare-metal interrupt mask control slice shipped:
-  - new mailbox opcodes: `command_interrupt_mask_set` (`arg0=vector`, `arg1=masked 0|1`) and `command_interrupt_mask_clear_all`
-  - new x86 bootstrap exports: `oc_interrupt_mask_ptr`, `oc_interrupt_mask_is_set`, `oc_interrupt_masked_count`, `oc_interrupt_mask_ignored_count`, `oc_interrupt_mask_set`, `oc_interrupt_mask_clear_all`
+  - new mailbox opcodes: `command_interrupt_mask_set` (`arg0=vector`, `arg1=masked 0|1`), `command_interrupt_mask_clear_all`, and `command_interrupt_mask_reset_ignored_counts`
+  - new x86 bootstrap exports: `oc_interrupt_mask_ptr`, `oc_interrupt_mask_is_set`, `oc_interrupt_masked_count`, `oc_interrupt_mask_ignored_count`, `oc_interrupt_last_masked_vector`, `oc_interrupt_mask_ignored_vector_counts_ptr`, `oc_interrupt_mask_ignored_vector_count`, `oc_interrupt_mask_set`, `oc_interrupt_mask_clear_all`, `oc_interrupt_mask_reset_ignored_counts`
   - runtime behavior: masked non-exception interrupts are ignored while exception vectors remain non-maskable
-  - regression coverage added for masked wake suppression, ignored-interrupt telemetry, and mask command argument validation
+  - regression coverage added for masked wake suppression, per-vector ignored-interrupt telemetry, reset semantics, and mask command argument validation
 - [x] `scripts/zig-codeberg-master-check.ps1` (reports local vs remote master hash)
 - [x] Multi-baseline method diff check: `Go(latest)=134`, `Original(latest)=94`, `OriginalBeta(latest)=94`, `Union=135`, `Zig=169`, `missing_in_zig=0`, `union_extras=34`
 - [x] Multi-baseline gateway event diff check: `OriginalEvents(latest)=19`, `OriginalBetaEvents(latest)=19`, `UnionEvents=19`, `ZigEvents=19`, `union_events_missing_in_zig=0`

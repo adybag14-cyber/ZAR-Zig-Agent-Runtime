@@ -450,8 +450,8 @@ while maintaining parity-first validation and release gating.
     - ABI contract extended with `BaremetalWakeQueueAgeBuckets` size/layout checks.
     - validated with `zig build test --summary all` (`118/118`) and `scripts/baremetal-smoke-check.ps1`.
   - bare-metal interrupt mask control slice shipped:
-    - new mailbox opcodes: `command_interrupt_mask_set` (`arg0=vector`, `arg1=masked 0|1`) and `command_interrupt_mask_clear_all`.
-    - new x86 bootstrap exports: `oc_interrupt_mask_ptr`, `oc_interrupt_mask_is_set`, `oc_interrupt_masked_count`, `oc_interrupt_mask_ignored_count`, `oc_interrupt_mask_set`, `oc_interrupt_mask_clear_all`.
+    - new mailbox opcodes: `command_interrupt_mask_set` (`arg0=vector`, `arg1=masked 0|1`), `command_interrupt_mask_clear_all`, and `command_interrupt_mask_reset_ignored_counts`.
+    - new x86 bootstrap exports: `oc_interrupt_mask_ptr`, `oc_interrupt_mask_is_set`, `oc_interrupt_masked_count`, `oc_interrupt_mask_ignored_count`, `oc_interrupt_last_masked_vector`, `oc_interrupt_mask_ignored_vector_counts_ptr`, `oc_interrupt_mask_ignored_vector_count`, `oc_interrupt_mask_set`, `oc_interrupt_mask_clear_all`, `oc_interrupt_mask_reset_ignored_counts`.
     - runtime now suppresses masked non-exception vectors while preserving exception delivery semantics for vectors `<32`.
     - validated with `zig build test --summary all` (`122/122`) and `scripts/baremetal-smoke-check.ps1`.
   - Week-3 control-plane completion slice shipped:
