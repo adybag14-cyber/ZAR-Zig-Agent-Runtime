@@ -5531,6 +5531,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
                     .enabled = cfg.runtime.exec_enabled,
                     .allowlist = cfg.runtime.exec_allowlist,
                 },
+                .memoryMaxEntries = cfg.runtime.memory_max_entries,
             },
             .browserBridge = .{
                 .enabled = true,
@@ -7160,8 +7161,8 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             .memory = .{
                 .enabled = true,
                 .zvecEntries = stats.entries,
-                .graphNodes = stats.entries,
-                .graphEdges = stats.entries * 2,
+                .graphNodes = stats.graphNodes,
+                .graphEdges = stats.graphEdges,
             },
             .datasetSources = [_]struct {
                 id: []const u8,
@@ -7181,8 +7182,8 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
                     .id = "graphlite",
                     .path = stats.statePath,
                     .exists = true,
-                    .nodes = stats.entries,
-                    .edges = stats.entries * 2,
+                    .nodes = stats.graphNodes,
+                    .edges = stats.graphEdges,
                 },
             },
             .jobs = jobs,
@@ -7372,8 +7373,8 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             .autoIngestMemory = auto_ingest,
             .memorySnapshot = .{
                 .zvecEntries = memory_stats.entries,
-                .graphNodes = memory_stats.entries,
-                .graphEdges = memory_stats.entries * 2,
+                .graphNodes = memory_stats.graphNodes,
+                .graphEdges = memory_stats.graphEdges,
             },
             .baseModel = .{
                 .provider = base_provider,
@@ -8189,7 +8190,12 @@ fn getTelegramRuntime() !*telegram_runtime.TelegramRuntime {
 
 fn getMemoryStore() !*memory_store.Store {
     if (memory_store_instance == null) {
-        memory_store_instance = try memory_store.Store.init(std.heap.page_allocator, currentConfig().state_path, 5000);
+        const configured_limit = currentConfig().runtime.memory_max_entries;
+        const max_entries = if (configured_limit <= 0)
+            @as(usize, 0)
+        else
+            @as(usize, @intCast(configured_limit));
+        memory_store_instance = try memory_store.Store.init(std.heap.page_allocator, currentConfig().state_path, max_entries);
     }
     return &memory_store_instance.?;
 }
@@ -11209,12 +11215,35 @@ fn applyBrowserCompletionContext(
         const memory = try getMemoryStore();
         var history = try memory.historyBySession(allocator, browser_params.session_id, browser_params.memory_context_limit);
         defer history.deinit(allocator);
+
+        const recall_query = selectMemoryRecallQuery(browser_params.completion_messages.items);
+        var recall = try memory.recallSynthesis(allocator, recall_query, @min(browser_params.memory_context_limit, @as(usize, 5)));
+        defer recall.deinit(allocator);
+
         if (history.count > 0) {
-            const memory_context = try buildBrowserMemoryContextMessage(allocator, browser_params.session_id, history.items);
+            const memory_context = try buildBrowserMemoryContextMessage(
+                allocator,
+                browser_params.session_id,
+                history.items,
+                recall.semantic.items,
+                recall.neighbors.items,
+            );
             defer allocator.free(memory_context);
             try appendSystemCompletionMessage(allocator, &browser_params.completion_messages, memory_context);
             context.memory_context_injected = true;
             context.memory_entries_used = history.count;
+        } else if (recall.semantic.count > 0 or recall.neighbors.count > 0) {
+            const memory_context = try buildBrowserMemoryContextMessage(
+                allocator,
+                browser_params.session_id,
+                history.items,
+                recall.semantic.items,
+                recall.neighbors.items,
+            );
+            defer allocator.free(memory_context);
+            try appendSystemCompletionMessage(allocator, &browser_params.completion_messages, memory_context);
+            context.memory_context_injected = true;
+            context.memory_entries_used = recall.semantic.count;
         }
     }
 
@@ -11250,10 +11279,30 @@ fn buildBrowserToolContextMessage(allocator: std.mem.Allocator) ![]u8 {
     );
 }
 
+fn selectMemoryRecallQuery(messages: []const lightpanda.CompletionMessage) []const u8 {
+    if (messages.len == 0) return "";
+    var idx = messages.len;
+    while (idx > 0) : (idx -= 1) {
+        const entry = messages[idx - 1];
+        const trimmed = std.mem.trim(u8, entry.content, " \t\r\n");
+        if (trimmed.len == 0) continue;
+        if (std.ascii.eqlIgnoreCase(entry.role, "user")) return trimmed;
+    }
+    idx = messages.len;
+    while (idx > 0) : (idx -= 1) {
+        const entry = messages[idx - 1];
+        const trimmed = std.mem.trim(u8, entry.content, " \t\r\n");
+        if (trimmed.len > 0) return trimmed;
+    }
+    return "";
+}
+
 fn buildBrowserMemoryContextMessage(
     allocator: std.mem.Allocator,
     session_id: []const u8,
     history_items: []memory_store.MessageView,
+    semantic_items: []memory_store.MessageView,
+    graph_neighbors: []memory_store.GraphEdge,
 ) ![]u8 {
     var out = std.ArrayList(u8).empty;
     defer out.deinit(allocator);
@@ -11272,6 +11321,33 @@ fn buildBrowserMemoryContextMessage(
         try out.appendSlice(allocator, line);
         if (text.len > snippet_len) try out.appendSlice(allocator, "...");
         try out.append(allocator, '\n');
+    }
+
+    if (semantic_items.len > 0) {
+        try out.appendSlice(allocator, "Semantic recall hits:\n");
+        for (semantic_items) |entry| {
+            const text = std.mem.trim(u8, entry.text, " \t\r\n");
+            if (text.len == 0) continue;
+            const snippet_len = @min(text.len, @as(usize, 180));
+            const line = try std.fmt.allocPrint(allocator, "- recall[{s}] {s}", .{
+                if (entry.sessionId.len > 0) entry.sessionId else "unknown",
+                text[0..snippet_len],
+            });
+            defer allocator.free(line);
+            try out.appendSlice(allocator, line);
+            if (text.len > snippet_len) try out.appendSlice(allocator, "...");
+            try out.append(allocator, '\n');
+        }
+    }
+
+    if (graph_neighbors.len > 0) {
+        try out.appendSlice(allocator, "Graph neighbors:\n");
+        for (graph_neighbors) |edge| {
+            const line = try std.fmt.allocPrint(allocator, "- {s} -> {s} ({d})", .{ edge.from, edge.to, edge.weight });
+            defer allocator.free(line);
+            try out.appendSlice(allocator, line);
+            try out.append(allocator, '\n');
+        }
     }
     return out.toOwnedSlice(allocator);
 }
@@ -11480,6 +11556,9 @@ test "dispatch config.get and tools.catalog expose runtime + wasm contracts" {
     try std.testing.expect(std.mem.indexOf(u8, config_out, "\"browserBridge\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, config_out, "\"wasm\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, config_out, "\"policy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, config_out, "\"vectors\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, config_out, "\"graphNodes\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, config_out, "\"memoryMaxEntries\"") != null);
 
     const catalog_out = try dispatch(allocator, "{\"id\":\"tools-1\",\"method\":\"tools.catalog\",\"params\":{}}");
     defer allocator.free(catalog_out);

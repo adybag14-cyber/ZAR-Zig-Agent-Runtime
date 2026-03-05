@@ -25,6 +25,7 @@ pub const RuntimeConfig = struct {
     file_allowed_roots: []const u8,
     exec_enabled: bool,
     exec_allowlist: []const u8,
+    memory_max_entries: i32 = 0,
     telegram_live_streaming: bool,
     telegram_stream_chunk_chars: u32,
     telegram_stream_chunk_delay_ms: u32,
@@ -61,6 +62,7 @@ pub fn fingerprint(cfg: Config) [32]u8 {
     hashStringField(&hasher, "runtime.file_allowed_roots", cfg.runtime.file_allowed_roots);
     hashBoolField(&hasher, "runtime.exec_enabled", cfg.runtime.exec_enabled);
     hashStringField(&hasher, "runtime.exec_allowlist", cfg.runtime.exec_allowlist);
+    hashIntField(&hasher, "runtime.memory_max_entries", cfg.runtime.memory_max_entries);
     hashBoolField(&hasher, "runtime.telegram_live_streaming", cfg.runtime.telegram_live_streaming);
     hashIntField(&hasher, "runtime.telegram_stream_chunk_chars", cfg.runtime.telegram_stream_chunk_chars);
     hashIntField(&hasher, "runtime.telegram_stream_chunk_delay_ms", cfg.runtime.telegram_stream_chunk_delay_ms);
@@ -104,6 +106,7 @@ pub fn defaults() Config {
             .file_allowed_roots = "",
             .exec_enabled = true,
             .exec_allowlist = "",
+            .memory_max_entries = 0,
             .telegram_live_streaming = true,
             .telegram_stream_chunk_chars = 700,
             .telegram_stream_chunk_delay_ms = 250,
@@ -141,6 +144,7 @@ pub fn loadFromEnviron(allocator: std.mem.Allocator, environ: std.process.Enviro
     cfg.runtime.file_allowed_roots = try getEnvOrDefault(allocator, environ, "OPENCLAW_ZIG_RUNTIME_FILE_ALLOWED_ROOTS", cfg.runtime.file_allowed_roots);
     cfg.runtime.exec_enabled = try parseBoolEnvOrDefault(allocator, environ, "OPENCLAW_ZIG_RUNTIME_EXEC_ENABLED", cfg.runtime.exec_enabled);
     cfg.runtime.exec_allowlist = try getEnvOrDefault(allocator, environ, "OPENCLAW_ZIG_RUNTIME_EXEC_ALLOWLIST", cfg.runtime.exec_allowlist);
+    cfg.runtime.memory_max_entries = try parseI32EnvOrDefault(allocator, environ, "OPENCLAW_ZIG_RUNTIME_MEMORY_MAX_ENTRIES", cfg.runtime.memory_max_entries);
     cfg.runtime.telegram_live_streaming = try parseBoolEnvOrDefault(allocator, environ, "OPENCLAW_ZIG_RUNTIME_TELEGRAM_LIVE_STREAMING", cfg.runtime.telegram_live_streaming);
     cfg.runtime.telegram_stream_chunk_chars = try parseU32EnvOrDefault(allocator, environ, "OPENCLAW_ZIG_RUNTIME_TELEGRAM_STREAM_CHUNK_CHARS", cfg.runtime.telegram_stream_chunk_chars);
     cfg.runtime.telegram_stream_chunk_delay_ms = try parseU32EnvOrDefault(allocator, environ, "OPENCLAW_ZIG_RUNTIME_TELEGRAM_STREAM_CHUNK_DELAY_MS", cfg.runtime.telegram_stream_chunk_delay_ms);
@@ -200,6 +204,21 @@ fn parseU32EnvOrDefault(
     const trimmed = std.mem.trim(u8, raw, " \t\r\n");
     if (trimmed.len == 0) return fallback;
     return std.fmt.parseInt(u32, trimmed, 10) catch fallback;
+}
+
+fn parseI32EnvOrDefault(
+    allocator: std.mem.Allocator,
+    environ: std.process.Environ,
+    key: []const u8,
+    fallback: i32,
+) !i32 {
+    const raw = std.process.Environ.getAlloc(environ, allocator, key) catch |err| switch (err) {
+        error.EnvironmentVariableMissing => return fallback,
+        else => return err,
+    };
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    if (trimmed.len == 0) return fallback;
+    return std.fmt.parseInt(i32, trimmed, 10) catch fallback;
 }
 
 fn parseU8EnvOrDefault(
@@ -268,6 +287,7 @@ test "defaults are stable" {
     try std.testing.expect(std.mem.eql(u8, cfg.runtime.file_allowed_roots, ""));
     try std.testing.expect(cfg.runtime.exec_enabled);
     try std.testing.expect(std.mem.eql(u8, cfg.runtime.exec_allowlist, ""));
+    try std.testing.expectEqual(@as(i32, 0), cfg.runtime.memory_max_entries);
     try std.testing.expect(cfg.runtime.telegram_live_streaming);
     try std.testing.expectEqual(@as(u32, 700), cfg.runtime.telegram_stream_chunk_chars);
     try std.testing.expectEqual(@as(u32, 250), cfg.runtime.telegram_stream_chunk_delay_ms);

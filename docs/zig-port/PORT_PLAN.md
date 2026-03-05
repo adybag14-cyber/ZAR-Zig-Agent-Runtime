@@ -56,7 +56,7 @@ Full-stack replacement execution reference:
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `139/139`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `146/146`.
 - Full-stack replacement kickoff (2026-03-05):
   - master tracking issue refreshed with FS0..FS7 execution gates.
   - FS0 execution issue opened (`#2`) and linked from master issue.
@@ -67,6 +67,11 @@ Full-stack replacement execution reference:
     - memory store load path now enforces configured retention cap (`max_entries`) during replay.
     - high-turn multi-session regression confirms oldest-history trimming and newest-history recall invariants after reload.
     - replay load now derives `next_id` from restored message IDs, preventing ID collisions when persisted `nextId` metadata is stale.
+  - FS3 memory depth parity expanded:
+    - `memory/store.zig` now exposes semantic recall (`semanticRecall`) and graph-neighbor recall (`graphNeighbors`) with synthesis helper (`recallSynthesis`).
+    - memory stats now report vector and graph telemetry (`vectors`, `graphNodes`, `graphEdges`) plus unlimited-retention posture (`unlimited`, `maxEntries=0`).
+    - runtime memory retention is now config-driven through `runtime.memory_max_entries` (`OPENCLAW_ZIG_RUNTIME_MEMORY_MAX_ENTRIES`), including unlimited mode for `<=0`.
+    - browser completion context injection now includes memory recap + semantic/graph recall hints to reduce false \"no tools/no memory\" model responses.
 
 - Tracking and documentation refresh (2026-03-04):
   - Gateway hardening slice shipped:

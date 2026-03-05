@@ -1,7 +1,7 @@
 # Phase Checklist
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
-Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `139/139`.
+Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `146/146`.
 
 ## Full-Stack Replacement Track (FS0..FS7)
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)
@@ -207,6 +207,16 @@ Phase 6 progress notes:
   - Added high-turn multi-session persistence regression test:
     - `memory.store.test.store load enforces max entries and keeps newest multi-session history`.
     - `memory.store.test.store load derives next id from entries when persisted nextId is stale`.
+- Memory semantic/graph recall parity hardening slice:
+  - `memory/store.zig` now includes semantic recall and graph-neighbor recall primitives (`semanticRecall`, `graphNeighbors`) plus synthesis helper (`recallSynthesis`).
+  - memory stats now include vector and graph telemetry (`vectors`, `graphNodes`, `graphEdges`) and explicit unlimited-retention posture (`unlimited`, `maxEntries`).
+  - runtime memory retention limit is now configurable via `runtime.memory_max_entries` (`OPENCLAW_ZIG_RUNTIME_MEMORY_MAX_ENTRIES`), with unlimited mode when set to `<=0`.
+  - browser completion memory context now includes semantic/graph recall hints to reinforce tool+memory awareness for bridge models.
+  - Added regression tests:
+    - `memory.store.test.store semantic recall returns ranked oracle related hits`
+    - `memory.store.test.store graph neighbors and recall synthesis provide semantic and graph depth`
+    - `memory.store.test.store stats include vector graph metadata and persistence recovery`
+    - `memory.store.test.store unlimited retention keeps all entries and reports unlimited stats`
 - Optimization hardening for Phase 6 shipped:
   - `memory/store.zig`: batched front-removal helper applied to overflow + trim, and `removeSession` rewritten to linear compaction while preserving order.
   - `runtime/state.zig`: pending job queue now dequeues via head offset + amortized compaction (replaces repeated front removal shifts).
