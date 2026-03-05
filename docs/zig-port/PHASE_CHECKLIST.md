@@ -1,13 +1,21 @@
 # Phase Checklist
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
-Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `179/179`.
+Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `182/182`.
 
 ## Full-Stack Replacement Track (FS0..FS7)
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)
 - [ ] FS1 - Runtime/core consolidation
 - [ ] FS2 - Provider + channel completion
   - Latest delivered slice:
+    - Telegram `/auth cancel` parity is now aligned more tightly with Go:
+      - invalid `/auth cancel|logout` parser branches now emit structured `metadata` with `type=auth.cancel` and `error=invalid_cancel_args` instead of reply-text-only invalid outcomes.
+      - `/auth cancel` with no active scoped session now returns the Go-style `No active auth session for this target.` reply with `status=none` and `revoked=false` metadata instead of pretending a cancellation happened.
+      - cancel metadata now derives `revoked` from the actual `logout()` result rather than treating any non-empty session id as a successful revocation.
+      - regression coverage added:
+        - `channels.telegram_runtime.test.telegram runtime auth cancel explicit rejected session reports revoked false`
+        - `channels.telegram_runtime.test.telegram runtime cancel without active session returns none status metadata`
+        - `gateway.dispatcher.test.dispatch send cancel without active auth session returns none status metadata`
     - Telegram `/auth` invalid-command receipts now preserve the structured metadata envelope across stricter parser rejection paths:
       - invalid `/auth status`, `/auth wait`, and `/auth complete` usage now return nested `metadata` with deterministic `type` and `error` fields instead of falling back to reply-text-only invalid outcomes.
       - Go-compatible machine-readable auth failure telemetry is now preserved for missing `session` targets, missing/invalid timeout values, unknown `--*` flags, malformed trailing arguments, and missing completion codes.

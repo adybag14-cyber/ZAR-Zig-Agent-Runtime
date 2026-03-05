@@ -2944,16 +2944,7 @@ pub const TelegramRuntime = struct {
                 const token = std.mem.trim(u8, rest[index], " \t\r\n");
                 if (token.len == 0) continue;
                 if (std.ascii.startsWithIgnoreCase(token, "--")) {
-                    return .{
-                        .is_command = true,
-                        .command_name = "auth",
-                        .reply = try std.fmt.allocPrint(allocator, "Unknown cancel option `{s}`.", .{token}),
-                        .provider = provider,
-                        .model = defaultModelForProvider(provider),
-                        .login_session_id = "",
-                        .login_code = "",
-                        .auth_status = "invalid",
-                    };
+                    return self.authInvalidOutcome(allocator, trimmed_target, "auth.cancel", provider, account, try std.fmt.allocPrint(allocator, "Unknown cancel option `{s}`.", .{token}), "invalid_cancel_args", "invalid", "", null);
                 }
                 if (session_token.len == 0 and looksLikeLoginSessionID(token)) {
                     session_token = token;
@@ -2963,33 +2954,45 @@ pub const TelegramRuntime = struct {
                     account = token;
                     continue;
                 }
+                return self.authInvalidOutcome(allocator, trimmed_target, "auth.cancel", provider, account, try allocator.dupe(u8, "Usage: /auth cancel [provider] [account] [session_id]"), "invalid_cancel_args", "invalid", "", null);
+            }
+            const bound_session = try self.getAuthBinding(allocator, target, provider, account);
+            const login_session = if (std.mem.trim(u8, session_token, " \t\r\n").len > 0) session_token else bound_session;
+            const has_login_session = std.mem.trim(u8, login_session, " \t\r\n").len > 0;
+            const account_norm = normalizeAccount(account);
+            const scope = try authScopeAlloc(allocator, provider, account_norm);
+            defer allocator.free(scope);
+            if (!has_login_session) {
+                try self.clearAuthBinding(allocator, target, provider, account);
+                const metadata_json = try stringifyJsonAlloc(allocator, AuthCommandMetadata{
+                    .type = "auth.cancel",
+                    .target = trimmed_target,
+                    .provider = provider,
+                    .account = account_norm,
+                    .scope = scope,
+                    .status = "none",
+                    .revoked = false,
+                });
                 return .{
                     .is_command = true,
                     .command_name = "auth",
-                    .reply = try allocator.dupe(u8, "Usage: /auth cancel [provider] [account] [session_id]"),
+                    .reply = try allocator.dupe(u8, "No active auth session for this target."),
                     .provider = provider,
                     .model = defaultModelForProvider(provider),
                     .login_session_id = "",
                     .login_code = "",
-                    .auth_status = "invalid",
+                    .auth_status = "none",
+                    .metadata_json = metadata_json,
                 };
             }
-            const bound_session = try self.getAuthBinding(allocator, target, provider, account);
-            const login_session = if (std.mem.trim(u8, session_token, " \t\r\n").len > 0) session_token else bound_session;
             const owned_login_session_id = if (std.mem.trim(u8, login_session, " \t\r\n").len > 0)
                 try allocator.dupe(u8, login_session)
             else
                 null;
             const login_session_label = if (owned_login_session_id) |value| value else login_session;
             const logout_session = login_session_label;
-            const revoked = std.mem.trim(u8, logout_session, " \t\r\n").len > 0;
-            if (std.mem.trim(u8, logout_session, " \t\r\n").len > 0) {
-                _ = self.login_manager.logout(logout_session);
-            }
+            const revoked = if (std.mem.trim(u8, logout_session, " \t\r\n").len > 0) self.login_manager.logout(logout_session) else false;
             try self.clearAuthBinding(allocator, target, provider, account);
-            const account_norm = normalizeAccount(account);
-            const scope = try authScopeAlloc(allocator, provider, account_norm);
-            defer allocator.free(scope);
             const metadata_json = try stringifyJsonAlloc(allocator, AuthCommandMetadata{
                 .type = "auth.cancel",
                 .target = trimmed_target,
@@ -5068,6 +5071,40 @@ test "telegram runtime auth cancel revokes scoped session" {
     try std.testing.expect(std.mem.indexOf(u8, status.reply, "Auth status: `rejected`") != null);
 }
 
+test "telegram runtime auth cancel explicit rejected session reports revoked false" {
+    var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
+    defer login.deinit();
+    var runtime = TelegramRuntime.init(std.testing.allocator, &login);
+    defer runtime.deinit();
+
+    const allocator = std.testing.allocator;
+    var start = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-start-cancel-revoked\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-cancel-revoked\",\"sessionId\":\"sess-cancel-revoked\",\"message\":\"/auth start qwen mobile\"}}");
+    defer start.deinit(allocator);
+
+    const first_cancel_frame = try std.fmt.allocPrint(
+        allocator,
+        "{{\"id\":\"tg-first-cancel-revoked\",\"method\":\"send\",\"params\":{{\"channel\":\"telegram\",\"to\":\"room-cancel-revoked\",\"sessionId\":\"sess-cancel-revoked\",\"message\":\"/auth cancel qwen mobile {s}\"}}}}",
+        .{start.loginSessionId},
+    );
+    defer allocator.free(first_cancel_frame);
+    var first_cancel = try runtime.sendFromFrame(allocator, first_cancel_frame);
+    defer first_cancel.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, first_cancel.metadataJson.?, "\"revoked\":true") != null);
+
+    const second_cancel_frame = try std.fmt.allocPrint(
+        allocator,
+        "{{\"id\":\"tg-second-cancel-revoked\",\"method\":\"send\",\"params\":{{\"channel\":\"telegram\",\"to\":\"room-cancel-revoked\",\"sessionId\":\"sess-cancel-revoked\",\"message\":\"/auth cancel qwen mobile {s}\"}}}}",
+        .{start.loginSessionId},
+    );
+    defer allocator.free(second_cancel_frame);
+    var second_cancel = try runtime.sendFromFrame(allocator, second_cancel_frame);
+    defer second_cancel.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, second_cancel.authStatus, "cancelled"));
+    try std.testing.expect(second_cancel.metadataJson != null);
+    try std.testing.expect(std.mem.indexOf(u8, second_cancel.metadataJson.?, "\"type\":\"auth.cancel\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, second_cancel.metadataJson.?, "\"revoked\":false") != null);
+}
+
 test "telegram runtime wait supports session keyword and bounded timeout flag" {
     var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
     defer login.deinit();
@@ -5135,6 +5172,26 @@ test "telegram runtime auth parser rejects invalid options and trailing args" {
     defer bad_cancel.deinit(allocator);
     try std.testing.expect(std.mem.eql(u8, bad_cancel.authStatus, "invalid"));
     try std.testing.expect(std.mem.indexOf(u8, bad_cancel.reply, "Unknown cancel option `--bogus`") != null);
+    try std.testing.expect(bad_cancel.metadataJson != null);
+    try std.testing.expect(std.mem.indexOf(u8, bad_cancel.metadataJson.?, "\"type\":\"auth.cancel\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bad_cancel.metadataJson.?, "\"error\":\"invalid_cancel_args\"") != null);
+}
+
+test "telegram runtime cancel without active session returns none status metadata" {
+    var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
+    defer login.deinit();
+    var runtime = TelegramRuntime.init(std.testing.allocator, &login);
+    defer runtime.deinit();
+
+    const allocator = std.testing.allocator;
+    var cancel = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-cancel-none\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-cancel-none\",\"sessionId\":\"sess-cancel-none\",\"message\":\"/auth cancel qwen mobile\"}}");
+    defer cancel.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, cancel.authStatus, "none"));
+    try std.testing.expect(std.mem.indexOf(u8, cancel.reply, "No active auth session for this target.") != null);
+    try std.testing.expect(cancel.metadataJson != null);
+    try std.testing.expect(std.mem.indexOf(u8, cancel.metadataJson.?, "\"type\":\"auth.cancel\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cancel.metadataJson.?, "\"status\":\"none\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cancel.metadataJson.?, "\"revoked\":false") != null);
 }
 
 test "telegram runtime wait supports positional timeout with account" {

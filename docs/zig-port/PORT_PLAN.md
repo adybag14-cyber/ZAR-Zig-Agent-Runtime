@@ -56,8 +56,16 @@ Full-stack replacement execution reference:
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `179/179`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `182/182`.
 - Full-stack replacement kickoff (2026-03-05):
+  - Phase 5 Telegram cancel parity hardened:
+    - invalid `/auth cancel|logout` parser branches now preserve structured `auth.cancel` metadata with `error=invalid_cancel_args`.
+    - `/auth cancel` with no active scoped session now returns the Go-style `status=none` outcome and `revoked=false` metadata instead of reporting a synthetic cancellation.
+    - cancel metadata now derives `revoked` from the actual `web_login.logout()` result, so explicit double-cancel / already-rejected session flows no longer over-report revocation success.
+    - regression tests added/expanded:
+      - `channels.telegram_runtime.test.telegram runtime auth cancel explicit rejected session reports revoked false`
+      - `channels.telegram_runtime.test.telegram runtime cancel without active session returns none status metadata`
+      - `gateway.dispatcher.test.dispatch send cancel without active auth session returns none status metadata`
   - Phase 5 Telegram invalid-auth metadata parity hardened:
     - invalid `/auth status`, `/auth wait`, and `/auth complete` parser branches now preserve the nested `metadata` envelope instead of returning bare invalid replies.
     - structured auth failure telemetry is now preserved for:

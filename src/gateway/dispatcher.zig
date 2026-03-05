@@ -13101,6 +13101,28 @@ test "dispatch send invalid auth parser replies preserve metadata envelope" {
     const bad_complete_error = try extractResultObjectStringField(allocator, bad_complete, "metadata", "error");
     defer allocator.free(bad_complete_error);
     try std.testing.expect(std.mem.eql(u8, bad_complete_error, "invalid_complete_args"));
+
+    const bad_cancel = try dispatch(allocator, "{\"id\":\"tg-auth-bad-cancel-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta-invalid-auth\",\"sessionId\":\"tg-meta-invalid-auth\",\"message\":\"/auth cancel qwen mobile --bogus\"}}");
+    defer allocator.free(bad_cancel);
+    const bad_cancel_type = try extractResultObjectStringField(allocator, bad_cancel, "metadata", "type");
+    defer allocator.free(bad_cancel_type);
+    try std.testing.expect(std.mem.eql(u8, bad_cancel_type, "auth.cancel"));
+    const bad_cancel_error = try extractResultObjectStringField(allocator, bad_cancel, "metadata", "error");
+    defer allocator.free(bad_cancel_error);
+    try std.testing.expect(std.mem.eql(u8, bad_cancel_error, "invalid_cancel_args"));
+}
+
+test "dispatch send cancel without active auth session returns none status metadata" {
+    const allocator = std.testing.allocator;
+
+    const cancel_none = try dispatch(allocator, "{\"id\":\"tg-auth-cancel-none-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta-cancel-none\",\"sessionId\":\"tg-meta-cancel-none\",\"message\":\"/auth cancel qwen mobile\"}}");
+    defer allocator.free(cancel_none);
+    const cancel_none_type = try extractResultObjectStringField(allocator, cancel_none, "metadata", "type");
+    defer allocator.free(cancel_none_type);
+    try std.testing.expect(std.mem.eql(u8, cancel_none_type, "auth.cancel"));
+    const cancel_none_status = try extractResultObjectStringField(allocator, cancel_none, "metadata", "status");
+    defer allocator.free(cancel_none_status);
+    try std.testing.expect(std.mem.eql(u8, cancel_none_status, "none"));
 }
 
 test "dispatch send model and tts commands expose go-compatible metadata envelope" {
