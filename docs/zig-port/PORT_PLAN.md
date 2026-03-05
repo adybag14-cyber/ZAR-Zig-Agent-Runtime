@@ -435,6 +435,7 @@ while maintaining parity-first validation and release gating.
     - `zig-ci` now runs freshness snapshot as non-blocking observability step and publishes `zig-master-freshness.json` artifact for build provenance context.
     - `release-preview` now mirrors this evidence path: validate stage generates freshness snapshot, publish stage attaches `zig-master-freshness.json` to release assets when available.
     - `release-preview` validate stage now includes docs snapshot drift enforcement (`scripts/docs-status-check.ps1`) after parity generation, so release previews fail fast if README/docs status blocks drift from live parity metadata.
+    - local preview pipeline (`scripts/release-preview.ps1`) now mirrors CI validate semantics: cross-platform zig resolution + optional freshness evidence capture + `python-pack-check` + docs-status gate before packaging.
   - bare-metal wake queue reason-selective drain slice shipped:
     - new opcode: `command_wake_queue_pop_reason` for selective queue draining by wake reason (`timer`, `interrupt`, `manual`) with bounded count semantics (`count=0` -> pop one).
     - new export: `oc_wake_queue_reason_count(reason)` for reason-specific telemetry without mutating queue state.

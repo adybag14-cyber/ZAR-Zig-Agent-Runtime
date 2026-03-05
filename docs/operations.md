@@ -51,6 +51,7 @@ Recommended sequence:
 - gateway-auth + websocket smoke checks in validate stage
 - npm package dry-run validation in release validate stage
 - python package validation (unit tests + build + twine check) in release validate stage
+- local `scripts/release-preview.ps1` mirrors parity/docs/freshness gates before artifact packaging
 
 ### `npm-release.yml`
 

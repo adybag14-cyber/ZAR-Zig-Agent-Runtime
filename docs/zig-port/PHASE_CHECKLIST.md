@@ -479,6 +479,7 @@ Phase 6 progress notes:
     - `zig-ci` now captures freshness snapshot as non-blocking evidence artifact (`zig-master-freshness.json`) with Codeberg->GitHub mirror fallback semantics.
     - `release-preview` now captures/publishes the same freshness evidence artifact and attaches `zig-master-freshness.json` to release assets.
     - `release-preview` validate stage now also enforces `scripts/docs-status-check.ps1` to prevent stale status docs in release cuts.
+    - local `scripts/release-preview.ps1` now mirrors CI validate gates (`python-pack-check`, parity, docs-status, zig-freshness snapshot) before building artifacts.
   - python package release lane added:
     - `python/openclaw-zig-rpc-client` package scaffold + tests + CLI.
     - `scripts/python-pack-check.ps1` added to local/CI/release validation gates.

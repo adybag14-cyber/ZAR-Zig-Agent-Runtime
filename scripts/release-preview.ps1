@@ -2,6 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string] $Version,
     [string] $Repo = "adybag14-cyber/openclaw-zig-port",
+    [string] $ZigExePath = "",
     [switch] $Publish,
     [switch] $IncludeArm64
 )
@@ -9,11 +10,44 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$zigExe = "C:\users\ady\documents\toolchains\zig-master\current\zig.exe"
 
-if (-not (Test-Path $zigExe)) {
-    throw "Zig master executable not found at $zigExe"
+function Resolve-ZigExecutable {
+    param(
+        [string]$PreferredPath
+    )
+
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($PreferredPath)) {
+        $candidates += $PreferredPath
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:OPENCLAW_ZIG_EXE)) {
+        $candidates += $env:OPENCLAW_ZIG_EXE
+    }
+
+    $windowsDefault = "C:\users\ady\documents\toolchains\zig-master\current\zig.exe"
+    $isWindowsHost = $false
+    if (($null -ne $IsWindows -and $IsWindows) -or $env:OS -eq "Windows_NT" -or $PSVersionTable.PSEdition -eq "Desktop") {
+        $isWindowsHost = $true
+    }
+    if ($isWindowsHost) {
+        $candidates += $windowsDefault
+    }
+
+    foreach ($candidate in $candidates) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path $candidate)) {
+            return $candidate
+        }
+    }
+
+    $zigCmd = Get-Command zig -ErrorAction SilentlyContinue
+    if ($zigCmd -and -not [string]::IsNullOrWhiteSpace($zigCmd.Source)) {
+        return $zigCmd.Source
+    }
+
+    throw "Unable to locate zig executable. Set -ZigExePath or OPENCLAW_ZIG_EXE, or ensure 'zig' is in PATH."
 }
+
+$zigExe = Resolve-ZigExecutable -PreferredPath $ZigExePath
 
 Set-Location $repoRoot
 
@@ -22,6 +56,14 @@ if (Test-Path $npmPackCheck) {
     & $npmPackCheck
     if (-not $?) {
         throw "npm package dry-run validation failed."
+    }
+}
+
+$pythonPackCheck = Join-Path $repoRoot "scripts\python-pack-check.ps1"
+if (Test-Path $pythonPackCheck) {
+    & $pythonPackCheck
+    if (-not $?) {
+        throw "python package validation failed."
     }
 }
 
@@ -57,6 +99,20 @@ New-Item -ItemType Directory -Force -Path $releaseRoot | Out-Null
 $assets = New-Object System.Collections.Generic.List[string]
 $optionalFailures = New-Object System.Collections.Generic.List[string]
 
+$freshnessScript = Join-Path $repoRoot "scripts\zig-codeberg-master-check.ps1"
+$freshnessJsonPath = Join-Path $releaseRoot "zig-master-freshness.json"
+if (Test-Path $freshnessScript) {
+    try {
+        & $freshnessScript -ZigExePath $zigExe -OutputJsonPath $freshnessJsonPath
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $freshnessJsonPath)) {
+            $assets.Add($freshnessJsonPath) | Out-Null
+        }
+    }
+    catch {
+        Write-Warning "Zig freshness snapshot failed; continuing local release flow: $($_.Exception.Message)"
+    }
+}
+
 $parityScript = Join-Path $repoRoot "scripts\check-go-method-parity.ps1"
 $parityJsonPath = Join-Path $releaseRoot "parity-go-zig.json"
 $parityMdPath = Join-Path $releaseRoot "parity-go-zig.md"
@@ -81,6 +137,23 @@ catch {
 }
 $assets.Add($parityJsonPath) | Out-Null
 $assets.Add($parityMdPath) | Out-Null
+
+$docsStatusScript = Join-Path $repoRoot "scripts\docs-status-check.ps1"
+if (Test-Path $docsStatusScript) {
+    try {
+        if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
+            & $docsStatusScript -ParityJsonPath $parityJsonPath -GitHubToken $env:GITHUB_TOKEN
+        } else {
+            & $docsStatusScript -ParityJsonPath $parityJsonPath
+        }
+        if (-not $?) {
+            throw "docs status drift gate failed."
+        }
+    }
+    catch {
+        throw "Docs status drift gate failed in release-preview flow. $($_.Exception.Message)"
+    }
+}
 
 foreach ($target in $targets) {
     Write-Output "Building target: $($target.Triple)"

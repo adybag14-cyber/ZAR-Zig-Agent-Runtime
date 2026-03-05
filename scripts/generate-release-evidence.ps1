@@ -69,6 +69,7 @@ $subjects = New-Object System.Collections.Generic.List[object]
 $manifestArtifacts = New-Object System.Collections.Generic.List[object]
 $spdxPackages = New-Object System.Collections.Generic.List[object]
 $spdxRelationships = New-Object System.Collections.Generic.List[object]
+$provenanceByproducts = New-Object System.Collections.Generic.List[object]
 
 $index = 0
 foreach ($artifact in $artifactFiles) {
@@ -113,6 +114,22 @@ foreach ($artifact in $artifactFiles) {
             relationshipType = "DESCRIBES"
             relatedSpdxElement = $packageId
         }) | Out-Null
+}
+
+$defaultByproducts = @(
+    "SHA256SUMS.txt",
+    "parity-go-zig.json",
+    "parity-go-zig.md",
+    "zig-master-freshness.json"
+)
+foreach ($byproductName in $defaultByproducts) {
+    $byproductPath = Join-Path $ArtifactDir $byproductName
+    if (Test-Path -LiteralPath $byproductPath) {
+        $provenanceByproducts.Add(@{
+                name = $byproductName
+                path = $byproductName
+            }) | Out-Null
+    }
 }
 
 $manifest = @{
@@ -183,20 +200,7 @@ $provenance = @{
                 startedOn = $generatedAtIso
                 finishedOn = $finishedAtIso
             }
-            byproducts = @(
-                @{
-                    name = "SHA256SUMS.txt"
-                    path = "SHA256SUMS.txt"
-                },
-                @{
-                    name = "parity-go-zig.json"
-                    path = "parity-go-zig.json"
-                },
-                @{
-                    name = "parity-go-zig.md"
-                    path = "parity-go-zig.md"
-                }
-            )
+            byproducts = $provenanceByproducts
         }
     }
 }

@@ -353,6 +353,12 @@ Validate python package publishability:
 ./scripts/python-pack-check.ps1
 ```
 
+Run local preview packaging with CI-aligned validate gates:
+
+```powershell
+./scripts/release-preview.ps1 -Version <release-tag>
+```
+
 ## CI and Release
 
 `zig-ci` workflow (`.github/workflows/zig-ci.yml`):
@@ -386,6 +392,7 @@ Validate python package publishability:
 - release asset zig freshness evidence attachment
 - release trust evidence attachment (`release-manifest.json`, `sbom.spdx.json`, `provenance.intoto.json`)
 - npm package dry-run validation gate in validate stage
+- local `scripts/release-preview.ps1` mirrors parity/docs/freshness gates before packaging
 
 `npm-release` workflow (`.github/workflows/npm-release.yml`):
 
