@@ -56,8 +56,15 @@ Full-stack replacement execution reference:
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `184/184`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `186/186`.
 - Full-stack replacement kickoff (2026-03-05):
+  - Phase 5 Telegram no-session status/wait parity hardened:
+    - `/auth status` with no scoped session now uses the Go-style `No active auth flow for <target> in scope <scope>.` reply with `authStatus=none` and metadata `status=none`.
+    - `/auth wait` with no scoped session now uses the Go-style `No auth session selected for scope <scope>. Start with /auth start <provider>.` reply with `authStatus=missing` and metadata `error=missing_session`.
+    - the old Zig shared no-session reply (`No active auth session for <provider> account <account>.`) and `authStatus=pending` behavior are gone from these paths.
+    - regression tests added:
+      - `channels.telegram_runtime.test.telegram runtime auth status and wait without session use go-style replies`
+      - `gateway.dispatcher.test.dispatch send auth status and wait without session use go-style replies`
   - Phase 5 Telegram missing-status cleanup parity hardened:
     - missing `/auth status` replies now use the Go-style `Auth session expired or missing. Run \`/auth start <provider>\` again.` wording instead of `Auth session not found.`.
     - when `/auth status` resolves through a scoped binding whose backing login session no longer exists, Zig now clears that stale binding immediately.

@@ -1,13 +1,20 @@
 # Phase Checklist
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
-Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `184/184`.
+Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `186/186`.
 
 ## Full-Stack Replacement Track (FS0..FS7)
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)
 - [ ] FS1 - Runtime/core consolidation
 - [ ] FS2 - Provider + channel completion
   - Latest delivered slice:
+    - Telegram `/auth status|wait` now split their no-session replies the same way Go does:
+      - `/auth status` with no scoped session now returns `No active auth flow for <target> in scope <scope>.` with `authStatus=none` and metadata `status=none`.
+      - `/auth wait` with no scoped session now returns `No auth session selected for scope <scope>. Start with /auth start <provider>.` with `authStatus=missing` and metadata `error=missing_session`.
+      - the shared no-session path no longer reports Zig's generic `No active auth session for <provider> account <account>.` or the misleading `authStatus=pending`.
+      - regression coverage added:
+        - `channels.telegram_runtime.test.telegram runtime auth status and wait without session use go-style replies`
+        - `gateway.dispatcher.test.dispatch send auth status and wait without session use go-style replies`
     - Telegram missing `/auth status` now matches Go more closely and no longer leaves dead scoped bindings behind:
       - missing status replies now use the Go-style `Auth session expired or missing. Run \`/auth start <provider>\` again.` wording instead of Zig's older `Auth session not found.` reply.
       - when `/auth status` resolves through the scoped binding and the backing login session is gone, Zig now clears that stale binding immediately.

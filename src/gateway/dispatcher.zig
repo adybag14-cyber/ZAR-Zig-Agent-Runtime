@@ -13130,6 +13130,34 @@ test "dispatch send cancel without active auth session returns none status metad
     try std.testing.expect(std.mem.eql(u8, cancel_none_status, "none"));
 }
 
+test "dispatch send auth status and wait without session use go-style replies" {
+    const allocator = std.testing.allocator;
+
+    const status_none = try dispatch(allocator, "{\"id\":\"tg-auth-status-none-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta-status-none\",\"sessionId\":\"tg-meta-status-none\",\"message\":\"/auth status qwen mobile\"}}");
+    defer allocator.free(status_none);
+    const status_none_reply = try extractResultStringField(allocator, status_none, "reply");
+    defer allocator.free(status_none_reply);
+    try std.testing.expect(std.mem.indexOf(u8, status_none_reply, "No active auth flow for `room-meta-status-none` in scope `qwen/mobile`.") != null);
+    const status_none_type = try extractResultObjectStringField(allocator, status_none, "metadata", "type");
+    defer allocator.free(status_none_type);
+    try std.testing.expect(std.mem.eql(u8, status_none_type, "auth.status"));
+    const status_none_status = try extractResultObjectStringField(allocator, status_none, "metadata", "status");
+    defer allocator.free(status_none_status);
+    try std.testing.expect(std.mem.eql(u8, status_none_status, "none"));
+
+    const wait_none = try dispatch(allocator, "{\"id\":\"tg-auth-wait-none-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta-wait-none\",\"sessionId\":\"tg-meta-wait-none\",\"message\":\"/auth wait qwen mobile --timeout 15\"}}");
+    defer allocator.free(wait_none);
+    const wait_none_reply = try extractResultStringField(allocator, wait_none, "reply");
+    defer allocator.free(wait_none_reply);
+    try std.testing.expect(std.mem.indexOf(u8, wait_none_reply, "No auth session selected for scope `qwen/mobile`. Start with `/auth start qwen`.") != null);
+    const wait_none_type = try extractResultObjectStringField(allocator, wait_none, "metadata", "type");
+    defer allocator.free(wait_none_type);
+    try std.testing.expect(std.mem.eql(u8, wait_none_type, "auth.wait"));
+    const wait_none_error = try extractResultObjectStringField(allocator, wait_none, "metadata", "error");
+    defer allocator.free(wait_none_error);
+    try std.testing.expect(std.mem.eql(u8, wait_none_error, "missing_session"));
+}
+
 test "dispatch send model and tts commands expose go-compatible metadata envelope" {
     const allocator = std.testing.allocator;
 

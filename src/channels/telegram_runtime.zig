@@ -2432,19 +2432,22 @@ pub const TelegramRuntime = struct {
                     .provider = provider,
                     .account = account_norm,
                     .scope = scope,
-                    .status = "none",
-                    .@"error" = "missing_session",
+                    .status = if (is_wait) null else "none",
+                    .@"error" = if (is_wait) "missing_session" else null,
                     .timeoutSeconds = if (is_wait) timeout_secs else null,
                 });
                 return .{
                     .is_command = true,
                     .command_name = "auth",
-                    .reply = try std.fmt.allocPrint(allocator, "No active auth session for `{s}` account `{s}`.", .{ provider, normalizeAccount(account) }),
+                    .reply = if (is_wait)
+                        try std.fmt.allocPrint(allocator, "No auth session selected for scope `{s}`. Start with `/auth start {s}`.", .{ scope, provider })
+                    else
+                        try std.fmt.allocPrint(allocator, "No active auth flow for `{s}` in scope `{s}`.", .{ trimmed_target, scope }),
                     .provider = provider,
                     .model = defaultModelForProvider(provider),
                     .login_session_id = "",
                     .login_code = "",
-                    .auth_status = "pending",
+                    .auth_status = if (is_wait) "missing" else "none",
                     .metadata_json = metadata_json,
                 };
             }
@@ -5124,6 +5127,33 @@ test "telegram runtime auth status clears stale binding when session is missing"
 
     const cleared = try runtime.getAuthBinding(allocator, "room-status-missing", "qwen", "mobile");
     try std.testing.expect(cleared.len == 0);
+}
+
+test "telegram runtime auth status and wait without session use go-style replies" {
+    var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
+    defer login.deinit();
+    var runtime = TelegramRuntime.init(std.testing.allocator, &login);
+    defer runtime.deinit();
+
+    const allocator = std.testing.allocator;
+
+    var status = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-status-none\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-status-none\",\"sessionId\":\"sess-status-none\",\"message\":\"/auth status qwen mobile\"}}");
+    defer status.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, status.authStatus, "none"));
+    try std.testing.expect(std.mem.indexOf(u8, status.reply, "No active auth flow for `room-status-none` in scope `qwen/mobile`.") != null);
+    try std.testing.expect(status.metadataJson != null);
+    try std.testing.expect(std.mem.indexOf(u8, status.metadataJson.?, "\"type\":\"auth.status\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, status.metadataJson.?, "\"status\":\"none\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, status.metadataJson.?, "\"error\":") == null);
+
+    var wait = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-wait-none\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-wait-none\",\"sessionId\":\"sess-wait-none\",\"message\":\"/auth wait qwen mobile --timeout 15\"}}");
+    defer wait.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, wait.authStatus, "missing"));
+    try std.testing.expect(std.mem.indexOf(u8, wait.reply, "No auth session selected for scope `qwen/mobile`. Start with `/auth start qwen`.") != null);
+    try std.testing.expect(wait.metadataJson != null);
+    try std.testing.expect(std.mem.indexOf(u8, wait.metadataJson.?, "\"type\":\"auth.wait\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, wait.metadataJson.?, "\"error\":\"missing_session\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, wait.metadataJson.?, "\"status\":") == null);
 }
 
 test "telegram runtime auth cancel revokes scoped session" {
