@@ -436,6 +436,19 @@ const CompatState = struct {
     update_channel: []u8,
     update_npm_package: []u8,
     update_npm_dist_tag: []u8,
+    boot_secure_enabled: bool,
+    boot_policy: []u8,
+    boot_signer: []u8,
+    boot_last_measurement: []u8,
+    boot_last_verified: bool,
+    boot_last_verified_at_ms: i64,
+    boot_active_slot: []u8,
+    boot_previous_slot: []u8,
+    rollback_pending: bool,
+    rollback_target_slot: []u8,
+    rollback_reason: []u8,
+    rollback_planned_at_ms: i64,
+    rollback_last_run_at_ms: i64,
     config_overlay: std.StringHashMap([]u8),
     next_event_id: u64,
     next_update_id: u64,
@@ -508,6 +521,19 @@ const CompatState = struct {
             .update_channel = try allocator.dupe(u8, "edge"),
             .update_npm_package = try allocator.dupe(u8, "@openclaw/zig-rpc-client"),
             .update_npm_dist_tag = try allocator.dupe(u8, "edge"),
+            .boot_secure_enabled = true,
+            .boot_policy = try allocator.dupe(u8, "signature-required"),
+            .boot_signer = try allocator.dupe(u8, "sigstore"),
+            .boot_last_measurement = try allocator.dupe(u8, "unverified"),
+            .boot_last_verified = false,
+            .boot_last_verified_at_ms = 0,
+            .boot_active_slot = try allocator.dupe(u8, "A"),
+            .boot_previous_slot = try allocator.dupe(u8, "B"),
+            .rollback_pending = false,
+            .rollback_target_slot = try allocator.dupe(u8, ""),
+            .rollback_reason = try allocator.dupe(u8, ""),
+            .rollback_planned_at_ms = 0,
+            .rollback_last_run_at_ms = 0,
             .config_overlay = std.StringHashMap([]u8).init(allocator),
             .next_event_id = 1,
             .next_update_id = 1,
@@ -564,6 +590,13 @@ const CompatState = struct {
         self.allocator.free(self.update_channel);
         self.allocator.free(self.update_npm_package);
         self.allocator.free(self.update_npm_dist_tag);
+        self.allocator.free(self.boot_policy);
+        self.allocator.free(self.boot_signer);
+        self.allocator.free(self.boot_last_measurement);
+        self.allocator.free(self.boot_active_slot);
+        self.allocator.free(self.boot_previous_slot);
+        self.allocator.free(self.rollback_target_slot);
+        self.allocator.free(self.rollback_reason);
         var overlay_it = self.config_overlay.iterator();
         while (overlay_it.next()) |entry| {
             self.allocator.free(entry.key_ptr.*);
@@ -922,6 +955,63 @@ const CompatState = struct {
     fn latestUpdateJob(self: *const CompatState) ?CompatUpdateJob {
         if (self.update_jobs.items.len == 0) return null;
         return self.update_jobs.items[self.update_jobs.items.len - 1];
+    }
+
+    fn setBootVerification(
+        self: *CompatState,
+        measurement: []const u8,
+        signer: []const u8,
+        verified: bool,
+    ) !void {
+        const normalized_measurement = std.mem.trim(u8, measurement, " \t\r\n");
+        const normalized_signer = std.mem.trim(u8, signer, " \t\r\n");
+
+        self.allocator.free(self.boot_last_measurement);
+        self.boot_last_measurement = try self.allocator.dupe(
+            u8,
+            if (normalized_measurement.len > 0) normalized_measurement else "unverified",
+        );
+
+        self.allocator.free(self.boot_signer);
+        self.boot_signer = try self.allocator.dupe(
+            u8,
+            if (normalized_signer.len > 0) normalized_signer else "unknown",
+        );
+
+        self.boot_last_verified = verified;
+        self.boot_last_verified_at_ms = time_util.nowMs();
+    }
+
+    fn setRollbackPlan(self: *CompatState, target_slot: []const u8, reason: []const u8) !void {
+        const normalized_target = std.mem.trim(u8, target_slot, " \t\r\n");
+        const normalized_reason = std.mem.trim(u8, reason, " \t\r\n");
+        const target_value = if (normalized_target.len > 0) normalized_target else self.boot_previous_slot;
+        const reason_value = if (normalized_reason.len > 0) normalized_reason else "operator requested rollback";
+
+        const owned_target = try self.allocator.dupe(u8, target_value);
+        errdefer self.allocator.free(owned_target);
+        const owned_reason = try self.allocator.dupe(u8, reason_value);
+        errdefer self.allocator.free(owned_reason);
+
+        self.allocator.free(self.rollback_target_slot);
+        self.rollback_target_slot = owned_target;
+
+        self.allocator.free(self.rollback_reason);
+        self.rollback_reason = owned_reason;
+
+        self.rollback_pending = true;
+        self.rollback_planned_at_ms = time_util.nowMs();
+    }
+
+    fn clearRollbackPlan(self: *CompatState) !void {
+        self.rollback_pending = false;
+        self.rollback_planned_at_ms = 0;
+
+        self.allocator.free(self.rollback_target_slot);
+        self.rollback_target_slot = try self.allocator.dupe(u8, "");
+
+        self.allocator.free(self.rollback_reason);
+        self.rollback_reason = try self.allocator.dupe(u8, "");
     }
 
     fn findAgentIndex(self: *const CompatState, agent_id: []const u8) ?usize {
@@ -3610,6 +3700,212 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             },
             .heartbeat = .{
                 .enabled = plan.heartbeatEnabled,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "system.boot.status")) {
+        const compat = try getCompatState();
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .secureBoot = .{
+                .enabled = compat.boot_secure_enabled,
+                .policy = compat.boot_policy,
+                .signer = compat.boot_signer,
+                .lastMeasurement = compat.boot_last_measurement,
+                .lastVerified = compat.boot_last_verified,
+                .lastVerifiedAtMs = compat.boot_last_verified_at_ms,
+                .activeSlot = compat.boot_active_slot,
+                .previousSlot = compat.boot_previous_slot,
+            },
+            .rollback = .{
+                .pending = compat.rollback_pending,
+                .targetSlot = compat.rollback_target_slot,
+                .reason = compat.rollback_reason,
+                .plannedAtMs = compat.rollback_planned_at_ms,
+                .lastRunAtMs = compat.rollback_last_run_at_ms,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "system.boot.verify")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const compat = try getCompatState();
+        const config_hash = config.fingerprintHex(currentConfig());
+        const measurement_raw = firstParamString(params, "measurement", config_hash[0..]);
+        const measurement = std.mem.trim(u8, measurement_raw, " \t\r\n");
+        const expected_hash = std.mem.trim(u8, firstParamString(params, "expectedHash", ""), " \t\r\n");
+        const signer = firstParamString(params, "signer", "sigstore");
+        const force = firstParamBool(params, "force", false);
+        const verified = force or expected_hash.len == 0 or std.ascii.eqlIgnoreCase(expected_hash, measurement);
+        const mismatch = expected_hash.len > 0 and !std.ascii.eqlIgnoreCase(expected_hash, measurement);
+
+        try compat.setBootVerification(measurement, signer, verified);
+        const evt = try compat.addEvent(if (verified) "system.boot.verified" else "system.boot.verify.failed");
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = verified,
+            .verified = verified,
+            .forced = force,
+            .measurement = measurement,
+            .expectedHash = expected_hash,
+            .mismatch = mismatch,
+            .secureBoot = .{
+                .enabled = compat.boot_secure_enabled,
+                .policy = compat.boot_policy,
+                .signer = compat.boot_signer,
+                .activeSlot = compat.boot_active_slot,
+                .previousSlot = compat.boot_previous_slot,
+                .lastVerified = compat.boot_last_verified,
+                .lastVerifiedAtMs = compat.boot_last_verified_at_ms,
+            },
+            .event = .{
+                .id = evt.id,
+                .kind = evt.kind,
+                .createdAtMs = evt.created_at_ms,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "system.rollback.plan")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const compat = try getCompatState();
+        const target_slot = normalizeBootSlot(
+            firstParamString(params, "targetSlot", compat.boot_previous_slot),
+            compat.boot_previous_slot,
+        );
+        if (!std.ascii.eqlIgnoreCase(target_slot, "A") and !std.ascii.eqlIgnoreCase(target_slot, "B")) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "invalid targetSlot (expected A or B)",
+            });
+        }
+        if (std.ascii.eqlIgnoreCase(target_slot, compat.boot_active_slot)) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "targetSlot matches current active slot",
+            });
+        }
+        const reason = firstParamString(params, "reason", "operator requested rollback");
+        try compat.setRollbackPlan(target_slot, reason);
+        const evt = try compat.addEvent("system.rollback.planned");
+
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .status = "planned",
+            .pending = compat.rollback_pending,
+            .targetSlot = compat.rollback_target_slot,
+            .reason = compat.rollback_reason,
+            .activeSlot = compat.boot_active_slot,
+            .previousSlot = compat.boot_previous_slot,
+            .plannedAtMs = compat.rollback_planned_at_ms,
+            .event = .{
+                .id = evt.id,
+                .kind = evt.kind,
+                .createdAtMs = evt.created_at_ms,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "system.rollback.run")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const compat = try getCompatState();
+
+        var apply = firstParamBool(params, "apply", true);
+        if (firstParamBool(params, "dryRun", false)) apply = false;
+
+        var target_slot = normalizeBootSlot(
+            firstParamString(params, "targetSlot", compat.rollback_target_slot),
+            compat.rollback_target_slot,
+        );
+        if (target_slot.len == 0) target_slot = compat.boot_previous_slot;
+        if (!std.ascii.eqlIgnoreCase(target_slot, "A") and !std.ascii.eqlIgnoreCase(target_slot, "B")) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "invalid targetSlot (expected A or B)",
+            });
+        }
+        if (std.ascii.eqlIgnoreCase(target_slot, compat.boot_active_slot)) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "targetSlot matches current active slot",
+            });
+        }
+
+        const reason = firstParamString(params, "reason", if (compat.rollback_reason.len > 0) compat.rollback_reason else "operator requested rollback");
+        const update_target = try std.fmt.allocPrint(allocator, "rollback-slot-{s}", .{target_slot});
+        defer allocator.free(update_target);
+        const update_job = try compat.createUpdateJob(update_target, !apply, true);
+
+        if (!apply) {
+            try compat.setRollbackPlan(target_slot, reason);
+            _ = compat.setUpdateJobState(update_job.id, "completed", "rollback-plan", 100);
+            const evt = try compat.addEvent("system.rollback.simulated");
+            return protocol.encodeResult(allocator, req.id, .{
+                .ok = true,
+                .status = "planned",
+                .applied = false,
+                .pending = compat.rollback_pending,
+                .targetSlot = compat.rollback_target_slot,
+                .reason = compat.rollback_reason,
+                .activeSlot = compat.boot_active_slot,
+                .previousSlot = compat.boot_previous_slot,
+                .plannedAtMs = compat.rollback_planned_at_ms,
+                .updateJob = .{
+                    .jobId = update_job.id,
+                    .status = "completed",
+                    .phase = "rollback-plan",
+                    .progress = 100,
+                },
+                .event = .{
+                    .id = evt.id,
+                    .kind = evt.kind,
+                    .createdAtMs = evt.created_at_ms,
+                },
+            });
+        }
+
+        _ = compat.setUpdateJobState(update_job.id, "running", "rollback-apply", 40);
+
+        const next_active = try compat.allocator.dupe(u8, target_slot);
+        errdefer compat.allocator.free(next_active);
+        const next_previous = try compat.allocator.dupe(u8, compat.boot_active_slot);
+        errdefer compat.allocator.free(next_previous);
+
+        compat.allocator.free(compat.boot_active_slot);
+        compat.boot_active_slot = next_active;
+        compat.allocator.free(compat.boot_previous_slot);
+        compat.boot_previous_slot = next_previous;
+
+        compat.rollback_last_run_at_ms = time_util.nowMs();
+        try compat.clearRollbackPlan();
+        _ = compat.setUpdateJobState(update_job.id, "completed", "rollback-applied", 100);
+
+        const evt = try compat.addEvent("system.rollback.applied");
+        return protocol.encodeResult(allocator, req.id, .{
+            .ok = true,
+            .status = "applied",
+            .applied = true,
+            .pending = compat.rollback_pending,
+            .targetSlot = target_slot,
+            .activeSlot = compat.boot_active_slot,
+            .previousSlot = compat.boot_previous_slot,
+            .lastRunAtMs = compat.rollback_last_run_at_ms,
+            .updateJob = .{
+                .jobId = update_job.id,
+                .status = "completed",
+                .phase = "rollback-applied",
+                .progress = 100,
+            },
+            .event = .{
+                .id = evt.id,
+                .kind = evt.kind,
+                .createdAtMs = evt.created_at_ms,
             },
         });
     }
@@ -6974,6 +7270,10 @@ fn shouldEnforceGuard(method: []const u8) bool {
     if (std.ascii.eqlIgnoreCase(method, "system.maintenance.plan")) return false;
     if (std.ascii.eqlIgnoreCase(method, "system.maintenance.run")) return false;
     if (std.ascii.eqlIgnoreCase(method, "system.maintenance.status")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "system.boot.status")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "system.boot.verify")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "system.rollback.plan")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "system.rollback.run")) return false;
     if (std.ascii.eqlIgnoreCase(method, "security.audit")) return false;
     if (std.ascii.eqlIgnoreCase(method, "doctor")) return false;
     if (std.ascii.eqlIgnoreCase(method, "doctor.memory.status")) return false;
@@ -7706,6 +8006,14 @@ fn firstParamBool(params: ?std.json.ObjectMap, key: []const u8, fallback: bool) 
         }
     }
     return fallback;
+}
+
+fn normalizeBootSlot(raw: []const u8, fallback: []const u8) []const u8 {
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    if (trimmed.len == 0) return fallback;
+    if (std.ascii.eqlIgnoreCase(trimmed, "a")) return "A";
+    if (std.ascii.eqlIgnoreCase(trimmed, "b")) return "B";
+    return trimmed;
 }
 
 const ResolvedUpdateTarget = struct {
@@ -10061,6 +10369,36 @@ test "dispatch compat talk tts models and control methods return contracts" {
     defer allocator.free(maintenance_status);
     try std.testing.expect(std.mem.indexOf(u8, maintenance_status, "\"latestRun\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, maintenance_status, "\"healthScore\"") != null);
+
+    const boot_status = try dispatch(allocator, "{\"id\":\"compat-boot-status\",\"method\":\"system.boot.status\",\"params\":{}}");
+    defer allocator.free(boot_status);
+    try std.testing.expect(std.mem.indexOf(u8, boot_status, "\"secureBoot\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, boot_status, "\"activeSlot\":\"A\"") != null);
+
+    const boot_verify = try dispatch(allocator, "{\"id\":\"compat-boot-verify\",\"method\":\"system.boot.verify\",\"params\":{\"measurement\":\"abc123\",\"expectedHash\":\"abc123\",\"signer\":\"sigstore-ci\"}}");
+    defer allocator.free(boot_verify);
+    try std.testing.expect(std.mem.indexOf(u8, boot_verify, "\"verified\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, boot_verify, "\"measurement\":\"abc123\"") != null);
+
+    const rollback_plan = try dispatch(allocator, "{\"id\":\"compat-rollback-plan\",\"method\":\"system.rollback.plan\",\"params\":{\"targetSlot\":\"B\",\"reason\":\"canary-failure\"}}");
+    defer allocator.free(rollback_plan);
+    try std.testing.expect(std.mem.indexOf(u8, rollback_plan, "\"status\":\"planned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rollback_plan, "\"pending\":true") != null);
+
+    const rollback_dry_run = try dispatch(allocator, "{\"id\":\"compat-rollback-dry-run\",\"method\":\"system.rollback.run\",\"params\":{\"targetSlot\":\"B\",\"dryRun\":true}}");
+    defer allocator.free(rollback_dry_run);
+    try std.testing.expect(std.mem.indexOf(u8, rollback_dry_run, "\"status\":\"planned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rollback_dry_run, "\"applied\":false") != null);
+
+    const rollback_apply = try dispatch(allocator, "{\"id\":\"compat-rollback-apply\",\"method\":\"system.rollback.run\",\"params\":{\"targetSlot\":\"B\",\"apply\":true}}");
+    defer allocator.free(rollback_apply);
+    try std.testing.expect(std.mem.indexOf(u8, rollback_apply, "\"status\":\"applied\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rollback_apply, "\"activeSlot\":\"B\"") != null);
+
+    const boot_status_after = try dispatch(allocator, "{\"id\":\"compat-boot-status-after\",\"method\":\"system.boot.status\",\"params\":{}}");
+    defer allocator.free(boot_status_after);
+    try std.testing.expect(std.mem.indexOf(u8, boot_status_after, "\"activeSlot\":\"B\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, boot_status_after, "\"pending\":false") != null);
 
     const push_test = try dispatch(allocator, "{\"id\":\"compat-push-test\",\"method\":\"push.test\",\"params\":{\"channel\":\"telegram\"}}");
     defer allocator.free(push_test);
