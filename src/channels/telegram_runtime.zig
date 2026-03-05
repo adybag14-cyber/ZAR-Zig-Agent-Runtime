@@ -2571,10 +2571,25 @@ pub const TelegramRuntime = struct {
                 .expiresInSeconds = authExpiresInSeconds(view.expiresAtMs),
                 .login = view,
             });
+            const reply = if (std.ascii.eqlIgnoreCase(view.status, "pending"))
+                (if (std.mem.eql(u8, account_norm, "default"))
+                    try std.fmt.allocPrint(
+                        allocator,
+                        "Auth status: `{s}` (session `{s}`).\nOpen: {s}\nThen run: `/auth complete {s} {s}`",
+                        .{ view.status, view.loginSessionId, view.verificationUriComplete, provider, view.code },
+                    )
+                else
+                    try std.fmt.allocPrint(
+                        allocator,
+                        "Auth status: `{s}` (session `{s}`).\nOpen: {s}\nThen run: `/auth complete {s} {s} {s}`",
+                        .{ view.status, view.loginSessionId, view.verificationUriComplete, provider, view.code, account_norm },
+                    ))
+            else
+                try std.fmt.allocPrint(allocator, "Auth status: `{s}` (session `{s}`).", .{ view.status, view.loginSessionId });
             return .{
                 .is_command = true,
                 .command_name = "auth",
-                .reply = try std.fmt.allocPrint(allocator, "Auth status: `{s}` (session `{s}`).", .{ view.status, view.loginSessionId }),
+                .reply = reply,
                 .provider = provider,
                 .model = view.model,
                 .login_session_id = view.loginSessionId,
@@ -4940,6 +4955,9 @@ test "telegram runtime auth supports account scope and force restart" {
     var status_mobile = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-status-mobile\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-acc\",\"sessionId\":\"sess-acc\",\"message\":\"/auth status qwen mobile\"}}");
     defer status_mobile.deinit(allocator);
     try std.testing.expect(std.mem.eql(u8, status_mobile.loginSessionId, start_mobile_force.loginSessionId));
+    try std.testing.expect(std.mem.indexOf(u8, status_mobile.reply, "Open: https://chat.qwen.ai/?openclaw_code=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, status_mobile.reply, "Then run: `/auth complete qwen ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, status_mobile.reply, " mobile`") != null);
 
     var start_desktop = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-start-desktop\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-acc\",\"sessionId\":\"sess-acc\",\"message\":\"/auth start qwen desktop\"}}");
     defer start_desktop.deinit(allocator);

@@ -58,6 +58,9 @@ Full-stack replacement execution reference:
 
 - Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `183/183`.
 - Full-stack replacement kickoff (2026-03-05):
+  - Phase 5 Telegram pending-status UX parity hardened:
+    - pending `/auth status` replies now include the live verification URL plus the concrete completion command, instead of only returning `Auth status: <pending>`.
+    - account-scoped bindings keep the exact scoped completion form (`/auth complete <provider> <code> <account>`), while default scope keeps the shorter Go-style completion command.
   - Phase 5 Telegram auth URL stale-binding parity hardened:
     - `/auth url` now clears the scoped auth binding when the referenced login session is missing, matching the Go cleanup behavior for expired/missing URL lookups.
     - missing-session URL lookups now return the Go-style reply:

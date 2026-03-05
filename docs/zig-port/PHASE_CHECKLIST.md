@@ -8,6 +8,9 @@ Historical note: milestone validation counts below are preserved as captured at 
 - [ ] FS1 - Runtime/core consolidation
 - [ ] FS2 - Provider + channel completion
   - Latest delivered slice:
+    - Telegram pending `/auth status` replies now include the live URL and concrete completion step:
+      - pending status replies now append `Open: <verificationUriComplete>` and the Go-style next-step command instead of only returning `Auth status: ...`.
+      - account-scoped status replies preserve the exact scoped completion form (`/auth complete <provider> <code> <account>`), while default scope keeps the shorter Go-style command.
     - Telegram `/auth url` now clears stale scoped bindings when the backing login session is gone:
       - a missing backing session on `/auth url` now returns the Go-style `Auth session expired or missing. Run \`/auth\` again.` reply instead of a generic `Auth session not found.` response.
       - the scoped Telegram auth binding is cleared immediately on that missing-session path, preventing dead bindings from lingering across later auth flows.

@@ -13015,6 +13015,11 @@ test "dispatch send auth commands expose go-compatible metadata envelope" {
 
     const auth_status = try dispatch(allocator, "{\"id\":\"tg-auth-status-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta\",\"sessionId\":\"tg-meta\",\"message\":\"/auth status codex mobile\"}}");
     defer allocator.free(auth_status);
+    const auth_status_reply = try extractResultStringField(allocator, auth_status, "reply");
+    defer allocator.free(auth_status_reply);
+    try std.testing.expect(std.mem.indexOf(u8, auth_status_reply, "Open: https://chatgpt.com/?openclaw_code=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, auth_status_reply, "Then run: `/auth complete codex ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, auth_status_reply, " mobile`") != null);
     {
         var parsed = try std.json.parseFromSlice(std.json.Value, allocator, auth_status, .{});
         defer parsed.deinit();
