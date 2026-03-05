@@ -1,4 +1,5 @@
 const std = @import("std");
+const abi = @import("abi.zig");
 
 pub const gdt_entries_count: usize = 8;
 pub const idt_entries_count: usize = 256;
@@ -82,6 +83,7 @@ var interrupt_masked_count: u32 = 0;
 var masked_interrupt_ignored_count: u64 = 0;
 var interrupt_mask_ignored_vector_counts: [interrupt_vector_table_size]u64 = std.mem.zeroes([interrupt_vector_table_size]u64);
 var last_masked_interrupt_vector: u8 = 0;
+var interrupt_mask_profile: u8 = abi.interrupt_mask_profile_none;
 var last_exception_vector: u8 = 0;
 var exception_counter: u64 = 0;
 var last_exception_code: u64 = 0;
@@ -134,6 +136,7 @@ pub fn init() void {
     interrupt_masked_count = 0;
     masked_interrupt_ignored_count = 0;
     last_masked_interrupt_vector = 0;
+    interrupt_mask_profile = abi.interrupt_mask_profile_none;
 
     gdt[1] = makeGdtEntry(0, 0xFFFFF, 0x9A, 0xA0);
     gdt[2] = makeGdtEntry(0, 0xFFFFF, 0x92, 0xA0);
@@ -246,6 +249,10 @@ pub export fn oc_interrupt_mask_ignored_count() u64 {
     return masked_interrupt_ignored_count;
 }
 
+pub export fn oc_interrupt_mask_profile() u8 {
+    return interrupt_mask_profile;
+}
+
 pub export fn oc_interrupt_last_masked_vector() u8 {
     return last_masked_interrupt_vector;
 }
@@ -259,7 +266,13 @@ pub export fn oc_interrupt_mask_ignored_vector_count(vector: u8) u64 {
 }
 
 pub export fn oc_interrupt_mask_set(vector: u8, masked: bool) void {
-    interrupt_mask[vector] = if (masked) 1 else 0;
+    if (vector < exception_vector_limit and masked) {
+        // Exception vectors are non-maskable in this control plane.
+        interrupt_mask[vector] = 0;
+    } else {
+        interrupt_mask[vector] = if (masked) 1 else 0;
+    }
+    interrupt_mask_profile = abi.interrupt_mask_profile_custom;
     recountInterruptMaskedCount();
     refreshInterruptState();
 }
@@ -267,7 +280,34 @@ pub export fn oc_interrupt_mask_set(vector: u8, masked: bool) void {
 pub export fn oc_interrupt_mask_clear_all() void {
     @memset(&interrupt_mask, 0);
     interrupt_masked_count = 0;
+    interrupt_mask_profile = abi.interrupt_mask_profile_none;
     refreshInterruptState();
+}
+
+pub export fn oc_interrupt_mask_apply_profile(profile: u8) bool {
+    if (!abi.interruptMaskProfileIsValid(profile)) return false;
+    switch (profile) {
+        abi.interrupt_mask_profile_none => {
+            @memset(&interrupt_mask, 0);
+        },
+        abi.interrupt_mask_profile_external_all => {
+            var idx: usize = 0;
+            while (idx < interrupt_vector_table_size) : (idx += 1) {
+                interrupt_mask[idx] = if (idx >= exception_vector_limit) 1 else 0;
+            }
+        },
+        abi.interrupt_mask_profile_external_high => {
+            var idx: usize = 0;
+            while (idx < interrupt_vector_table_size) : (idx += 1) {
+                interrupt_mask[idx] = if (idx >= 64) 1 else 0;
+            }
+        },
+        else => unreachable,
+    }
+    interrupt_mask_profile = profile;
+    recountInterruptMaskedCount();
+    refreshInterruptState();
+    return true;
 }
 
 pub export fn oc_interrupt_mask_reset_ignored_counts() void {
@@ -730,4 +770,39 @@ test "x86 bootstrap interrupt mask blocks masked non-exception vectors" {
     try std.testing.expectEqual(@as(u64, 0), oc_interrupt_mask_ignored_vector_count(200));
     try std.testing.expectEqual(@as(u64, 0), oc_interrupt_mask_ignored_vector_count(201));
     try std.testing.expectEqual(@as(u8, 0), oc_interrupt_last_masked_vector());
+}
+
+test "x86 bootstrap interrupt mask profiles apply expected vector windows" {
+    init();
+    oc_interrupt_mask_clear_all();
+    try std.testing.expectEqual(abi.interrupt_mask_profile_none, oc_interrupt_mask_profile());
+    try std.testing.expectEqual(@as(u32, 0), oc_interrupt_masked_count());
+
+    try std.testing.expect(oc_interrupt_mask_apply_profile(abi.interrupt_mask_profile_external_all));
+    try std.testing.expectEqual(abi.interrupt_mask_profile_external_all, oc_interrupt_mask_profile());
+    try std.testing.expectEqual(@as(u32, 224), oc_interrupt_masked_count());
+    try std.testing.expect(!oc_interrupt_mask_is_set(31));
+    try std.testing.expect(oc_interrupt_mask_is_set(32));
+    try std.testing.expect(oc_interrupt_mask_is_set(200));
+
+    try std.testing.expect(oc_interrupt_mask_apply_profile(abi.interrupt_mask_profile_external_high));
+    try std.testing.expectEqual(abi.interrupt_mask_profile_external_high, oc_interrupt_mask_profile());
+    try std.testing.expectEqual(@as(u32, 192), oc_interrupt_masked_count());
+    try std.testing.expect(!oc_interrupt_mask_is_set(63));
+    try std.testing.expect(oc_interrupt_mask_is_set(64));
+
+    try std.testing.expect(!oc_interrupt_mask_apply_profile(9));
+    try std.testing.expectEqual(abi.interrupt_mask_profile_external_high, oc_interrupt_mask_profile());
+
+    oc_interrupt_mask_set(200, false);
+    try std.testing.expectEqual(abi.interrupt_mask_profile_custom, oc_interrupt_mask_profile());
+    try std.testing.expectEqual(@as(u32, 191), oc_interrupt_masked_count());
+
+    oc_interrupt_mask_set(12, true);
+    try std.testing.expect(!oc_interrupt_mask_is_set(12));
+    try std.testing.expectEqual(@as(u32, 191), oc_interrupt_masked_count());
+
+    oc_interrupt_mask_clear_all();
+    try std.testing.expectEqual(abi.interrupt_mask_profile_none, oc_interrupt_mask_profile());
+    try std.testing.expectEqual(@as(u32, 0), oc_interrupt_masked_count());
 }

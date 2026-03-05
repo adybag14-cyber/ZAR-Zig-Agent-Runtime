@@ -450,10 +450,11 @@ while maintaining parity-first validation and release gating.
     - ABI contract extended with `BaremetalWakeQueueAgeBuckets` size/layout checks.
     - validated with `zig build test --summary all` (`118/118`) and `scripts/baremetal-smoke-check.ps1`.
   - bare-metal interrupt mask control slice shipped:
-    - new mailbox opcodes: `command_interrupt_mask_set` (`arg0=vector`, `arg1=masked 0|1`), `command_interrupt_mask_clear_all`, and `command_interrupt_mask_reset_ignored_counts`.
-    - new x86 bootstrap exports: `oc_interrupt_mask_ptr`, `oc_interrupt_mask_is_set`, `oc_interrupt_masked_count`, `oc_interrupt_mask_ignored_count`, `oc_interrupt_last_masked_vector`, `oc_interrupt_mask_ignored_vector_counts_ptr`, `oc_interrupt_mask_ignored_vector_count`, `oc_interrupt_mask_set`, `oc_interrupt_mask_clear_all`, `oc_interrupt_mask_reset_ignored_counts`.
+    - new mailbox opcodes: `command_interrupt_mask_set` (`arg0=vector`, `arg1=masked 0|1`), `command_interrupt_mask_clear_all`, `command_interrupt_mask_reset_ignored_counts`, and `command_interrupt_mask_apply_profile`.
+    - new x86 bootstrap exports: `oc_interrupt_mask_ptr`, `oc_interrupt_mask_is_set`, `oc_interrupt_masked_count`, `oc_interrupt_mask_ignored_count`, `oc_interrupt_mask_profile`, `oc_interrupt_last_masked_vector`, `oc_interrupt_mask_ignored_vector_counts_ptr`, `oc_interrupt_mask_ignored_vector_count`, `oc_interrupt_mask_set`, `oc_interrupt_mask_clear_all`, `oc_interrupt_mask_reset_ignored_counts`, `oc_interrupt_mask_apply_profile`.
     - runtime now suppresses masked non-exception vectors while preserving exception delivery semantics for vectors `<32`.
-    - validated with `zig build test --summary all` (`122/122`) and `scripts/baremetal-smoke-check.ps1`.
+    - profile-aware masking now supports deterministic windows (`none`, `external_all`, `external_high`) with automatic `custom` profile drift tracking after manual per-vector edits.
+    - validated with `zig build test --summary all` (`124/124`) and `scripts/baremetal-smoke-check.ps1`.
   - Week-3 control-plane completion slice shipped:
     - gateway now exposes `GET /ui` for minimal bootstrap control operations (`status`, `doctor`, `logs.tail`, `node.pair.list`) through a token-aware browser panel.
     - node-pair protocol handling consolidated across payload variants: request aliases (`node_id/deviceId`) and action aliases (`pair_id/nodePairId/id` + optional `status|decision`) now normalize into the same state transitions and response schema.

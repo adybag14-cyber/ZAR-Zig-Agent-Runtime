@@ -193,9 +193,13 @@ test "baremetal x86 bootstrap module exports descriptor table metadata" {
     _ = baremetal_x86_bootstrap.oc_interrupt_mask_ptr();
     _ = baremetal_x86_bootstrap.oc_interrupt_masked_count();
     _ = baremetal_x86_bootstrap.oc_interrupt_mask_ignored_count();
+    _ = baremetal_x86_bootstrap.oc_interrupt_mask_profile();
     _ = baremetal_x86_bootstrap.oc_interrupt_last_masked_vector();
     _ = baremetal_x86_bootstrap.oc_interrupt_mask_ignored_vector_counts_ptr();
     _ = baremetal_x86_bootstrap.oc_interrupt_mask_ignored_vector_count(0);
+    try std.testing.expect(
+        baremetal_x86_bootstrap.oc_interrupt_mask_apply_profile(baremetal_abi.interrupt_mask_profile_external_all),
+    );
     baremetal_x86_bootstrap.oc_interrupt_mask_set(200, true);
     try std.testing.expect(baremetal_x86_bootstrap.oc_interrupt_mask_is_set(200));
     baremetal_x86_bootstrap.oc_interrupt_mask_reset_ignored_counts();

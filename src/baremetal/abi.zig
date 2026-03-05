@@ -141,6 +141,7 @@ pub const command_wake_queue_pop_reason_vector: u16 = 62;
 pub const command_interrupt_mask_set: u16 = 63;
 pub const command_interrupt_mask_clear_all: u16 = 64;
 pub const command_interrupt_mask_reset_ignored_counts: u16 = 65;
+pub const command_interrupt_mask_apply_profile: u16 = 66;
 
 pub const mode_change_reason_boot: u8 = 0;
 pub const mode_change_reason_command: u8 = 1;
@@ -198,6 +199,11 @@ pub const wake_reason_interrupt: u8 = 2;
 pub const wake_reason_manual: u8 = 3;
 
 pub const wait_interrupt_any_vector: u16 = 0xFFFF;
+
+pub const interrupt_mask_profile_none: u8 = 0;
+pub const interrupt_mask_profile_external_all: u8 = 1;
+pub const interrupt_mask_profile_external_high: u8 = 2;
+pub const interrupt_mask_profile_custom: u8 = 255;
 
 pub const BaremetalStatus = extern struct {
     magic: u32,
@@ -518,6 +524,12 @@ pub fn wakeReasonIsValid(reason: u8) bool {
     return reason == wake_reason_timer or reason == wake_reason_interrupt or reason == wake_reason_manual;
 }
 
+pub fn interruptMaskProfileIsValid(profile: u8) bool {
+    return profile == interrupt_mask_profile_none or
+        profile == interrupt_mask_profile_external_all or
+        profile == interrupt_mask_profile_external_high;
+}
+
 test "baremetal abi layout contract stays stable" {
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(BaremetalStatus, "magic"));
     try std.testing.expectEqual(@as(usize, 4), @offsetOf(BaremetalStatus, "api_version"));
@@ -581,4 +593,12 @@ test "baremetal wake reason helper validates supported reasons" {
     try std.testing.expect(wakeReasonIsValid(wake_reason_manual));
     try std.testing.expect(!wakeReasonIsValid(0));
     try std.testing.expect(!wakeReasonIsValid(4));
+}
+
+test "baremetal interrupt mask profile helper validates supported profiles" {
+    try std.testing.expect(interruptMaskProfileIsValid(interrupt_mask_profile_none));
+    try std.testing.expect(interruptMaskProfileIsValid(interrupt_mask_profile_external_all));
+    try std.testing.expect(interruptMaskProfileIsValid(interrupt_mask_profile_external_high));
+    try std.testing.expect(!interruptMaskProfileIsValid(3));
+    try std.testing.expect(!interruptMaskProfileIsValid(interrupt_mask_profile_custom));
 }
