@@ -28,7 +28,7 @@ jobs:
         uses: mlugg/setup-zig@v2
         with:
           version: master
-          use-cache: false
+          use-cache: true
 
       - name: Setup Zig (master) mirror fallback
         id: setup_zig_mirror_mach
@@ -38,7 +38,7 @@ jobs:
         with:
           version: master
           mirror: https://pkg.machengine.org/zig
-          use-cache: false
+          use-cache: true
 
       - name: Setup Zig (master) mirror fallback (ziglang.org)
         if: steps.setup_zig_primary.outcome == 'failure' && steps.setup_zig_mirror_mach.outcome == 'failure'
@@ -46,7 +46,7 @@ jobs:
         with:
           version: master
           mirror: https://ziglang.org/builds
-          use-cache: false
+          use-cache: true
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -172,7 +172,7 @@ jobs:
         uses: mlugg/setup-zig@v2
         with:
           version: master
-          use-cache: false
+          use-cache: true
 
       - name: Setup Zig (master) mirror fallback
         id: setup_zig_mirror_mach
@@ -182,7 +182,7 @@ jobs:
         with:
           version: master
           mirror: https://pkg.machengine.org/zig
-          use-cache: false
+          use-cache: true
 
       - name: Setup Zig (master) mirror fallback (ziglang.org)
         if: steps.setup_zig_primary.outcome == 'failure' && steps.setup_zig_mirror_mach.outcome == 'failure'
@@ -190,7 +190,7 @@ jobs:
         with:
           version: master
           mirror: https://ziglang.org/builds
-          use-cache: false
+          use-cache: true
 
       - name: Zig version
         run: zig version
@@ -235,7 +235,7 @@ jobs:
         uses: mlugg/setup-zig@v2
         with:
           version: master
-          use-cache: false
+          use-cache: true
 
       - name: Setup Zig (master) mirror fallback
         id: setup_zig_mirror_mach
@@ -245,7 +245,7 @@ jobs:
         with:
           version: master
           mirror: https://pkg.machengine.org/zig
-          use-cache: false
+          use-cache: true
 
       - name: Setup Zig (master) mirror fallback (ziglang.org)
         if: steps.setup_zig_primary.outcome == 'failure' && steps.setup_zig_mirror_mach.outcome == 'failure'
@@ -253,7 +253,7 @@ jobs:
         with:
           version: master
           mirror: https://ziglang.org/builds
-          use-cache: false
+          use-cache: true
 
       - name: Zig version
         run: zig version
