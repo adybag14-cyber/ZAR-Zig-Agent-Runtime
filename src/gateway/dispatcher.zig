@@ -5791,30 +5791,30 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
     }
 
     if (std.ascii.eqlIgnoreCase(req.method, "auth.oauth.providers")) {
-        const providers = [_]struct {
-            id: []const u8,
-            name: []const u8,
-            verificationUri: []const u8,
-            supportsBrowserSession: bool,
-            defaultModel: []const u8,
-            authMode: []const u8,
-            guestBypassSupported: bool,
-            popupBypassAction: []const u8,
-        }{
-            .{ .id = "chatgpt", .name = "ChatGPT", .verificationUri = "https://chatgpt.com/", .supportsBrowserSession = true, .defaultModel = "gpt-5.2", .authMode = "device_code", .guestBypassSupported = false, .popupBypassAction = "not_applicable" },
-            .{ .id = "claude", .name = "Claude", .verificationUri = "https://claude.ai/", .supportsBrowserSession = true, .defaultModel = "claude-opus-4", .authMode = "device_code", .guestBypassSupported = false, .popupBypassAction = "not_applicable" },
-            .{ .id = "gemini", .name = "Gemini", .verificationUri = "https://aistudio.google.com/", .supportsBrowserSession = true, .defaultModel = "gemini-2.5-pro", .authMode = "device_code", .guestBypassSupported = false, .popupBypassAction = "not_applicable" },
-            .{ .id = "minimax", .name = "MiniMax", .verificationUri = "https://chat.minimax.io/", .supportsBrowserSession = true, .defaultModel = "minimax-m2.5", .authMode = "device_code", .guestBypassSupported = false, .popupBypassAction = "not_applicable" },
-            .{ .id = "kimi", .name = "Kimi", .verificationUri = "https://kimi.com/", .supportsBrowserSession = true, .defaultModel = "kimi-k2.5", .authMode = "device_code", .guestBypassSupported = false, .popupBypassAction = "not_applicable" },
-            .{ .id = "zhipuai", .name = "ZhipuAI", .verificationUri = "https://open.bigmodel.cn/", .supportsBrowserSession = true, .defaultModel = "glm-4.6", .authMode = "device_code", .guestBypassSupported = false, .popupBypassAction = "not_applicable" },
-            .{ .id = "qwen", .name = "Qwen", .verificationUri = "https://chat.qwen.ai/", .supportsBrowserSession = true, .defaultModel = "qwen-max", .authMode = "guest_or_code", .guestBypassSupported = true, .popupBypassAction = "stay_logged_out" },
-            .{ .id = "zai", .name = "ZAI", .verificationUri = "https://chat.z.ai/", .supportsBrowserSession = true, .defaultModel = "glm-5", .authMode = "guest_or_code", .guestBypassSupported = true, .popupBypassAction = "stay_logged_out" },
-            .{ .id = "inception", .name = "Mercury", .verificationUri = "https://chat.inceptionlabs.ai/", .supportsBrowserSession = true, .defaultModel = "mercury-2", .authMode = "guest_or_code", .guestBypassSupported = true, .popupBypassAction = "stay_logged_out" },
-            .{ .id = "openrouter", .name = "OpenRouter", .verificationUri = "https://openrouter.ai/", .supportsBrowserSession = false, .defaultModel = "openai/gpt-5.2-mini", .authMode = "api_key", .guestBypassSupported = false, .popupBypassAction = "not_applicable" },
-        };
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        if (params) |obj| {
+            var it = obj.iterator();
+            while (it.next()) |entry| {
+                if (!std.mem.eql(u8, entry.key_ptr.*, "provider")) {
+                    const message = try std.fmt.allocPrint(allocator, "invalid auth.oauth.providers params: unknown field \"{s}\"", .{entry.key_ptr.*});
+                    defer allocator.free(message);
+                    return protocol.encodeError(allocator, req.id, .{
+                        .code = -32602,
+                        .message = message,
+                    });
+                }
+            }
+        }
+        const compat = try getCompatState();
+        const provider_filter = normalizeOAuthProviderCatalogProvider(firstParamString(params, "provider", ""));
+        const providers = try buildOAuthProviderCatalogViews(allocator, compat, provider_filter);
+        defer allocator.free(providers);
         return protocol.encodeResult(allocator, req.id, .{
             .providers = providers,
             .count = providers.len,
+            .providerRequested = if (provider_filter.len == 0) null else provider_filter,
         });
     }
 
@@ -5837,14 +5837,54 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
         defer parsed.deinit();
         const params = getParamsObjectOrNull(parsed.value);
-        const provider = firstParamString(params, "provider", "chatgpt");
-        const model = firstParamString(params, "model", "gpt-5.2");
+        if (params) |obj| {
+            var it = obj.iterator();
+            while (it.next()) |entry| {
+                if (!std.mem.eql(u8, entry.key_ptr.*, "provider") and
+                    !std.mem.eql(u8, entry.key_ptr.*, "model") and
+                    !std.mem.eql(u8, entry.key_ptr.*, "loginSessionId") and
+                    !std.mem.eql(u8, entry.key_ptr.*, "code"))
+                {
+                    const message = try std.fmt.allocPrint(allocator, "invalid auth.oauth.import params: unknown field \"{s}\"", .{entry.key_ptr.*});
+                    defer allocator.free(message);
+                    return protocol.encodeError(allocator, req.id, .{
+                        .code = -32602,
+                        .message = message,
+                    });
+                }
+            }
+        }
+        const provider_entry = resolveOAuthProviderCatalogEntry(firstParamString(params, "provider", "chatgpt")) orelse {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "unknown oauth provider",
+            });
+        };
+        const provider = provider_entry.id;
+        const requested_model = firstParamString(params, "model", "");
+        const model = if (std.mem.trim(u8, requested_model, " \t\r\n").len > 0) requested_model else web_login.defaultModelForProvider(provider);
+        const requested_session_id = firstParamString(params, "loginSessionId", "");
+        const requested_code = std.mem.trim(u8, firstParamString(params, "code", ""), " \t\r\n");
 
         const manager = try getLoginManager();
-        const pending = try manager.start(provider, model);
-        const completed = manager.complete(pending.loginSessionId, pending.code) catch |err| {
+        var login_session_id = requested_session_id;
+        var completion_code = requested_code;
+        if (std.mem.trim(u8, login_session_id, " \t\r\n").len == 0) {
+            const pending = try manager.start(provider, model);
+            login_session_id = pending.loginSessionId;
+            if (completion_code.len == 0) completion_code = pending.code;
+        } else if (completion_code.len == 0) {
+            const existing = manager.get(login_session_id) orelse {
+                return protocol.encodeError(allocator, req.id, .{
+                    .code = -32004,
+                    .message = "login session not found",
+                });
+            };
+            completion_code = existing.code;
+        }
+        const completed = manager.complete(login_session_id, completion_code) catch |err| {
             return protocol.encodeError(allocator, req.id, .{
-                .code = -32004,
+                .code = -32041,
                 .message = @errorName(err),
             });
         };
@@ -5852,6 +5892,8 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             .status = "authorized",
             .imported = true,
             .login = completed,
+            .providerId = provider_entry.id,
+            .providerDisplayName = provider_entry.display_name,
             .provider = completed.provider,
             .model = completed.model,
         });
@@ -9743,6 +9785,117 @@ fn resolveBrowserProviderApiKeyAlloc(
             },
         );
     }
+    if (std.ascii.eqlIgnoreCase(normalized, "qwen")) {
+        return resolveFirstSecretCandidateAlloc(
+            allocator,
+            compat,
+            &.{
+                "talk.providers.qwen.apiKey",
+                "models.providers.qwen.apiKey",
+            },
+            &.{
+                "QWEN_API_KEY",
+                "OPENCLAW_ZIG_QWEN_API_KEY",
+                "OPENCLAW_GO_QWEN_API_KEY",
+                "OPENCLAW_RS_QWEN_API_KEY",
+                "OPENCLAW_ZIG_BROWSER_QWEN_API_KEY",
+            },
+        );
+    }
+    if (std.ascii.eqlIgnoreCase(normalized, "zai")) {
+        return resolveFirstSecretCandidateAlloc(
+            allocator,
+            compat,
+            &.{
+                "talk.providers.zai.apiKey",
+                "talk.providers.glm.apiKey",
+                "models.providers.zai.apiKey",
+                "models.providers.glm.apiKey",
+            },
+            &.{
+                "ZAI_API_KEY",
+                "GLM_API_KEY",
+                "OPENCLAW_ZIG_ZAI_API_KEY",
+                "OPENCLAW_GO_ZAI_API_KEY",
+                "OPENCLAW_RS_ZAI_API_KEY",
+                "OPENCLAW_ZIG_BROWSER_ZAI_API_KEY",
+            },
+        );
+    }
+    if (std.ascii.eqlIgnoreCase(normalized, "inception")) {
+        return resolveFirstSecretCandidateAlloc(
+            allocator,
+            compat,
+            &.{
+                "talk.providers.inception.apiKey",
+                "talk.providers.mercury.apiKey",
+                "models.providers.inception.apiKey",
+                "models.providers.mercury.apiKey",
+            },
+            &.{
+                "INCEPTION_API_KEY",
+                "MERCURY_API_KEY",
+                "OPENCLAW_ZIG_INCEPTION_API_KEY",
+                "OPENCLAW_GO_INCEPTION_API_KEY",
+                "OPENCLAW_RS_INCEPTION_API_KEY",
+                "OPENCLAW_ZIG_BROWSER_INCEPTION_API_KEY",
+            },
+        );
+    }
+    if (std.ascii.eqlIgnoreCase(normalized, "minimax")) {
+        return resolveFirstSecretCandidateAlloc(
+            allocator,
+            compat,
+            &.{
+                "talk.providers.minimax.apiKey",
+                "models.providers.minimax.apiKey",
+            },
+            &.{
+                "MINIMAX_API_KEY",
+                "OPENCLAW_ZIG_MINIMAX_API_KEY",
+                "OPENCLAW_GO_MINIMAX_API_KEY",
+                "OPENCLAW_RS_MINIMAX_API_KEY",
+                "OPENCLAW_ZIG_BROWSER_MINIMAX_API_KEY",
+            },
+        );
+    }
+    if (std.ascii.eqlIgnoreCase(normalized, "kimi")) {
+        return resolveFirstSecretCandidateAlloc(
+            allocator,
+            compat,
+            &.{
+                "talk.providers.kimi.apiKey",
+                "models.providers.kimi.apiKey",
+            },
+            &.{
+                "KIMI_API_KEY",
+                "OPENCLAW_ZIG_KIMI_API_KEY",
+                "OPENCLAW_GO_KIMI_API_KEY",
+                "OPENCLAW_RS_KIMI_API_KEY",
+                "OPENCLAW_ZIG_BROWSER_KIMI_API_KEY",
+            },
+        );
+    }
+    if (std.ascii.eqlIgnoreCase(normalized, "zhipuai")) {
+        return resolveFirstSecretCandidateAlloc(
+            allocator,
+            compat,
+            &.{
+                "talk.providers.zhipuai.apiKey",
+                "talk.providers.bigmodel.apiKey",
+                "models.providers.zhipuai.apiKey",
+                "models.providers.bigmodel.apiKey",
+            },
+            &.{
+                "ZHIPUAI_API_KEY",
+                "BIGMODEL_API_KEY",
+                "OPENCLAW_ZIG_ZHIPUAI_API_KEY",
+                "OPENCLAW_GO_ZHIPUAI_API_KEY",
+                "OPENCLAW_RS_ZHIPUAI_API_KEY",
+                "OPENCLAW_ZIG_BROWSER_ZHIPUAI_API_KEY",
+            },
+        );
+    }
     if (std.ascii.eqlIgnoreCase(normalized, "openrouter")) {
         return resolveFirstSecretCandidateAlloc(
             allocator,
@@ -10215,6 +10368,112 @@ fn buildMultimodalSummary(
         "modalities={d} prompt=\"{s}\" ocr=\"{s}\"",
         .{ modalities.len, prompt_fragment, ocr_fragment },
     );
+}
+
+const OAuthProviderCatalogEntry = struct {
+    id: []const u8,
+    display_name: []const u8,
+    aliases: []const []const u8,
+    verification_url: []const u8,
+    supports_browser_session: bool,
+};
+
+const OAuthProviderCatalogView = struct {
+    id: []const u8,
+    providerId: []const u8,
+    name: []const u8,
+    displayName: []const u8,
+    aliases: []const []const u8,
+    verificationUrl: []const u8,
+    verificationUri: []const u8,
+    supportsBrowserSession: bool,
+    apiKeyConfigured: bool,
+    defaultModel: []const u8,
+    authMode: []const u8,
+    guestBypassSupported: bool,
+    popupBypassAction: []const u8,
+    guestBypassHint: []const u8,
+};
+
+fn oauthProviderCatalogEntries() []const OAuthProviderCatalogEntry {
+    return &[_]OAuthProviderCatalogEntry{
+        .{ .id = "chatgpt", .display_name = "ChatGPT", .aliases = &.{ "openai", "openai-chatgpt", "chatgpt-web", "chatgpt.com" }, .verification_url = "https://chatgpt.com/", .supports_browser_session = true },
+        .{ .id = "codex", .display_name = "Codex", .aliases = &.{ "openai-codex", "codex-cli", "openai-codex-cli" }, .verification_url = "https://chatgpt.com/", .supports_browser_session = true },
+        .{ .id = "claude", .display_name = "Claude", .aliases = &.{ "anthropic", "claude-cli", "claude-code", "claude-desktop" }, .verification_url = "https://claude.ai/", .supports_browser_session = false },
+        .{ .id = "gemini", .display_name = "Gemini", .aliases = &.{ "google", "google-gemini", "google-gemini-cli", "gemini-cli" }, .verification_url = "https://aistudio.google.com/", .supports_browser_session = false },
+        .{ .id = "qwen", .display_name = "Qwen", .aliases = &.{ "qwen-portal", "qwen-cli", "qwen-chat", "qwen35", "qwen3.5", "qwen-3.5", "copaw", "qwen-copaw", "qwen-agent" }, .verification_url = "https://chat.qwen.ai/", .supports_browser_session = true },
+        .{ .id = "minimax", .display_name = "MiniMax", .aliases = &.{ "minimax-portal", "minimax-cli" }, .verification_url = "https://chat.minimax.io/", .supports_browser_session = false },
+        .{ .id = "kimi", .display_name = "Kimi", .aliases = &.{ "kimi-code", "kimi-coding", "kimi-for-coding" }, .verification_url = "https://www.kimi.com/", .supports_browser_session = true },
+        .{ .id = "opencode", .display_name = "OpenCode", .aliases = &.{ "opencode-zen", "opencode-ai", "opencode-go", "opencode_free", "opencodefree" }, .verification_url = "https://opencode.ai/", .supports_browser_session = false },
+        .{ .id = "zhipuai", .display_name = "Zhipu AI", .aliases = &.{ "zhipu", "zhipu-ai", "bigmodel", "bigmodel-cn", "zhipuai-coding", "zhipu-coding" }, .verification_url = "https://open.bigmodel.cn/", .supports_browser_session = false },
+        .{ .id = "openrouter", .display_name = "OpenRouter", .aliases = &.{"openrouter-ai"}, .verification_url = "https://openrouter.ai/", .supports_browser_session = true },
+        .{ .id = "zai", .display_name = "Z.ai", .aliases = &.{ "z.ai", "z-ai", "zaiweb", "zai-web", "glm", "glm5", "glm-5" }, .verification_url = "https://chat.z.ai/", .supports_browser_session = true },
+        .{ .id = "inception", .display_name = "Inception", .aliases = &.{ "inception-labs", "inceptionlabs", "mercury", "mercury2", "mercury-2" }, .verification_url = "https://chat.inceptionlabs.ai/", .supports_browser_session = true },
+    };
+}
+
+fn normalizeOAuthProviderCatalogProvider(provider_raw: []const u8) []const u8 {
+    const trimmed = std.mem.trim(u8, provider_raw, " \t\r\n");
+    if (trimmed.len == 0) return "";
+    return web_login.normalizeProviderAlias(trimmed);
+}
+
+fn resolveOAuthProviderCatalogEntry(provider_raw: []const u8) ?OAuthProviderCatalogEntry {
+    const provider = normalizeOAuthProviderCatalogProvider(provider_raw);
+    if (provider.len == 0) return null;
+    for (oauthProviderCatalogEntries()) |entry| {
+        if (std.ascii.eqlIgnoreCase(entry.id, provider)) return entry;
+    }
+    return null;
+}
+
+fn oauthProviderApiKeyConfigured(
+    allocator: std.mem.Allocator,
+    compat: *CompatState,
+    provider_raw: []const u8,
+) bool {
+    const maybe_api_key = resolveBrowserProviderApiKeyAlloc(allocator, compat, provider_raw) catch return false;
+    defer if (maybe_api_key) |value| allocator.free(value);
+    return if (maybe_api_key) |value| std.mem.trim(u8, value, " \t\r\n").len > 0 else false;
+}
+
+fn buildOAuthProviderCatalogViews(
+    allocator: std.mem.Allocator,
+    compat: *CompatState,
+    provider_filter_raw: []const u8,
+) ![]OAuthProviderCatalogView {
+    const provider_filter = normalizeOAuthProviderCatalogProvider(provider_filter_raw);
+    var items: std.ArrayList(OAuthProviderCatalogView) = .empty;
+    defer items.deinit(allocator);
+
+    for (oauthProviderCatalogEntries()) |entry| {
+        if (provider_filter.len > 0 and !std.ascii.eqlIgnoreCase(entry.id, provider_filter)) continue;
+        const profile = web_login.providerProfile(entry.id);
+        try items.append(allocator, .{
+            .id = entry.id,
+            .providerId = entry.id,
+            .name = entry.display_name,
+            .displayName = entry.display_name,
+            .aliases = entry.aliases,
+            .verificationUrl = entry.verification_url,
+            .verificationUri = entry.verification_url,
+            .supportsBrowserSession = entry.supports_browser_session,
+            .apiKeyConfigured = oauthProviderApiKeyConfigured(allocator, compat, entry.id),
+            .defaultModel = profile.default_model,
+            .authMode = profile.auth_mode,
+            .guestBypassSupported = profile.guest_bypass_supported,
+            .popupBypassAction = profile.popup_bypass_action,
+            .guestBypassHint = profile.guest_bypass_hint,
+        });
+    }
+
+    std.mem.sort(OAuthProviderCatalogView, items.items, {}, struct {
+        fn lessThan(_: void, lhs: OAuthProviderCatalogView, rhs: OAuthProviderCatalogView) bool {
+            return std.mem.lessThan(u8, lhs.id, rhs.id);
+        }
+    }.lessThan);
+
+    return items.toOwnedSlice(allocator);
 }
 
 const default_openrouter_models_url = "https://openrouter.ai/api/v1/models";
@@ -12314,6 +12573,30 @@ test "dispatch models.list provider filter supports copaw alias and qwen refresh
     try std.testing.expect(std.mem.indexOf(u8, out, "\"providers\":[\"qwen\"]") != null);
 }
 
+test "dispatch auth.oauth.providers rejects unknown params" {
+    const allocator = std.testing.allocator;
+    const out = try dispatch(allocator, "{\"id\":\"oauth-providers-invalid\",\"method\":\"auth.oauth.providers\",\"params\":{\"unknownField\":true}}");
+    defer allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"code\":-32602") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "invalid auth.oauth.providers params") != null);
+}
+
+test "dispatch auth.oauth.providers filter supports alias and api key flag" {
+    const allocator = std.testing.allocator;
+    const compat = try getCompatState();
+    try compat.mergeConfigEntry("talk.providers.qwen.apiKey", "qwen-secret");
+    defer compat.mergeConfigEntry("talk.providers.qwen.apiKey", "") catch unreachable;
+
+    const out = try dispatch(allocator, "{\"id\":\"oauth-providers-filter\",\"method\":\"auth.oauth.providers\",\"params\":{\"provider\":\"copaw\"}}");
+    defer allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"providerRequested\":\"qwen\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"count\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"id\":\"qwen\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"verificationUrl\":\"https://chat.qwen.ai/\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"apiKeyConfigured\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"copaw\"") != null);
+}
+
 test "dispatch config.get and tools.catalog expose runtime + wasm contracts" {
     const allocator = std.testing.allocator;
 
@@ -12356,8 +12639,10 @@ test "dispatch auth oauth alias lifecycle providers start wait complete logout i
     defer allocator.free(providers);
     try std.testing.expect(std.mem.indexOf(u8, providers, "\"providers\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, providers, "\"chatgpt\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, providers, "\"codex\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, providers, "\"minimax\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, providers, "\"kimi\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, providers, "\"opencode\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, providers, "\"zhipuai\"") != null);
 
     const start = try dispatch(allocator, "{\"id\":\"oauth-start\",\"method\":\"auth.oauth.start\",\"params\":{\"provider\":\"chatgpt\",\"model\":\"gpt-5.2\"}}");
@@ -12399,6 +12684,24 @@ test "dispatch auth oauth alias lifecycle providers start wait complete logout i
     defer allocator.free(imported);
     try std.testing.expect(std.mem.indexOf(u8, imported, "\"imported\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, imported, "\"status\":\"authorized\"") != null);
+}
+
+test "dispatch auth.oauth.import rejects unknown provider" {
+    const allocator = std.testing.allocator;
+    const out = try dispatch(allocator, "{\"id\":\"oauth-import-invalid\",\"method\":\"auth.oauth.import\",\"params\":{\"provider\":\"unknown-oauth-provider\"}}");
+    defer allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"code\":-32602") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "unknown oauth provider") != null);
+}
+
+test "dispatch auth.oauth.import canonicalizes provider alias and returns provider display" {
+    const allocator = std.testing.allocator;
+    const out = try dispatch(allocator, "{\"id\":\"oauth-import-codex\",\"method\":\"auth.oauth.import\",\"params\":{\"provider\":\"openai-codex\"}}");
+    defer allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"imported\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"providerId\":\"codex\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"providerDisplayName\":\"Codex\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"provider\":\"codex\"") != null);
 }
 
 test "dispatch browser.open and send aliases follow existing runtime paths" {
@@ -13843,6 +14146,12 @@ test "resolve browser provider api key supports extended provider matrix" {
 
     try compat.mergeConfigEntry("talk.providers.codex.apiKey", "sk-codex-local");
     try compat.mergeConfigEntry("talk.providers.gemini.apiKey", "gm-local");
+    try compat.mergeConfigEntry("talk.providers.qwen.apiKey", "qw-local");
+    try compat.mergeConfigEntry("talk.providers.zai.apiKey", "zai-local");
+    try compat.mergeConfigEntry("talk.providers.inception.apiKey", "inc-local");
+    try compat.mergeConfigEntry("talk.providers.minimax.apiKey", "mm-local");
+    try compat.mergeConfigEntry("talk.providers.kimi.apiKey", "kimi-local");
+    try compat.mergeConfigEntry("talk.providers.zhipuai.apiKey", "zp-local");
     try compat.mergeConfigEntry("talk.providers.openrouter.apiKey", "or-local");
     try compat.mergeConfigEntry("talk.providers.opencode.apiKey", "oc-local");
 
@@ -13855,6 +14164,36 @@ test "resolve browser provider api key supports extended provider matrix" {
     defer if (gemini) |value| allocator.free(value);
     try std.testing.expect(gemini != null);
     try std.testing.expect(std.mem.eql(u8, gemini.?, "gm-local"));
+
+    const qwen = try resolveBrowserProviderApiKeyAlloc(allocator, &compat, "copaw");
+    defer if (qwen) |value| allocator.free(value);
+    try std.testing.expect(qwen != null);
+    try std.testing.expect(std.mem.eql(u8, qwen.?, "qw-local"));
+
+    const zai = try resolveBrowserProviderApiKeyAlloc(allocator, &compat, "glm5");
+    defer if (zai) |value| allocator.free(value);
+    try std.testing.expect(zai != null);
+    try std.testing.expect(std.mem.eql(u8, zai.?, "zai-local"));
+
+    const inception = try resolveBrowserProviderApiKeyAlloc(allocator, &compat, "mercury2");
+    defer if (inception) |value| allocator.free(value);
+    try std.testing.expect(inception != null);
+    try std.testing.expect(std.mem.eql(u8, inception.?, "inc-local"));
+
+    const minimax = try resolveBrowserProviderApiKeyAlloc(allocator, &compat, "minimax-cli");
+    defer if (minimax) |value| allocator.free(value);
+    try std.testing.expect(minimax != null);
+    try std.testing.expect(std.mem.eql(u8, minimax.?, "mm-local"));
+
+    const kimi = try resolveBrowserProviderApiKeyAlloc(allocator, &compat, "kimi-code");
+    defer if (kimi) |value| allocator.free(value);
+    try std.testing.expect(kimi != null);
+    try std.testing.expect(std.mem.eql(u8, kimi.?, "kimi-local"));
+
+    const zhipuai = try resolveBrowserProviderApiKeyAlloc(allocator, &compat, "zhipu");
+    defer if (zhipuai) |value| allocator.free(value);
+    try std.testing.expect(zhipuai != null);
+    try std.testing.expect(std.mem.eql(u8, zhipuai.?, "zp-local"));
 
     const openrouter = try resolveBrowserProviderApiKeyAlloc(allocator, &compat, "openrouter");
     defer if (openrouter) |value| allocator.free(value);

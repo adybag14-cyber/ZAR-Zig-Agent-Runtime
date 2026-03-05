@@ -56,7 +56,7 @@ Full-stack replacement execution reference:
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `161/161`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `165/165`.
 - Full-stack replacement kickoff (2026-03-05):
   - master tracking issue refreshed with FS0..FS7 execution gates.
   - FS0 execution issue opened (`#2`) and linked from master issue.
@@ -115,6 +115,22 @@ Full-stack replacement execution reference:
       - `bridge.provider_http.test.direct provider gemini requires api key and reports gemini endpoint`
       - `gateway.dispatcher.test.dispatch browser.request direct provider gemini missing key uses api-key auth semantics`
   - Phase 5 provider-catalog parity expanded:
+    - `auth.oauth.providers` now returns a richer OAuth/browser catalog aligned with Go parity, including `codex` and `opencode`, verification URLs, browser-session support flags, alias lists, provider-filtering, and deterministic invalid-param rejection.
+    - `auth.oauth.import` now canonicalizes provider aliases, rejects unknown providers with `-32602`, supports existing `loginSessionId` completion reuse, and returns `providerId` plus `providerDisplayName` for downstream UX parity.
+    - browser/provider API-key resolution now covers the extended auth matrix:
+      - `qwen`
+      - `zai`
+      - `inception`
+      - `minimax`
+      - `kimi`
+      - `zhipuai`
+      - alongside existing `chatgpt|codex`, `claude`, `gemini`, `openrouter`, and `opencode`.
+    - regression tests added:
+      - `gateway.dispatcher.test.dispatch auth.oauth.providers rejects unknown params`
+      - `gateway.dispatcher.test.dispatch auth.oauth.providers filter supports alias and api key flag`
+      - `gateway.dispatcher.test.dispatch auth.oauth.import rejects unknown provider`
+      - `gateway.dispatcher.test.dispatch auth.oauth.import canonicalizes provider alias and returns provider display`
+      - `gateway.dispatcher.test.resolve browser provider api key supports extended provider matrix`
     - `models.list` now refreshes dynamic provider catalogs for `qwen`, `openrouter`, and `opencode`, while preserving static fallback models and provider alias normalization (`copaw -> qwen`).
     - catalog refresh state is TTL-bound via `runtime.model_catalog_refresh_ttl_seconds` / `OPENCLAW_ZIG_RUNTIME_MODEL_CATALOG_REFRESH_TTL_SECONDS`.
     - dynamic model ownership now uses the compat allocator instead of the transient request allocator, fixing a cross-allocator lifetime bug that surfaced as test leaks and an alignment panic on Windows Zig master.
