@@ -8,6 +8,7 @@ var process_environ: std.process.Environ = std.process.Environ.empty;
 const telegram_context_history_limit: usize = 24;
 const telegram_context_recall_limit: usize = 6;
 const telegram_context_message_max_chars: usize = 1200;
+const telegram_completion_max_chars: usize = 12_000;
 
 pub const RuntimeError = error{
     InvalidParamsFrame,
@@ -540,6 +541,7 @@ pub const TelegramRuntime = struct {
         if (!completionMessagesEndWithUser(completion_messages.items, trimmed_message)) {
             try appendCompletionMessage(allocator, &completion_messages, "user", trimmed_message);
         }
+        try trimCompletionMessagesToBudget(allocator, &completion_messages, telegram_completion_max_chars);
 
         var execution = lightpanda.executeCompletion(
             allocator,
@@ -602,6 +604,67 @@ pub const TelegramRuntime = struct {
         const last_content = std.mem.trim(u8, last.content, " \t\r\n");
         const user_message = std.mem.trim(u8, user_message_raw, " \t\r\n");
         return std.mem.eql(u8, last_content, user_message);
+    }
+
+    fn completionMessageChars(entry: lightpanda.CompletionMessage) usize {
+        return std.mem.trim(u8, entry.content, " \t\r\n").len;
+    }
+
+    fn completionMessagesTotalChars(messages: []const lightpanda.CompletionMessage) usize {
+        var total: usize = 0;
+        for (messages) |entry| total += completionMessageChars(entry);
+        return total;
+    }
+
+    fn trimCompletionMessagesToBudget(
+        allocator: std.mem.Allocator,
+        completion_messages: *std.ArrayList(lightpanda.CompletionMessage),
+        max_chars: usize,
+    ) !void {
+        if (max_chars == 0 or completion_messages.items.len <= 1) return;
+
+        var total = completionMessagesTotalChars(completion_messages.items);
+        if (total <= max_chars) return;
+
+        while (total > max_chars and completion_messages.items.len > 2) {
+            const removed = completion_messages.orderedRemove(1);
+            total -= completionMessageChars(removed);
+            allocator.free(removed.role);
+            allocator.free(removed.content);
+        }
+
+        if (completion_messages.items.len <= 1) return;
+        if (total <= max_chars) return;
+
+        const system_chars = completionMessageChars(completion_messages.items[0]);
+        if (system_chars >= max_chars) {
+            while (completion_messages.items.len > 1) {
+                const removed = completion_messages.pop().?;
+                allocator.free(removed.role);
+                allocator.free(removed.content);
+            }
+            return;
+        }
+
+        const keep_chars = max_chars - system_chars;
+        if (keep_chars == 0) {
+            while (completion_messages.items.len > 1) {
+                const removed = completion_messages.pop().?;
+                allocator.free(removed.role);
+                allocator.free(removed.content);
+            }
+            return;
+        }
+
+        const last_idx = completion_messages.items.len - 1;
+        const last = completion_messages.items[last_idx];
+        const trimmed = std.mem.trim(u8, last.content, " \t\r\n");
+        if (trimmed.len <= keep_chars) return;
+
+        const truncated = trimmed[0..keep_chars];
+        const replacement = try allocator.dupe(u8, truncated);
+        allocator.free(completion_messages.items[last_idx].content);
+        completion_messages.items[last_idx].content = replacement;
     }
 
     fn buildTelegramRecallContextMessage(
@@ -2500,6 +2563,41 @@ test "telegram runtime wait supports positional timeout with account" {
     var wait = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-wait-positional\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-wait\",\"sessionId\":\"sess-wait\",\"message\":\"/auth wait qwen mobile 45\"}}");
     defer wait.deinit(allocator);
     try std.testing.expect(std.mem.indexOf(u8, wait.reply, "Auth wait result: `pending`") != null);
+}
+
+test "telegram runtime completion budget keeps system and newest user turn" {
+    const allocator = std.testing.allocator;
+    var messages: std.ArrayList(lightpanda.CompletionMessage) = .empty;
+    defer {
+        for (messages.items) |entry| {
+            allocator.free(entry.role);
+            allocator.free(entry.content);
+        }
+        messages.deinit(allocator);
+    }
+
+    const old_user = try allocator.alloc(u8, 3000);
+    defer allocator.free(old_user);
+    @memset(old_user, 'a');
+    const old_assistant = try allocator.alloc(u8, 3000);
+    defer allocator.free(old_assistant);
+    @memset(old_assistant, 'b');
+    const latest_user = try allocator.alloc(u8, 3000);
+    defer allocator.free(latest_user);
+    @memset(latest_user, 'z');
+
+    try TelegramRuntime.appendCompletionMessage(allocator, &messages, "system", "system context");
+    try TelegramRuntime.appendCompletionMessage(allocator, &messages, "user", old_user);
+    try TelegramRuntime.appendCompletionMessage(allocator, &messages, "assistant", old_assistant);
+    try TelegramRuntime.appendCompletionMessage(allocator, &messages, "user", latest_user);
+    try TelegramRuntime.trimCompletionMessagesToBudget(allocator, &messages, 128);
+
+    try std.testing.expect(messages.items.len >= 2);
+    try std.testing.expect(std.ascii.eqlIgnoreCase(messages.items[0].role, "system"));
+    try std.testing.expect(std.ascii.eqlIgnoreCase(messages.items[messages.items.len - 1].role, "user"));
+    try std.testing.expect(TelegramRuntime.completionMessagesTotalChars(messages.items) <= 128);
+    try std.testing.expect(messages.items[messages.items.len - 1].content.len > 0);
+    try std.testing.expect(messages.items[messages.items.len - 1].content[0] == 'z');
 }
 
 test "telegram runtime persistence roundtrip restores model auth binding and queue" {

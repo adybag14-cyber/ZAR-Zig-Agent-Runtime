@@ -1,7 +1,7 @@
 # Phase Checklist
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
-Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `146/146`.
+Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `147/147`.
 
 ## Full-Stack Replacement Track (FS0..FS7)
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)
@@ -184,6 +184,8 @@ Phase 5 enhancement notes:
   - dispatcher now wires Telegram runtime to shared memory store (`getTelegramRuntime -> setMemoryStore(getMemoryStore())`) so bridge completions can consume persisted memory.
   - Telegram `tryGenerateBridgeReply` now injects runtime tool capability context, semantic/graph recall synthesis, and recent session history into Lightpanda completion messages.
   - completion payload assembly now applies role filtering and last-user dedupe to prevent duplicate user turns in bridge requests.
+  - completion payloads now apply bounded-context shaping (`12,000` char budget) while preserving system context and newest user turn.
+  - regression test added: `telegram runtime completion budget keeps system and newest user turn`.
 
 ## Phase 6 - Memory + Edge
 - [x] Port memory persistence primitives
