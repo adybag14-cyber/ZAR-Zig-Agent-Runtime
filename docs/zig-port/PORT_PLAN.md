@@ -56,7 +56,7 @@ Full-stack replacement execution reference:
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `151/151`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `153/153`.
 - Full-stack replacement kickoff (2026-03-05):
   - master tracking issue refreshed with FS0..FS7 execution gates.
   - FS0 execution issue opened (`#2`) and linked from master issue.
@@ -87,6 +87,12 @@ Full-stack replacement execution reference:
     - Dispatcher provider-key resolver matrix expanded for provider/channel parity depth:
       - resolver now covers `codex` (OpenAI key family), `gemini`, `openrouter`, and `opencode` in addition to existing `chatgpt` and `claude`.
       - regression test added: `gateway.dispatcher.test.resolve browser provider api key supports extended provider matrix`.
+    - Direct-provider bridge depth expanded for OpenRouter compatibility:
+      - `provider_http` now supports `openrouter` as a direct provider path (OpenAI-compatible API envelope), alongside `chatgpt|codex` and `claude`.
+      - direct-provider request URL telemetry now reports OpenRouter endpoint (`https://openrouter.ai/api/v1/chat/completions`) for missing-key and runtime failures.
+      - regression tests added:
+        - `bridge.provider_http.test.direct provider openrouter requires api key and reports openrouter endpoint`
+        - `gateway.dispatcher.test.dispatch browser.request supports direct provider path for openrouter with missing key telemetry`
 
 - Tracking and documentation refresh (2026-03-04):
   - Gateway hardening slice shipped:

@@ -1,7 +1,7 @@
 # Phase Checklist
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
-Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `151/151`.
+Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `153/153`.
 
 ## Full-Stack Replacement Track (FS0..FS7)
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)
@@ -195,6 +195,12 @@ Phase 5 enhancement notes:
   - Dispatcher provider-key resolution now includes extended provider matrix parity:
     - resolver covers `codex`, `gemini`, `openrouter`, and `opencode` alongside `chatgpt` and `claude`.
     - regression test added: `resolve browser provider api key supports extended provider matrix`.
+  - Direct-provider bridge parity now includes OpenRouter:
+    - `provider_http.executeCompletion` now supports direct provider `openrouter` with OpenAI-compatible transport contracts.
+    - dispatcher `browser.request` direct path now returns deterministic OpenRouter request URL telemetry on credential failures.
+    - regression tests added:
+      - `direct provider openrouter requires api key and reports openrouter endpoint`
+      - `dispatch browser.request supports direct provider path for openrouter with missing key telemetry`
   - regression tests added:
     - `bridge.web_login.test.latest authorized session supports provider filter and summary status`
     - `channels.telegram_runtime.test.telegram runtime uses latest authorized session fallback when selected provider is unauthenticated`
