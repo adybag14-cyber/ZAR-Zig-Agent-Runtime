@@ -1,13 +1,22 @@
 # Phase Checklist
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
-Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `168/168`.
+Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `170/170`.
 
 ## Full-Stack Replacement Track (FS0..FS7)
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)
 - [ ] FS1 - Runtime/core consolidation
 - [ ] FS2 - Provider + channel completion
   - Latest delivered slice:
+    - Telegram `/auth` parser parity is now stricter for scoped status/wait/complete/cancel flows:
+      - `/auth status` now rejects unknown `--*` flags and extra trailing positional arguments instead of silently accepting them.
+      - `/auth wait` now accepts Go-style `session <id>`, supports `--timeout <seconds>` and `--timeout=<seconds>`, rejects invalid/unknown timeout flags, and enforces the `1..900` timeout bound.
+      - `/auth complete` now rejects unknown `--*` flags and any trailing token beyond `provider + code + optional session_id + optional account`.
+      - `/auth cancel|logout` now rejects unknown `--*` flags and extra trailing positional arguments instead of ignoring them.
+      - Zig intentionally retains the older positional timeout shortcut (`/auth wait <provider> <account> <seconds>`) for compatibility, even though that is not part of current Go parity.
+      - regression coverage added:
+        - `channels.telegram_runtime.test.telegram runtime wait supports session keyword and bounded timeout flag`
+        - `channels.telegram_runtime.test.telegram runtime auth parser rejects invalid options and trailing args`
     - Telegram `/auth` parity depth now covers a dynamic provider catalog and live bridge/session telemetry:
       - `/auth providers` now renders provider catalog metadata dynamically instead of a static string, including auth mode, browser-session support, API-key posture, guest-bypass support, default model, verification URL, popup action, and alias lists.
       - `/auth bridge <provider>` now performs a live Lightpanda probe against the configured endpoint and reports endpoint/probe URL/HTTP status/latency together with web-login session summary counts.

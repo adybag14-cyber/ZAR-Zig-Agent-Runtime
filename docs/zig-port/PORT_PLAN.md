@@ -56,8 +56,17 @@ Full-stack replacement execution reference:
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `168/168`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `170/170`.
 - Full-stack replacement kickoff (2026-03-05):
+  - Phase 5 Telegram auth parser parity hardened:
+    - `/auth status` now rejects unknown `--*` flags and extra positional tail arguments instead of silently accepting them.
+    - `/auth wait` now supports Go-style `session <id>`, bounded `--timeout <seconds>` and `--timeout=<seconds>` parsing, and deterministic rejection for missing/invalid/unknown timeout options.
+    - `/auth complete` now rejects unknown flags and trailing garbage beyond `provider + code + optional session_id + optional account`.
+    - `/auth cancel|logout` now rejects unknown flags and extra positional tail arguments instead of ignoring them.
+    - Zig intentionally retains the older positional timeout shortcut (`/auth wait <provider> <account> <seconds>`) as a compatibility extension beyond current Go behavior.
+    - regression tests added:
+      - `channels.telegram_runtime.test.telegram runtime wait supports session keyword and bounded timeout flag`
+      - `channels.telegram_runtime.test.telegram runtime auth parser rejects invalid options and trailing args`
   - Phase 5 Telegram auth-depth parity expanded:
     - `/auth providers` now renders a live provider catalog instead of a hardcoded string:
       - per-provider auth mode, browser-session support, API-key posture, guest bypass support, default model, verification URL, popup action, and aliases are now surfaced directly from Zig runtime state/profile data.
