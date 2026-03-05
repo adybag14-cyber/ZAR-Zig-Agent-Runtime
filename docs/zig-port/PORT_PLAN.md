@@ -142,6 +142,13 @@ Full-stack replacement execution reference:
     - runtime state persistence/replay added for tool runtime sessions + pending queue (`src/runtime/state.zig`).
     - persisted at `<state_path>/runtime-state.json` (or explicit JSON path override) and restored during runtime bootstrap.
     - regression test added: `runtime state persistence roundtrip restores session and pending queue`.
+  - FS1 Telegram/auth recovery slice shipped:
+    - web login session persistence/replay added (`src/bridge/web_login.zig`) via `<state_path>/web-login-state.json`.
+    - telegram runtime persistence/replay added (`src/channels/telegram_runtime.zig`) via `<state_path>/telegram-runtime-state.json`.
+    - dispatcher bootstrap now initializes both persistence paths on startup.
+    - regression tests added:
+      - `web login persistence roundtrip restores authorized session`
+      - `telegram runtime persistence roundtrip restores model auth binding and queue`.
   - Bare-metal diagnostics depth expansion shipped:
     - new boot diagnostics ABI contract (`BaremetalBootDiagnostics`) with exported pointer + stack snapshot helper (`oc_boot_diag_ptr`, `oc_boot_diag_capture_stack`)
     - new mailbox opcodes wired in runtime: `command_set_boot_phase`, `command_reset_boot_diagnostics`, `command_capture_stack_pointer`

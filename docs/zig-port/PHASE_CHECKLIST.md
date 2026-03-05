@@ -45,6 +45,13 @@ FS1 runtime/core consolidation slice (active):
   - persists session snapshots and pending job queue to `runtime-state.json` under configured `state_path`.
   - restores persisted sessions/queue on runtime bootstrap.
   - regression test added: `runtime state persistence roundtrip restores session and pending queue`.
+- [x] Telegram + auth runtime restart replay added (`src/channels/telegram_runtime.zig`, `src/bridge/web_login.zig`):
+  - persists/restores web login sessions (`web-login-state.json`) and Telegram runtime state (`telegram-runtime-state.json`) under configured `state_path`.
+  - restores target model bindings, auth bindings, and queued Telegram updates across restart.
+  - dispatcher bootstrap now enables persistence for both managers (`getLoginManager`, `getTelegramRuntime`).
+  - regression tests added:
+    - `web login persistence roundtrip restores authorized session`
+    - `telegram runtime persistence roundtrip restores model auth binding and queue`.
 
 ## Phase 4 - Security + Diagnostics
 - [x] Port core guard flow (prompt/tool policy checks)

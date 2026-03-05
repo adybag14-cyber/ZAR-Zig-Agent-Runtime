@@ -97,11 +97,36 @@ const Session = struct {
     }
 };
 
+const PersistedSession = struct {
+    id: []const u8,
+    status: []const u8,
+    provider: []const u8,
+    model: []const u8,
+    code: []const u8,
+    verificationUri: []const u8,
+    verificationUriComplete: []const u8,
+    authMode: []const u8,
+    guestBypassSupported: bool,
+    popupBypassAction: []const u8,
+    guestBypassHint: []const u8,
+    createdAtMs: i64,
+    expiresAtMs: i64,
+    authorizedAtMs: ?i64 = null,
+};
+
+const PersistedState = struct {
+    nextSequence: u64 = 0,
+    ttlMs: i64 = 10 * 60 * 1000,
+    sessions: []PersistedSession = &.{},
+};
+
 pub const LoginManager = struct {
     allocator: std.mem.Allocator,
     ttl_ms: i64,
     next_sequence: u64,
     sessions: std.ArrayList(Session),
+    state_path: ?[]u8,
+    persistent: bool,
 
     pub fn init(allocator: std.mem.Allocator, ttl_ms: i64) LoginManager {
         return .{
@@ -109,12 +134,30 @@ pub const LoginManager = struct {
             .ttl_ms = if (ttl_ms <= 0) 10 * 60 * 1000 else ttl_ms,
             .next_sequence = 0,
             .sessions = .empty,
+            .state_path = null,
+            .persistent = false,
         };
     }
 
     pub fn deinit(self: *LoginManager) void {
-        for (self.sessions.items) |*session| session.deinit(self.allocator);
+        self.clearSessions();
         self.sessions.deinit(self.allocator);
+        if (self.state_path) |path| self.allocator.free(path);
+        self.state_path = null;
+        self.persistent = false;
+    }
+
+    pub fn configurePersistence(self: *LoginManager, state_root: []const u8) !void {
+        const resolved = try resolveStatePath(self.allocator, state_root);
+        if (self.state_path) |path| self.allocator.free(path);
+        self.state_path = resolved;
+        self.persistent = shouldPersist(resolved);
+        if (!self.persistent) return;
+
+        // configurePersistence is expected during bootstrap before active sessions.
+        if (self.sessions.items.len == 0 and self.next_sequence == 0) {
+            try self.load();
+        }
     }
 
     pub fn start(self: *LoginManager, provider_raw: []const u8, model_raw: []const u8) !SessionView {
@@ -154,6 +197,7 @@ pub const LoginManager = struct {
             .expires_at_ms = now + self.ttl_ms,
             .authorized_at_ms = null,
         });
+        if (self.persistent) try self.persist();
 
         return self.sessions.items[self.sessions.items.len - 1].view();
     }
@@ -183,6 +227,7 @@ pub const LoginManager = struct {
 
         session.status = .authorized;
         session.authorized_at_ms = nowMs();
+        if (self.persistent) self.persist() catch {};
         return session.view();
     }
 
@@ -220,6 +265,99 @@ pub const LoginManager = struct {
         }
         return null;
     }
+
+    fn clearSessions(self: *LoginManager) void {
+        for (self.sessions.items) |*session| session.deinit(self.allocator);
+        self.sessions.clearRetainingCapacity();
+    }
+
+    fn load(self: *LoginManager) !void {
+        const path = self.state_path orelse return;
+        const io = std.Io.Threaded.global_single_threaded.io();
+        const raw = std.Io.Dir.cwd().readFileAlloc(io, path, self.allocator, .limited(2 * 1024 * 1024)) catch |err| switch (err) {
+            error.FileNotFound => return,
+            else => return err,
+        };
+        defer self.allocator.free(raw);
+
+        var parsed = try std.json.parseFromSlice(PersistedState, self.allocator, raw, .{ .ignore_unknown_fields = true });
+        defer parsed.deinit();
+
+        self.clearSessions();
+        self.ttl_ms = if (parsed.value.ttlMs <= 0) self.ttl_ms else parsed.value.ttlMs;
+        self.next_sequence = parsed.value.nextSequence;
+
+        var max_seq: u64 = 0;
+        for (parsed.value.sessions) |entry| {
+            const restored_status = parseStatus(entry.status);
+            try self.sessions.append(self.allocator, .{
+                .id = try self.allocator.dupe(u8, entry.id),
+                .status = restored_status,
+                .provider = try self.allocator.dupe(u8, entry.provider),
+                .model = try self.allocator.dupe(u8, entry.model),
+                .code = try self.allocator.dupe(u8, entry.code),
+                .verification_uri = try self.allocator.dupe(u8, entry.verificationUri),
+                .verification_uri_complete = try self.allocator.dupe(u8, entry.verificationUriComplete),
+                .auth_mode = try self.allocator.dupe(u8, entry.authMode),
+                .guest_bypass_supported = entry.guestBypassSupported,
+                .popup_bypass_action = try self.allocator.dupe(u8, entry.popupBypassAction),
+                .guest_bypass_hint = try self.allocator.dupe(u8, entry.guestBypassHint),
+                .created_at_ms = entry.createdAtMs,
+                .expires_at_ms = entry.expiresAtMs,
+                .authorized_at_ms = entry.authorizedAtMs,
+            });
+            if (sequenceFromSessionId(entry.id)) |seq| {
+                if (seq > max_seq) max_seq = seq;
+            }
+        }
+        if (self.next_sequence < max_seq) self.next_sequence = max_seq;
+    }
+
+    fn persist(self: *LoginManager) !void {
+        if (!self.persistent) return;
+        const path = self.state_path orelse return;
+        const io = std.Io.Threaded.global_single_threaded.io();
+
+        if (std.fs.path.dirname(path)) |parent| {
+            if (parent.len > 0) try std.Io.Dir.cwd().createDirPath(io, parent);
+        }
+
+        var out_sessions = try self.allocator.alloc(PersistedSession, self.sessions.items.len);
+        defer self.allocator.free(out_sessions);
+        for (self.sessions.items, 0..) |entry, idx| {
+            out_sessions[idx] = .{
+                .id = entry.id,
+                .status = statusText(entry.status),
+                .provider = entry.provider,
+                .model = entry.model,
+                .code = entry.code,
+                .verificationUri = entry.verification_uri,
+                .verificationUriComplete = entry.verification_uri_complete,
+                .authMode = entry.auth_mode,
+                .guestBypassSupported = entry.guest_bypass_supported,
+                .popupBypassAction = entry.popup_bypass_action,
+                .guestBypassHint = entry.guest_bypass_hint,
+                .createdAtMs = entry.created_at_ms,
+                .expiresAtMs = entry.expires_at_ms,
+                .authorizedAtMs = entry.authorized_at_ms,
+            };
+        }
+
+        var out: std.Io.Writer.Allocating = .init(self.allocator);
+        defer out.deinit();
+        try std.json.Stringify.value(.{
+            .nextSequence = self.next_sequence,
+            .ttlMs = self.ttl_ms,
+            .sessions = out_sessions,
+        }, .{}, &out.writer);
+        const payload = try out.toOwnedSlice();
+        defer self.allocator.free(payload);
+
+        try std.Io.Dir.cwd().writeFile(io, .{
+            .sub_path = path,
+            .data = payload,
+        });
+    }
 };
 
 fn statusText(status: LoginStatus) []const u8 {
@@ -229,6 +367,39 @@ fn statusText(status: LoginStatus) []const u8 {
         .expired => "expired",
         .rejected => "rejected",
     };
+}
+
+fn parseStatus(raw: []const u8) LoginStatus {
+    if (std.ascii.eqlIgnoreCase(raw, "authorized")) return .authorized;
+    if (std.ascii.eqlIgnoreCase(raw, "expired")) return .expired;
+    if (std.ascii.eqlIgnoreCase(raw, "rejected")) return .rejected;
+    return .pending;
+}
+
+fn resolveStatePath(allocator: std.mem.Allocator, state_root: []const u8) ![]u8 {
+    const trimmed = std.mem.trim(u8, state_root, " \t\r\n");
+    if (trimmed.len == 0) return allocator.dupe(u8, "memory://web-login-state");
+    if (isMemoryScheme(trimmed)) return allocator.dupe(u8, trimmed);
+    if (std.mem.endsWith(u8, trimmed, ".json")) return allocator.dupe(u8, trimmed);
+    return std.fs.path.join(allocator, &.{ trimmed, "web-login-state.json" });
+}
+
+fn shouldPersist(path: []const u8) bool {
+    return !isMemoryScheme(path);
+}
+
+fn isMemoryScheme(path: []const u8) bool {
+    const prefix = "memory://";
+    if (path.len < prefix.len) return false;
+    return std.ascii.eqlIgnoreCase(path[0..prefix.len], prefix);
+}
+
+fn sequenceFromSessionId(session_id: []const u8) ?u64 {
+    const prefix = "web-login-";
+    if (!std.ascii.startsWithIgnoreCase(session_id, prefix)) return null;
+    const suffix = std.mem.trim(u8, session_id[prefix.len..], " \t\r\n");
+    if (suffix.len == 0) return null;
+    return std.fmt.parseInt(u64, suffix, 10) catch null;
 }
 
 pub fn providerProfile(provider_raw: []const u8) ProviderProfile {
@@ -538,4 +709,33 @@ test "extract auth code supports callback urls and fragments" {
     try std.testing.expect(std.mem.eql(u8, extractAuthCode("https://chat.z.ai/oauth#auth_code=OC-GLM5"), "OC-GLM5"));
     try std.testing.expect(std.mem.eql(u8, extractAuthCode("https://chat.inceptionlabs.ai/auth/OC-MERCURY2"), "OC-MERCURY2"));
     try std.testing.expect(std.mem.eql(u8, extractAuthCode("guest"), ""));
+}
+
+test "web login persistence roundtrip restores authorized session" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const root = try tmp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+
+    var session_id: []u8 = undefined;
+    {
+        var manager = LoginManager.init(allocator, 5 * 60 * 1000);
+        defer manager.deinit();
+        try manager.configurePersistence(root);
+        const started = try manager.start("qwen", "qwen-max");
+        _ = try manager.complete(started.loginSessionId, "guest");
+        session_id = try allocator.dupe(u8, started.loginSessionId);
+    }
+    defer allocator.free(session_id);
+
+    {
+        var restored = LoginManager.init(allocator, 5 * 60 * 1000);
+        defer restored.deinit();
+        try restored.configurePersistence(root);
+        const view = restored.get(session_id) orelse return error.SessionNotFound;
+        try std.testing.expect(std.ascii.eqlIgnoreCase(view.status, "authorized"));
+        try std.testing.expect(std.ascii.eqlIgnoreCase(view.provider, "qwen"));
+    }
 }

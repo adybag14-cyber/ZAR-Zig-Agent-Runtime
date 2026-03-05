@@ -117,6 +117,33 @@ const QueuedMessage = struct {
     }
 };
 
+const PersistedMapEntry = struct {
+    key: []const u8,
+    value: []const u8,
+};
+
+const PersistedQueuedMessage = struct {
+    id: u64,
+    to: []const u8,
+    sessionId: []const u8,
+    role: []const u8,
+    kind: []const u8,
+    message: []const u8,
+    createdAtMs: i64,
+};
+
+const PersistedState = struct {
+    nextUpdateId: u64 = 1,
+    maxQueueEntries: usize = 4096,
+    ttsEnabled: bool = true,
+    ttsProvider: []const u8 = "edge",
+    bridgeEndpoint: []const u8 = "http://127.0.0.1:9222",
+    bridgeTimeoutMs: u32 = 15_000,
+    targetModels: []PersistedMapEntry = &.{},
+    authBindings: []PersistedMapEntry = &.{},
+    queue: []PersistedQueuedMessage = &.{},
+};
+
 pub const TelegramRuntime = struct {
     allocator: std.mem.Allocator,
     login_manager: *web_login.LoginManager,
@@ -129,6 +156,8 @@ pub const TelegramRuntime = struct {
     bridge_endpoint: []u8,
     bridge_timeout_ms: u32,
     next_update_id: u64,
+    state_path: ?[]u8,
+    persistent: bool,
 
     pub fn init(allocator: std.mem.Allocator, login_manager: *web_login.LoginManager) TelegramRuntime {
         return .{
@@ -143,6 +172,8 @@ pub const TelegramRuntime = struct {
             .bridge_endpoint = allocator.dupe(u8, "http://127.0.0.1:9222") catch @panic("oom"),
             .bridge_timeout_ms = 15_000,
             .next_update_id = 1,
+            .state_path = null,
+            .persistent = false,
         };
     }
 
@@ -165,6 +196,21 @@ pub const TelegramRuntime = struct {
         self.auth_bindings.deinit();
         self.allocator.free(self.tts_provider);
         self.allocator.free(self.bridge_endpoint);
+        if (self.state_path) |path| self.allocator.free(path);
+        self.state_path = null;
+        self.persistent = false;
+    }
+
+    pub fn configurePersistence(self: *TelegramRuntime, state_root: []const u8) !void {
+        const resolved = try resolveStatePath(self.allocator, state_root);
+        if (self.state_path) |path| self.allocator.free(path);
+        self.state_path = resolved;
+        self.persistent = shouldPersist(resolved);
+        if (!self.persistent) return;
+
+        if (self.queue.items.len == 0 and self.target_models.count() == 0 and self.auth_bindings.count() == 0 and self.next_update_id == 1) {
+            try self.load();
+        }
     }
 
     pub fn setBridgeConfig(self: *TelegramRuntime, endpoint_raw: []const u8, timeout_ms: u32) !void {
@@ -176,6 +222,7 @@ pub const TelegramRuntime = struct {
             self.bridge_endpoint = copied;
         }
         self.bridge_timeout_ms = std.math.clamp(if (timeout_ms == 0) @as(u32, 15_000) else timeout_ms, @as(u32, 500), @as(u32, 120_000));
+        if (self.persistent) try self.persist();
     }
 
     pub fn status(self: *TelegramRuntime) StatusView {
@@ -255,6 +302,7 @@ pub const TelegramRuntime = struct {
             std.mem.copyForwards(QueuedMessage, self.queue.items[0..remaining], self.queue.items[to_remove..]);
         }
         self.queue.items.len = remaining;
+        if (self.persistent) self.persist() catch {};
     }
 
     const SendOutcome = struct {
@@ -640,6 +688,7 @@ pub const TelegramRuntime = struct {
 
         if (std.ascii.eqlIgnoreCase(action, "on") or std.ascii.eqlIgnoreCase(action, "enable")) {
             self.tts_enabled = true;
+            if (self.persistent) try self.persist();
             return .{
                 .is_command = true,
                 .command_name = "tts",
@@ -654,6 +703,7 @@ pub const TelegramRuntime = struct {
 
         if (std.ascii.eqlIgnoreCase(action, "off") or std.ascii.eqlIgnoreCase(action, "disable")) {
             self.tts_enabled = false;
+            if (self.persistent) try self.persist();
             return .{
                 .is_command = true,
                 .command_name = "tts",
@@ -682,6 +732,7 @@ pub const TelegramRuntime = struct {
             }
             self.allocator.free(self.tts_provider);
             self.tts_provider = try self.allocator.dupe(u8, provider);
+            if (self.persistent) try self.persist();
             return .{
                 .is_command = true,
                 .command_name = "tts",
@@ -1370,6 +1421,7 @@ pub const TelegramRuntime = struct {
         if (self.max_queue_entries > 0 and self.queue.items.len > self.max_queue_entries) {
             self.compactQueueFront(self.queue.items.len - self.max_queue_entries);
         }
+        if (self.persistent) try self.persist();
     }
 
     fn setTargetModel(self: *TelegramRuntime, target: []const u8, provider: []const u8, model: []const u8) !void {
@@ -1378,6 +1430,7 @@ pub const TelegramRuntime = struct {
         const value = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ normalizeProvider(provider), if (normalizeModel(model).len > 0) normalizeModel(model) else defaultModelForProvider(provider) });
         errdefer self.allocator.free(value);
         try self.setOrReplaceMapEntry(&self.target_models, key, value);
+        if (self.persistent) try self.persist();
     }
 
     fn getTargetModel(self: *TelegramRuntime, target: []const u8) struct { provider: []const u8, model: []const u8 } {
@@ -1401,6 +1454,7 @@ pub const TelegramRuntime = struct {
                 defer self.allocator.free(legacy_key);
                 try self.setOrClearAuthBinding(legacy_key, "");
             }
+            if (self.persistent) try self.persist();
             return;
         }
         const value = try self.allocator.dupe(u8, login_session_id);
@@ -1412,6 +1466,7 @@ pub const TelegramRuntime = struct {
             errdefer self.allocator.free(legacy_value);
             try self.setOrReplaceMapEntry(&self.auth_bindings, legacy_key, legacy_value);
         }
+        if (self.persistent) try self.persist();
     }
 
     fn getAuthBinding(self: *TelegramRuntime, allocator: std.mem.Allocator, target: []const u8, provider: []const u8, account: []const u8) ![]const u8 {
@@ -1462,6 +1517,7 @@ pub const TelegramRuntime = struct {
                 self.allocator.free(removed.key);
                 self.allocator.free(removed.value);
             }
+            if (self.persistent) try self.persist();
             return;
         }
         const key_copy = try self.allocator.dupe(u8, key);
@@ -1469,6 +1525,7 @@ pub const TelegramRuntime = struct {
         const value_copy = try self.allocator.dupe(u8, value);
         errdefer self.allocator.free(value_copy);
         try self.setOrReplaceMapEntry(&self.auth_bindings, key_copy, value_copy);
+        if (self.persistent) try self.persist();
     }
 
     fn setOrReplaceMapEntry(self: *TelegramRuntime, map: *std.StringHashMap([]u8), key: []u8, value: []u8) !void {
@@ -1477,6 +1534,163 @@ pub const TelegramRuntime = struct {
             self.allocator.free(removed.value);
         }
         try map.put(key, value);
+    }
+
+    fn clearState(self: *TelegramRuntime) void {
+        for (self.queue.items) |*entry| entry.deinit(self.allocator);
+        self.queue.clearRetainingCapacity();
+
+        var model_it = self.target_models.iterator();
+        while (model_it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.target_models.clearRetainingCapacity();
+
+        var auth_it = self.auth_bindings.iterator();
+        while (auth_it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.auth_bindings.clearRetainingCapacity();
+
+        self.next_update_id = 1;
+        self.max_queue_entries = 4096;
+    }
+
+    fn load(self: *TelegramRuntime) !void {
+        const path = self.state_path orelse return;
+        const io = std.Io.Threaded.global_single_threaded.io();
+        const raw = std.Io.Dir.cwd().readFileAlloc(io, path, self.allocator, .limited(4 * 1024 * 1024)) catch |err| switch (err) {
+            error.FileNotFound => return,
+            else => return err,
+        };
+        defer self.allocator.free(raw);
+
+        var parsed = try std.json.parseFromSlice(PersistedState, self.allocator, raw, .{ .ignore_unknown_fields = true });
+        defer parsed.deinit();
+
+        self.clearState();
+
+        self.max_queue_entries = parsed.value.maxQueueEntries;
+        self.next_update_id = if (parsed.value.nextUpdateId == 0) 1 else parsed.value.nextUpdateId;
+        self.tts_enabled = parsed.value.ttsEnabled;
+        self.bridge_timeout_ms = std.math.clamp(
+            if (parsed.value.bridgeTimeoutMs == 0) @as(u32, 15_000) else parsed.value.bridgeTimeoutMs,
+            @as(u32, 500),
+            @as(u32, 120_000),
+        );
+
+        if (parsed.value.ttsProvider.len > 0 and !std.mem.eql(u8, self.tts_provider, parsed.value.ttsProvider)) {
+            const copied = try self.allocator.dupe(u8, parsed.value.ttsProvider);
+            self.allocator.free(self.tts_provider);
+            self.tts_provider = copied;
+        }
+        if (parsed.value.bridgeEndpoint.len > 0 and !std.mem.eql(u8, self.bridge_endpoint, parsed.value.bridgeEndpoint)) {
+            const copied = try self.allocator.dupe(u8, parsed.value.bridgeEndpoint);
+            self.allocator.free(self.bridge_endpoint);
+            self.bridge_endpoint = copied;
+        }
+
+        for (parsed.value.targetModels) |entry| {
+            const key = try self.allocator.dupe(u8, entry.key);
+            errdefer self.allocator.free(key);
+            const value = try self.allocator.dupe(u8, entry.value);
+            errdefer self.allocator.free(value);
+            try self.target_models.put(key, value);
+        }
+
+        for (parsed.value.authBindings) |entry| {
+            const key = try self.allocator.dupe(u8, entry.key);
+            errdefer self.allocator.free(key);
+            const value = try self.allocator.dupe(u8, entry.value);
+            errdefer self.allocator.free(value);
+            try self.auth_bindings.put(key, value);
+        }
+
+        var max_seen_id: u64 = if (self.next_update_id == 0) 1 else self.next_update_id - 1;
+        for (parsed.value.queue) |entry| {
+            try self.queue.append(self.allocator, .{
+                .id = entry.id,
+                .to = try self.allocator.dupe(u8, entry.to),
+                .session_id = try self.allocator.dupe(u8, entry.sessionId),
+                .role = try self.allocator.dupe(u8, entry.role),
+                .kind = try self.allocator.dupe(u8, entry.kind),
+                .message = try self.allocator.dupe(u8, entry.message),
+                .created_at_ms = entry.createdAtMs,
+            });
+            if (entry.id > max_seen_id) max_seen_id = entry.id;
+        }
+        if (self.next_update_id <= max_seen_id) self.next_update_id = max_seen_id + 1;
+    }
+
+    fn persist(self: *TelegramRuntime) !void {
+        if (!self.persistent) return;
+        const path = self.state_path orelse return;
+        const io = std.Io.Threaded.global_single_threaded.io();
+
+        if (std.fs.path.dirname(path)) |parent| {
+            if (parent.len > 0) try std.Io.Dir.cwd().createDirPath(io, parent);
+        }
+
+        var targets = try self.allocator.alloc(PersistedMapEntry, self.target_models.count());
+        defer self.allocator.free(targets);
+        var target_idx: usize = 0;
+        var target_it = self.target_models.iterator();
+        while (target_it.next()) |entry| {
+            targets[target_idx] = .{
+                .key = entry.key_ptr.*,
+                .value = entry.value_ptr.*,
+            };
+            target_idx += 1;
+        }
+
+        var bindings = try self.allocator.alloc(PersistedMapEntry, self.auth_bindings.count());
+        defer self.allocator.free(bindings);
+        var bind_idx: usize = 0;
+        var bind_it = self.auth_bindings.iterator();
+        while (bind_it.next()) |entry| {
+            bindings[bind_idx] = .{
+                .key = entry.key_ptr.*,
+                .value = entry.value_ptr.*,
+            };
+            bind_idx += 1;
+        }
+
+        var queue = try self.allocator.alloc(PersistedQueuedMessage, self.queue.items.len);
+        defer self.allocator.free(queue);
+        for (self.queue.items, 0..) |entry, idx| {
+            queue[idx] = .{
+                .id = entry.id,
+                .to = entry.to,
+                .sessionId = entry.session_id,
+                .role = entry.role,
+                .kind = entry.kind,
+                .message = entry.message,
+                .createdAtMs = entry.created_at_ms,
+            };
+        }
+
+        var out: std.Io.Writer.Allocating = .init(self.allocator);
+        defer out.deinit();
+        try std.json.Stringify.value(.{
+            .nextUpdateId = self.next_update_id,
+            .maxQueueEntries = self.max_queue_entries,
+            .ttsEnabled = self.tts_enabled,
+            .ttsProvider = self.tts_provider,
+            .bridgeEndpoint = self.bridge_endpoint,
+            .bridgeTimeoutMs = self.bridge_timeout_ms,
+            .targetModels = targets,
+            .authBindings = bindings,
+            .queue = queue,
+        }, .{}, &out.writer);
+        const payload = try out.toOwnedSlice();
+        defer self.allocator.free(payload);
+
+        try std.Io.Dir.cwd().writeFile(io, .{
+            .sub_path = path,
+            .data = payload,
+        });
     }
 };
 
@@ -1537,6 +1751,24 @@ fn authBindingKey(allocator: std.mem.Allocator, target: []const u8, provider: []
 fn normalizeAccount(account_raw: []const u8) []const u8 {
     const trimmed = std.mem.trim(u8, account_raw, " \t\r\n");
     return if (trimmed.len == 0) "default" else trimmed;
+}
+
+fn resolveStatePath(allocator: std.mem.Allocator, state_root: []const u8) ![]u8 {
+    const trimmed = std.mem.trim(u8, state_root, " \t\r\n");
+    if (trimmed.len == 0) return allocator.dupe(u8, "memory://telegram-runtime-state");
+    if (isMemoryScheme(trimmed)) return allocator.dupe(u8, trimmed);
+    if (std.mem.endsWith(u8, trimmed, ".json")) return allocator.dupe(u8, trimmed);
+    return std.fs.path.join(allocator, &.{ trimmed, "telegram-runtime-state.json" });
+}
+
+fn shouldPersist(path: []const u8) bool {
+    return !isMemoryScheme(path);
+}
+
+fn isMemoryScheme(path: []const u8) bool {
+    const prefix = "memory://";
+    if (path.len < prefix.len) return false;
+    return std.ascii.eqlIgnoreCase(path[0..prefix.len], prefix);
 }
 
 fn looksLikeLoginSessionID(token_raw: []const u8) bool {
@@ -2107,4 +2339,66 @@ test "telegram runtime wait supports positional timeout with account" {
     var wait = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-wait-positional\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-wait\",\"sessionId\":\"sess-wait\",\"message\":\"/auth wait qwen mobile 45\"}}");
     defer wait.deinit(allocator);
     try std.testing.expect(std.mem.indexOf(u8, wait.reply, "Auth wait result: `pending`") != null);
+}
+
+test "telegram runtime persistence roundtrip restores model auth binding and queue" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const root = try tmp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+
+    {
+        var login = web_login.LoginManager.init(allocator, 5 * 60 * 1000);
+        defer login.deinit();
+        try login.configurePersistence(root);
+
+        var runtime = TelegramRuntime.init(allocator, &login);
+        defer runtime.deinit();
+        try runtime.configurePersistence(root);
+
+        var model_set = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-persist-model\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-persist\",\"sessionId\":\"sess-persist\",\"message\":\"/model qwen/qwen-max\"}}");
+        defer model_set.deinit(allocator);
+        try std.testing.expect(std.mem.eql(u8, model_set.provider, "qwen"));
+
+        var start = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-persist-start\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-persist\",\"sessionId\":\"sess-persist\",\"message\":\"/auth start qwen mobile\"}}");
+        defer start.deinit(allocator);
+        try std.testing.expect(start.loginSessionId.len > 0);
+
+        var guest = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-persist-guest\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-persist\",\"sessionId\":\"sess-persist\",\"message\":\"/auth guest qwen mobile\"}}");
+        defer guest.deinit(allocator);
+        try std.testing.expect(std.mem.eql(u8, guest.authStatus, "authorized"));
+
+        var chat = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-persist-chat\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-persist\",\"sessionId\":\"sess-persist\",\"message\":\"hello after restart\"}}");
+        defer chat.deinit(allocator);
+        try std.testing.expect(chat.queueDepth > 0);
+    }
+
+    {
+        var login = web_login.LoginManager.init(allocator, 5 * 60 * 1000);
+        defer login.deinit();
+        try login.configurePersistence(root);
+
+        var runtime = TelegramRuntime.init(allocator, &login);
+        defer runtime.deinit();
+        try runtime.configurePersistence(root);
+
+        const status = runtime.status();
+        try std.testing.expect(status.targetCount > 0);
+        try std.testing.expect(status.authBindingCount > 0);
+        try std.testing.expect(status.queueDepth > 0);
+
+        var auth_status = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-persist-status\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-persist\",\"sessionId\":\"sess-persist\",\"message\":\"/auth status qwen mobile\"}}");
+        defer auth_status.deinit(allocator);
+        try std.testing.expect(std.mem.eql(u8, auth_status.authStatus, "authorized"));
+
+        var model_check = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-persist-model-check\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-persist\",\"sessionId\":\"sess-persist\",\"message\":\"/model\"}}");
+        defer model_check.deinit(allocator);
+        try std.testing.expect(std.mem.indexOf(u8, model_check.reply, "qwen/") != null);
+
+        var poll = try runtime.pollFromFrame(allocator, "{\"id\":\"tg-persist-poll\",\"method\":\"poll\",\"params\":{\"channel\":\"telegram\",\"limit\":20}}");
+        defer poll.deinit(allocator);
+        try std.testing.expect(poll.count > 0);
+    }
 }

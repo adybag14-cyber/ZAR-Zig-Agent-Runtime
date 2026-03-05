@@ -7682,7 +7682,11 @@ fn getGuard() !*security_guard.Guard {
 
 fn getLoginManager() !*web_login.LoginManager {
     if (login_manager == null) {
-        login_manager = web_login.LoginManager.init(std.heap.page_allocator, 10 * 60 * 1000);
+        var manager = web_login.LoginManager.init(std.heap.page_allocator, 10 * 60 * 1000);
+        manager.configurePersistence(currentConfig().state_path) catch |err| {
+            std.log.warn("web login persistence init failed: {s}", .{@errorName(err)});
+        };
+        login_manager = manager;
     }
     return &login_manager.?;
 }
@@ -7690,7 +7694,11 @@ fn getLoginManager() !*web_login.LoginManager {
 fn getTelegramRuntime() !*telegram_runtime.TelegramRuntime {
     if (telegram_runtime_instance == null) {
         const manager = try getLoginManager();
-        telegram_runtime_instance = telegram_runtime.TelegramRuntime.init(std.heap.page_allocator, manager);
+        var tg_runtime = telegram_runtime.TelegramRuntime.init(std.heap.page_allocator, manager);
+        tg_runtime.configurePersistence(currentConfig().state_path) catch |err| {
+            std.log.warn("telegram runtime persistence init failed: {s}", .{@errorName(err)});
+        };
+        telegram_runtime_instance = tg_runtime;
     }
     const cfg = currentConfig();
     try telegram_runtime_instance.?.setBridgeConfig(cfg.lightpanda_endpoint, cfg.lightpanda_timeout_ms);
