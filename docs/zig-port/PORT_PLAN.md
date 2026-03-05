@@ -61,6 +61,8 @@ Full-stack replacement execution reference:
   - master tracking issue refreshed with FS0..FS7 execution gates.
   - FS0 execution issue opened (`#2`) and linked from master issue.
   - initial matrix published: `docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`.
+  - FS1 restart determinism coverage expanded:
+    - compat-state persistence test now asserts `sessionChannels` mappings and replayed timestamps survive restart, preserving omitted-channel send routing without memory-history dependence.
 
 - Tracking and documentation refresh (2026-03-04):
   - Gateway hardening slice shipped:

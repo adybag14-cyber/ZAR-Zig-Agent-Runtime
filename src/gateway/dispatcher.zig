@@ -12898,6 +12898,10 @@ test "compat state persistence roundtrip restores core runtime settings and hist
         try state.setVoicewake(true, "hey zig");
         try state.mergeConfigEntry("talk.apiKey", "sk-zig-local");
         try state.markSessionDeleted("session-z1");
+        try state.upsertSessionChannel("session-z2", "cli");
+        if (state.session_channels.getPtr("session-z2")) |session_state| {
+            session_state.updated_at_ms = 1_700_000_123_456;
+        }
         _ = try state.addEvent("runtime-replay");
         _ = try state.createUpdateJob("v0.2.1-zig-edge", true, false);
         try state.persist();
@@ -12926,6 +12930,10 @@ test "compat state persistence roundtrip restores core runtime settings and hist
         try std.testing.expectEqual(@as(usize, 1), restored.update_jobs.items.len);
         try std.testing.expect(std.mem.eql(u8, restored.update_jobs.items[0].target_version, "v0.2.1-zig-edge"));
         try std.testing.expectEqual(@as(usize, 1), restored.config_overlay.count());
+        try std.testing.expectEqual(@as(usize, 1), restored.session_channels.count());
+        const restored_session_channel = restored.getSessionChannel("session-z2") orelse unreachable;
+        try std.testing.expect(std.mem.eql(u8, restored_session_channel.channel, "cli"));
+        try std.testing.expectEqual(@as(i64, 1_700_000_123_456), restored_session_channel.updated_at_ms);
         try std.testing.expect(restored.session_tombstones.contains("session-z1"));
     }
 }

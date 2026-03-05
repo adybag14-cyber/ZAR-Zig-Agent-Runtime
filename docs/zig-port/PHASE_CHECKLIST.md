@@ -158,6 +158,7 @@ Phase 5 enhancement notes:
   - `send` now normalizes channel aliases for compatibility with Go channel routing (`web|webchat`, `cli|console|terminal`, `telegram|tg|tele`).
   - `send|chat.send|sessions.send` now inherit the last known session channel when `params.channel` is omitted; unknown/new sessions default to `webchat`.
   - session-channel state is now tracked in compat state (`sessionChannels`) and persisted in `compat-state.json`, so omitted-channel routing is independent of memory-history retention.
+  - compat-state recovery test now explicitly verifies `sessionChannels` persistence and timestamp replay across restart (`gateway.dispatcher.test.compat state persistence roundtrip restores core runtime settings and histories`).
   - `connect` and `sessions.patch` upsert session-channel state; `sessions.delete` removes it; `sessions.reset` keeps it (matching Go session behavior).
   - `poll` remains Telegram-only by design and now rejects non-Telegram aliases deterministically.
   - regression coverage added for alias acceptance and unsupported-channel rejection paths:
