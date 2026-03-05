@@ -56,7 +56,7 @@ Full-stack replacement execution reference:
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `153/153`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `155/155`.
 - Full-stack replacement kickoff (2026-03-05):
   - master tracking issue refreshed with FS0..FS7 execution gates.
   - FS0 execution issue opened (`#2`) and linked from master issue.
@@ -93,6 +93,12 @@ Full-stack replacement execution reference:
       - regression tests added:
         - `bridge.provider_http.test.direct provider openrouter requires api key and reports openrouter endpoint`
         - `gateway.dispatcher.test.dispatch browser.request supports direct provider path for openrouter with missing key telemetry`
+    - Direct-provider bridge depth expanded for OpenCode compatibility:
+      - `provider_http` now supports `opencode` as a direct provider path (OpenAI-compatible API envelope).
+      - direct-provider request URL telemetry now reports OpenCode endpoint (`https://api.opencode.ai/v1/chat/completions`) for missing-key and runtime failures.
+      - regression tests added:
+        - `bridge.provider_http.test.direct provider opencode requires api key and reports opencode endpoint`
+        - `gateway.dispatcher.test.dispatch browser.request supports direct provider path for opencode with missing key telemetry`
     - Telegram bridge response telemetry now includes API-key usage flag:
       - `send` result now emits `providerApiKeyUsed` when bridge completion succeeds using provider API-key credentials.
       - regression test updated: `channels.telegram_runtime.test.telegram runtime uses provider api key when no authorized browser session exists`.

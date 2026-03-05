@@ -4,6 +4,7 @@ const time_util = @import("../util/time.zig");
 
 const direct_openai_url = "https://api.openai.com/v1/chat/completions";
 const direct_openrouter_url = "https://openrouter.ai/api/v1/chat/completions";
+const direct_opencode_url = "https://api.opencode.ai/v1/chat/completions";
 const direct_anthropic_url = "https://api.anthropic.com/v1/messages";
 const anthropic_version = "2023-06-01";
 
@@ -31,7 +32,7 @@ pub fn executeCompletion(
             .model = try allocator.dupe(u8, normalizedModel(normalized_provider, model_raw)),
             .assistantText = try allocator.dupe(u8, ""),
             .latencyMs = 0,
-            .errorText = try allocator.dupe(u8, "unsupported direct provider; supported providers: chatgpt, codex, claude, openrouter"),
+            .errorText = try allocator.dupe(u8, "unsupported direct provider; supported providers: chatgpt, codex, claude, openrouter, opencode"),
         };
     }
 
@@ -79,6 +80,19 @@ pub fn executeCompletion(
             stream_requested,
         );
     }
+    if (std.ascii.eqlIgnoreCase(normalized_provider, "opencode")) {
+        return executeOpenCodeCompletion(
+            allocator,
+            normalized_provider,
+            model_raw,
+            messages,
+            temperature,
+            max_tokens,
+            api_key,
+            request_timeout_ms,
+            stream_requested,
+        );
+    }
     return executeOpenAICompletion(
         allocator,
         normalized_provider,
@@ -96,12 +110,14 @@ fn isSupportedDirectProvider(provider: []const u8) bool {
     return std.ascii.eqlIgnoreCase(provider, "chatgpt") or
         std.ascii.eqlIgnoreCase(provider, "codex") or
         std.ascii.eqlIgnoreCase(provider, "claude") or
-        std.ascii.eqlIgnoreCase(provider, "openrouter");
+        std.ascii.eqlIgnoreCase(provider, "openrouter") or
+        std.ascii.eqlIgnoreCase(provider, "opencode");
 }
 
 fn directRequestUrlForProvider(provider: []const u8) []const u8 {
     if (std.ascii.eqlIgnoreCase(provider, "claude")) return direct_anthropic_url;
     if (std.ascii.eqlIgnoreCase(provider, "openrouter")) return direct_openrouter_url;
+    if (std.ascii.eqlIgnoreCase(provider, "opencode")) return direct_opencode_url;
     return direct_openai_url;
 }
 
@@ -154,6 +170,32 @@ fn executeOpenRouterCompletion(
         stream_requested,
         "https://openrouter.ai",
         direct_openrouter_url,
+    );
+}
+
+fn executeOpenCodeCompletion(
+    allocator: std.mem.Allocator,
+    provider: []const u8,
+    model_raw: []const u8,
+    messages: []const lightpanda.CompletionMessage,
+    temperature: ?f64,
+    max_tokens: ?u32,
+    api_key: []const u8,
+    request_timeout_ms: u32,
+    stream_requested: bool,
+) !lightpanda.BridgeCompletionExecution {
+    return executeOpenAICompatibleCompletion(
+        allocator,
+        provider,
+        model_raw,
+        messages,
+        temperature,
+        max_tokens,
+        api_key,
+        request_timeout_ms,
+        stream_requested,
+        "https://api.opencode.ai",
+        direct_opencode_url,
     );
 }
 
@@ -414,6 +456,7 @@ fn normalizedModel(provider: []const u8, model_raw: []const u8) []const u8 {
     if (trimmed.len > 0) return trimmed;
     if (std.ascii.eqlIgnoreCase(provider, "claude")) return "claude-opus-4";
     if (std.ascii.eqlIgnoreCase(provider, "openrouter")) return "openai/gpt-5.2-mini";
+    if (std.ascii.eqlIgnoreCase(provider, "opencode")) return "opencode/default";
     return "gpt-5.2";
 }
 
@@ -594,6 +637,20 @@ test "direct provider openrouter requires api key and reports openrouter endpoin
     try std.testing.expect(!execution.ok);
     try std.testing.expect(std.mem.eql(u8, execution.provider, "openrouter"));
     try std.testing.expect(std.mem.indexOf(u8, execution.requestUrl, "openrouter.ai/api/v1/chat/completions") != null);
+    try std.testing.expect(std.mem.indexOf(u8, execution.errorText, "missing API key") != null);
+}
+
+test "direct provider opencode requires api key and reports opencode endpoint" {
+    const allocator = std.testing.allocator;
+    const messages = [_]lightpanda.CompletionMessage{
+        .{ .role = "user", .content = "hello" },
+    };
+    var execution = try executeCompletion(allocator, "opencode", "", messages[0..], null, null, "", 1500, false);
+    defer execution.deinit(allocator);
+    try std.testing.expect(execution.requested);
+    try std.testing.expect(!execution.ok);
+    try std.testing.expect(std.mem.eql(u8, execution.provider, "opencode"));
+    try std.testing.expect(std.mem.indexOf(u8, execution.requestUrl, "api.opencode.ai/v1/chat/completions") != null);
     try std.testing.expect(std.mem.indexOf(u8, execution.errorText, "missing API key") != null);
 }
 

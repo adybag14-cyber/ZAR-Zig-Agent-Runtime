@@ -11599,6 +11599,21 @@ test "dispatch browser.request supports direct provider path for openrouter with
     try std.testing.expect(std.mem.indexOf(u8, out, "missing API key for direct provider request") != null);
 }
 
+test "dispatch browser.request supports direct provider path for opencode with missing key telemetry" {
+    const allocator = std.testing.allocator;
+    const out = try dispatch(
+        allocator,
+        "{\"id\":\"3g\",\"method\":\"browser.request\",\"params\":{\"provider\":\"opencode\",\"directProvider\":true,\"prompt\":\"hello opencode direct\"}}",
+    );
+    defer allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"status\":\"failed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"executionPath\":\"direct-provider\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"directProvider\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"provider\":\"opencode\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"requestUrl\":\"https://api.opencode.ai/v1/chat/completions\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "missing API key for direct provider request") != null);
+}
+
 test "dispatch browser.request injects memory and tool context when session history exists" {
     const allocator = std.testing.allocator;
     const send = try dispatch(allocator, "{\"id\":\"ctx-send\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"ctx-room\",\"sessionId\":\"ctx-s1\",\"message\":\"context memory test\"}}");

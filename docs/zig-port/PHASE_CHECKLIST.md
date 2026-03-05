@@ -1,7 +1,7 @@
 # Phase Checklist
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
-Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `153/153`.
+Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `155/155`.
 
 ## Full-Stack Replacement Track (FS0..FS7)
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)
@@ -201,6 +201,12 @@ Phase 5 enhancement notes:
     - regression tests added:
       - `direct provider openrouter requires api key and reports openrouter endpoint`
       - `dispatch browser.request supports direct provider path for openrouter with missing key telemetry`
+  - Direct-provider bridge parity now includes OpenCode:
+    - `provider_http.executeCompletion` now supports direct provider `opencode` with OpenAI-compatible transport contracts.
+    - dispatcher `browser.request` direct path now returns deterministic OpenCode request URL telemetry on credential failures.
+    - regression tests added:
+      - `direct provider opencode requires api key and reports opencode endpoint`
+      - `dispatch browser.request supports direct provider path for opencode with missing key telemetry`
   - Telegram send-result bridge telemetry now includes provider API-key usage:
     - `send` response includes `providerApiKeyUsed` to indicate when bridge completion used API-key credentials.
     - regression coverage updated in `telegram runtime uses provider api key when no authorized browser session exists`.
