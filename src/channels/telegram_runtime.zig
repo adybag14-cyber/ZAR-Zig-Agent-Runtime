@@ -22,6 +22,12 @@ pub const ProviderApiKeyResolver = *const fn (
     provider: []const u8,
 ) anyerror!?[]u8;
 
+pub const ModelCatalogResolver = *const fn (
+    ctx: *anyopaque,
+    allocator: std.mem.Allocator,
+    refresh_provider: []const u8,
+) anyerror![]TelegramModelDescriptor;
+
 pub fn setEnviron(environ: std.process.Environ) void {
     process_environ = environ;
 }
@@ -329,6 +335,8 @@ pub const TelegramRuntime = struct {
     persistent: bool,
     provider_api_key_resolver_ctx: ?*anyopaque,
     provider_api_key_resolver: ?ProviderApiKeyResolver,
+    model_catalog_resolver_ctx: ?*anyopaque,
+    model_catalog_resolver: ?ModelCatalogResolver,
 
     pub fn init(allocator: std.mem.Allocator, login_manager: *web_login.LoginManager) TelegramRuntime {
         return .{
@@ -348,6 +356,8 @@ pub const TelegramRuntime = struct {
             .persistent = false,
             .provider_api_key_resolver_ctx = null,
             .provider_api_key_resolver = null,
+            .model_catalog_resolver_ctx = null,
+            .model_catalog_resolver = null,
         };
     }
 
@@ -412,6 +422,15 @@ pub const TelegramRuntime = struct {
         self.provider_api_key_resolver = resolver;
     }
 
+    pub fn setModelCatalogResolver(
+        self: *TelegramRuntime,
+        ctx: ?*anyopaque,
+        resolver: ?ModelCatalogResolver,
+    ) void {
+        self.model_catalog_resolver_ctx = ctx;
+        self.model_catalog_resolver = resolver;
+    }
+
     pub fn status(self: *TelegramRuntime) StatusView {
         return .{
             .enabled = true,
@@ -420,6 +439,19 @@ pub const TelegramRuntime = struct {
             .targetCount = self.target_models.count(),
             .authBindingCount = self.auth_bindings.count(),
         };
+    }
+
+    fn resolveModelCatalogAlloc(
+        self: *TelegramRuntime,
+        allocator: std.mem.Allocator,
+        refresh_provider_raw: []const u8,
+    ) ![]TelegramModelDescriptor {
+        if (self.model_catalog_resolver) |resolver| {
+            if (self.model_catalog_resolver_ctx) |ctx| {
+                return resolver(ctx, allocator, refresh_provider_raw);
+            }
+        }
+        return allocator.dupe(TelegramModelDescriptor, telegramModelCatalog());
     }
 
     fn normalizeSendChannelAlias(channel: []const u8) ?[]const u8 {
@@ -1040,11 +1072,13 @@ pub const TelegramRuntime = struct {
         const action = if (args.len == 0) "status" else args[0];
 
         if (std.ascii.eqlIgnoreCase(action, "status")) {
-            const providers = try listTelegramModelProvidersAlloc(allocator);
+            const catalog = try self.resolveModelCatalogAlloc(allocator, model_sel.provider);
+            defer allocator.free(catalog);
+            const providers = try listTelegramModelProvidersFromCatalogAlloc(allocator, catalog);
             defer allocator.free(providers);
-            const available_models = try listTelegramModelIDsAlloc(allocator, "");
+            const available_models = try listTelegramModelIDsFromCatalogAlloc(allocator, catalog, "");
             defer allocator.free(available_models);
-            const descriptors = try listTelegramModelDescriptorsAlloc(allocator, "");
+            const descriptors = try listTelegramModelDescriptorsFromCatalogAlloc(allocator, catalog, "");
             defer allocator.free(descriptors);
             const providers_text = try std.mem.join(allocator, ", ", providers);
             defer allocator.free(providers_text);
@@ -1074,12 +1108,15 @@ pub const TelegramRuntime = struct {
         }
 
         if (std.ascii.eqlIgnoreCase(action, "list")) {
-            const providers = try listTelegramModelProvidersAlloc(allocator);
+            const refresh_provider = if (args.len >= 2) normalizeProvider(args[1]) else model_sel.provider;
+            const catalog = try self.resolveModelCatalogAlloc(allocator, refresh_provider);
+            defer allocator.free(catalog);
+            const providers = try listTelegramModelProvidersFromCatalogAlloc(allocator, catalog);
             defer allocator.free(providers);
             if (args.len < 2) {
-                const available_models = try listTelegramModelIDsAlloc(allocator, "");
+                const available_models = try listTelegramModelIDsFromCatalogAlloc(allocator, catalog, "");
                 defer allocator.free(available_models);
-                const descriptors = try listTelegramModelDescriptorsAlloc(allocator, "");
+                const descriptors = try listTelegramModelDescriptorsFromCatalogAlloc(allocator, catalog, "");
                 defer allocator.free(descriptors);
                 const providers_text = try std.mem.join(allocator, ", ", providers);
                 defer allocator.free(providers_text);
@@ -1104,9 +1141,9 @@ pub const TelegramRuntime = struct {
             }
 
             const requested_provider = normalizeProvider(args[1]);
-            const filtered = try listTelegramModelIDsAlloc(allocator, requested_provider);
+            const filtered = try listTelegramModelIDsFromCatalogAlloc(allocator, catalog, requested_provider);
             defer allocator.free(filtered);
-            const descriptors = try listTelegramModelDescriptorsAlloc(allocator, requested_provider);
+            const descriptors = try listTelegramModelDescriptorsFromCatalogAlloc(allocator, catalog, requested_provider);
             defer allocator.free(descriptors);
             const metadata_json = try stringifyJsonAlloc(allocator, ModelCommandMetadata{
                 .type = "model.list",
@@ -1146,7 +1183,9 @@ pub const TelegramRuntime = struct {
         }
 
         if (std.ascii.eqlIgnoreCase(action, "next")) {
-            const next_choice = nextTelegramModelChoice(model_sel.model);
+            const catalog = try self.resolveModelCatalogAlloc(allocator, model_sel.provider);
+            defer allocator.free(catalog);
+            const next_choice = nextTelegramModelChoiceInCatalog(catalog, model_sel.model);
             try self.setTargetModel(target, next_choice.provider, next_choice.id);
             const model_ref = try modelRefForDisplayAlloc(allocator, next_choice.provider, next_choice.id);
             defer allocator.free(model_ref);
@@ -1161,7 +1200,7 @@ pub const TelegramRuntime = struct {
             return .{
                 .is_command = true,
                 .command_name = "model",
-                .reply = try std.fmt.allocPrint(allocator, "Model advanced to `{s}`.", .{model_ref}),
+                .reply = try std.fmt.allocPrint(allocator, "Model advanced to `{s}` for `{s}`.", .{ model_ref, trimmed_target }),
                 .provider = next_choice.provider,
                 .model = next_choice.id,
                 .login_session_id = "",
@@ -1186,7 +1225,7 @@ pub const TelegramRuntime = struct {
             return .{
                 .is_command = true,
                 .command_name = "model",
-                .reply = try allocator.dupe(u8, "Model reset to `chatgpt/gpt-5.2`."),
+                .reply = try std.fmt.allocPrint(allocator, "Model reset to `chatgpt/gpt-5.2` for `{s}`.", .{trimmed_target}),
                 .provider = "chatgpt",
                 .model = "gpt-5.2",
                 .login_session_id = "",
@@ -1214,9 +1253,11 @@ pub const TelegramRuntime = struct {
         }
 
         if (provider_scoped) {
-            const providers = try listTelegramModelProvidersAlloc(allocator);
+            const catalog = try self.resolveModelCatalogAlloc(allocator, requested_provider);
+            defer allocator.free(catalog);
+            const providers = try listTelegramModelProvidersFromCatalogAlloc(allocator, catalog);
             defer allocator.free(providers);
-            if (!isKnownModelProvider(requested_provider)) {
+            if (!isKnownModelProviderInCatalog(catalog, requested_provider)) {
                 const providers_text = try std.mem.join(allocator, ", ", providers);
                 defer allocator.free(providers_text);
                 const metadata_json = try stringifyJsonAlloc(allocator, ModelCommandMetadata{
@@ -1240,7 +1281,25 @@ pub const TelegramRuntime = struct {
             }
 
             if (requested_model.len == 0) {
-                const default_model = defaultModelForProvider(requested_provider);
+                const default_model = defaultModelForProviderInCatalog(catalog, requested_provider) orelse {
+                    const metadata_json = try stringifyJsonAlloc(allocator, ModelCommandMetadata{
+                        .type = "model.invalid",
+                        .target = trimmed_target,
+                        .requestedProvider = requested_provider,
+                        .@"error" = "missing_provider_model",
+                    });
+                    return .{
+                        .is_command = true,
+                        .command_name = "model",
+                        .reply = try std.fmt.allocPrint(allocator, "Provider `{s}` has no catalog models. Run `/model list` first.", .{requested_provider}),
+                        .provider = model_sel.provider,
+                        .model = model_sel.model,
+                        .login_session_id = "",
+                        .login_code = "",
+                        .auth_status = "invalid",
+                        .metadata_json = metadata_json,
+                    };
+                };
                 try self.setTargetModel(target, requested_provider, default_model);
                 const model_ref = try modelRefForDisplayAlloc(allocator, requested_provider, default_model);
                 defer allocator.free(model_ref);
@@ -1256,7 +1315,7 @@ pub const TelegramRuntime = struct {
                 return .{
                     .is_command = true,
                     .command_name = "model",
-                    .reply = try std.fmt.allocPrint(allocator, "Model set to `{s}`.", .{model_ref}),
+                    .reply = try std.fmt.allocPrint(allocator, "Model set to `{s}` for `{s}`.", .{ model_ref, trimmed_target }),
                     .provider = requested_provider,
                     .model = default_model,
                     .login_session_id = "",
@@ -1266,7 +1325,7 @@ pub const TelegramRuntime = struct {
                 };
             }
 
-            if (try resolveTelegramModelChoiceForProviderDetailed(allocator, requested_provider, requested_model)) |choice| {
+            if (try resolveTelegramModelChoiceForProviderDetailedInCatalog(allocator, catalog, requested_provider, requested_model)) |choice| {
                 try self.setTargetModel(target, choice.provider, choice.id);
                 const selected = self.getTargetModel(target);
                 const model_ref = try modelRefForDisplayAlloc(allocator, selected.provider, selected.model);
@@ -1289,7 +1348,7 @@ pub const TelegramRuntime = struct {
                 return .{
                     .is_command = true,
                     .command_name = "model",
-                    .reply = try std.fmt.allocPrint(allocator, "Model set to `{s}`.", .{model_ref}),
+                    .reply = try std.fmt.allocPrint(allocator, "Model set to `{s}` for `{s}`.", .{ model_ref, trimmed_target }),
                     .provider = selected.provider,
                     .model = selected.model,
                     .login_session_id = "",
@@ -1321,7 +1380,7 @@ pub const TelegramRuntime = struct {
             return .{
                 .is_command = true,
                 .command_name = "model",
-                .reply = try std.fmt.allocPrint(allocator, "Model set to `{s}`.\nNote: custom model override applied (not found in catalog).", .{model_ref}),
+                .reply = try std.fmt.allocPrint(allocator, "Model set to `{s}` for `{s}`.\nNote: custom model override applied (not found in catalog).", .{ model_ref, trimmed_target }),
                 .provider = selected.provider,
                 .model = selected.model,
                 .login_session_id = "",
@@ -1331,9 +1390,12 @@ pub const TelegramRuntime = struct {
             };
         }
 
-        if (isKnownModelProvider(action)) {
+        const catalog = try self.resolveModelCatalogAlloc(allocator, action);
+        defer allocator.free(catalog);
+
+        if (isKnownModelProviderInCatalog(catalog, action)) {
             const provider = normalizeProvider(action);
-            const model = defaultModelForProvider(provider);
+            const model = defaultModelForProviderInCatalog(catalog, provider).?;
             try self.setTargetModel(target, provider, model);
             const model_ref = try modelRefForDisplayAlloc(allocator, provider, model);
             defer allocator.free(model_ref);
@@ -1349,7 +1411,7 @@ pub const TelegramRuntime = struct {
             return .{
                 .is_command = true,
                 .command_name = "model",
-                .reply = try std.fmt.allocPrint(allocator, "Model set to `{s}`.", .{model_ref}),
+                .reply = try std.fmt.allocPrint(allocator, "Model set to `{s}` for `{s}`.", .{ model_ref, trimmed_target }),
                 .provider = provider,
                 .model = model,
                 .login_session_id = "",
@@ -1359,7 +1421,7 @@ pub const TelegramRuntime = struct {
             };
         }
 
-        if (try resolveTelegramModelChoiceDetailed(allocator, action)) |choice| {
+        if (try resolveTelegramModelChoiceDetailedInCatalog(allocator, catalog, action)) |choice| {
             try self.setTargetModel(target, choice.provider, choice.id);
             const model_ref = try modelRefForDisplayAlloc(allocator, choice.provider, choice.id);
             defer allocator.free(model_ref);
@@ -1376,7 +1438,7 @@ pub const TelegramRuntime = struct {
             return .{
                 .is_command = true,
                 .command_name = "model",
-                .reply = try std.fmt.allocPrint(allocator, "Model set to `{s}`.", .{model_ref}),
+                .reply = try std.fmt.allocPrint(allocator, "Model set to `{s}` for `{s}`.", .{ model_ref, trimmed_target }),
                 .provider = choice.provider,
                 .model = choice.id,
                 .login_session_id = "",
@@ -1386,9 +1448,9 @@ pub const TelegramRuntime = struct {
             };
         }
 
-        const available_models = try listTelegramModelIDsAlloc(allocator, "");
+        const available_models = try listTelegramModelIDsFromCatalogAlloc(allocator, catalog, "");
         defer allocator.free(available_models);
-        const providers = try listTelegramModelProvidersAlloc(allocator);
+        const providers = try listTelegramModelProvidersFromCatalogAlloc(allocator, catalog);
         defer allocator.free(providers);
         const available_text = try std.mem.join(allocator, ", ", available_models);
         defer allocator.free(available_text);
@@ -3422,7 +3484,7 @@ fn normalizeModel(model_raw: []const u8) []const u8 {
     return std.mem.trim(u8, model_raw, " \t\r\n");
 }
 
-const TelegramModelDescriptor = struct {
+pub const TelegramModelDescriptor = struct {
     id: []const u8,
     provider: []const u8,
     name: []const u8,
@@ -3515,20 +3577,24 @@ fn modelAliasMatches(allocator: std.mem.Allocator, candidate: []const u8, normal
     return std.mem.eql(u8, normalized, normalized_requested);
 }
 
-fn isKnownModelProvider(provider_raw: []const u8) bool {
+fn isKnownModelProviderInCatalog(catalog: []const TelegramModelDescriptor, provider_raw: []const u8) bool {
     const provider = normalizeProvider(provider_raw);
     if (provider.len == 0) return false;
-    for (telegramModelCatalog()) |descriptor| {
+    for (catalog) |descriptor| {
         if (std.ascii.eqlIgnoreCase(descriptor.provider, provider)) return true;
     }
     return false;
 }
 
-fn listTelegramModelProvidersAlloc(allocator: std.mem.Allocator) ![]const []const u8 {
+fn isKnownModelProvider(provider_raw: []const u8) bool {
+    return isKnownModelProviderInCatalog(telegramModelCatalog(), provider_raw);
+}
+
+fn listTelegramModelProvidersFromCatalogAlloc(allocator: std.mem.Allocator, catalog: []const TelegramModelDescriptor) ![]const []const u8 {
     var providers: std.ArrayList([]const u8) = .empty;
     defer providers.deinit(allocator);
 
-    for (telegramModelCatalog()) |descriptor| {
+    for (catalog) |descriptor| {
         var seen = false;
         for (providers.items) |existing| {
             if (std.mem.eql(u8, existing, descriptor.provider)) {
@@ -3548,12 +3614,23 @@ fn listTelegramModelProvidersAlloc(allocator: std.mem.Allocator) ![]const []cons
     return providers.toOwnedSlice(allocator);
 }
 
-fn listTelegramModelIDsAlloc(allocator: std.mem.Allocator, provider_filter_raw: []const u8) ![]const []const u8 {
-    const provider_filter = normalizeProvider(provider_filter_raw);
+fn listTelegramModelProvidersAlloc(allocator: std.mem.Allocator) ![]const []const u8 {
+    return listTelegramModelProvidersFromCatalogAlloc(allocator, telegramModelCatalog());
+}
+
+fn listTelegramModelIDsFromCatalogAlloc(
+    allocator: std.mem.Allocator,
+    catalog: []const TelegramModelDescriptor,
+    provider_filter_raw: []const u8,
+) ![]const []const u8 {
+    const provider_filter = blk: {
+        const trimmed = std.mem.trim(u8, provider_filter_raw, " \t\r\n");
+        break :blk if (trimmed.len == 0) "" else normalizeProvider(trimmed);
+    };
     var ids: std.ArrayList([]const u8) = .empty;
     defer ids.deinit(allocator);
 
-    for (telegramModelCatalog()) |descriptor| {
+    for (catalog) |descriptor| {
         if (provider_filter.len > 0 and !std.ascii.eqlIgnoreCase(descriptor.provider, provider_filter)) continue;
         var seen = false;
         for (ids.items) |existing| {
@@ -3568,12 +3645,23 @@ fn listTelegramModelIDsAlloc(allocator: std.mem.Allocator, provider_filter_raw: 
     return ids.toOwnedSlice(allocator);
 }
 
-fn listTelegramModelDescriptorsAlloc(allocator: std.mem.Allocator, provider_filter_raw: []const u8) ![]TelegramModelDescriptor {
-    const provider_filter = normalizeProvider(provider_filter_raw);
+fn listTelegramModelIDsAlloc(allocator: std.mem.Allocator, provider_filter_raw: []const u8) ![]const []const u8 {
+    return listTelegramModelIDsFromCatalogAlloc(allocator, telegramModelCatalog(), provider_filter_raw);
+}
+
+fn listTelegramModelDescriptorsFromCatalogAlloc(
+    allocator: std.mem.Allocator,
+    catalog: []const TelegramModelDescriptor,
+    provider_filter_raw: []const u8,
+) ![]TelegramModelDescriptor {
+    const provider_filter = blk: {
+        const trimmed = std.mem.trim(u8, provider_filter_raw, " \t\r\n");
+        break :blk if (trimmed.len == 0) "" else normalizeProvider(trimmed);
+    };
     var descriptors: std.ArrayList(TelegramModelDescriptor) = .empty;
     defer descriptors.deinit(allocator);
 
-    for (telegramModelCatalog()) |descriptor| {
+    for (catalog) |descriptor| {
         if (provider_filter.len > 0 and !std.ascii.eqlIgnoreCase(descriptor.provider, provider_filter)) continue;
         try descriptors.append(allocator, descriptor);
     }
@@ -3581,19 +3669,27 @@ fn listTelegramModelDescriptorsAlloc(allocator: std.mem.Allocator, provider_filt
     return descriptors.toOwnedSlice(allocator);
 }
 
-fn resolveTelegramModelChoiceDetailed(allocator: std.mem.Allocator, model_raw: []const u8) !?ResolvedTelegramModelChoice {
+fn listTelegramModelDescriptorsAlloc(allocator: std.mem.Allocator, provider_filter_raw: []const u8) ![]TelegramModelDescriptor {
+    return listTelegramModelDescriptorsFromCatalogAlloc(allocator, telegramModelCatalog(), provider_filter_raw);
+}
+
+fn resolveTelegramModelChoiceDetailedInCatalog(
+    allocator: std.mem.Allocator,
+    catalog: []const TelegramModelDescriptor,
+    model_raw: []const u8,
+) !?ResolvedTelegramModelChoice {
     const normalized_requested = try normalizeModelAliasAlloc(allocator, model_raw);
     defer allocator.free(normalized_requested);
     if (normalized_requested.len == 0) return null;
 
-    for (telegramModelCatalog()) |descriptor| {
+    for (catalog) |descriptor| {
         if (try modelAliasMatches(allocator, descriptor.id, normalized_requested)) {
             return .{ .id = descriptor.id, .provider = descriptor.provider };
         }
     }
 
     const requested = normalizeModel(model_raw);
-    for (telegramModelCatalog()) |descriptor| {
+    for (catalog) |descriptor| {
         if (descriptor.mode.len > 0 and try modelAliasMatches(allocator, descriptor.mode, normalized_requested)) {
             return .{ .id = descriptor.id, .provider = descriptor.provider, .alias_used = requested };
         }
@@ -3610,8 +3706,12 @@ fn resolveTelegramModelChoiceDetailed(allocator: std.mem.Allocator, model_raw: [
     return null;
 }
 
+fn resolveTelegramModelChoiceDetailed(allocator: std.mem.Allocator, model_raw: []const u8) !?ResolvedTelegramModelChoice {
+    return resolveTelegramModelChoiceDetailedInCatalog(allocator, telegramModelCatalog(), model_raw);
+}
+
 fn resolveTelegramModelChoice(allocator: std.mem.Allocator, model_raw: []const u8) !?TelegramModelChoice {
-    const resolved = try resolveTelegramModelChoiceDetailed(allocator, model_raw) orelse return null;
+    const resolved = try resolveTelegramModelChoiceDetailedInCatalog(allocator, telegramModelCatalog(), model_raw) orelse return null;
     return .{ .id = resolved.id, .provider = resolved.provider };
 }
 
@@ -3629,12 +3729,21 @@ fn resolveTelegramModelChoiceForProviderDetailed(
     provider_raw: []const u8,
     model_raw: []const u8,
 ) !?ResolvedTelegramModelChoice {
+    return resolveTelegramModelChoiceForProviderDetailedInCatalog(allocator, telegramModelCatalog(), provider_raw, model_raw);
+}
+
+fn resolveTelegramModelChoiceForProviderDetailedInCatalog(
+    allocator: std.mem.Allocator,
+    catalog: []const TelegramModelDescriptor,
+    provider_raw: []const u8,
+    model_raw: []const u8,
+) !?ResolvedTelegramModelChoice {
     const provider = normalizeProvider(provider_raw);
     const normalized_requested = try normalizeModelAliasAlloc(allocator, model_raw);
     defer allocator.free(normalized_requested);
     if (provider.len == 0 or normalized_requested.len == 0) return null;
 
-    for (telegramModelCatalog()) |descriptor| {
+    for (catalog) |descriptor| {
         if (!std.ascii.eqlIgnoreCase(descriptor.provider, provider)) continue;
         if (try modelAliasMatches(allocator, descriptor.id, normalized_requested)) {
             return .{ .id = descriptor.id, .provider = descriptor.provider };
@@ -3661,9 +3770,8 @@ fn resolveTelegramModelChoiceForProviderDetailed(
     return null;
 }
 
-fn nextTelegramModelChoice(current_model_raw: []const u8) TelegramModelChoice {
+fn nextTelegramModelChoiceInCatalog(catalog: []const TelegramModelDescriptor, current_model_raw: []const u8) TelegramModelChoice {
     const current_model = normalizeModel(current_model_raw);
-    const catalog = telegramModelCatalog();
     if (catalog.len == 0) return .{ .id = "gpt-5.2", .provider = "chatgpt" };
 
     var current_index: ?usize = null;
@@ -3678,6 +3786,10 @@ fn nextTelegramModelChoice(current_model_raw: []const u8) TelegramModelChoice {
     return .{ .id = catalog[next_index].id, .provider = catalog[next_index].provider };
 }
 
+fn nextTelegramModelChoice(current_model_raw: []const u8) TelegramModelChoice {
+    return nextTelegramModelChoiceInCatalog(telegramModelCatalog(), current_model_raw);
+}
+
 fn modelRefForDisplayAlloc(allocator: std.mem.Allocator, provider_raw: []const u8, model_raw: []const u8) ![]u8 {
     const provider = normalizeProvider(provider_raw);
     const model = normalizeModel(model_raw);
@@ -3687,20 +3799,17 @@ fn modelRefForDisplayAlloc(allocator: std.mem.Allocator, provider_raw: []const u
     return std.fmt.allocPrint(allocator, "{s}/{s}", .{ provider, model });
 }
 
-fn defaultModelForProvider(provider_raw: []const u8) []const u8 {
+fn defaultModelForProviderInCatalog(catalog: []const TelegramModelDescriptor, provider_raw: []const u8) ?[]const u8 {
     const provider = normalizeProvider(provider_raw);
-    if (std.ascii.eqlIgnoreCase(provider, "codex")) return "gpt-5.2";
-    if (std.ascii.eqlIgnoreCase(provider, "claude")) return "claude-sonnet-4";
-    if (std.ascii.eqlIgnoreCase(provider, "gemini")) return "gemini-2.5-pro";
-    if (std.ascii.eqlIgnoreCase(provider, "openrouter")) return "openrouter/auto";
-    if (std.ascii.eqlIgnoreCase(provider, "opencode")) return "opencode/default";
-    if (std.ascii.eqlIgnoreCase(provider, "qwen")) return "qwen-max";
-    if (std.ascii.eqlIgnoreCase(provider, "minimax")) return "minimax-m2.5";
-    if (std.ascii.eqlIgnoreCase(provider, "kimi")) return "kimi-k2.5";
-    if (std.ascii.eqlIgnoreCase(provider, "zhipuai")) return "glm-4.6";
-    if (std.ascii.eqlIgnoreCase(provider, "zai")) return "glm-5";
-    if (std.ascii.eqlIgnoreCase(provider, "inception")) return "mercury-2";
-    return "gpt-5.2";
+    if (provider.len == 0) return null;
+    for (catalog) |descriptor| {
+        if (std.ascii.eqlIgnoreCase(descriptor.provider, provider)) return descriptor.id;
+    }
+    return null;
+}
+
+fn defaultModelForProvider(provider_raw: []const u8) []const u8 {
+    return defaultModelForProviderInCatalog(telegramModelCatalog(), provider_raw) orelse "gpt-5.2";
 }
 
 fn isKnownProvider(provider_raw: []const u8) bool {
@@ -4092,6 +4201,41 @@ test "telegram runtime model command supports custom overrides and provider scop
     try std.testing.expect(std.mem.indexOf(u8, custom_override.reply, "custom model override applied") != null);
 }
 
+test "telegram runtime model command uses injected catalog resolver" {
+    var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
+    defer login.deinit();
+    var runtime = TelegramRuntime.init(std.testing.allocator, &login);
+    defer runtime.deinit();
+
+    const injected_catalog = [_]TelegramModelDescriptor{
+        .{ .id = "deepseek/deepseek-chat", .provider = "deepseek", .name = "DeepSeek Chat", .mode = "auto", .capability = "reasoning", .aliases = &.{ "deepseek-chat", "chat" } },
+        .{ .id = "deepseek/deepseek-reasoner", .provider = "deepseek", .name = "DeepSeek Reasoner", .mode = "thinking", .capability = "reasoning", .aliases = &.{"reasoner"} },
+        .{ .id = "gpt-5.2", .provider = "chatgpt", .name = "GPT-5.2", .mode = "auto", .capability = "reasoning", .aliases = &.{ "auto", "default" } },
+    };
+    var resolver_ctx: TestModelCatalogContext = .{
+        .descriptors = injected_catalog[0..],
+    };
+    runtime.setModelCatalogResolver(@ptrCast(&resolver_ctx), testModelCatalogResolver);
+
+    const allocator = std.testing.allocator;
+
+    var list = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-model-list-injected\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-dyn\",\"sessionId\":\"sess-dyn\",\"message\":\"/model list deepseek\"}}");
+    defer list.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, list.reply, "Models for `deepseek`") != null);
+    try std.testing.expect(std.mem.indexOf(u8, list.reply, "deepseek/deepseek-chat") != null);
+
+    var provider_default = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-model-provider-injected\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-dyn\",\"sessionId\":\"sess-dyn\",\"message\":\"/model deepseek\"}}");
+    defer provider_default.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, provider_default.provider, "deepseek"));
+    try std.testing.expect(std.mem.eql(u8, provider_default.model, "deepseek/deepseek-chat"));
+    try std.testing.expect(std.mem.indexOf(u8, provider_default.reply, "for `room-dyn`") != null);
+
+    var alias_set = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-model-alias-injected\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-dyn\",\"sessionId\":\"sess-dyn\",\"message\":\"/model reasoner\"}}");
+    defer alias_set.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, alias_set.provider, "deepseek"));
+    try std.testing.expect(std.mem.eql(u8, alias_set.model, "deepseek/deepseek-reasoner"));
+}
+
 test "telegram runtime tts command lifecycle" {
     var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
     defer login.deinit();
@@ -4213,6 +4357,10 @@ const TestProviderApiKeyContext = struct {
     api_key: []const u8,
 };
 
+const TestModelCatalogContext = struct {
+    descriptors: []const TelegramModelDescriptor,
+};
+
 fn testProviderApiKeyResolver(
     ctx: *anyopaque,
     allocator: std.mem.Allocator,
@@ -4222,6 +4370,15 @@ fn testProviderApiKeyResolver(
     const provider = normalizeProvider(provider_raw);
     if (!std.ascii.eqlIgnoreCase(provider, typed.provider)) return null;
     return try allocator.dupe(u8, typed.api_key);
+}
+
+fn testModelCatalogResolver(
+    ctx: *anyopaque,
+    allocator: std.mem.Allocator,
+    _: []const u8,
+) ![]TelegramModelDescriptor {
+    const typed: *const TestModelCatalogContext = @ptrCast(@alignCast(ctx));
+    return allocator.dupe(TelegramModelDescriptor, typed.descriptors);
 }
 
 test "telegram runtime uses provider api key when no authorized browser session exists" {

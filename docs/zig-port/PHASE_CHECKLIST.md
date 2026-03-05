@@ -1,13 +1,21 @@
 # Phase Checklist
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
-Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `172/172`.
+Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `174/174`.
 
 ## Full-Stack Replacement Track (FS0..FS7)
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)
 - [ ] FS1 - Runtime/core consolidation
 - [ ] FS2 - Provider + channel completion
   - Latest delivered slice:
+    - Telegram `/model` now consumes a shared compat-backed catalog resolver instead of a Telegram-only static catalog when dispatcher wiring is available:
+      - `/model status`, `/model list`, `/model list <provider>`, provider-default selection, provider-scoped resolution, alias resolution, and invalid-model/provider messaging now see the same merged catalog state used by `models.list`.
+      - dispatcher-fed dynamic compat models are now visible to Telegram model commands, including provider-default selection for providers that exist only in compat dynamic state.
+      - runtime fallback no longer collapses empty provider filters to `chatgpt`; full-catalog paths now preserve all static providers when no dispatcher resolver is attached.
+      - `/model set|next|reset` replies now use Go-style target-aware wording (`for <target>`) while preserving the existing Zig metadata envelope.
+      - regression coverage added:
+        - `channels.telegram_runtime.test.telegram runtime model command uses injected catalog resolver`
+        - `gateway.dispatcher.test.dispatch send model command uses compat-backed dynamic catalog for telegram runtime`
     - Telegram `/model` and `/tts` command receipts now expose a Go-compatible nested `metadata` object while preserving Zig's existing top-level command fields:
       - `send` results now include `result.metadata` for `/model status|list|list <provider>|next|reset|<provider>|<model>|<provider>/<model>` and `/tts status|providers|provider|on|off|say|speak|help`.
       - `/tts` now accepts Go-compatible `/tts say <text>` in addition to Zig's existing `/tts speak <text>` path, and a bare `/tts` now routes to `status` instead of `help`.

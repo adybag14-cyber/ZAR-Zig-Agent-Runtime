@@ -56,8 +56,17 @@ Full-stack replacement execution reference:
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `172/172`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `174/174`.
 - Full-stack replacement kickoff (2026-03-05):
+  - Phase 5 Telegram model catalog parity expanded:
+    - `src/channels/telegram_runtime.zig` now accepts a dispatcher-fed model catalog resolver, so Telegram `/model` commands can consume the shared compat catalog instead of a Telegram-only static table.
+    - `/model status`, `/model list`, `/model list <provider>`, provider-default selection, provider-scoped resolution, alias resolution, and invalid-model/provider replies now operate on the merged compat catalog surface already used by `models.list`.
+    - dispatcher-fed dynamic compat models are now visible inside Telegram model flows, including provider-default selection for providers that exist only in dynamic compat state.
+    - runtime fallback handling for empty provider filters now preserves the full static provider catalog instead of collapsing to `chatgpt`.
+    - `/model set|next|reset` replies now include Go-style target-aware wording (`for <target>`), aligning Telegram UX more closely with Go without changing the existing Zig command envelope.
+    - regression tests added:
+      - `channels.telegram_runtime.test.telegram runtime model command uses injected catalog resolver`
+      - `gateway.dispatcher.test.dispatch send model command uses compat-backed dynamic catalog for telegram runtime`
   - Phase 5 Telegram model/TTS envelope parity expanded:
     - `src/channels/telegram_runtime.zig` now attaches a nested `metadata` object to `/model` and `/tts` command receipts while preserving Zig's stable top-level send fields.
     - model command metadata now carries the Go-compatible selection envelope:

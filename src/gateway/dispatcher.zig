@@ -8299,6 +8299,7 @@ fn getTelegramRuntime() !*telegram_runtime.TelegramRuntime {
     const compat = try getCompatState();
     telegram_runtime_instance.?.setMemoryStore(try getMemoryStore());
     telegram_runtime_instance.?.setProviderApiKeyResolver(@ptrCast(compat), resolveTelegramProviderApiKeyAlloc);
+    telegram_runtime_instance.?.setModelCatalogResolver(@ptrCast(compat), resolveTelegramModelCatalogAlloc);
     try telegram_runtime_instance.?.setBridgeConfig(cfg.lightpanda_endpoint, cfg.lightpanda_timeout_ms);
     return &telegram_runtime_instance.?;
 }
@@ -9941,6 +9942,35 @@ fn resolveTelegramProviderApiKeyAlloc(
 ) anyerror!?[]u8 {
     const compat: *CompatState = @ptrCast(@alignCast(ctx));
     return resolveBrowserProviderApiKeyAlloc(allocator, compat, provider_raw);
+}
+
+fn resolveTelegramModelCatalogAlloc(
+    ctx: *anyopaque,
+    allocator: std.mem.Allocator,
+    refresh_provider_raw: []const u8,
+) anyerror![]telegram_runtime.TelegramModelDescriptor {
+    const compat: *CompatState = @ptrCast(@alignCast(ctx));
+    const refresh_provider = normalizeModelCatalogProvider(refresh_provider_raw);
+
+    const refresh = try refreshCompatModelCatalog(allocator, compat, refresh_provider);
+    defer allocator.free(refresh.providers);
+
+    const models = try filteredModelCatalog(allocator, compat, "", 0);
+    defer allocator.free(models);
+
+    var descriptors: std.ArrayList(telegram_runtime.TelegramModelDescriptor) = .empty;
+    defer descriptors.deinit(allocator);
+    for (models) |model| {
+        try descriptors.append(allocator, .{
+            .id = model.id,
+            .provider = model.provider,
+            .name = model.name,
+            .mode = model.mode,
+            .capability = model.capability,
+            .aliases = &.{},
+        });
+    }
+    return descriptors.toOwnedSlice(allocator);
 }
 
 fn resolveFirstSecretCandidateAlloc(
@@ -13160,6 +13190,53 @@ test "dispatch send model and tts commands expose go-compatible metadata envelop
         const output_format = metadata.object.get("outputFormat") orelse return error.TestUnexpectedResult;
         try std.testing.expect(output_format == .string and output_format.string.len > 0);
     }
+}
+
+test "dispatch send model command uses compat-backed dynamic catalog for telegram runtime" {
+    const allocator = std.testing.allocator;
+    const compat = try getCompatState();
+    const original_len = compat.dynamic_models.items.len;
+    defer {
+        while (compat.dynamic_models.items.len > original_len) {
+            const idx = compat.dynamic_models.items.len - 1;
+            compat.dynamic_models.items[idx].deinit(compat.allocator);
+            compat.dynamic_models.items.len = idx;
+        }
+    }
+
+    try compat.dynamic_models.append(compat.allocator, try allocOwnedModelDescriptor(compat.allocator, .{
+        .id = "deepseek/deepseek-chat",
+        .provider = "deepseek",
+        .name = "DeepSeek Chat",
+        .mode = "auto",
+        .capability = "reasoning",
+    }));
+    try compat.dynamic_models.append(compat.allocator, try allocOwnedModelDescriptor(compat.allocator, .{
+        .id = "deepseek/deepseek-reasoner",
+        .provider = "deepseek",
+        .name = "DeepSeek Reasoner",
+        .mode = "thinking",
+        .capability = "reasoning",
+    }));
+
+    const list = try dispatch(allocator, "{\"id\":\"tg-model-dynamic-list\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-dynamic\",\"sessionId\":\"tg-dynamic\",\"message\":\"/model list deepseek\"}}");
+    defer allocator.free(list);
+    try std.testing.expect(std.mem.indexOf(u8, list, "deepseek/deepseek-chat") != null);
+    const list_type = try extractResultObjectStringField(allocator, list, "metadata", "type");
+    defer allocator.free(list_type);
+    try std.testing.expect(std.mem.eql(u8, list_type, "model.list"));
+    const requested_provider = try extractResultObjectStringField(allocator, list, "metadata", "requestedProvider");
+    defer allocator.free(requested_provider);
+    try std.testing.expect(std.mem.eql(u8, requested_provider, "deepseek"));
+
+    const set_default = try dispatch(allocator, "{\"id\":\"tg-model-dynamic-set\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-dynamic\",\"sessionId\":\"tg-dynamic\",\"message\":\"/model deepseek\"}}");
+    defer allocator.free(set_default);
+    const current_provider = try extractResultObjectStringField(allocator, set_default, "metadata", "currentProvider");
+    defer allocator.free(current_provider);
+    try std.testing.expect(std.mem.eql(u8, current_provider, "deepseek"));
+    const current_model = try extractResultObjectStringField(allocator, set_default, "metadata", "currentModel");
+    defer allocator.free(current_model);
+    try std.testing.expect(std.mem.eql(u8, current_model, "deepseek/deepseek-chat"));
 }
 
 test "dispatch channels.telegram.webhook.receive routes update through runtime and skips delivery in dry run" {
