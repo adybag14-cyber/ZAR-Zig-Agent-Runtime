@@ -2260,6 +2260,7 @@ test "telegram runtime auth complete infers provider from callback URL" {
 }
 
 test "telegram runtime normalizes additional provider aliases" {
+    try std.testing.expect(std.mem.eql(u8, normalizeProvider("openai-codex-cli"), "codex"));
     try std.testing.expect(std.mem.eql(u8, normalizeProvider("minimax-cli"), "minimax"));
     try std.testing.expect(std.mem.eql(u8, normalizeProvider("kimi-coding"), "kimi"));
     try std.testing.expect(std.mem.eql(u8, normalizeProvider("bigmodel"), "zhipuai"));

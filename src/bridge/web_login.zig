@@ -560,7 +560,7 @@ pub fn normalizeProviderAlias(provider: []const u8) []const u8 {
     const trimmed = std.mem.trim(u8, provider, " \t\r\n");
     if (trimmed.len == 0) return "chatgpt";
     if (std.ascii.eqlIgnoreCase(trimmed, "openai") or std.ascii.eqlIgnoreCase(trimmed, "openai-chatgpt") or std.ascii.eqlIgnoreCase(trimmed, "chatgpt.com") or std.ascii.eqlIgnoreCase(trimmed, "chatgpt-web")) return "chatgpt";
-    if (std.ascii.eqlIgnoreCase(trimmed, "codex") or std.ascii.eqlIgnoreCase(trimmed, "openai-codex") or std.ascii.eqlIgnoreCase(trimmed, "codex-cli")) return "codex";
+    if (std.ascii.eqlIgnoreCase(trimmed, "codex") or std.ascii.eqlIgnoreCase(trimmed, "openai-codex") or std.ascii.eqlIgnoreCase(trimmed, "codex-cli") or std.ascii.eqlIgnoreCase(trimmed, "openai-codex-cli")) return "codex";
     if (std.ascii.eqlIgnoreCase(trimmed, "anthropic") or std.ascii.eqlIgnoreCase(trimmed, "claude-cli") or std.ascii.eqlIgnoreCase(trimmed, "claude-code") or std.ascii.eqlIgnoreCase(trimmed, "claude-desktop")) return "claude";
     if (std.ascii.eqlIgnoreCase(trimmed, "google") or std.ascii.eqlIgnoreCase(trimmed, "google-gemini") or std.ascii.eqlIgnoreCase(trimmed, "google-gemini-cli") or std.ascii.eqlIgnoreCase(trimmed, "gemini-cli")) return "gemini";
     if (std.ascii.eqlIgnoreCase(trimmed, "qwen-portal") or std.ascii.eqlIgnoreCase(trimmed, "qwen-cli") or std.ascii.eqlIgnoreCase(trimmed, "qwen-chat") or std.ascii.eqlIgnoreCase(trimmed, "qwen35") or std.ascii.eqlIgnoreCase(trimmed, "qwen3.5") or std.ascii.eqlIgnoreCase(trimmed, "qwen-3.5") or std.ascii.eqlIgnoreCase(trimmed, "copaw") or std.ascii.eqlIgnoreCase(trimmed, "qwen-copaw") or std.ascii.eqlIgnoreCase(trimmed, "qwen-agent") or std.ascii.eqlIgnoreCase(trimmed, "qwen-free") or std.ascii.eqlIgnoreCase(trimmed, "qwen-chat-free") or std.ascii.eqlIgnoreCase(trimmed, "qwen-free-chat")) return "qwen";
@@ -699,6 +699,7 @@ test "normalize provider alias accepts free guest chat variants" {
     try std.testing.expect(std.mem.eql(u8, normalizeProviderAlias("qwen-chat-free"), "qwen"));
     try std.testing.expect(std.mem.eql(u8, normalizeProviderAlias("glm-5-chat-free"), "zai"));
     try std.testing.expect(std.mem.eql(u8, normalizeProviderAlias("mercury-2-chat-free"), "inception"));
+    try std.testing.expect(std.mem.eql(u8, normalizeProviderAlias("openai-codex-cli"), "codex"));
 }
 
 test "non guest providers reject empty or guest completion token" {
