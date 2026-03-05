@@ -1786,19 +1786,7 @@ fn looksLikeLoginSessionID(token_raw: []const u8) bool {
 }
 
 fn normalizeProvider(provider_raw: []const u8) []const u8 {
-    const trimmed = std.mem.trim(u8, provider_raw, " \t\r\n");
-    if (trimmed.len == 0) return "chatgpt";
-    if (std.ascii.eqlIgnoreCase(trimmed, "openai") or std.ascii.eqlIgnoreCase(trimmed, "openai-chatgpt") or std.ascii.eqlIgnoreCase(trimmed, "chatgpt.com") or std.ascii.eqlIgnoreCase(trimmed, "chatgpt-web")) return "chatgpt";
-    if (std.ascii.eqlIgnoreCase(trimmed, "openai-codex") or std.ascii.eqlIgnoreCase(trimmed, "codex-cli") or std.ascii.eqlIgnoreCase(trimmed, "openai-codex-cli")) return "codex";
-    if (std.ascii.eqlIgnoreCase(trimmed, "anthropic") or std.ascii.eqlIgnoreCase(trimmed, "claude-cli") or std.ascii.eqlIgnoreCase(trimmed, "claude-code") or std.ascii.eqlIgnoreCase(trimmed, "claude-desktop")) return "claude";
-    if (std.ascii.eqlIgnoreCase(trimmed, "google") or std.ascii.eqlIgnoreCase(trimmed, "google-gemini") or std.ascii.eqlIgnoreCase(trimmed, "google-gemini-cli") or std.ascii.eqlIgnoreCase(trimmed, "gemini-cli")) return "gemini";
-    if (std.ascii.eqlIgnoreCase(trimmed, "qwen-portal") or std.ascii.eqlIgnoreCase(trimmed, "qwen-chat") or std.ascii.eqlIgnoreCase(trimmed, "qwen-cli") or std.ascii.eqlIgnoreCase(trimmed, "qwen35") or std.ascii.eqlIgnoreCase(trimmed, "qwen3.5") or std.ascii.eqlIgnoreCase(trimmed, "qwen-3.5") or std.ascii.eqlIgnoreCase(trimmed, "copaw") or std.ascii.eqlIgnoreCase(trimmed, "qwen-copaw") or std.ascii.eqlIgnoreCase(trimmed, "qwen-agent") or std.ascii.eqlIgnoreCase(trimmed, "qwen-free") or std.ascii.eqlIgnoreCase(trimmed, "qwen-chat-free") or std.ascii.eqlIgnoreCase(trimmed, "qwen-free-chat")) return "qwen";
-    if (std.ascii.eqlIgnoreCase(trimmed, "minimax-portal") or std.ascii.eqlIgnoreCase(trimmed, "minimax-cli")) return "minimax";
-    if (std.ascii.eqlIgnoreCase(trimmed, "kimi-code") or std.ascii.eqlIgnoreCase(trimmed, "kimi-coding") or std.ascii.eqlIgnoreCase(trimmed, "kimi-for-coding")) return "kimi";
-    if (std.ascii.eqlIgnoreCase(trimmed, "zhipu") or std.ascii.eqlIgnoreCase(trimmed, "zhipu-ai") or std.ascii.eqlIgnoreCase(trimmed, "bigmodel") or std.ascii.eqlIgnoreCase(trimmed, "bigmodel-cn") or std.ascii.eqlIgnoreCase(trimmed, "zhipuai-coding") or std.ascii.eqlIgnoreCase(trimmed, "zhipu-coding")) return "zhipuai";
-    if (std.ascii.eqlIgnoreCase(trimmed, "z.ai") or std.ascii.eqlIgnoreCase(trimmed, "z-ai") or std.ascii.eqlIgnoreCase(trimmed, "zaiweb") or std.ascii.eqlIgnoreCase(trimmed, "zai-web") or std.ascii.eqlIgnoreCase(trimmed, "glm") or std.ascii.eqlIgnoreCase(trimmed, "glm-5") or std.ascii.eqlIgnoreCase(trimmed, "glm5") or std.ascii.eqlIgnoreCase(trimmed, "zai-chat-free") or std.ascii.eqlIgnoreCase(trimmed, "glm-chat-free") or std.ascii.eqlIgnoreCase(trimmed, "glm5-chat-free") or std.ascii.eqlIgnoreCase(trimmed, "glm-5-chat-free")) return "zai";
-    if (std.ascii.eqlIgnoreCase(trimmed, "inception-labs") or std.ascii.eqlIgnoreCase(trimmed, "inceptionlabs") or std.ascii.eqlIgnoreCase(trimmed, "mercury") or std.ascii.eqlIgnoreCase(trimmed, "mercury2") or std.ascii.eqlIgnoreCase(trimmed, "mercury-2") or std.ascii.eqlIgnoreCase(trimmed, "inception-chat-free") or std.ascii.eqlIgnoreCase(trimmed, "mercury-chat-free") or std.ascii.eqlIgnoreCase(trimmed, "mercury2-chat-free") or std.ascii.eqlIgnoreCase(trimmed, "mercury-2-chat-free")) return "inception";
-    return trimmed;
+    return web_login.normalizeProviderAlias(provider_raw);
 }
 
 fn normalizeModel(model_raw: []const u8) []const u8 {

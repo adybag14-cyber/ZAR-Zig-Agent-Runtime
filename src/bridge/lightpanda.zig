@@ -1,5 +1,6 @@
 const std = @import("std");
 const time_util = @import("../util/time.zig");
+const web_login = @import("web_login.zig");
 
 pub const BridgeError = error{
     UnsupportedEngine,
@@ -73,18 +74,23 @@ pub fn normalizeEngine(raw: []const u8) BridgeError![]const u8 {
 pub fn normalizeProvider(raw: []const u8) BridgeError![]const u8 {
     const provider = std.mem.trim(u8, raw, " \t\r\n");
     if (provider.len == 0) return "chatgpt";
-    if (std.ascii.eqlIgnoreCase(provider, "openai") or std.ascii.eqlIgnoreCase(provider, "openai-chatgpt") or std.ascii.eqlIgnoreCase(provider, "chatgpt-web") or std.ascii.eqlIgnoreCase(provider, "chatgpt.com")) return "chatgpt";
-    if (std.ascii.eqlIgnoreCase(provider, "openai-codex") or std.ascii.eqlIgnoreCase(provider, "codex-cli") or std.ascii.eqlIgnoreCase(provider, "openai-codex-cli")) return "codex";
-    if (std.ascii.eqlIgnoreCase(provider, "anthropic") or std.ascii.eqlIgnoreCase(provider, "claude-cli") or std.ascii.eqlIgnoreCase(provider, "claude-code") or std.ascii.eqlIgnoreCase(provider, "claude-desktop")) return "claude";
-    if (std.ascii.eqlIgnoreCase(provider, "google") or std.ascii.eqlIgnoreCase(provider, "google-gemini") or std.ascii.eqlIgnoreCase(provider, "google-gemini-cli") or std.ascii.eqlIgnoreCase(provider, "gemini-cli")) return "gemini";
-    if (std.ascii.eqlIgnoreCase(provider, "qwen-portal") or std.ascii.eqlIgnoreCase(provider, "qwen-cli") or std.ascii.eqlIgnoreCase(provider, "qwen-chat") or std.ascii.eqlIgnoreCase(provider, "qwen35") or std.ascii.eqlIgnoreCase(provider, "qwen3.5") or std.ascii.eqlIgnoreCase(provider, "qwen-3.5") or std.ascii.eqlIgnoreCase(provider, "copaw") or std.ascii.eqlIgnoreCase(provider, "qwen-copaw") or std.ascii.eqlIgnoreCase(provider, "qwen-agent") or std.ascii.eqlIgnoreCase(provider, "qwen-free") or std.ascii.eqlIgnoreCase(provider, "qwen-chat-free") or std.ascii.eqlIgnoreCase(provider, "qwen-free-chat")) return "qwen";
-    if (std.ascii.eqlIgnoreCase(provider, "minimax-portal") or std.ascii.eqlIgnoreCase(provider, "minimax-cli")) return "minimax";
-    if (std.ascii.eqlIgnoreCase(provider, "kimi-code") or std.ascii.eqlIgnoreCase(provider, "kimi-coding") or std.ascii.eqlIgnoreCase(provider, "kimi-for-coding")) return "kimi";
-    if (std.ascii.eqlIgnoreCase(provider, "opencode-zen") or std.ascii.eqlIgnoreCase(provider, "opencode-ai") or std.ascii.eqlIgnoreCase(provider, "opencode-go") or std.ascii.eqlIgnoreCase(provider, "opencode_free") or std.ascii.eqlIgnoreCase(provider, "opencodefree")) return "opencode";
-    if (std.ascii.eqlIgnoreCase(provider, "zhipu") or std.ascii.eqlIgnoreCase(provider, "zhipu-ai") or std.ascii.eqlIgnoreCase(provider, "bigmodel") or std.ascii.eqlIgnoreCase(provider, "bigmodel-cn") or std.ascii.eqlIgnoreCase(provider, "zhipuai-coding") or std.ascii.eqlIgnoreCase(provider, "zhipu-coding")) return "zhipuai";
-    if (std.ascii.eqlIgnoreCase(provider, "z.ai") or std.ascii.eqlIgnoreCase(provider, "z-ai") or std.ascii.eqlIgnoreCase(provider, "zaiweb") or std.ascii.eqlIgnoreCase(provider, "zai-web") or std.ascii.eqlIgnoreCase(provider, "glm") or std.ascii.eqlIgnoreCase(provider, "glm5") or std.ascii.eqlIgnoreCase(provider, "glm-5") or std.ascii.eqlIgnoreCase(provider, "zai-chat-free") or std.ascii.eqlIgnoreCase(provider, "glm-chat-free") or std.ascii.eqlIgnoreCase(provider, "glm5-chat-free") or std.ascii.eqlIgnoreCase(provider, "glm-5-chat-free")) return "zai";
-    if (std.ascii.eqlIgnoreCase(provider, "inception-labs") or std.ascii.eqlIgnoreCase(provider, "inceptionlabs") or std.ascii.eqlIgnoreCase(provider, "mercury") or std.ascii.eqlIgnoreCase(provider, "mercury2") or std.ascii.eqlIgnoreCase(provider, "mercury-2") or std.ascii.eqlIgnoreCase(provider, "inception-chat-free") or std.ascii.eqlIgnoreCase(provider, "mercury-chat-free") or std.ascii.eqlIgnoreCase(provider, "mercury2-chat-free") or std.ascii.eqlIgnoreCase(provider, "mercury-2-chat-free")) return "inception";
-    if (std.ascii.eqlIgnoreCase(provider, "chatgpt") or std.ascii.eqlIgnoreCase(provider, "codex") or std.ascii.eqlIgnoreCase(provider, "claude") or std.ascii.eqlIgnoreCase(provider, "gemini") or std.ascii.eqlIgnoreCase(provider, "qwen") or std.ascii.eqlIgnoreCase(provider, "minimax") or std.ascii.eqlIgnoreCase(provider, "kimi") or std.ascii.eqlIgnoreCase(provider, "openrouter") or std.ascii.eqlIgnoreCase(provider, "opencode") or std.ascii.eqlIgnoreCase(provider, "zhipuai") or std.ascii.eqlIgnoreCase(provider, "zai") or std.ascii.eqlIgnoreCase(provider, "inception")) return provider;
+
+    const normalized = web_login.normalizeProviderAlias(provider);
+    if (std.ascii.eqlIgnoreCase(normalized, "chatgpt") or
+        std.ascii.eqlIgnoreCase(normalized, "codex") or
+        std.ascii.eqlIgnoreCase(normalized, "claude") or
+        std.ascii.eqlIgnoreCase(normalized, "gemini") or
+        std.ascii.eqlIgnoreCase(normalized, "qwen") or
+        std.ascii.eqlIgnoreCase(normalized, "minimax") or
+        std.ascii.eqlIgnoreCase(normalized, "kimi") or
+        std.ascii.eqlIgnoreCase(normalized, "openrouter") or
+        std.ascii.eqlIgnoreCase(normalized, "opencode") or
+        std.ascii.eqlIgnoreCase(normalized, "zhipuai") or
+        std.ascii.eqlIgnoreCase(normalized, "zai") or
+        std.ascii.eqlIgnoreCase(normalized, "inception"))
+    {
+        return normalized;
+    }
     return error.UnsupportedProvider;
 }
 
