@@ -372,6 +372,12 @@ const PersistedConfigEntry = struct {
     value: []const u8,
 };
 
+const PersistedSessionChannel = struct {
+    sessionId: []const u8,
+    channel: []const u8,
+    updatedAtMs: i64,
+};
+
 const PersistedCompatState = struct {
     heartbeatEnabled: bool = true,
     heartbeatIntervalMs: u32 = 15_000,
@@ -401,6 +407,7 @@ const PersistedCompatState = struct {
     events: []PersistedCompatEvent = &.{},
     updateJobs: []PersistedCompatUpdateJob = &.{},
     configOverlay: []PersistedConfigEntry = &.{},
+    sessionChannels: []PersistedSessionChannel = &.{},
     sessionTombstones: []const []const u8 = &.{},
 };
 
@@ -425,6 +432,11 @@ const CompatState = struct {
         enabled: bool,
         intervalMs: u32,
         lastAtMs: i64,
+    };
+
+    const SessionChannelState = struct {
+        channel: []u8,
+        updated_at_ms: i64,
     };
 
     allocator: std.mem.Allocator,
@@ -508,6 +520,7 @@ const CompatState = struct {
     rollback_planned_at_ms: i64,
     rollback_last_run_at_ms: i64,
     config_overlay: std.StringHashMap([]u8),
+    session_channels: std.StringHashMap(SessionChannelState),
     next_event_id: u64,
     next_update_id: u64,
     session_tombstones: std.StringHashMap(void),
@@ -598,6 +611,7 @@ const CompatState = struct {
             .rollback_planned_at_ms = 0,
             .rollback_last_run_at_ms = 0,
             .config_overlay = std.StringHashMap([]u8).init(allocator),
+            .session_channels = std.StringHashMap(SessionChannelState).init(allocator),
             .next_event_id = 1,
             .next_update_id = 1,
             .session_tombstones = std.StringHashMap(void).init(allocator),
@@ -670,6 +684,13 @@ const CompatState = struct {
         }
         self.config_overlay.deinit();
 
+        var sessions_it = self.session_channels.iterator();
+        while (sessions_it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            self.allocator.free(entry.value_ptr.channel);
+        }
+        self.session_channels.deinit();
+
         var tombstones = self.session_tombstones.iterator();
         while (tombstones.next()) |entry| self.allocator.free(entry.key_ptr.*);
         self.session_tombstones.deinit();
@@ -691,6 +712,7 @@ const CompatState = struct {
         return self.events.items.len == 0 and
             self.update_jobs.items.len == 0 and
             self.config_overlay.count() == 0 and
+            self.session_channels.count() == 0 and
             self.session_tombstones.count() == 0 and
             self.next_event_id == 1 and
             self.next_update_id == 1;
@@ -709,6 +731,13 @@ const CompatState = struct {
             self.allocator.free(entry.value_ptr.*);
         }
         self.config_overlay.clearRetainingCapacity();
+
+        var sessions_it = self.session_channels.iterator();
+        while (sessions_it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            self.allocator.free(entry.value_ptr.channel);
+        }
+        self.session_channels.clearRetainingCapacity();
 
         var tombstones = self.session_tombstones.iterator();
         while (tombstones.next()) |entry| self.allocator.free(entry.key_ptr.*);
@@ -798,6 +827,13 @@ const CompatState = struct {
             try self.mergeConfigEntry(entry.key, entry.value);
         }
 
+        for (parsed.value.sessionChannels) |entry| {
+            try self.upsertSessionChannel(entry.sessionId, entry.channel);
+            if (self.session_channels.getPtr(std.mem.trim(u8, entry.sessionId, " \t\r\n"))) |state| {
+                state.updated_at_ms = entry.updatedAtMs;
+            }
+        }
+
         for (parsed.value.sessionTombstones) |entry| {
             try self.markSessionDeleted(entry);
         }
@@ -858,6 +894,19 @@ const CompatState = struct {
             overlay_index += 1;
         }
 
+        var persisted_session_channels = try self.allocator.alloc(PersistedSessionChannel, self.session_channels.count());
+        defer self.allocator.free(persisted_session_channels);
+        var session_channel_index: usize = 0;
+        var session_it = self.session_channels.iterator();
+        while (session_it.next()) |entry| {
+            persisted_session_channels[session_channel_index] = .{
+                .sessionId = entry.key_ptr.*,
+                .channel = entry.value_ptr.channel,
+                .updatedAtMs = entry.value_ptr.updated_at_ms,
+            };
+            session_channel_index += 1;
+        }
+
         var persisted_tombstones = try self.allocator.alloc([]const u8, self.session_tombstones.count());
         defer self.allocator.free(persisted_tombstones);
         var tombstone_index: usize = 0;
@@ -898,6 +947,7 @@ const CompatState = struct {
             .events = persisted_events,
             .updateJobs = persisted_update_jobs,
             .configOverlay = persisted_overlay,
+            .sessionChannels = persisted_session_channels,
             .sessionTombstones = persisted_tombstones,
         }, .{}, &out.writer);
         const payload = try out.toOwnedSlice();
@@ -1939,6 +1989,41 @@ const CompatState = struct {
         return self.pending_approvals.items[self.pending_approvals.items.len - 1];
     }
 
+    fn upsertSessionChannel(self: *CompatState, session_id: []const u8, channel: []const u8) !void {
+        const key = std.mem.trim(u8, session_id, " \t\r\n");
+        const normalized_channel = normalizeSendMemoryChannel(channel);
+        if (key.len == 0 or normalized_channel.len == 0) return;
+
+        if (self.session_channels.getPtr(key)) |existing| {
+            self.allocator.free(existing.channel);
+            existing.channel = try self.allocator.dupe(u8, normalized_channel);
+            existing.updated_at_ms = time_util.nowMs();
+            return;
+        }
+
+        const owned_key = try self.allocator.dupe(u8, key);
+        errdefer self.allocator.free(owned_key);
+        try self.session_channels.put(owned_key, .{
+            .channel = try self.allocator.dupe(u8, normalized_channel),
+            .updated_at_ms = time_util.nowMs(),
+        });
+    }
+
+    fn getSessionChannel(self: *const CompatState, session_id: []const u8) ?SessionChannelState {
+        const key = std.mem.trim(u8, session_id, " \t\r\n");
+        if (key.len == 0) return null;
+        return self.session_channels.get(key);
+    }
+
+    fn removeSessionChannel(self: *CompatState, session_id: []const u8) void {
+        const key = std.mem.trim(u8, session_id, " \t\r\n");
+        if (key.len == 0) return;
+        if (self.session_channels.fetchRemove(key)) |removed| {
+            self.allocator.free(removed.key);
+            self.allocator.free(removed.value.channel);
+        }
+    }
+
     fn markSessionDeleted(self: *CompatState, session_id: []const u8) !void {
         const key = std.mem.trim(u8, session_id, " \t\r\n");
         if (key.len == 0) return;
@@ -2313,6 +2398,8 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         const session_id = firstParamString(params, "sessionId", "session-zig-local");
         const memory = try getMemoryStore();
         try memory.append(session_id, channel, "connect", "system", "session connected");
+        const compat = try getCompatState();
+        try compat.upsertSessionChannel(session_id, channel);
         return protocol.encodeResult(allocator, req.id, .{
             .sessionId = session_id,
             .role = role,
@@ -5369,6 +5456,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         try memory.append(session_id, channel, "sessions.patch", "system", "session patched");
         const compat = try getCompatState();
         compat.clearSessionDeleted(session_id);
+        try compat.upsertSessionChannel(session_id, channel);
         const summary = (try findSessionSummary(allocator, memory, compat, session_id)) orelse {
             return protocol.encodeError(allocator, req.id, .{
                 .code = -32004,
@@ -6022,6 +6110,8 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             try memory.append(user_entry.session_id, user_entry.channel, "send", "user", user_entry.message);
         }
         try memory.append(send_result.sessionId, send_result.channel, "send", "assistant", send_result.reply);
+        const compat = try getCompatState();
+        try compat.upsertSessionChannel(send_result.sessionId, send_result.channel);
 
         return protocol.encodeResult(allocator, req.id, send_result);
     }
@@ -6143,6 +6233,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         };
         const compat = try getCompatState();
         try compat.markSessionDeleted(session_id);
+        compat.removeSessionChannel(session_id);
         return protocol.encodeResult(allocator, req.id, .{
             .ok = true,
             .sessionId = session_id,
@@ -8918,10 +9009,15 @@ fn normalizeSendFrameChannelForDispatch(allocator: std.mem.Allocator, frame_json
     const session_id = resolveSessionId(params.*);
     var resolved_channel: []const u8 = "";
     if (session_id.len > 0) {
-        const memory = try getMemoryStore();
         const compat = try getCompatState();
-        if (try findSessionSummary(allocator, memory, compat, session_id)) |summary| {
-            resolved_channel = std.mem.trim(u8, summary.channel, " \t\r\n");
+        if (compat.getSessionChannel(session_id)) |session_state| {
+            resolved_channel = std.mem.trim(u8, session_state.channel, " \t\r\n");
+        }
+        if (resolved_channel.len == 0) {
+            const memory = try getMemoryStore();
+            if (try findSessionSummary(allocator, memory, compat, session_id)) |summary| {
+                resolved_channel = std.mem.trim(u8, summary.channel, " \t\r\n");
+            }
         }
     }
     if (resolved_channel.len == 0) resolved_channel = "webchat";
@@ -9083,6 +9179,20 @@ fn collectSessionSummaries(
         });
     }
 
+    var session_it = compat.session_channels.iterator();
+    while (session_it.next()) |entry| {
+        const sid = std.mem.trim(u8, entry.key_ptr.*, " \t\r\n");
+        if (sid.len == 0) continue;
+        if (compat.isSessionDeleted(sid)) continue;
+        if (summary_map.get(sid) != null) continue;
+        try summary_map.put(sid, .{
+            .sessionId = sid,
+            .channel = entry.value_ptr.channel,
+            .lastSeenAtMs = entry.value_ptr.updated_at_ms,
+            .authenticated = true,
+        });
+    }
+
     var tmp: std.ArrayList(SessionSummary) = .empty;
     defer tmp.deinit(allocator);
     var it = summary_map.iterator();
@@ -9112,11 +9222,21 @@ fn findSessionSummary(
     const stats = memory.stats();
     var history = try memory.historyBySession(allocator, needle, stats.maxEntries);
     defer history.deinit(allocator);
-    if (history.count == 0) return null;
+    if (history.count == 0) {
+        if (compat.getSessionChannel(needle)) |state| {
+            return SessionSummary{
+                .sessionId = needle,
+                .channel = state.channel,
+                .lastSeenAtMs = state.updated_at_ms,
+                .authenticated = true,
+            };
+        }
+        return null;
+    }
     const latest = history.items[history.count - 1];
     return SessionSummary{
         .sessionId = needle,
-        .channel = latest.channel,
+        .channel = if (latest.channel.len > 0) latest.channel else if (compat.getSessionChannel(needle)) |state| state.channel else latest.channel,
         .lastSeenAtMs = latest.createdAtMs,
         .authenticated = true,
     };
@@ -11467,6 +11587,24 @@ test "dispatch browser.open and send aliases follow existing runtime paths" {
     defer allocator.free(send_without_channel);
     try std.testing.expect(std.mem.indexOf(u8, send_without_channel, "\"accepted\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, send_without_channel, "\"channel\":\"cli\"") != null);
+
+    const reset_cli = try dispatch(allocator, "{\"id\":\"reset-cli\",\"method\":\"sessions.reset\",\"params\":{\"sessionId\":\"alias-cli-fallback\"}}");
+    defer allocator.free(reset_cli);
+    try std.testing.expect(std.mem.indexOf(u8, reset_cli, "\"ok\":true") != null);
+
+    const send_without_channel_after_reset = try dispatch(allocator, "{\"id\":\"send-no-channel-reset\",\"method\":\"send\",\"params\":{\"to\":\"alias-cli\",\"sessionId\":\"alias-cli-fallback\",\"message\":\"hello after reset\"}}");
+    defer allocator.free(send_without_channel_after_reset);
+    try std.testing.expect(std.mem.indexOf(u8, send_without_channel_after_reset, "\"accepted\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, send_without_channel_after_reset, "\"channel\":\"cli\"") != null);
+
+    const delete_cli = try dispatch(allocator, "{\"id\":\"delete-cli\",\"method\":\"sessions.delete\",\"params\":{\"sessionId\":\"alias-cli-fallback\"}}");
+    defer allocator.free(delete_cli);
+    try std.testing.expect(std.mem.indexOf(u8, delete_cli, "\"ok\":true") != null);
+
+    const send_without_channel_after_delete = try dispatch(allocator, "{\"id\":\"send-no-channel-delete\",\"method\":\"send\",\"params\":{\"sessionId\":\"alias-cli-fallback\",\"message\":\"hello after delete\"}}");
+    defer allocator.free(send_without_channel_after_delete);
+    try std.testing.expect(std.mem.indexOf(u8, send_without_channel_after_delete, "\"accepted\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, send_without_channel_after_delete, "\"channel\":\"webchat\"") != null);
 
     const send_without_channel_unknown_session = try dispatch(allocator, "{\"id\":\"send-no-channel-new\",\"method\":\"send\",\"params\":{\"sessionId\":\"alias-new-session\",\"message\":\"hello default channel\"}}");
     defer allocator.free(send_without_channel_unknown_session);

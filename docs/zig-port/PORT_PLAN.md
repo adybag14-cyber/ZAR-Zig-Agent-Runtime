@@ -312,7 +312,8 @@ Full-stack replacement execution reference:
     - `send` now accepts and normalizes channel aliases to Go-compatible canonical names (`webchat`, `cli`, `telegram`).
     - normalized aliases include `web`, `console`, `terminal`, `tg`, and `tele`.
     - omitted-channel sends now inherit the last known session channel (`send|chat.send|sessions.send`), with deterministic fallback to `webchat` for unknown/new sessions.
-    - `connect` now persists session/channel context into memory history to make omitted-channel fallback work from the initial connected request.
+    - omitted-channel fallback now uses persisted compat session-channel state (`sessionChannels`) first, then memory summaries as fallback.
+    - `connect` and `sessions.patch` upsert session-channel state, `sessions.delete` removes it, and `sessions.reset` preserves it (Go-aligned registry semantics).
     - `poll` remains Telegram-only, preserving existing queue semantics while returning deterministic unsupported-channel errors for non-Telegram polling attempts.
   - Dispatcher `channels.status` now includes telegram queue/target/auth telemetry
   - Added auth + reply-loop smokes (`scripts/web-login-smoke-check.ps1`, `scripts/telegram-reply-loop-smoke-check.ps1`)
