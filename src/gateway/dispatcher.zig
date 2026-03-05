@@ -33,9 +33,6 @@ var secret_store_instance: ?secret_store.SecretStore = null;
 var edge_state_instance: ?EdgeState = null;
 var compat_state_instance: ?CompatState = null;
 
-const telegram_stream_default_chunk_chars: usize = 700;
-const telegram_stream_default_chunk_delay_ms: u32 = 250;
-
 const WasmMarketplaceModule = struct {
     id: []const u8,
     version: []const u8,
@@ -5820,14 +5817,14 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             if (params.get("timeoutMs")) |value| out = parseTimeout(value, out);
             break :blk out;
         };
-        const typing_action = firstParamString(params, "typingAction", "typing");
+        const typing_action = resolveTelegramTypingAction(params);
         const chunking = parseTelegramChunkingOptions(params);
 
         const compat = try getCompatState();
         const maybe_token = try resolveTelegramBotTokenForParamsAlloc(allocator, compat, params);
         defer if (maybe_token) |value| allocator.free(value);
 
-        var typing = if (deliver)
+        var typing = if (deliver and typing_action.len > 0)
             try telegram_bot_api.sendChatAction(
                 allocator,
                 maybe_token orelse "",
@@ -5841,7 +5838,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
                 .ok = true,
                 .statusCode = 0,
                 .requestUrl = try allocator.dupe(u8, ""),
-                .errorText = try allocator.dupe(u8, "typing skipped"),
+                .errorText = try allocator.dupe(u8, if (typing_action.len > 0) "typing skipped" else "typing action not requested"),
                 .messageId = null,
                 .responseBytes = 0,
                 .latencyMs = 0,
@@ -5932,7 +5929,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             }
             break :blk out;
         };
-        const typing_action = firstParamString(params, "typingAction", firstParamString(params, "typing", ""));
+        const typing_action = resolveTelegramTypingAction(params);
         const chunking = parseTelegramChunkingOptions(params);
 
         const compat = try getCompatState();
@@ -8510,11 +8507,16 @@ const TelegramDeliveryBatch = struct {
 };
 
 fn parseTelegramChunkingOptions(params: ?std.json.ObjectMap) TelegramChunkingOptions {
-    const stream_enabled = firstParamBool(params, "stream", firstParamBool(params, "liveStreaming", false));
+    const cfg = currentConfig();
+    const stream_enabled = firstParamBool(
+        params,
+        "stream",
+        firstParamBool(params, "liveStreaming", cfg.runtime.telegram_live_streaming),
+    );
     const default_chunk_chars = if (stream_enabled)
-        telegram_stream_default_chunk_chars
+        cfg.runtime.telegram_stream_chunk_chars
     else
-        telegram_bot_api.maxTelegramMessageRunes;
+        @as(u32, @intCast(telegram_bot_api.maxTelegramMessageRunes));
     const requested_chunk_chars = firstParamInt(
         params,
         "streamChunkChars",
@@ -8526,7 +8528,7 @@ fn parseTelegramChunkingOptions(params: ?std.json.ObjectMap) TelegramChunkingOpt
         @as(i64, @intCast(telegram_bot_api.maxTelegramMessageRunes)),
     );
 
-    const default_delay_ms: i64 = if (stream_enabled) telegram_stream_default_chunk_delay_ms else 0;
+    const default_delay_ms: i64 = if (stream_enabled) cfg.runtime.telegram_stream_chunk_delay_ms else 0;
     const requested_delay_ms = firstParamInt(
         params,
         "streamChunkDelayMs",
@@ -8539,6 +8541,13 @@ fn parseTelegramChunkingOptions(params: ?std.json.ObjectMap) TelegramChunkingOpt
         .max_chunk_runes = @as(usize, @intCast(normalized_chunk_chars)),
         .chunk_delay_ms = @as(u32, @intCast(normalized_delay_ms)),
     };
+}
+
+fn resolveTelegramTypingAction(params: ?std.json.ObjectMap) []const u8 {
+    const explicit = firstParamString(params, "typingAction", firstParamString(params, "typing", ""));
+    if (explicit.len > 0) return explicit;
+    if (currentConfig().runtime.telegram_typing_indicators) return "typing";
+    return "";
 }
 
 fn makeTelegramSkippedDeliveryResult(
@@ -11555,6 +11564,47 @@ test "dispatch channels.telegram.bot.send dryRun exposes chunking metadata for s
     try std.testing.expect(chunk_count == .integer and chunk_count.integer > 1);
     const delivered_count = delivery_batch.object.get("deliveredChunkCount") orelse return error.TestUnexpectedResult;
     try std.testing.expect(delivered_count == .integer and delivered_count.integer == 0);
+}
+
+test "dispatch channels.telegram.bot.send uses config defaults for telegram stream chunking and typing indicators" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.runtime.telegram_live_streaming = true;
+    cfg.runtime.telegram_stream_chunk_chars = 32;
+    cfg.runtime.telegram_stream_chunk_delay_ms = 9;
+    cfg.runtime.telegram_typing_indicators = false;
+    setConfig(cfg);
+    defer setConfig(config.defaults());
+
+    const message = "Config-driven streaming chunk test payload should split into several chunks without explicit stream parameters in request.";
+    const frame = try std.fmt.allocPrint(
+        allocator,
+        "{{\"id\":\"tg-bot-send-cfg-stream\",\"method\":\"channels.telegram.bot.send\",\"params\":{{\"chatId\":12345,\"message\":\"{s}\",\"dryRun\":true}}}}",
+        .{message},
+    );
+    defer allocator.free(frame);
+
+    const out = try dispatch(allocator, frame);
+    defer allocator.free(out);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, out, .{});
+    defer parsed.deinit();
+    const result = parsed.value.object.get("result") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(result == .object);
+
+    const delivery_batch = result.object.get("deliveryBatch") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(delivery_batch == .object);
+    const stream = delivery_batch.object.get("stream") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(stream == .bool and stream.bool);
+    const max_chunk_runes = delivery_batch.object.get("maxChunkRunes") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(max_chunk_runes == .integer and max_chunk_runes.integer == 32);
+    const chunk_delay_ms = delivery_batch.object.get("chunkDelayMs") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(chunk_delay_ms == .integer and chunk_delay_ms.integer == 9);
+
+    const typing = result.object.get("typing") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(typing == .object);
+    const typing_error = typing.object.get("errorText") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(typing_error == .string and std.mem.indexOf(u8, typing_error.string, "not requested") != null);
 }
 
 test "dispatch memory history handlers return persisted send activity" {

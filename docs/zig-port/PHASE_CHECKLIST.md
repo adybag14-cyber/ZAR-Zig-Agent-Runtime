@@ -128,6 +128,20 @@ Phase 5 enhancement notes:
   - `channels.telegram.webhook.receive` and `channels.telegram.bot.send` now deliver replies through chunk batches with structured `deliveryBatch` telemetry (`chunkCount`, `deliveredChunkCount`, `messageIds`, `maxChunkRunes`, `chunkDelayMs`, `failedChunkIndex`).
   - stream-style overrides are now supported on both Telegram Bot API methods: `stream`, `streamChunkChars|chunkChars`, `streamChunkDelayMs|chunkDelayMs`.
   - regression tests added for chunk splitting (`telegram_bot_api`) and dry-run streamed chunk telemetry (`dispatcher`).
+- Telegram stream/typing config parity slice:
+  - Runtime config now includes Telegram streaming/typing defaults aligned to Go semantics:
+    - `runtime.telegram_live_streaming`
+    - `runtime.telegram_stream_chunk_chars`
+    - `runtime.telegram_stream_chunk_delay_ms`
+    - `runtime.telegram_typing_indicators`
+    - `runtime.telegram_typing_interval_ms`
+  - Env overrides added:
+    - `OPENCLAW_ZIG_RUNTIME_TELEGRAM_LIVE_STREAMING`
+    - `OPENCLAW_ZIG_RUNTIME_TELEGRAM_STREAM_CHUNK_CHARS`
+    - `OPENCLAW_ZIG_RUNTIME_TELEGRAM_STREAM_CHUNK_DELAY_MS`
+    - `OPENCLAW_ZIG_RUNTIME_TELEGRAM_TYPING_INDICATORS`
+    - `OPENCLAW_ZIG_RUNTIME_TELEGRAM_TYPING_INTERVAL_MS`
+  - Dispatcher telegram delivery now consumes config defaults when request-level stream/typing fields are omitted.
 - Completion semantics hardening:
   - Top-level `ok/status/message` for `browser.request` now reflect live completion outcome when completion execution is requested (`status=failed` on bridge failure).
   - Assistant text extraction now supports additional response shapes: `output_text`, `output[].content[]`, and array-based `choices[].message.content`.

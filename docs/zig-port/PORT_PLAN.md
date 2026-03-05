@@ -291,6 +291,11 @@ Full-stack replacement execution reference:
     - `channels.telegram.webhook.receive` and `channels.telegram.bot.send` now route outbound text through chunk-batch delivery with structured `deliveryBatch` telemetry (`chunkCount`, `deliveredChunkCount`, `messageIds`, `maxChunkRunes`, `chunkDelayMs`, `failedChunkIndex`).
     - stream-style chunk controls added for both methods (`stream`, `streamChunkChars|chunkChars`, `streamChunkDelayMs|chunkDelayMs`) with deterministic bounds and defaults.
     - Added regression tests for chunk splitting and dispatcher dry-run chunk telemetry.
+  - Added Telegram stream/typing config-default parity:
+    - runtime config now includes `telegram_live_streaming`, `telegram_stream_chunk_chars`, `telegram_stream_chunk_delay_ms`, `telegram_typing_indicators`, `telegram_typing_interval_ms`.
+    - dispatcher telegram bot/webhook delivery paths now consume those runtime defaults when request params omit stream/typing controls.
+    - env override wiring added for all new runtime telegram knobs (`OPENCLAW_ZIG_RUNTIME_TELEGRAM_*`).
+    - added regression test validating config-driven stream chunking + typing defaults without per-request overrides.
   - Dispatcher `channels.status` now includes telegram queue/target/auth telemetry
   - Added auth + reply-loop smokes (`scripts/web-login-smoke-check.ps1`, `scripts/telegram-reply-loop-smoke-check.ps1`)
   - Telegram reply-loop smoke now asserts `/auth link` parity guidance includes active code/session identifiers and completion command hints.
