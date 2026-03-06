@@ -56,8 +56,21 @@ Full-stack replacement execution reference:
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `192/192`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `193/193`.
 - Full-stack replacement kickoff (2026-03-05):
+  - Phase 5 Telegram auth-link/open alias parity hardened:
+    - `/auth link` and `/auth open` now reuse the same compact auth-url reply surface as `/auth url`:
+      - `Auth URL: <verificationUriComplete>`
+      - `Code: <code>`
+    - the older Zig-only multi-line `Auth link for ... / Status / Session / /auth guest ...` prose was removed from the alias reply body so operator output now stays aligned with the compact Go shape.
+    - no-session alias lookups now use the same Go-style missing-flow reply as `/auth url`:
+      - `No active auth flow. Run \`/auth start <provider>\` first.`
+    - missing-session alias lookups now use the same Go-style expired/missing reply as `/auth url`:
+      - `Auth session expired or missing. Run \`/auth\` again.`
+    - stale scoped auth bindings are now cleared on missing-session `/auth link|open` lookups in the same way they were already cleared for `/auth url`.
+    - regression coverage added:
+      - `channels.telegram_runtime.test.telegram runtime auth link and open aliases use url-style missing replies`
+      - dispatcher auth metadata test now asserts compact `/auth link` reply shape directly.
   - Phase 5 Telegram auth-start parity hardened:
     - new `/auth start` replies now match the Go operator flow more closely:
       - `Auth started for ...`

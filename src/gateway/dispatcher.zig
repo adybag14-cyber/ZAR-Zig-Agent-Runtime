@@ -13074,6 +13074,14 @@ test "dispatch send auth commands expose go-compatible metadata envelope" {
     try std.testing.expect(std.mem.indexOf(u8, auth_url_reply, "Status: `") == null);
     try std.testing.expect(std.mem.indexOf(u8, auth_url_reply, "Session: `") == null);
 
+    const auth_link = try dispatch(allocator, "{\"id\":\"tg-auth-link-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta\",\"sessionId\":\"tg-meta\",\"message\":\"/auth link codex mobile\"}}");
+    defer allocator.free(auth_link);
+    const auth_link_reply = try extractResultStringField(allocator, auth_link, "reply");
+    defer allocator.free(auth_link_reply);
+    try std.testing.expect(std.mem.indexOf(u8, auth_link_reply, "Auth URL: https://chatgpt.com/?openclaw_code=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, auth_link_reply, "Status: `") == null);
+    try std.testing.expect(std.mem.indexOf(u8, auth_link_reply, "Session: `") == null);
+
     const provider_callback_url = try std.fmt.allocPrint(allocator, "https://chatgpt.com/?openclaw_code={s}", .{login_code});
     defer allocator.free(provider_callback_url);
     const auth_complete_frame = try std.fmt.allocPrint(allocator, "{{\"id\":\"tg-auth-complete-meta\",\"method\":\"send\",\"params\":{{\"channel\":\"telegram\",\"to\":\"room-meta\",\"sessionId\":\"tg-meta\",\"message\":\"/auth complete codex {s} mobile\"}}}}", .{provider_callback_url});

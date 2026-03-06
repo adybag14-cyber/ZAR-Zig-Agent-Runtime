@@ -1,13 +1,26 @@
 # Phase Checklist
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
-Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `192/192`.
+Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `193/193`.
 
 ## Full-Stack Replacement Track (FS0..FS7)
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)
 - [ ] FS1 - Runtime/core consolidation
 - [ ] FS2 - Provider + channel completion
   - Latest delivered slice:
+    - Telegram `/auth link|open` now align more closely with Go's compact auth-url surface:
+      - successful `/auth link` and `/auth open` replies now reuse the same compact auth-url reply shape as `/auth url`:
+        - `Auth URL: <verificationUriComplete>`
+        - `Code: <code>`
+      - the older Zig-only multi-line `Auth link for ... / Status / Session / /auth guest ...` operator prose was removed from those alias reply bodies.
+      - `/auth link` with no active scoped session now uses the same Go-style missing-flow reply as `/auth url`:
+        - `No active auth flow. Run \`/auth start <provider>\` first.`
+      - `/auth open|link` missing-session paths now return the same Go-style expired/missing reply as `/auth url`:
+        - `Auth session expired or missing. Run \`/auth\` again.`
+      - stale scoped auth bindings are now cleared on missing-session `link|open` lookups, not just `url`.
+      - regression coverage added:
+        - `channels.telegram_runtime.test.telegram runtime auth link and open aliases use url-style missing replies`
+        - dispatcher auth-metadata coverage now asserts compact `/auth link` reply shape directly.
     - Telegram `/auth start` now matches Go more closely on success, repeat-start, and invalid-start reply text:
       - new auth-start replies now include the explicit Go-style code line:
         - `If prompted, use code <code>.`

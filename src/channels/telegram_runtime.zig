@@ -2068,10 +2068,7 @@ pub const TelegramRuntime = struct {
             const bound_session = try self.getAuthBinding(allocator, target, provider, account);
             const login_session = if (std.mem.trim(u8, session_token, " \t\r\n").len > 0) session_token else bound_session;
             if (std.mem.trim(u8, login_session, " \t\r\n").len == 0) {
-                const missing_reply = if (std.ascii.eqlIgnoreCase(action, "url"))
-                    try std.fmt.allocPrint(allocator, "No active auth flow for `{s}` account `{s}`. Start with `/auth start {s} {s}`.", .{ provider, normalizeAccount(account), provider, normalizeAccount(account) })
-                else
-                    try std.fmt.allocPrint(allocator, "No active auth session for `{s}` account `{s}`. Start with `/auth start {s} {s}`.", .{ provider, normalizeAccount(account), provider, normalizeAccount(account) });
+                const missing_reply = try allocator.dupe(u8, "No active auth flow. Run `/auth start <provider>` first.");
                 const scope = try authScopeAlloc(allocator, provider, account);
                 defer allocator.free(scope);
                 const metadata_json = try stringifyJsonAlloc(allocator, AuthCommandMetadata{
@@ -2090,19 +2087,19 @@ pub const TelegramRuntime = struct {
                     .model = defaultModelForProvider(provider),
                     .login_session_id = "",
                     .login_code = "",
-                    .auth_status = "pending",
+                    .auth_status = "none",
                     .metadata_json = metadata_json,
                 };
             }
 
             const view = self.login_manager.get(login_session) orelse {
-                const should_clear_binding = std.ascii.eqlIgnoreCase(action, "url") and std.mem.trim(u8, session_token, " \t\r\n").len == 0;
+                const should_clear_binding = std.mem.trim(u8, session_token, " \t\r\n").len == 0;
                 const owned_login_session_id = if (should_clear_binding and std.mem.trim(u8, login_session, " \t\r\n").len > 0)
                     try allocator.dupe(u8, login_session)
                 else
                     null;
                 const login_session_value = if (owned_login_session_id) |value| value else login_session;
-                if (std.ascii.eqlIgnoreCase(action, "url")) {
+                if (should_clear_binding) {
                     try self.clearAuthBinding(allocator, target, provider, account);
                 }
                 const scope = try authScopeAlloc(allocator, provider, account);
@@ -2119,10 +2116,7 @@ pub const TelegramRuntime = struct {
                 return .{
                     .is_command = true,
                     .command_name = "auth",
-                    .reply = if (std.ascii.eqlIgnoreCase(action, "url"))
-                        try allocator.dupe(u8, "Auth session expired or missing. Run `/auth` again.")
-                    else
-                        try allocator.dupe(u8, "Auth session not found."),
+                    .reply = try allocator.dupe(u8, "Auth session expired or missing. Run `/auth` again."),
                     .provider = provider,
                     .model = defaultModelForProvider(provider),
                     .login_session_id = login_session_value,
@@ -2133,35 +2127,7 @@ pub const TelegramRuntime = struct {
                 };
             };
             const account_norm = normalizeAccount(account);
-            const account_is_default = std.mem.eql(u8, account_norm, "default");
-            const reply = if (std.ascii.eqlIgnoreCase(action, "url"))
-                try self.formatAuthUrlMessage(allocator, provider, account_norm, view)
-            else if (view.guestBypassSupported)
-                (if (account_is_default)
-                    try std.fmt.allocPrint(
-                        allocator,
-                        "Auth link for `{s}`.\nStatus: `{s}`\nSession: `{s}`\nOpen: {s}\nCode: `{s}`\nThen run `/auth guest {s}` or `/auth complete {s} <callback_url_or_code> {s}`.",
-                        .{ provider, view.status, view.loginSessionId, view.verificationUriComplete, view.code, provider, provider, view.loginSessionId },
-                    )
-                else
-                    try std.fmt.allocPrint(
-                        allocator,
-                        "Auth link for `{s}` account `{s}`.\nStatus: `{s}`\nSession: `{s}`\nOpen: {s}\nCode: `{s}`\nThen run `/auth guest {s} {s}` or `/auth complete {s} <callback_url_or_code> {s} {s}`.",
-                        .{ provider, account_norm, view.status, view.loginSessionId, view.verificationUriComplete, view.code, provider, account_norm, provider, view.loginSessionId, account_norm },
-                    ))
-            else
-                (if (account_is_default)
-                    try std.fmt.allocPrint(
-                        allocator,
-                        "Auth link for `{s}`.\nStatus: `{s}`\nSession: `{s}`\nOpen: {s}\nCode: `{s}`\nThen run `/auth complete {s} <callback_url_or_code> {s}`.",
-                        .{ provider, view.status, view.loginSessionId, view.verificationUriComplete, view.code, provider, view.loginSessionId },
-                    )
-                else
-                    try std.fmt.allocPrint(
-                        allocator,
-                        "Auth link for `{s}` account `{s}`.\nStatus: `{s}`\nSession: `{s}`\nOpen: {s}\nCode: `{s}`\nThen run `/auth complete {s} <callback_url_or_code> {s} {s}`.",
-                        .{ provider, account_norm, view.status, view.loginSessionId, view.verificationUriComplete, view.code, provider, view.loginSessionId, account_norm },
-                    ));
+            const reply = try self.formatAuthUrlMessage(allocator, provider, account_norm, view);
             const scope = try authScopeAlloc(allocator, provider, account_norm);
             defer allocator.free(scope);
             const metadata_json = try stringifyJsonAlloc(allocator, AuthCommandMetadata{
@@ -5044,9 +5010,10 @@ test "telegram runtime auth link command surfaces pending qwen session details" 
     var link = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-link-qwen\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-link\",\"sessionId\":\"sess-link\",\"message\":\"/auth link qwen mobile\"}}");
     defer link.deinit(allocator);
     try std.testing.expect(std.mem.eql(u8, link.authStatus, "pending"));
-    try std.testing.expect(std.mem.indexOf(u8, link.reply, "Auth link for `qwen` account `mobile`.") != null);
-    try std.testing.expect(std.mem.indexOf(u8, link.reply, "Open: https://chat.qwen.ai/?openclaw_code=") != null);
-    try std.testing.expect(std.mem.indexOf(u8, link.reply, "/auth guest qwen mobile") != null);
+    try std.testing.expect(std.mem.indexOf(u8, link.reply, "Auth URL: https://chat.qwen.ai/?openclaw_code=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, link.reply, "Status: `") == null);
+    try std.testing.expect(std.mem.indexOf(u8, link.reply, "Session: `") == null);
+    try std.testing.expect(std.mem.indexOf(u8, link.reply, "/auth guest qwen mobile") == null);
     try std.testing.expect(std.mem.indexOf(u8, link.reply, start.loginCode) != null);
 }
 
@@ -5065,9 +5032,33 @@ test "telegram runtime auth open alias surfaces chatgpt completion command" {
     var open = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-open-chatgpt\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-link-chatgpt\",\"sessionId\":\"sess-link-chatgpt\",\"message\":\"/auth open chatgpt\"}}");
     defer open.deinit(allocator);
     try std.testing.expect(std.mem.eql(u8, open.authStatus, "pending"));
-    try std.testing.expect(std.mem.indexOf(u8, open.reply, "Auth link for `chatgpt`.") != null);
-    try std.testing.expect(std.mem.indexOf(u8, open.reply, "/auth complete chatgpt <callback_url_or_code>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, open.reply, "Auth URL: https://chatgpt.com/?openclaw_code=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, open.reply, "Status: `") == null);
+    try std.testing.expect(std.mem.indexOf(u8, open.reply, "Session: `") == null);
     try std.testing.expect(std.mem.indexOf(u8, open.reply, start.loginCode) != null);
+}
+
+test "telegram runtime auth link and open aliases use url-style missing replies" {
+    var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
+    defer login.deinit();
+    var runtime = TelegramRuntime.init(std.testing.allocator, &login);
+    defer runtime.deinit();
+
+    const allocator = std.testing.allocator;
+
+    var link_none = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-link-none\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-link-none\",\"sessionId\":\"sess-link-none\",\"message\":\"/auth link qwen mobile\"}}");
+    defer link_none.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, link_none.authStatus, "none"));
+    try std.testing.expect(std.mem.indexOf(u8, link_none.reply, "No active auth flow. Run `/auth start <provider>` first.") != null);
+
+    try runtime.setAuthBinding("room-open-missing", "chatgpt", "default", "web-login-stale");
+    var open_missing = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-open-missing\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-open-missing\",\"sessionId\":\"sess-open-missing\",\"message\":\"/auth open chatgpt\"}}");
+    defer open_missing.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, open_missing.authStatus, "missing"));
+    try std.testing.expect(std.mem.indexOf(u8, open_missing.reply, "Auth session expired or missing. Run `/auth` again.") != null);
+
+    const cleared = try runtime.getAuthBinding(allocator, "room-open-missing", "chatgpt", "default");
+    try std.testing.expect(cleared.len == 0);
 }
 
 test "telegram runtime auth url alias surfaces session details" {
