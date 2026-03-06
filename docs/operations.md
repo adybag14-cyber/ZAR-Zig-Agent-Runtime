@@ -26,6 +26,7 @@ Recommended sequence:
 ./scripts/baremetal-qemu-command-loop-check.ps1
 ./scripts/baremetal-qemu-scheduler-probe-check.ps1
 ./scripts/baremetal-qemu-timer-wake-probe-check.ps1
+./scripts/baremetal-qemu-interrupt-timeout-probe-check.ps1
 ./scripts/baremetal-qemu-allocator-syscall-probe-check.ps1
 ./scripts/baremetal-qemu-allocator-syscall-failure-probe-check.ps1
 ./scripts/appliance-control-plane-smoke-check.ps1
@@ -55,6 +56,7 @@ Recommended sequence:
 - appliance minimal profile smoke check (persisted state + auth + secure-boot/readiness contract)
 - optional bare-metal QEMU scheduler probe (scheduler reset/timeslice/task-create/policy-enable against the freestanding PVH artifact)
 - optional bare-metal QEMU timer wake probe (timer reset/quantum/task-wait to fired timer entry + wake queue telemetry against the freestanding PVH artifact)
+- optional bare-metal QEMU interrupt timeout probe (`task_wait_interrupt_for` wakes on interrupt before deadline, clears the timeout arm, and does not later leak a second timer wake against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator syscall probe (alloc/free plus syscall register/invoke/block/disable/unregister against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator syscall failure probe (invalid-alignment, no-space, blocked-syscall, and disabled-syscall result semantics plus command-result counters against the freestanding PVH artifact)
 - optional bare-metal QEMU interrupt mask exception probe (masked external vector remains blocked while an exception vector still wakes the waiting task and records history telemetry against the freestanding PVH artifact)
@@ -78,6 +80,7 @@ Recommended sequence:
 - appliance minimal profile smoke check in validate stage
 - bare-metal optional QEMU scheduler probe in validate stage
 - bare-metal optional QEMU timer wake probe in validate stage
+- bare-metal optional QEMU interrupt timeout probe in validate stage
 - bare-metal optional QEMU allocator syscall probe in validate stage
 - bare-metal optional QEMU allocator syscall failure probe in validate stage
 - bare-metal optional QEMU interrupt mask exception probe in validate stage
