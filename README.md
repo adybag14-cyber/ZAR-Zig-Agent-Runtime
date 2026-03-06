@@ -11,8 +11,13 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - Original OpenClaw beta baseline (`v2026.3.2-beta.1`): `94/94` covered
   - Union baseline: `135/135` covered (`MISSING_IN_ZIG=0`)
   - Gateway events: stable `19/19`, beta `19/19`, union `19/19` (`UNION_EVENTS_MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> `197/197` passing
+- Latest local validation: `zig build test --summary all` -> `202/202` passing
 - Latest published edge release tag: `v0.2.0-zig-edge.26`
+- Recent FS1 progress (2026-03-06):
+  - runtime recovery posture is now surfaced on live diagnostics and maintenance RPCs
+  - `doctor.memory.status` now includes Go-visible health envelope fields
+  - `agent.identity.get` now reports stable `startedAt` + gateway `authMode`
+  - `status` now includes Go-visible summary keys alongside Zig runtime/security telemetry
 - Dual runtime profiles available:
   - OS-hosted profile: `openclaw-zig` (`--serve`, doctor, security audit, full RPC stack)
 - Bare-metal profile: `openclaw-zig-baremetal.elf` (`zig build baremetal`, freestanding runtime loop + Multiboot2 header)
