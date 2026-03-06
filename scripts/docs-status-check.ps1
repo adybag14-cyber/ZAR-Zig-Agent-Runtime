@@ -52,12 +52,21 @@ try {
         $releaseHeaders["Authorization"] = "Bearer $GitHubToken"
     }
     try {
-        $release = Invoke-RestMethod -Headers $releaseHeaders -Uri "https://api.github.com/repos/adybag14-cyber/openclaw-zig-port/releases/latest"
-        if ($null -ne $release -and -not [string]::IsNullOrWhiteSpace($release.tag_name)) {
-            $releaseTag = [string]$release.tag_name
+        $releases = Invoke-RestMethod -Headers $releaseHeaders -Uri "https://api.github.com/repos/adybag14-cyber/openclaw-zig-port/releases?per_page=20"
+        if ($releases) {
+            foreach ($candidate in $releases) {
+                if ($candidate.draft) {
+                    continue
+                }
+                $tag = [string]$candidate.tag_name
+                if (-not [string]::IsNullOrWhiteSpace($tag) -and $tag -match '^v\d+\.\d+\.\d+-zig-edge\.\d+$') {
+                    $releaseTag = $tag
+                    break
+                }
+            }
         }
     } catch {
-        Write-Warning "Unable to resolve latest GitHub release tag via GitHub API. Release-tag docs checks will be skipped."
+        Write-Warning "Unable to resolve latest GitHub edge release tag via GitHub API. Release-tag docs checks will be skipped."
     }
 
     $failures = @()

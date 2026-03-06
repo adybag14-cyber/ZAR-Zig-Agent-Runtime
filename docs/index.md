@@ -12,7 +12,7 @@ Full documentation for the OpenClaw Zig runtime port.
   - Union baseline: `135/135` (`MISSING_IN_ZIG=0`)
   - Gateway events union baseline: `19/19` (`UNION_EVENTS_MISSING_IN_ZIG=0`)
 - Latest local validation: `195/195` tests passing
-- Latest published edge release tag: `v0.2.0-zig-edge.25`
+- Latest published edge release tag: `v0.2.0-zig-edge.26`
 
 ## Documentation Map
 

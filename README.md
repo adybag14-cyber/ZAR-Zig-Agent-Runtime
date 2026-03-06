@@ -12,7 +12,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - Union baseline: `135/135` covered (`MISSING_IN_ZIG=0`)
   - Gateway events: stable `19/19`, beta `19/19`, union `19/19` (`UNION_EVENTS_MISSING_IN_ZIG=0`)
 - Latest local validation: `zig build test --summary all` -> `195/195` passing
-- Latest published edge release tag: `v0.2.0-zig-edge.25`
+- Latest published edge release tag: `v0.2.0-zig-edge.26`
 - Dual runtime profiles available:
   - OS-hosted profile: `openclaw-zig` (`--serve`, doctor, security audit, full RPC stack)
 - Bare-metal profile: `openclaw-zig-baremetal.elf` (`zig build baremetal`, freestanding runtime loop + Multiboot2 header)
