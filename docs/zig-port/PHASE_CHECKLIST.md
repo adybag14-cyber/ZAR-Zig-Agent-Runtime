@@ -2,6 +2,10 @@
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
 Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `195/195`.
+Latest edge release: `v0.2.0-zig-edge.26` is published with binaries, parity evidence, SBOM/provenance, npm tarball, wheel, and sdist attached.
+Registry status:
+- npm public publish still requires npm-side scope/package permission or `NPM_TOKEN`; GitHub release asset + GitHub Packages fallback are available now.
+- PyPI public publish still requires a matching trusted publisher or `PYPI_API_TOKEN`; workflow claim shape is now confirmed as `repo:adybag14-cyber/openclaw-zig-port:environment:pypi`.
 
 ## Full-Stack Replacement Track (FS0..FS7)
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)

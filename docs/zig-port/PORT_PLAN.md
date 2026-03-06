@@ -57,7 +57,16 @@ Full-stack replacement execution reference:
 ## Current Progress Snapshot
 
 - Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `195/195`.
-- Full-stack replacement kickoff (2026-03-05):
+- Release/package lane status (2026-03-06):
+  - GitHub prerelease `v0.2.0-zig-edge.26` is live with desktop/android/bare-metal artifacts, parity reports, manifest, SBOM, provenance, npm tarball, wheel, and sdist.
+  - `uvx` fallback from the tagged Git repo was validated locally:
+    - `uvx --from "git+https://github.com/adybag14-cyber/openclaw-zig-port@v0.2.0-zig-edge.26#subdirectory=python/openclaw-zig-rpc-client" openclaw-zig-rpc --help`
+  - npm public publish remains externally blocked by npm scope/package permission on npmjs; GitHub Packages fallback remains available.
+  - PyPI public publish remains externally blocked by missing trusted-publisher mapping, but the workflow now emits the confirmed OIDC claim shape:
+    - `sub=repo:adybag14-cyber/openclaw-zig-port:environment:pypi`
+    - `workflow_ref=adybag14-cyber/openclaw-zig-port/.github/workflows/python-release.yml@refs/heads/main`
+    - `ref=refs/heads/main`
+  - Full-stack replacement kickoff (2026-03-05):
   - Phase 5 Telegram auth fallback-metadata parity hardened:
     - no-session `/auth url` metadata now matches Go’s leaner fallback envelope and no longer emits Zig-only top-level:
       - `provider`

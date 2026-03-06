@@ -99,13 +99,24 @@ That means PyPI does not yet have a matching trusted publisher entry for:
 - repository: `adybag14-cyber/openclaw-zig-port`
 - workflow: `.github/workflows/python-release.yml`
 - ref: `refs/heads/main`
+- environment: `pypi`
+
+Exact claims emitted by the latest trusted-publish attempt (`python-release` run `22749787597`):
+
+- `sub`: `repo:adybag14-cyber/openclaw-zig-port:environment:pypi`
+- `repository`: `adybag14-cyber/openclaw-zig-port`
+- `repository_owner`: `adybag14-cyber`
+- `workflow_ref`: `adybag14-cyber/openclaw-zig-port/.github/workflows/python-release.yml@refs/heads/main`
+- `job_workflow_ref`: `adybag14-cyber/openclaw-zig-port/.github/workflows/python-release.yml@refs/heads/main`
+- `ref`: `refs/heads/main`
+- `environment`: `pypi`
 
 Fix either by:
 
 1. adding a matching trusted publisher in PyPI for `openclaw-zig-rpc-client`
 2. setting `PYPI_API_TOKEN` in repo secrets
 
-The workflow now uses the GitHub Actions environment `pypi`, which is the common trusted-publisher configuration shape documented by GitHub and PyPI. If the PyPI publisher entry was created with environment `pypi`, rerunning the workflow should now satisfy that claim.
+The workflow now uses the GitHub Actions environment `pypi`, and the repo-side OIDC claim shape is confirmed in the run above. If PyPI is configured with that exact publisher shape, rerunning the workflow should publish successfully without further repo changes.
 
 ## Workflow Outputs
 
