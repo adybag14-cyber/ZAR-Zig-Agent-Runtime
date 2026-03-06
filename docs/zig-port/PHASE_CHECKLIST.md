@@ -12,6 +12,15 @@ Registry status:
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)
 - [ ] FS1 - Runtime/core consolidation
   - Latest delivered slice:
+    - `doctor.memory.status` now includes the Go-visible health envelope instead of exposing only raw Zig counters:
+      - `healthy`
+      - `entryCount`
+      - `checkedAt`
+      - `maxRetention`
+      - nested `stats`
+    - Zig keeps the richer top-level memory counters plus nested `runtime`, so parity callers and deeper local diagnostics share the same receipt.
+    - regression coverage added:
+      - `dispatch memory history handlers return persisted send activity`
     - runtime recovery posture is now exposed on live diagnostics and maintenance surfaces instead of remaining implicit inside the runtime layer.
     - `ToolRuntime.snapshot()` now reports:
       - `statePath`

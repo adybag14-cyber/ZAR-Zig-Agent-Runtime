@@ -6521,7 +6521,14 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         const memory = try getMemoryStore();
         const runtime = getRuntime();
         const stats = memory.stats();
+        const checked_at = try time_util.unixMsToRfc3339Alloc(allocator, time_util.nowMs());
+        defer allocator.free(checked_at);
         return protocol.encodeResult(allocator, req.id, .{
+            .healthy = std.mem.trim(u8, stats.lastError, " \t\r\n").len == 0,
+            .entryCount = stats.entries,
+            .checkedAt = checked_at,
+            .maxRetention = stats.maxEntries,
+            .stats = stats,
             .entries = stats.entries,
             .vectors = stats.vectors,
             .graphNodes = stats.graphNodes,
@@ -14099,6 +14106,11 @@ test "dispatch memory history handlers return persisted send activity" {
 
     const memory_status = try dispatch(allocator, "{\"id\":\"mem-status\",\"method\":\"doctor.memory.status\",\"params\":{}}");
     defer allocator.free(memory_status);
+    try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"healthy\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"entryCount\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"checkedAt\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"maxRetention\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"stats\":{\"entries\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"entries\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"statePath\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"runtime\":{\"statePath\":") != null);

@@ -102,6 +102,15 @@ Full-stack replacement execution reference:
       - `system.maintenance.run`
       - `system.maintenance.status`
     - new regressions cover both the normalized persisted replay file and the exported runtime snapshot contract.
+  - FS1 doctor-memory contract parity slice shipped:
+    - `doctor.memory.status` now includes the Go-visible health envelope instead of exposing only the expanded Zig counters:
+      - `healthy`
+      - `entryCount`
+      - `checkedAt`
+      - `maxRetention`
+      - nested `stats`
+    - Zig keeps its richer top-level counters plus nested `runtime`, so operator/agent callers get both the compat contract and the deeper local posture in one receipt.
+    - dispatcher regression coverage now asserts the health envelope keys alongside the richer runtime snapshot.
   - Full-stack replacement kickoff (2026-03-05):
   - Phase 5 Telegram auth fallback-metadata parity hardened:
     - no-session `/auth url` metadata now matches Go’s leaner fallback envelope and no longer emits Zig-only top-level:
