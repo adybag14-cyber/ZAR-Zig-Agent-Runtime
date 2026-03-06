@@ -93,6 +93,10 @@ jobs:
         shell: pwsh
         run: ./scripts/package-registry-status.ps1 -Repository "${{ github.repository }}" -ReleaseTag "${{ inputs.version }}" -NpmPackageName "@adybag14-cyber/openclaw-zig-rpc-client" -PythonPackageName "openclaw-zig-rpc-client" -OutputJsonPath package-registry-status.json -GitHubToken "${{ github.token }}"
 
+      - name: Release status snapshot
+        shell: pwsh
+        run: ./scripts/release-status.ps1 -Repository "${{ github.repository }}" -ReleaseTag "${{ inputs.version }}" -PackageRegistryStatusPath package-registry-status.json -OutputJsonPath release-status.json -OutputMarkdownPath release-status.md -GitHubToken "${{ github.token }}"
+
       - name: Upload parity report
         uses: actions/upload-artifact@v4
         with:
@@ -106,6 +110,14 @@ jobs:
         with:
           name: package-registry-status
           path: package-registry-status.json
+
+      - name: Upload release status snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-status
+          path: |
+            release-status.json
+            release-status.md
 
       - name: Upload Zig freshness snapshot
         if: always()
@@ -342,6 +354,12 @@ jobs:
           name: package-registry-status
           path: dist
 
+      - name: Download release status snapshot
+        uses: actions/download-artifact@v4
+        with:
+          name: release-status
+          path: dist
+
       - name: Build checksum manifest
         shell: bash
         run: |
@@ -406,6 +424,12 @@ jobs:
           fi
           if [ -f dist/package-registry-status.json ]; then
             ASSETS+=(dist/package-registry-status.json)
+          fi
+          if [ -f dist/release-status.json ]; then
+            ASSETS+=(dist/release-status.json)
+          fi
+          if [ -f dist/release-status.md ]; then
+            ASSETS+=(dist/release-status.md)
           fi
 
           gh release create "${{ inputs.version }}" \

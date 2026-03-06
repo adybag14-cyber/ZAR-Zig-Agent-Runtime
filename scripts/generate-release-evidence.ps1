@@ -121,7 +121,9 @@ $defaultByproducts = @(
     "parity-go-zig.json",
     "parity-go-zig.md",
     "zig-master-freshness.json",
-    "package-registry-status.json"
+    "package-registry-status.json",
+    "release-status.json",
+    "release-status.md"
 )
 foreach ($byproductName in $defaultByproducts) {
     $byproductPath = Join-Path $ArtifactDir $byproductName

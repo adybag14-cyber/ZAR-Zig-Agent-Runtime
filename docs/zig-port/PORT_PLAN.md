@@ -59,6 +59,7 @@ Full-stack replacement execution reference:
 - Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `195/195`.
 - Release/package lane status (2026-03-06):
   - GitHub prerelease `v0.2.0-zig-edge.26` is live with desktop/android/bare-metal artifacts, parity reports, manifest, SBOM, provenance, npm tarball, wheel, and sdist.
+  - release evidence now also includes `release-status.json` + `release-status.md` so every edge cut carries a frozen workflow-status + registry-status snapshot in addition to package preflight evidence.
   - `uvx` fallback from the tagged Git repo was validated locally:
     - `uvx --from "git+https://github.com/adybag14-cyber/openclaw-zig-port@v0.2.0-zig-edge.26#subdirectory=python/openclaw-zig-rpc-client" openclaw-zig-rpc --help`
   - npm public publish remains externally blocked by npm scope/package permission on npmjs; GitHub Packages fallback remains available.

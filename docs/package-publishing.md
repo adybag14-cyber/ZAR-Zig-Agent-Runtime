@@ -131,6 +131,7 @@ The workflow now uses the GitHub Actions environment `pypi`, and the repo-side O
   - uploads `package-registry-status-python.json` preflight evidence for the target version/tag
 - `release-preview.yml`
   - now generates and attaches `package-registry-status.json` to the edge release itself
+  - now also generates and attaches `release-status.json` and `release-status.md` so each edge release carries a frozen workflow + registry snapshot
   - this gives each release a frozen snapshot of GitHub asset presence, npmjs visibility, PyPI visibility, and `uvx` fallback readiness
 
 ## Registry Preflight Script
@@ -153,6 +154,27 @@ This emits a machine-readable report covering:
 - npmjs package/version visibility
 - PyPI package/version visibility
 - whether the GitHub release already contains the Python artifacts needed for the documented `uvx` fallback
+
+## Consolidated Release Status
+
+Local/operator snapshot:
+
+```powershell
+pwsh ./scripts/release-status.ps1 `
+  -ReleaseTag v0.2.0-zig-edge.26 `
+  -OutputJsonPath ./release/release-status.json `
+  -OutputMarkdownPath ./release/release-status.md
+```
+
+This emits:
+
+- `release-status.json`
+  - latest `zig-ci`, `docs-pages`, `release-preview`, `npm-release`, and `python-release` run state
+  - current GitHub release publish/asset state
+  - current npmjs/PyPI visibility state
+  - explicit edge-release blockers vs public-registry blockers
+- `release-status.md`
+  - the same snapshot in operator-readable markdown
 
 ## Operator Rule
 

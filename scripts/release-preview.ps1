@@ -182,6 +182,39 @@ if (Test-Path $packageRegistryStatusScript) {
     }
 }
 
+$releaseStatusScript = Join-Path $repoRoot "scripts\release-status.ps1"
+$releaseStatusJsonPath = Join-Path $releaseRoot "release-status.json"
+$releaseStatusMarkdownPath = Join-Path $releaseRoot "release-status.md"
+if (Test-Path $releaseStatusScript) {
+    try {
+        $releaseStatusArgs = @{
+            Repository                = $Repo
+            ReleaseTag                = $Version
+            NpmPackageName            = "@adybag14-cyber/openclaw-zig-rpc-client"
+            PythonPackageName         = "openclaw-zig-rpc-client"
+            PackageRegistryStatusPath = $packageRegistryStatusPath
+            OutputJsonPath            = $releaseStatusJsonPath
+            OutputMarkdownPath        = $releaseStatusMarkdownPath
+        }
+        if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
+            $releaseStatusArgs.GitHubToken = $env:GITHUB_TOKEN
+        }
+        & $releaseStatusScript @releaseStatusArgs
+        if (-not $?) {
+            throw "release status snapshot failed."
+        }
+        if (Test-Path $releaseStatusJsonPath) {
+            $assets.Add($releaseStatusJsonPath) | Out-Null
+        }
+        if (Test-Path $releaseStatusMarkdownPath) {
+            $assets.Add($releaseStatusMarkdownPath) | Out-Null
+        }
+    }
+    catch {
+        throw "Release status snapshot failed in release-preview flow. $($_.Exception.Message)"
+    }
+}
+
 foreach ($target in $targets) {
     Write-Output "Building target: $($target.Triple)"
     try {

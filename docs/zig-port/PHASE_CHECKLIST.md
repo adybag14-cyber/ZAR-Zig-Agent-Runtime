@@ -6,6 +6,7 @@ Latest edge release: `v0.2.0-zig-edge.26` is published with binaries, parity evi
 Registry status:
 - npm public publish still requires npm-side scope/package permission or `NPM_TOKEN`; GitHub release asset + GitHub Packages fallback are available now.
 - PyPI public publish still requires a matching trusted publisher or `PYPI_API_TOKEN`; workflow claim shape is now confirmed as `repo:adybag14-cyber/openclaw-zig-port:environment:pypi`.
+- release evidence now also includes `release-status.json` + `release-status.md`, which snapshot package visibility plus the latest `zig-ci` / `docs-pages` / `release-preview` / `npm-release` / `python-release` workflow state for the target tag.
 
 ## Full-Stack Replacement Track (FS0..FS7)
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)
