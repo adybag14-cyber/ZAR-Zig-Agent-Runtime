@@ -8,6 +8,22 @@ Historical note: milestone validation counts below are preserved as captured at 
 - [ ] FS1 - Runtime/core consolidation
 - [ ] FS2 - Provider + channel completion
   - Latest delivered slice:
+    - Telegram `/auth providers` and `/auth bridge` now align more closely with Go on operator-visible reply text while preserving Zig’s richer metadata:
+      - `/auth providers` now uses the compact Go-style reply surface:
+        - `Auth providers: chatgpt (browser:true, apiKey:false), ...`
+      - `/auth bridge` now uses the compact Go-style bridge status reply:
+        - `Bridge \`reachable|unreachable|unhealthy\` (<endpoint>).`
+        - optional `Probe error: ...` line when the bridge probe fails
+      - auth provider metadata now includes the Go-style catalog keys alongside Zig’s richer auth/browser fields:
+        - `providerId`
+        - `name`
+        - `verificationUrl`
+        - `verificationUri`
+      - auth bridge metadata now includes the Go-style bridge keys alongside Zig’s richer probe/session guidance fields:
+        - `enabled`
+        - `reachable`
+        - `httpStatus`
+      - runtime and dispatcher regression coverage now assert the compact reply surface plus the new metadata fields.
     - Telegram `/auth url` alias parsing now matches Go more closely across `url`, `link`, and `open`:
       - unknown `--*` flags on these aliases now fail with the same reply surface Go uses for `/auth url` parsing:
         - `Unknown status option \`--bogus\``

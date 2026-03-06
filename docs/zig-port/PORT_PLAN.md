@@ -58,6 +58,22 @@ Full-stack replacement execution reference:
 
 - Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `193/193`.
 - Full-stack replacement kickoff (2026-03-05):
+  - Phase 5 Telegram auth providers/bridge reply parity hardened:
+    - `/auth providers` now emits the compact Go-style operator reply:
+      - `Auth providers: <provider> (browser:<bool>, apiKey:<bool>), ...`
+    - `/auth bridge` now emits the compact Go-style operator reply:
+      - `Bridge \`<status>\` (<endpoint>).`
+      - `Probe error: <error>` is appended only when the probe fails.
+    - `auth.providers` metadata now includes the missing Go-compatible catalog keys while keeping Zig’s richer auth/browser details:
+      - `providerId`
+      - `name`
+      - `verificationUrl`
+      - `verificationUri`
+    - `auth.bridge` metadata now includes the missing Go-compatible bridge keys while keeping Zig’s richer probe/session guidance details:
+      - `enabled`
+      - `reachable`
+      - `httpStatus`
+    - regression coverage tightened in both runtime and dispatcher tests for the compact reply surface and the added metadata keys.
   - Phase 5 Telegram auth-url parser parity hardened:
     - `/auth url`, `/auth link`, and `/auth open` now reject malformed input with the same operator-visible parse surface Go uses for `/auth url`.
     - unknown `--*` flags now return the Go-style status-parser reply text:

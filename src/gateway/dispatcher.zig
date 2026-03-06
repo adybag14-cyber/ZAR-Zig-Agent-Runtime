@@ -12974,12 +12974,19 @@ test "dispatch send auth commands expose go-compatible metadata envelope" {
         var parsed = try std.json.parseFromSlice(std.json.Value, allocator, auth_providers, .{});
         defer parsed.deinit();
         const result = parsed.value.object.get("result") orelse return error.TestUnexpectedResult;
+        const reply = result.object.get("reply") orelse return error.TestUnexpectedResult;
+        try std.testing.expect(reply == .string and std.mem.indexOf(u8, reply.string, "Auth providers:") != null);
         const metadata = result.object.get("metadata") orelse return error.TestUnexpectedResult;
         try std.testing.expect(metadata == .object);
         const metadata_type = metadata.object.get("type") orelse return error.TestUnexpectedResult;
         try std.testing.expect(metadata_type == .string and std.mem.eql(u8, metadata_type.string, "auth.providers"));
         const providers = metadata.object.get("providers") orelse return error.TestUnexpectedResult;
         try std.testing.expect(providers == .array and providers.array.items.len > 0);
+        const first_provider = providers.array.items[0];
+        try std.testing.expect(first_provider == .object);
+        try std.testing.expect(first_provider.object.get("providerId") != null);
+        try std.testing.expect(first_provider.object.get("name") != null);
+        try std.testing.expect(first_provider.object.get("verificationUrl") != null);
     }
 
     const auth_bridge = try dispatch(allocator, "{\"id\":\"tg-auth-bridge-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta\",\"sessionId\":\"tg-meta\",\"message\":\"/auth bridge qwen\"}}");
@@ -12988,6 +12995,8 @@ test "dispatch send auth commands expose go-compatible metadata envelope" {
         var parsed = try std.json.parseFromSlice(std.json.Value, allocator, auth_bridge, .{});
         defer parsed.deinit();
         const result = parsed.value.object.get("result") orelse return error.TestUnexpectedResult;
+        const reply = result.object.get("reply") orelse return error.TestUnexpectedResult;
+        try std.testing.expect(reply == .string and std.mem.indexOf(u8, reply.string, "Bridge `") != null);
         const metadata = result.object.get("metadata") orelse return error.TestUnexpectedResult;
         try std.testing.expect(metadata == .object);
         const metadata_type = metadata.object.get("type") orelse return error.TestUnexpectedResult;
@@ -12996,6 +13005,10 @@ test "dispatch send auth commands expose go-compatible metadata envelope" {
         try std.testing.expect(bridge == .object);
         const sessions = bridge.object.get("sessions") orelse return error.TestUnexpectedResult;
         try std.testing.expect(sessions == .object);
+        try std.testing.expect(bridge.object.get("enabled") != null);
+        try std.testing.expect(bridge.object.get("reachable") != null);
+        try std.testing.expect(bridge.object.get("httpStatus") != null);
+        try std.testing.expect(bridge.object.get("guidance") != null);
     }
 
     const auth_help = try dispatch(allocator, "{\"id\":\"tg-auth-help-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta\",\"sessionId\":\"tg-meta\",\"message\":\"/auth help\"}}");

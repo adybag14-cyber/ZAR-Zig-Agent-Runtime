@@ -144,21 +144,27 @@ pub const SendResult = struct {
 
 const AuthProviderMetadataEntry = struct {
     id: []const u8,
+    providerId: []const u8,
+    name: []const u8,
     displayName: []const u8,
     aliases: []const []const u8,
+    verificationUrl: []const u8,
+    verificationUri: []const u8,
     supportsBrowserSession: bool,
     apiKeyConfigured: bool,
     authMode: []const u8,
     defaultModel: []const u8,
-    verificationUri: []const u8,
     guestBypassSupported: bool,
     popupBypassAction: []const u8,
     guestBypassHint: []const u8,
 };
 
 const AuthBridgeMetadata = struct {
+    enabled: bool,
     status: []const u8,
     endpoint: []const u8,
+    reachable: bool,
+    httpStatus: u16,
     probeUrl: []const u8,
     statusCode: u16,
     latencyMs: i64,
@@ -3099,13 +3105,16 @@ pub const TelegramRuntime = struct {
             const profile = web_login.providerProfile(entry.id);
             providers[idx] = .{
                 .id = entry.id,
+                .providerId = entry.id,
+                .name = entry.display_name,
                 .displayName = entry.display_name,
                 .aliases = entry.aliases,
+                .verificationUrl = profile.verification_uri,
+                .verificationUri = profile.verification_uri,
                 .supportsBrowserSession = entry.supports_browser_session,
                 .apiKeyConfigured = providerApiKeyConfigured(self, allocator, entry.id),
                 .authMode = profile.auth_mode,
                 .defaultModel = profile.default_model,
-                .verificationUri = profile.verification_uri,
                 .guestBypassSupported = profile.guest_bypass_supported,
                 .popupBypassAction = profile.popup_bypass_action,
                 .guestBypassHint = profile.guest_bypass_hint,
@@ -3123,20 +3132,27 @@ pub const TelegramRuntime = struct {
         const provider = normalizeProvider(provider_raw);
         const guidance = providerBridgeGuidance(provider);
         const summary = self.login_manager.status();
-        const probe = try lightpanda.probeEndpoint(allocator, self.bridge_endpoint);
+        const endpoint = std.mem.trim(u8, self.bridge_endpoint, " \t\r\n");
+        const enabled = endpoint.len > 0;
+        const probe = try lightpanda.probeEndpoint(allocator, endpoint);
         defer {
             allocator.free(probe.endpoint);
             allocator.free(probe.probeUrl);
             allocator.free(probe.errorText);
         }
+        const bridge_status = bridgeProbeCompatStatus(probe);
+        const reachable = bridgeProbeReachable(probe);
 
         return stringifyJsonAlloc(allocator, AuthCommandMetadata{
             .type = "auth.bridge",
             .target = std.mem.trim(u8, target, " \t\r\n"),
             .provider = provider,
             .bridge = .{
-                .status = if (probe.ok) "ok" else "error",
+                .enabled = enabled,
+                .status = bridge_status,
                 .endpoint = probe.endpoint,
+                .reachable = reachable,
+                .httpStatus = probe.statusCode,
                 .probeUrl = probe.probeUrl,
                 .statusCode = probe.statusCode,
                 .latencyMs = probe.latencyMs,
@@ -3152,72 +3168,57 @@ pub const TelegramRuntime = struct {
         defer out.deinit(allocator);
 
         try out.appendSlice(allocator, "Auth providers:");
-        for (telegramAuthProviderCatalog()) |entry| {
-            const profile = web_login.providerProfile(entry.id);
+        for (telegramAuthProviderCatalog(), 0..) |entry, idx| {
             const api_key_configured = providerApiKeyConfigured(self, allocator, entry.id);
-            const line = try std.fmt.allocPrint(
-                allocator,
-                "\n- {s} [{s}] mode:{s}, browser:{s}, apiKey:{s}, guest:{s}, model:{s}, verification:{s}",
-                .{
-                    entry.id,
-                    entry.display_name,
-                    profile.auth_mode,
-                    if (entry.supports_browser_session) "true" else "false",
-                    if (api_key_configured) "true" else "false",
-                    if (profile.guest_bypass_supported) "true" else "false",
-                    profile.default_model,
-                    profile.verification_uri,
-                },
-            );
+            if (idx > 0) try out.appendSlice(allocator, ",");
+            const line = try std.fmt.allocPrint(allocator, " {s} (browser:{s}, apiKey:{s})", .{
+                entry.id,
+                if (entry.supports_browser_session) "true" else "false",
+                if (api_key_configured) "true" else "false",
+            });
             defer allocator.free(line);
             try out.appendSlice(allocator, line);
-
-            if (profile.guest_bypass_supported and profile.popup_bypass_action.len > 0 and !std.ascii.eqlIgnoreCase(profile.popup_bypass_action, "not_applicable")) {
-                const popup_line = try std.fmt.allocPrint(allocator, ", popup:{s}", .{profile.popup_bypass_action});
-                defer allocator.free(popup_line);
-                try out.appendSlice(allocator, popup_line);
-            }
-            if (entry.aliases.len > 0) {
-                try out.appendSlice(allocator, ", aliases:");
-                for (entry.aliases, 0..) |alias, idx| {
-                    if (idx > 0) try out.appendSlice(allocator, "|");
-                    try out.appendSlice(allocator, alias);
-                }
-            }
         }
 
         return out.toOwnedSlice(allocator);
     }
 
     fn formatBridgeStatusMessage(self: *TelegramRuntime, allocator: std.mem.Allocator, provider_raw: []const u8) ![]u8 {
-        const provider = normalizeProvider(provider_raw);
-        const guidance = providerBridgeGuidance(provider);
+        _ = provider_raw;
         const summary = self.login_manager.status();
-        const probe = try lightpanda.probeEndpoint(allocator, self.bridge_endpoint);
+        const endpoint = std.mem.trim(u8, self.bridge_endpoint, " \t\r\n");
+        const probe = try lightpanda.probeEndpoint(allocator, endpoint);
         defer {
             allocator.free(probe.endpoint);
             allocator.free(probe.probeUrl);
             allocator.free(probe.errorText);
         }
+        _ = summary;
+        const bridge_status = bridgeProbeCompatStatus(probe);
 
-        return std.fmt.allocPrint(
-            allocator,
-            "Browser bridge: lightpanda\nProvider: {s}\nProbe: {s}\nEndpoint: {s}\nProbe URL: {s}\nHTTP: {d}\nLatency: {d}ms\nSessions: total={d}, pending={d}, authorized={d}, expired={d}, rejected={d}\n{s}",
-            .{
-                provider,
-                if (probe.ok) "ok" else "error",
+        if (probe.errorText.len > 0) {
+            return std.fmt.allocPrint(allocator, "Bridge `{s}` ({s}).\nProbe error: {s}", .{
+                bridge_status,
                 probe.endpoint,
-                probe.probeUrl,
-                probe.statusCode,
-                probe.latencyMs,
-                summary.total,
-                summary.pending,
-                summary.authorized,
-                summary.expired,
-                summary.rejected,
-                guidance,
-            },
-        );
+                probe.errorText,
+            });
+        }
+        return std.fmt.allocPrint(allocator, "Bridge `{s}` ({s}).", .{
+            bridge_status,
+            probe.endpoint,
+        });
+    }
+
+    fn bridgeProbeCompatStatus(probe: lightpanda.BridgeProbe) []const u8 {
+        if (std.mem.trim(u8, probe.endpoint, " \t\r\n").len == 0) return "missing-endpoint";
+        if (probe.errorText.len > 0 and probe.statusCode == 0) return "unreachable";
+        if (probe.statusCode >= 200 and probe.statusCode < 500) return "reachable";
+        if (probe.statusCode > 0) return "unhealthy";
+        return "unreachable";
+    }
+
+    fn bridgeProbeReachable(probe: lightpanda.BridgeProbe) bool {
+        return probe.statusCode >= 200 and probe.statusCode < 500;
     }
 
     fn formatAuthUrlMessage(
@@ -4689,7 +4690,7 @@ test "telegram runtime set api key command stores provider secret and updates au
 
     var providers = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-set-key-providers\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-set\",\"sessionId\":\"sess-set\",\"message\":\"/auth providers\"}}");
     defer providers.deinit(allocator);
-    try std.testing.expect(std.mem.indexOf(u8, providers.reply, "- openrouter [OpenRouter]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, providers.reply, "openrouter (browser:true, apiKey:true)") != null);
     try std.testing.expect(std.mem.indexOf(u8, providers.reply, "apiKey:true") != null);
 }
 
@@ -4975,7 +4976,7 @@ test "telegram runtime auth supports account scope and force restart" {
     try std.testing.expect(std.mem.indexOf(u8, chat_mobile.reply, "OpenClaw Zig (qwen/") != null);
 }
 
-test "telegram runtime auth bridge and providers help include guest guidance" {
+test "telegram runtime auth bridge and providers help keep compact go-style replies with rich metadata" {
     var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
     defer login.deinit();
     var runtime = TelegramRuntime.init(std.testing.allocator, &login);
@@ -4995,9 +4996,10 @@ test "telegram runtime auth bridge and providers help include guest guidance" {
 
     var providers = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-providers\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-help\",\"sessionId\":\"sess-help\",\"message\":\"/auth providers\"}}");
     defer providers.deinit(allocator);
-    try std.testing.expect(std.mem.indexOf(u8, providers.reply, "qwen [Qwen] mode:guest_or_code") != null);
+    try std.testing.expect(std.mem.indexOf(u8, providers.reply, "Auth providers:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, providers.reply, "qwen (browser:true, apiKey:true)") != null);
     try std.testing.expect(std.mem.indexOf(u8, providers.reply, "apiKey:true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, providers.reply, "aliases:z.ai|z-ai|zaiweb|zai-web|glm|glm5|glm-5") != null);
+    try std.testing.expect(std.mem.indexOf(u8, providers.reply, "zai (browser:true, apiKey:false)") != null);
 
     var help = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-help\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-help\",\"sessionId\":\"sess-help\",\"message\":\"/auth help\"}}");
     defer help.deinit(allocator);
@@ -5015,10 +5017,12 @@ test "telegram runtime auth bridge and providers help include guest guidance" {
 
     var bridge_qwen = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-bridge-qwen\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-help\",\"sessionId\":\"sess-help\",\"message\":\"/auth bridge qwen\"}}");
     defer bridge_qwen.deinit(allocator);
-    try std.testing.expect(std.mem.indexOf(u8, bridge_qwen.reply, "Probe: error") != null);
-    try std.testing.expect(std.mem.indexOf(u8, bridge_qwen.reply, "Sessions: total=1, pending=1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, bridge_qwen.reply, "Stay logged out") != null);
-    try std.testing.expect(std.mem.indexOf(u8, bridge_qwen.reply, "/auth guest qwen") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bridge_qwen.reply, "Bridge `unreachable` (http://127.0.0.1:1).") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bridge_qwen.reply, "Probe error: probe failed: ConnectionRefused") != null);
+    const bridge_qwen_metadata = bridge_qwen.metadataJson orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.indexOf(u8, bridge_qwen_metadata, "\"guidance\":\"Browser bridge: lightpanda") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bridge_qwen_metadata, "\"reachable\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bridge_qwen_metadata, "\"httpStatus\":0") != null);
 }
 
 test "telegram runtime auth link command surfaces pending qwen session details" {
