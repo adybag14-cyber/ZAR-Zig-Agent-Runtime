@@ -123,10 +123,11 @@ Historical note: milestone validation counts below are preserved as captured at 
         - `Auth session <id> cancelled.`
       - unknown `/auth` actions now use the fuller Go-style help text:
         - `Unknown /auth action. Use /auth help for full usage.`
-      - missing `/auth complete` codes now use the Go-style backticked usage string:
-        - `Missing code. Usage: \`/auth complete <provider> <callback_url_or_code> [session_id] [account]\``
+      - bare and provider-only `/auth complete` invocations now follow the Go parser contract:
+        - `Usage: \`/auth complete <provider> <callback_url_or_code> [session_id] [account]\``
+        - metadata `error=invalid_complete_args`
       - regression coverage added:
-        - `channels.telegram_runtime.test.telegram runtime auth invalid action and missing code use go-style help text`
+        - `channels.telegram_runtime.test.telegram runtime auth invalid action and complete usage use go-style help text`
         - `gateway.dispatcher.test.dispatch send auth cancel and invalid action use go-style replies`
     - Telegram auth success/operator replies now match Go more closely:
       - `/auth url` now uses the compact Go-style reply shape:

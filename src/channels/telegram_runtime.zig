@@ -2777,24 +2777,18 @@ pub const TelegramRuntime = struct {
         }
         if (std.ascii.eqlIgnoreCase(action, "complete")) {
             if (rest.len == 0) {
-                const metadata_json = try stringifyJsonAlloc(allocator, AuthCommandMetadata{
-                    .type = "auth.complete",
-                    .target = trimmed_target,
-                    .provider = default_provider,
-                    .status = "pending",
-                    .@"error" = "missing_code",
-                });
-                return .{
-                    .is_command = true,
-                    .command_name = "auth",
-                    .reply = try allocator.dupe(u8, "Missing code. Usage: `/auth complete <provider> <callback_url_or_code> [session_id] [account]`"),
-                    .provider = default_provider,
-                    .model = default_model,
-                    .login_session_id = "",
-                    .login_code = "",
-                    .auth_status = "pending",
-                    .metadata_json = metadata_json,
-                };
+                return self.authInvalidOutcome(
+                    allocator,
+                    trimmed_target,
+                    "auth.complete",
+                    default_provider,
+                    "default",
+                    try allocator.dupe(u8, "Usage: `/auth complete <provider> <callback_url_or_code> [session_id] [account]`"),
+                    "invalid_complete_args",
+                    "invalid",
+                    "",
+                    null,
+                );
             }
 
             var provider = default_provider;
@@ -2830,7 +2824,7 @@ pub const TelegramRuntime = struct {
             }
 
             if (code_token.len == 0) {
-                return self.authInvalidOutcome(allocator, trimmed_target, "auth.complete", provider, account, try allocator.dupe(u8, "Missing code. Usage: `/auth complete <provider> <callback_url_or_code> [session_id] [account]`"), "missing_code", "pending", "", null);
+                return self.authInvalidOutcome(allocator, trimmed_target, "auth.complete", provider, account, try allocator.dupe(u8, "Usage: `/auth complete <provider> <callback_url_or_code> [session_id] [account]`"), "invalid_complete_args", "invalid", "", null);
             }
 
             if (!isKnownProvider(rest[0])) {
@@ -5469,7 +5463,7 @@ test "telegram runtime auth parser rejects invalid options and trailing args" {
     try std.testing.expect(std.mem.indexOf(u8, cancel_usage.metadataJson.?, "\"error\":\"invalid_cancel_args\"") != null);
 }
 
-test "telegram runtime auth invalid action and missing code use go-style help text" {
+test "telegram runtime auth invalid action and complete usage use go-style help text" {
     var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
     defer login.deinit();
     var runtime = TelegramRuntime.init(std.testing.allocator, &login);
@@ -5484,9 +5478,19 @@ test "telegram runtime auth invalid action and missing code use go-style help te
     try std.testing.expect(invalid.metadataJson != null);
     try std.testing.expect(std.mem.indexOf(u8, invalid.metadataJson.?, "\"error\":\"unknown_action\"") != null);
 
-    var missing_code = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-missing-code\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-auth-invalid\",\"sessionId\":\"sess-auth-invalid\",\"message\":\"/auth complete\"}}");
-    defer missing_code.deinit(allocator);
-    try std.testing.expect(std.mem.indexOf(u8, missing_code.reply, "Missing code. Usage: `/auth complete <provider> <callback_url_or_code> [session_id] [account]`") != null);
+    var complete_usage = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-complete-usage\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-auth-invalid\",\"sessionId\":\"sess-auth-invalid\",\"message\":\"/auth complete\"}}");
+    defer complete_usage.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, complete_usage.authStatus, "invalid"));
+    try std.testing.expect(std.mem.indexOf(u8, complete_usage.reply, "Usage: `/auth complete <provider> <callback_url_or_code> [session_id] [account]`") != null);
+    try std.testing.expect(complete_usage.metadataJson != null);
+    try std.testing.expect(std.mem.indexOf(u8, complete_usage.metadataJson.?, "\"error\":\"invalid_complete_args\"") != null);
+
+    var provider_only_usage = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-complete-provider-only\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-auth-invalid\",\"sessionId\":\"sess-auth-invalid\",\"message\":\"/auth complete qwen\"}}");
+    defer provider_only_usage.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, provider_only_usage.authStatus, "invalid"));
+    try std.testing.expect(std.mem.indexOf(u8, provider_only_usage.reply, "Usage: `/auth complete <provider> <callback_url_or_code> [session_id] [account]`") != null);
+    try std.testing.expect(provider_only_usage.metadataJson != null);
+    try std.testing.expect(std.mem.indexOf(u8, provider_only_usage.metadataJson.?, "\"error\":\"invalid_complete_args\"") != null);
 }
 
 test "telegram runtime cancel without active session returns none status metadata" {

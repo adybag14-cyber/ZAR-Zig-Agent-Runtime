@@ -177,10 +177,11 @@ Full-stack replacement execution reference:
       - `Auth session \`<id>\` cancelled.`
     - unknown `/auth` actions now use the fuller Go-style help text:
       - `Unknown \`/auth\` action. Use \`/auth help\` for full usage.`
-    - missing `/auth complete` codes now use the Go-style backticked usage string:
-      - `Missing code. Usage: \`/auth complete <provider> <callback_url_or_code> [session_id] [account]\``
+    - bare and provider-only `/auth complete` invocations now follow the Go parser contract:
+      - `Usage: \`/auth complete <provider> <callback_url_or_code> [session_id] [account]\``
+      - metadata `error=invalid_complete_args`
     - regression tests added:
-      - `channels.telegram_runtime.test.telegram runtime auth invalid action and missing code use go-style help text`
+      - `channels.telegram_runtime.test.telegram runtime auth invalid action and complete usage use go-style help text`
       - `gateway.dispatcher.test.dispatch send auth cancel and invalid action use go-style replies`
   - Phase 5 Telegram auth success-reply parity hardened:
     - `/auth url` now emits the compact Go-style operator reply (`Auth URL: ...` + `Code: ...`) instead of Zig's longer status/session/scope/guest guidance block.

@@ -13250,6 +13250,24 @@ test "dispatch send invalid auth parser replies preserve metadata envelope" {
     defer allocator.free(bad_complete_error);
     try std.testing.expect(std.mem.eql(u8, bad_complete_error, "invalid_complete_args"));
 
+    const empty_complete = try dispatch(allocator, "{\"id\":\"tg-auth-empty-complete-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta-invalid-auth\",\"sessionId\":\"tg-meta-invalid-auth\",\"message\":\"/auth complete\"}}");
+    defer allocator.free(empty_complete);
+    const empty_complete_reply = try extractResultStringField(allocator, empty_complete, "reply");
+    defer allocator.free(empty_complete_reply);
+    try std.testing.expect(std.mem.indexOf(u8, empty_complete_reply, "Usage: `/auth complete <provider> <callback_url_or_code> [session_id] [account]`") != null);
+    const empty_complete_error = try extractResultObjectStringField(allocator, empty_complete, "metadata", "error");
+    defer allocator.free(empty_complete_error);
+    try std.testing.expect(std.mem.eql(u8, empty_complete_error, "invalid_complete_args"));
+
+    const provider_only_complete = try dispatch(allocator, "{\"id\":\"tg-auth-provider-only-complete-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta-invalid-auth\",\"sessionId\":\"tg-meta-invalid-auth\",\"message\":\"/auth complete qwen\"}}");
+    defer allocator.free(provider_only_complete);
+    const provider_only_complete_reply = try extractResultStringField(allocator, provider_only_complete, "reply");
+    defer allocator.free(provider_only_complete_reply);
+    try std.testing.expect(std.mem.indexOf(u8, provider_only_complete_reply, "Usage: `/auth complete <provider> <callback_url_or_code> [session_id] [account]`") != null);
+    const provider_only_complete_error = try extractResultObjectStringField(allocator, provider_only_complete, "metadata", "error");
+    defer allocator.free(provider_only_complete_error);
+    try std.testing.expect(std.mem.eql(u8, provider_only_complete_error, "invalid_complete_args"));
+
     const bad_cancel = try dispatch(allocator, "{\"id\":\"tg-auth-bad-cancel-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta-invalid-auth\",\"sessionId\":\"tg-meta-invalid-auth\",\"message\":\"/auth cancel qwen mobile --bogus\"}}");
     defer allocator.free(bad_cancel);
     const bad_cancel_reply = try extractResultStringField(allocator, bad_cancel, "reply");
