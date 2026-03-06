@@ -1,7 +1,7 @@
 # Phase Checklist
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
-Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `195/195`.
+Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `197/197`.
 Latest edge release: `v0.2.0-zig-edge.26` is published with binaries, parity evidence, SBOM/provenance, npm tarball, wheel, and sdist attached.
 Registry status:
 - npm public publish still requires npm-side scope/package permission or `NPM_TOKEN`; GitHub release asset + GitHub Packages fallback are available now.
@@ -372,6 +372,13 @@ FS1 runtime/core consolidation slice (active):
   - dispatcher now writes compat persistence snapshots safely after request handling when compatibility state is active.
   - regression test added:
     - `compat state persistence roundtrip restores core runtime settings and histories`.
+- [x] Runtime persistence posture is now surfaced explicitly in diagnostics (`src/security/audit.zig`, `src/gateway/dispatcher.zig`):
+  - `security.audit` now emits `runtime.state_path.in_memory` when runtime state is empty or memory-backed.
+  - `doctor` now exposes `runtime.state_path` and `security.policy_bundle` checks with persisted-vs-memory posture details.
+  - regression tests added:
+    - `security audit reports in-memory runtime state path`
+    - `doctor exposes runtime state path and policy bundle posture checks`
+    - dispatcher `doctor` JSON now asserts both checks are present.
 
 ## Phase 4 - Security + Diagnostics
 - [x] Port core guard flow (prompt/tool policy checks)
@@ -671,7 +678,7 @@ Phase 6 progress notes:
 ## Latest Validation Snapshot
 - [x] `zig build`
 - [x] `zig build test`
-- [x] `zig build test --summary all` -> `195/195` passing (includes gateway auth/rate-limit hardening tests, runtime file/exec policy hardening tests, config-hash diagnostics coverage, bind-policy token enforcement checks, secure-boot policy/update-gate enforcement coverage, boot attestation + attestation-verify + rollback-cancel coverage, TTS/completion execution-path coverage, PAL extraction coverage, secure secret-store backend coverage, and bare-metal ABI v2 contract tests)
+- [x] `zig build test --summary all` -> `197/197` passing (includes gateway auth/rate-limit hardening tests, runtime file/exec policy hardening tests, config-hash diagnostics coverage, bind-policy token enforcement checks, secure-boot policy/update-gate enforcement coverage, TTS/completion execution-path coverage, PAL extraction coverage, secure secret-store backend coverage, bare-metal ABI v2 contract tests, and runtime persistence posture diagnostics coverage)
 - [x] Runtime policy hardening slice shipped:
   - `file.read` / `file.write` optional sandbox enforcement with traversal + symlink denial paths:
     - `OPENCLAW_ZIG_RUNTIME_FILE_SANDBOX_ENABLED`

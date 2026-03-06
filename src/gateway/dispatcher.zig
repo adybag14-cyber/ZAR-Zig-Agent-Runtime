@@ -12879,10 +12879,20 @@ test "dispatch exposes security.audit and doctor methods" {
     defer allocator.free(audit);
     try std.testing.expect(std.mem.indexOf(u8, audit, "\"summary\"") != null);
 
+    var cfg = config.defaults();
+    cfg.state_path = "memory://dispatcher-doctor-state";
+    cfg.security.policy_bundle_path = "memory://dispatcher-policy";
+    setConfig(cfg);
+    defer setConfig(config.defaults());
+
     const doctor = try dispatch(allocator, "{\"id\":\"doctor-1\",\"method\":\"doctor\",\"params\":{}}");
     defer allocator.free(doctor);
     try std.testing.expect(std.mem.indexOf(u8, doctor, "\"checks\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, doctor, "\"configHash\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doctor, "\"id\":\"runtime.state_path\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doctor, "\"message\":\"memory://dispatcher-doctor-state\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doctor, "\"id\":\"security.policy_bundle\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doctor, "\"message\":\"memory://dispatcher-policy\"") != null);
 }
 
 test "dispatch web.login lifecycle start wait complete status" {

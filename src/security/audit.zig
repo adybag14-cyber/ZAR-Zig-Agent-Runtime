@@ -207,6 +207,17 @@ pub fn run(
         });
     }
 
+    const state_path = std.mem.trim(u8, cfg.state_path, " \t\r\n");
+    if (state_path.len == 0 or startsWithIgnoreCase(state_path, "memory://")) {
+        try findings.append(allocator, .{
+            .checkId = "runtime.state_path.in_memory",
+            .severity = "info",
+            .title = "Runtime state path is not persisted",
+            .detail = "runtime state path is empty or memory-backed and will not survive restart",
+            .remediation = "set OPENCLAW_ZIG_STATE_PATH to a persisted directory or file path",
+        });
+    }
+
     if (std.mem.trim(u8, cfg.security.blocked_message_patterns, " \t\r\n").len == 0) {
         try findings.append(allocator, .{
             .checkId = "security.blocked_patterns.empty",
@@ -309,6 +320,27 @@ pub fn doctor(
         .status = if (cfg.security.loop_guard_enabled) "pass" else "warn",
         .message = if (cfg.security.loop_guard_enabled) "enabled" else "disabled",
         .detail = "loop guard blocks repetitive tool calls",
+    });
+    const state_path = std.mem.trim(u8, cfg.state_path, " \t\r\n");
+    const persisted_state_path = state_path.len > 0 and !startsWithIgnoreCase(state_path, "memory://");
+    try checks.append(allocator, .{
+        .id = "runtime.state_path",
+        .status = if (persisted_state_path) "pass" else "warn",
+        .message = if (state_path.len > 0) state_path else "unset",
+        .detail = if (persisted_state_path) "runtime state path is persisted" else "runtime state path is in-memory and non-persistent",
+    });
+    const policy_path = std.mem.trim(u8, cfg.security.policy_bundle_path, " \t\r\n");
+    const policy_probe = probePolicyBundle(policy_path);
+    try checks.append(allocator, .{
+        .id = "security.policy_bundle",
+        .status = if (!policy_probe.attempted) "warn" else if (policy_probe.parseOk) "pass" else "warn",
+        .message = if (policy_path.len > 0) policy_path else "unset",
+        .detail = if (!policy_probe.attempted)
+            "policy bundle is unset or memory-backed"
+        else if (policy_probe.parseOk)
+            "persisted policy bundle configured"
+        else
+            (policy_probe.@"error" orelse "policy bundle deep probe failed"),
     });
     try checks.append(allocator, .{
         .id = "security.audit.summary",
@@ -607,6 +639,55 @@ test "doctor includes docker binary check" {
         }
     }
     try std.testing.expect(found);
+}
+
+test "security audit reports in-memory runtime state path" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.state_path = "memory://runtime-state";
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try run(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found = false;
+    for (report.findings) |finding| {
+        if (std.mem.eql(u8, finding.checkId, "runtime.state_path.in_memory")) {
+            found = true;
+            try std.testing.expect(std.mem.eql(u8, finding.severity, "info"));
+        }
+    }
+    try std.testing.expect(found);
+}
+
+test "doctor exposes runtime state path and policy bundle posture checks" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.state_path = "memory://runtime-state";
+    cfg.security.policy_bundle_path = "memory://security-policy.json";
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try doctor(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found_state_path = false;
+    var found_policy_bundle = false;
+    for (report.checks) |check| {
+        if (std.mem.eql(u8, check.id, "runtime.state_path")) {
+            found_state_path = true;
+            try std.testing.expect(std.mem.eql(u8, check.status, "warn"));
+            try std.testing.expect(std.mem.eql(u8, check.message, "memory://runtime-state"));
+        }
+        if (std.mem.eql(u8, check.id, "security.policy_bundle")) {
+            found_policy_bundle = true;
+            try std.testing.expect(std.mem.eql(u8, check.status, "warn"));
+            try std.testing.expect(std.mem.eql(u8, check.message, "memory://security-policy.json"));
+        }
+    }
+    try std.testing.expect(found_state_path);
+    try std.testing.expect(found_policy_bundle);
 }
 
 test "security audit includes gateway auth warning when token gate is disabled" {
