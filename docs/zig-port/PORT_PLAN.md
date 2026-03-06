@@ -111,6 +111,11 @@ Full-stack replacement execution reference:
       - nested `stats`
     - Zig keeps its richer top-level counters plus nested `runtime`, so operator/agent callers get both the compat contract and the deeper local posture in one receipt.
     - dispatcher regression coverage now asserts the health envelope keys alongside the richer runtime snapshot.
+  - FS1 identity diagnostics parity slice shipped:
+    - `agent.identity.get` now reports a stable process start time instead of generating a fresh timestamp on every call.
+    - the identity contract now includes the Go-visible RFC3339 `startedAt` field while preserving `startedAtMs` for Zig callers.
+    - `authMode` now reflects gateway auth posture (`token` or `none`) instead of the unrelated browser-bridge `keyless` label.
+    - dispatcher regression coverage now asserts `authMode`, `startedAt`, and `startedAtMs` on the identity receipt.
   - Full-stack replacement kickoff (2026-03-05):
   - Phase 5 Telegram auth fallback-metadata parity hardened:
     - no-session `/auth url` metadata now matches Go’s leaner fallback envelope and no longer emits Zig-only top-level:

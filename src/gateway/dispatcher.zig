@@ -19,6 +19,8 @@ const time_util = @import("../util/time.zig");
 var runtime_instance: ?tool_runtime.ToolRuntime = null;
 var runtime_io_threaded: std.Io.Threaded = undefined;
 var runtime_io_ready: bool = false;
+var process_started_at_ms: i64 = 0;
+var process_started_at_ready: bool = false;
 
 var active_config: config.Config = config.defaults();
 var config_ready: bool = false;
@@ -2854,15 +2856,21 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
     }
 
     if (std.ascii.eqlIgnoreCase(req.method, "agent.identity.get")) {
+        const cfg = currentConfig();
+        const gateway_token_required = cfg.gateway.require_token or !isLoopbackBind(cfg.http_bind);
         const runtime = getRuntime();
         const runtime_snapshot = runtime.snapshot();
+        const started_at_ms = getProcessStartedAtMs();
+        const started_at = try time_util.unixMsToRfc3339Alloc(allocator, started_at_ms);
+        defer allocator.free(started_at);
         return protocol.encodeResult(allocator, req.id, .{
             .id = "openclaw-zig",
             .service = "openclaw-zig-port",
             .version = "dev",
             .runtime = runtime_snapshot,
-            .authMode = "keyless",
-            .startedAtMs = time_util.nowMs(),
+            .authMode = if (gateway_token_required) "token" else "none",
+            .startedAt = started_at,
+            .startedAtMs = started_at_ms,
         });
     }
 
@@ -8341,6 +8349,14 @@ const BrowserCompletionContext = struct {
 
 fn currentConfig() config.Config {
     return if (config_ready) active_config else config.defaults();
+}
+
+fn getProcessStartedAtMs() i64 {
+    if (!process_started_at_ready) {
+        process_started_at_ms = time_util.nowMs();
+        process_started_at_ready = true;
+    }
+    return process_started_at_ms;
 }
 
 fn getRuntime() *tool_runtime.ToolRuntime {
@@ -14549,6 +14565,9 @@ test "dispatch compat agent and skills methods return contracts" {
     defer allocator.free(identity);
     try std.testing.expect(std.mem.indexOf(u8, identity, "\"id\":\"openclaw-zig\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, identity, "\"runtime\":{\"statePath\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, identity, "\"authMode\":\"none\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, identity, "\"startedAt\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, identity, "\"startedAtMs\":") != null);
 
     const created = try dispatch(allocator, "{\"id\":\"compat-agent-create\",\"method\":\"agents.create\",\"params\":{\"name\":\"zig-agent\",\"description\":\"parity test\",\"model\":\"gpt-5.2\"}}");
     defer allocator.free(created);
