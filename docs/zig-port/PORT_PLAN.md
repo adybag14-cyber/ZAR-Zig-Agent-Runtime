@@ -56,8 +56,19 @@ Full-stack replacement execution reference:
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `188/188`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `190/190`.
 - Full-stack replacement kickoff (2026-03-05):
+  - Phase 5 Telegram auth-complete parity hardened:
+    - missing `/auth complete` sessions now use the Go-style scope reply:
+      - `No pending auth session for scope \`<provider>/<account>\`. Run \`/auth start <provider>\` first.`
+    - complete no-session metadata now keeps `error=missing_session` without Zig's older `status=none`, and top-level `authStatus` now settles to `none`.
+    - bridge completion failures now preserve Go-style raw error text in both reply and metadata:
+      - `invalid login code`
+      - `login session expired`
+      - `login session not found`
+    - regression tests added:
+      - `channels.telegram_runtime.test.telegram runtime auth complete missing session and bridge errors use go-style replies`
+      - `gateway.dispatcher.test.dispatch send auth complete errors use go-style messages`
   - Phase 5 Telegram auth-wait bridge error parity hardened:
     - when `/auth wait` resolves through a scoped/bound login session that no longer exists, Zig now mirrors the Go bridge error wording:
       - `Auth wait failed: login session not found`

@@ -1,13 +1,24 @@
 # Phase Checklist
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
-Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `188/188`.
+Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `190/190`.
 
 ## Full-Stack Replacement Track (FS0..FS7)
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)
 - [ ] FS1 - Runtime/core consolidation
 - [ ] FS2 - Provider + channel completion
   - Latest delivered slice:
+    - Telegram `/auth complete` now matches Go more closely on no-session and bridge-error paths:
+      - missing complete sessions now return `No pending auth session for scope <scope>. Run /auth start <provider> first.` instead of Zig's older provider/account-specific wording.
+      - no-session complete metadata now carries `error=missing_session` without the extra Zig-only `status=none`, and top-level `authStatus` now settles to `none`.
+      - completion failures now preserve raw Go-style bridge error strings:
+        - `Auth failed: invalid login code`
+        - `Auth failed: login session expired`
+        - `Auth failed: login session not found`
+      - error metadata on these paths now carries the same raw bridge error strings rather than Zig's older `invalid_code|session_expired|session_not_found` tokens.
+      - regression coverage added:
+        - `channels.telegram_runtime.test.telegram runtime auth complete missing session and bridge errors use go-style replies`
+        - `gateway.dispatcher.test.dispatch send auth complete errors use go-style messages`
     - Telegram `/auth wait` bridge-missing errors now match Go more closely:
       - when a scoped/bound login session is missing, `/auth wait` now returns `Auth wait failed: login session not found` instead of Zig's older `session not found.` reply.
       - missing-session wait metadata now carries `error=login session not found` and no longer reports the extra Zig-only `status=missing` field on the bridge-error path.

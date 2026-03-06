@@ -13171,6 +13171,47 @@ test "dispatch send auth wait bridge errors use go-style messages" {
     try std.testing.expect(std.mem.eql(u8, wait_missing_error, "login session not found"));
 }
 
+test "dispatch send auth complete errors use go-style messages" {
+    const allocator = std.testing.allocator;
+
+    const complete_missing = try dispatch(allocator, "{\"id\":\"tg-auth-complete-missing-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta-complete-missing\",\"sessionId\":\"tg-meta-complete-missing\",\"message\":\"/auth complete qwen OC-123 mobile\"}}");
+    defer allocator.free(complete_missing);
+    const complete_missing_reply = try extractResultStringField(allocator, complete_missing, "reply");
+    defer allocator.free(complete_missing_reply);
+    try std.testing.expect(std.mem.indexOf(u8, complete_missing_reply, "No pending auth session for scope `qwen/mobile`. Run `/auth start qwen` first.") != null);
+    const complete_missing_error = try extractResultObjectStringField(allocator, complete_missing, "metadata", "error");
+    defer allocator.free(complete_missing_error);
+    try std.testing.expect(std.mem.eql(u8, complete_missing_error, "missing_session"));
+
+    const start = try dispatch(allocator, "{\"id\":\"tg-auth-complete-invalid-start-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta-complete-invalid\",\"sessionId\":\"tg-meta-complete-invalid\",\"message\":\"/auth start qwen mobile\"}}");
+    defer allocator.free(start);
+    const start_session = try extractResultStringField(allocator, start, "loginSessionId");
+    defer allocator.free(start_session);
+    const invalid_frame = try std.fmt.allocPrint(
+        allocator,
+        "{{\"id\":\"tg-auth-complete-invalid-meta\",\"method\":\"send\",\"params\":{{\"channel\":\"telegram\",\"to\":\"room-meta-complete-invalid\",\"sessionId\":\"tg-meta-complete-invalid\",\"message\":\"/auth complete qwen WRONG {s} mobile\"}}}}",
+        .{start_session},
+    );
+    defer allocator.free(invalid_frame);
+    const complete_invalid = try dispatch(allocator, invalid_frame);
+    defer allocator.free(complete_invalid);
+    const complete_invalid_reply = try extractResultStringField(allocator, complete_invalid, "reply");
+    defer allocator.free(complete_invalid_reply);
+    try std.testing.expect(std.mem.indexOf(u8, complete_invalid_reply, "Auth failed: invalid login code") != null);
+    const complete_invalid_error = try extractResultObjectStringField(allocator, complete_invalid, "metadata", "error");
+    defer allocator.free(complete_invalid_error);
+    try std.testing.expect(std.mem.eql(u8, complete_invalid_error, "invalid login code"));
+
+    const complete_stale = try dispatch(allocator, "{\"id\":\"tg-auth-complete-stale-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta-complete-stale\",\"sessionId\":\"tg-meta-complete-stale\",\"message\":\"/auth complete qwen OC-123 web-login-stale mobile\"}}");
+    defer allocator.free(complete_stale);
+    const complete_stale_reply = try extractResultStringField(allocator, complete_stale, "reply");
+    defer allocator.free(complete_stale_reply);
+    try std.testing.expect(std.mem.indexOf(u8, complete_stale_reply, "Auth failed: login session not found") != null);
+    const complete_stale_error = try extractResultObjectStringField(allocator, complete_stale, "metadata", "error");
+    defer allocator.free(complete_stale_error);
+    try std.testing.expect(std.mem.eql(u8, complete_stale_error, "login session not found"));
+}
+
 test "dispatch send model and tts commands expose go-compatible metadata envelope" {
     const allocator = std.testing.allocator;
 

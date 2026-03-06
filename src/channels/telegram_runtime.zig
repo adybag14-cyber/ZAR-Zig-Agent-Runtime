@@ -2842,18 +2842,17 @@ pub const TelegramRuntime = struct {
                     .provider = provider,
                     .account = account_norm,
                     .scope = scope,
-                    .status = "none",
                     .@"error" = "missing_session",
                 });
                 return .{
                     .is_command = true,
                     .command_name = "auth",
-                    .reply = try std.fmt.allocPrint(allocator, "No pending auth session for `{s}` account `{s}`. Start with `/auth start {s} {s}`.", .{ provider, normalizeAccount(account), provider, normalizeAccount(account) }),
+                    .reply = try std.fmt.allocPrint(allocator, "No pending auth session for scope `{s}`. Run `/auth start {s}` first.", .{ scope, provider }),
                     .provider = provider,
                     .model = defaultModelForProvider(provider),
                     .login_session_id = "",
                     .login_code = "",
-                    .auth_status = "pending",
+                    .auth_status = "none",
                     .metadata_json = metadata_json,
                 };
             }
@@ -2870,17 +2869,13 @@ pub const TelegramRuntime = struct {
                         .provider = provider,
                         .account = account_norm,
                         .scope = scope,
-                        .status = "rejected",
-                        .@"error" = "invalid_code",
+                        .@"error" = "invalid login code",
                         .loginSessionId = login_session,
                     });
                     return .{
                         .is_command = true,
                         .command_name = "auth",
-                        .reply = if (web_login.supportsGuestBypass(provider))
-                            try std.fmt.allocPrint(allocator, "Auth failed: invalid code. For `{s}` you can also run `/auth guest {s}` after choosing 'Stay logged out'.", .{ provider, provider })
-                        else
-                            try allocator.dupe(u8, "Auth failed: invalid code."),
+                        .reply = try allocator.dupe(u8, "Auth failed: invalid login code"),
                         .provider = provider,
                         .model = defaultModelForProvider(provider),
                         .login_session_id = login_session,
@@ -2899,14 +2894,13 @@ pub const TelegramRuntime = struct {
                         .provider = provider,
                         .account = account_norm,
                         .scope = scope,
-                        .status = "expired",
-                        .@"error" = "session_expired",
+                        .@"error" = "login session expired",
                         .loginSessionId = login_session,
                     });
                     return .{
                         .is_command = true,
                         .command_name = "auth",
-                        .reply = try allocator.dupe(u8, "Auth failed: session expired."),
+                        .reply = try allocator.dupe(u8, "Auth failed: login session expired"),
                         .provider = provider,
                         .model = defaultModelForProvider(provider),
                         .login_session_id = login_session,
@@ -2925,14 +2919,13 @@ pub const TelegramRuntime = struct {
                         .provider = provider,
                         .account = account_norm,
                         .scope = scope,
-                        .status = "missing",
-                        .@"error" = "session_not_found",
+                        .@"error" = "login session not found",
                         .loginSessionId = login_session,
                     });
                     return .{
                         .is_command = true,
                         .command_name = "auth",
-                        .reply = try allocator.dupe(u8, "Auth failed: session not found."),
+                        .reply = try allocator.dupe(u8, "Auth failed: login session not found"),
                         .provider = provider,
                         .model = defaultModelForProvider(provider),
                         .login_session_id = login_session,
@@ -5170,6 +5163,66 @@ test "telegram runtime auth wait missing session uses go-style bridge error" {
     try std.testing.expect(wait_missing.metadataJson != null);
     try std.testing.expect(std.mem.indexOf(u8, wait_missing.metadataJson.?, "\"error\":\"login session not found\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, wait_missing.metadataJson.?, "\"status\":") == null);
+}
+
+test "telegram runtime auth complete missing session and bridge errors use go-style replies" {
+    var login = web_login.LoginManager.init(std.testing.allocator, 10);
+    defer login.deinit();
+    var runtime = TelegramRuntime.init(std.testing.allocator, &login);
+    defer runtime.deinit();
+
+    const allocator = std.testing.allocator;
+
+    var complete_missing = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-complete-missing\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-complete-missing\",\"sessionId\":\"sess-complete-missing\",\"message\":\"/auth complete qwen OC-123 mobile\"}}");
+    defer complete_missing.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, complete_missing.authStatus, "none"));
+    try std.testing.expect(std.mem.indexOf(u8, complete_missing.reply, "No pending auth session for scope `qwen/mobile`. Run `/auth start qwen` first.") != null);
+    try std.testing.expect(complete_missing.metadataJson != null);
+    try std.testing.expect(std.mem.indexOf(u8, complete_missing.metadataJson.?, "\"error\":\"missing_session\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, complete_missing.metadataJson.?, "\"status\":") == null);
+
+    var start_invalid = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-complete-invalid-start\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-complete-invalid\",\"sessionId\":\"sess-complete-invalid\",\"message\":\"/auth start qwen mobile\"}}");
+    defer start_invalid.deinit(allocator);
+    const invalid_frame = try std.fmt.allocPrint(
+        allocator,
+        "{{\"id\":\"tg-complete-invalid\",\"method\":\"send\",\"params\":{{\"channel\":\"telegram\",\"to\":\"room-complete-invalid\",\"sessionId\":\"sess-complete-invalid\",\"message\":\"/auth complete qwen WRONG {s} mobile\"}}}}",
+        .{start_invalid.loginSessionId},
+    );
+    defer allocator.free(invalid_frame);
+    var complete_invalid = try runtime.sendFromFrame(allocator, invalid_frame);
+    defer complete_invalid.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, complete_invalid.authStatus, "rejected"));
+    try std.testing.expect(std.mem.indexOf(u8, complete_invalid.reply, "Auth failed: invalid login code") != null);
+    try std.testing.expect(complete_invalid.metadataJson != null);
+    try std.testing.expect(std.mem.indexOf(u8, complete_invalid.metadataJson.?, "\"error\":\"invalid login code\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, complete_invalid.metadataJson.?, "\"status\":") == null);
+
+    try runtime.setAuthBinding("room-complete-stale", "qwen", "mobile", "web-login-stale");
+    var complete_stale = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-complete-stale\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-complete-stale\",\"sessionId\":\"sess-complete-stale\",\"message\":\"/auth complete qwen OC-123 mobile\"}}");
+    defer complete_stale.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, complete_stale.authStatus, "missing"));
+    try std.testing.expect(std.mem.indexOf(u8, complete_stale.reply, "Auth failed: login session not found") != null);
+    try std.testing.expect(complete_stale.metadataJson != null);
+    try std.testing.expect(std.mem.indexOf(u8, complete_stale.metadataJson.?, "\"error\":\"login session not found\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, complete_stale.metadataJson.?, "\"status\":") == null);
+
+    var start_expired = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-complete-expired-start\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-complete-expired\",\"sessionId\":\"sess-complete-expired\",\"message\":\"/auth start qwen mobile\"}}");
+    defer start_expired.deinit(allocator);
+    const expire_deadline_ms = time_util.nowMs() + 20;
+    while (time_util.nowMs() <= expire_deadline_ms) {}
+    const expired_frame = try std.fmt.allocPrint(
+        allocator,
+        "{{\"id\":\"tg-complete-expired\",\"method\":\"send\",\"params\":{{\"channel\":\"telegram\",\"to\":\"room-complete-expired\",\"sessionId\":\"sess-complete-expired\",\"message\":\"/auth complete qwen {s} {s} mobile\"}}}}",
+        .{ start_expired.loginCode, start_expired.loginSessionId },
+    );
+    defer allocator.free(expired_frame);
+    var complete_expired = try runtime.sendFromFrame(allocator, expired_frame);
+    defer complete_expired.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, complete_expired.authStatus, "expired"));
+    try std.testing.expect(std.mem.indexOf(u8, complete_expired.reply, "Auth failed: login session expired") != null);
+    try std.testing.expect(complete_expired.metadataJson != null);
+    try std.testing.expect(std.mem.indexOf(u8, complete_expired.metadataJson.?, "\"error\":\"login session expired\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, complete_expired.metadataJson.?, "\"status\":") == null);
 }
 
 test "telegram runtime auth cancel revokes scoped session" {
