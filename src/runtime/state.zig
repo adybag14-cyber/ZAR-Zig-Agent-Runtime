@@ -42,12 +42,14 @@ const PersistedState = struct {
     nextJobId: u64 = 1,
     sessions: []PersistedSession = &.{},
     pendingJobs: []PersistedJob = &.{},
+    leasedJobs: []PersistedJob = &.{},
 };
 
 pub const RuntimeState = struct {
     allocator: std.mem.Allocator,
     sessions: std.StringHashMap(Session),
     pending_jobs: std.ArrayList(Job),
+    leased_jobs: std.ArrayList(Job),
     pending_jobs_head: usize,
     next_job_id: u64,
     state_path: ?[]u8,
@@ -58,6 +60,7 @@ pub const RuntimeState = struct {
             .allocator = allocator,
             .sessions = std.StringHashMap(Session).init(allocator),
             .pending_jobs = .empty,
+            .leased_jobs = .empty,
             .pending_jobs_head = 0,
             .next_job_id = 1,
             .state_path = null,
@@ -69,6 +72,7 @@ pub const RuntimeState = struct {
         self.clearState();
         self.sessions.deinit();
         self.pending_jobs.deinit(self.allocator);
+        self.leased_jobs.deinit(self.allocator);
         if (self.state_path) |path| {
             self.allocator.free(path);
         }
@@ -85,7 +89,7 @@ pub const RuntimeState = struct {
 
         // Persistence configuration is expected during runtime bootstrap.
         // If state already exists in memory, keep it untouched.
-        if (self.sessions.count() == 0 and self.queueDepth() == 0 and self.next_job_id == 1) {
+        if (self.sessions.count() == 0 and self.queueDepth() == 0 and self.leased_jobs.items.len == 0 and self.next_job_id == 1) {
             try self.load();
         }
     }
@@ -143,6 +147,7 @@ pub const RuntimeState = struct {
     pub fn dequeueJob(self: *RuntimeState) ?Job {
         if (self.pending_jobs_head >= self.pending_jobs.items.len) return null;
         const job = self.pending_jobs.items[self.pending_jobs_head];
+        self.leased_jobs.append(self.allocator, job) catch return null;
         self.pending_jobs_head += 1;
         self.compactPendingJobs();
         if (self.persistent) self.persist() catch {};
@@ -150,7 +155,15 @@ pub const RuntimeState = struct {
     }
 
     pub fn releaseJob(self: *RuntimeState, job: Job) void {
+        var idx: usize = 0;
+        while (idx < self.leased_jobs.items.len) : (idx += 1) {
+            if (self.leased_jobs.items[idx].id == job.id) {
+                _ = self.leased_jobs.orderedRemove(idx);
+                break;
+            }
+        }
         self.allocator.free(job.payload);
+        if (self.persistent) self.persist() catch {};
     }
 
     pub fn queueDepth(self: *const RuntimeState) usize {
@@ -187,6 +200,10 @@ pub const RuntimeState = struct {
             self.allocator.free(job.payload);
         }
         self.pending_jobs.clearRetainingCapacity();
+        for (self.leased_jobs.items) |job| {
+            self.allocator.free(job.payload);
+        }
+        self.leased_jobs.clearRetainingCapacity();
         self.pending_jobs_head = 0;
         self.next_job_id = 1;
     }
@@ -218,15 +235,13 @@ pub const RuntimeState = struct {
             });
         }
 
+        for (parsed.value.leasedJobs) |entry| {
+            try self.appendRestoredPendingJob(entry);
+            if (entry.id > max_job_id) max_job_id = entry.id;
+        }
+
         for (parsed.value.pendingJobs) |entry| {
-            const kind = parseJobKind(entry.kind) orelse continue;
-            const payload = try self.allocator.dupe(u8, entry.payload);
-            errdefer self.allocator.free(payload);
-            try self.pending_jobs.append(self.allocator, .{
-                .id = entry.id,
-                .kind = kind,
-                .payload = payload,
-            });
+            try self.appendRestoredPendingJob(entry);
             if (entry.id > max_job_id) max_job_id = entry.id;
         }
         self.pending_jobs_head = 0;
@@ -269,12 +284,23 @@ pub const RuntimeState = struct {
             };
         }
 
+        var persisted_leased_jobs = try self.allocator.alloc(PersistedJob, self.leased_jobs.items.len);
+        defer self.allocator.free(persisted_leased_jobs);
+        for (self.leased_jobs.items, 0..) |job, idx| {
+            persisted_leased_jobs[idx] = .{
+                .id = job.id,
+                .kind = formatJobKind(job.kind),
+                .payload = job.payload,
+            };
+        }
+
         var out: std.Io.Writer.Allocating = .init(self.allocator);
         defer out.deinit();
         try std.json.Stringify.value(.{
             .nextJobId = self.next_job_id,
             .sessions = persisted_sessions,
             .pendingJobs = persisted_jobs,
+            .leasedJobs = persisted_leased_jobs,
         }, .{}, &out.writer);
         const payload = try out.toOwnedSlice();
         defer self.allocator.free(payload);
@@ -282,6 +308,17 @@ pub const RuntimeState = struct {
         try std.Io.Dir.cwd().writeFile(io, .{
             .sub_path = path,
             .data = payload,
+        });
+    }
+
+    fn appendRestoredPendingJob(self: *RuntimeState, entry: PersistedJob) !void {
+        const kind = parseJobKind(entry.kind) orelse return;
+        const payload = try self.allocator.dupe(u8, entry.payload);
+        errdefer self.allocator.free(payload);
+        try self.pending_jobs.append(self.allocator, .{
+            .id = entry.id,
+            .kind = kind,
+            .payload = payload,
         });
     }
 };
@@ -423,6 +460,44 @@ test "runtime state persistence roundtrip restores session and pending queue" {
         defer restored.releaseJob(queued);
         try std.testing.expectEqual(@as(u64, 2), queued.id);
         try std.testing.expectEqual(JobKind.exec, queued.kind);
+        try std.testing.expectEqual(@as(usize, 0), restored.queueDepth());
+    }
+}
+
+test "runtime state restart replay preserves leased jobs that were dequeued but not released" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const root = try tmp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+
+    {
+        var state = RuntimeState.init(allocator);
+        defer state.deinit();
+        try state.configurePersistence(root);
+        _ = try state.enqueueJob(.exec, "{\"cmd\":\"echo replay-me\"}");
+        _ = try state.enqueueJob(.file_read, "{\"path\":\"README.md\"}");
+        _ = state.dequeueJob().?;
+        try std.testing.expectEqual(@as(usize, 1), state.queueDepth());
+    }
+
+    {
+        var restored = RuntimeState.init(allocator);
+        defer restored.deinit();
+        try restored.configurePersistence(root);
+        try std.testing.expectEqual(@as(usize, 2), restored.queueDepth());
+
+        const first = restored.dequeueJob().?;
+        defer restored.releaseJob(first);
+        try std.testing.expectEqual(@as(u64, 1), first.id);
+        try std.testing.expectEqual(JobKind.exec, first.kind);
+
+        const second = restored.dequeueJob().?;
+        defer restored.releaseJob(second);
+        try std.testing.expectEqual(@as(u64, 2), second.id);
+        try std.testing.expectEqual(JobKind.file_read, second.kind);
+
         try std.testing.expectEqual(@as(usize, 0), restored.queueDepth());
     }
 }

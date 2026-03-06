@@ -56,7 +56,7 @@ Full-stack replacement execution reference:
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `200/200`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `201/201`.
 - Release/package lane status (2026-03-06):
   - GitHub prerelease `v0.2.0-zig-edge.26` is live with desktop/android/bare-metal artifacts, parity reports, manifest, SBOM, provenance, npm tarball, wheel, and sdist.
   - release evidence now also includes `release-status.json` + `release-status.md` so every edge cut carries a frozen workflow-status + registry-status snapshot in addition to package preflight evidence.
@@ -79,6 +79,11 @@ Full-stack replacement execution reference:
       - run `status=completed_with_manual_action`
       - `counts.partial`
     - new regressions cover both the raw audit JSON surface and the maintenance-run partial/remediation contract.
+  - FS1 leased-job replay slice shipped:
+    - runtime-state persistence now keeps dequeued in-flight jobs durable via `leasedJobs` instead of dropping them from restart replay as soon as they are leased for execution.
+    - on restart, leased jobs are re-queued ahead of later pending jobs so interrupted work resumes in deterministic order.
+    - new regression proves a job dequeued but not released before shutdown is replayed after restore:
+      - `runtime state restart replay preserves leased jobs that were dequeued but not released`
   - Full-stack replacement kickoff (2026-03-05):
   - Phase 5 Telegram auth fallback-metadata parity hardened:
     - no-session `/auth url` metadata now matches Go’s leaner fallback envelope and no longer emits Zig-only top-level:

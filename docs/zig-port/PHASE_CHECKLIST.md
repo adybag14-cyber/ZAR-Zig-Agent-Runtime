@@ -1,7 +1,7 @@
 # Phase Checklist
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
-Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `200/200`.
+Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `201/201`.
 Latest edge release: `v0.2.0-zig-edge.26` is published with binaries, parity evidence, SBOM/provenance, npm tarball, wheel, and sdist attached.
 Registry status:
 - npm public publish still requires npm-side scope/package permission or `NPM_TOKEN`; GitHub release asset + GitHub Packages fallback are available now.
@@ -12,6 +12,11 @@ Registry status:
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)
 - [ ] FS1 - Runtime/core consolidation
   - Latest delivered slice:
+    - runtime-state persistence now preserves leased/in-flight jobs across restart instead of dropping them as soon as they are dequeued for execution.
+    - persisted `leasedJobs` are replayed ahead of later pending jobs on restore, so interrupted work resumes in deterministic order.
+    - regression coverage added:
+      - `runtime state restart replay preserves leased jobs that were dequeued but not released`
+    - prior FS1 manual-remediation reporting slice remains in place:
     - `security.audit --fix` now reports when Zig can only apply partial remediation because config still needs an operator update.
     - `fix.complete=false` and `fix.unresolved[]` now expose manual follow-up for memory-backed runtime-state or policy-bundle config instead of implying those settings were changed.
     - `system.maintenance.run` now reports partial remediation honestly:
@@ -398,6 +403,11 @@ FS1 runtime/core consolidation slice (active):
     - `security audit fix reports manual runtime and policy config blockers`
     - `dispatch security.audit fix exposes manual runtime persistence blockers`
     - `dispatch maintenance run reports partial security remediation when runtime persistence stays memory-backed`
+- [x] Runtime leased-job replay now survives restart interruption (`src/runtime/state.zig`):
+  - dequeued jobs are now persisted in a dedicated leased/in-flight set instead of disappearing from on-disk replay state before completion.
+  - restore now requeues leased jobs ahead of later pending jobs so interrupted work resumes in deterministic order.
+  - regression test added:
+    - `runtime state restart replay preserves leased jobs that were dequeued but not released`
 
 ## Phase 4 - Security + Diagnostics
 - [x] Port core guard flow (prompt/tool policy checks)
