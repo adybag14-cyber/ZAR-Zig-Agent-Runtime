@@ -8,6 +8,11 @@ Historical note: milestone validation counts below are preserved as captured at 
 - [ ] FS1 - Runtime/core consolidation
 - [ ] FS2 - Provider + channel completion
   - Latest delivered slice:
+    - Telegram no-session `/auth cancel` metadata now matches Go more closely:
+      - `/auth cancel` with no active scoped session still returns the Go-style reply:
+        - `No active auth session for this target.`
+      - the no-session metadata envelope still reports `status=none`, but it no longer emits the Zig-only `revoked=false` field that Go does not include on this path.
+      - regression coverage now asserts that the no-session cancel receipt omits `revoked` while preserving the existing `auth.cancel` metadata envelope.
     - Telegram auth parser metadata now matches Go more closely for `/auth status|wait` unknown-flag failures:
       - unknown `/auth status ... --bogus` replies still use the Go-visible operator text:
         - `Unknown status option \`--bogus\``
@@ -166,7 +171,7 @@ Historical note: milestone validation counts below are preserved as captured at 
         - `channels.telegram_runtime.test.telegram runtime auth url clears stale binding when session is missing`
     - Telegram `/auth cancel` parity is now aligned more tightly with Go:
       - invalid `/auth cancel|logout` parser branches now emit structured `metadata` with `type=auth.cancel` and `error=invalid_cancel_args` instead of reply-text-only invalid outcomes.
-      - `/auth cancel` with no active scoped session now returns the Go-style `No active auth session for this target.` reply with `status=none` and `revoked=false` metadata instead of pretending a cancellation happened.
+      - `/auth cancel` with no active scoped session now returns the Go-style `No active auth session for this target.` reply with `status=none` metadata, and the no-session receipt no longer emits Zig's older extra `revoked=false` field.
       - cancel metadata now derives `revoked` from the actual `logout()` result rather than treating any non-empty session id as a successful revocation.
       - regression coverage added:
         - `channels.telegram_runtime.test.telegram runtime auth cancel explicit rejected session reports revoked false`

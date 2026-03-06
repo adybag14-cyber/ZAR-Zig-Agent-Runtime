@@ -3017,7 +3017,6 @@ pub const TelegramRuntime = struct {
                     .account = account_norm,
                     .scope = scope,
                     .status = "none",
-                    .revoked = false,
                 });
                 return .{
                     .is_command = true,
@@ -5511,7 +5510,7 @@ test "telegram runtime cancel without active session returns none status metadat
     try std.testing.expect(cancel.metadataJson != null);
     try std.testing.expect(std.mem.indexOf(u8, cancel.metadataJson.?, "\"type\":\"auth.cancel\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, cancel.metadataJson.?, "\"status\":\"none\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, cancel.metadataJson.?, "\"revoked\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cancel.metadataJson.?, "\"revoked\"") == null);
 }
 
 test "telegram runtime wait supports positional timeout with account" {

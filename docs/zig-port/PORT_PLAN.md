@@ -58,6 +58,11 @@ Full-stack replacement execution reference:
 
 - Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `195/195`.
 - Full-stack replacement kickoff (2026-03-05):
+  - Phase 5 Telegram no-session cancel metadata parity hardened:
+    - `/auth cancel` with no active scoped session still returns the Go-style reply:
+      - `No active auth session for this target.`
+    - the no-session metadata envelope still reports `status=none`, but it no longer emits the Zig-only `revoked=false` field that Go does not include on this path.
+    - regression coverage now asserts that the no-session cancel receipt omits `revoked` while preserving the existing `auth.cancel` metadata envelope.
   - Phase 5 Telegram auth parser-metadata parity hardened:
     - unknown `/auth status ... --bogus` replies still use the Go-visible operator text:
       - `Unknown status option \`--bogus\``
@@ -220,7 +225,7 @@ Full-stack replacement execution reference:
       - `channels.telegram_runtime.test.telegram runtime auth url clears stale binding when session is missing`
   - Phase 5 Telegram cancel parity hardened:
     - invalid `/auth cancel|logout` parser branches now preserve structured `auth.cancel` metadata with `error=invalid_cancel_args`.
-    - `/auth cancel` with no active scoped session now returns the Go-style `status=none` outcome and `revoked=false` metadata instead of reporting a synthetic cancellation.
+    - `/auth cancel` with no active scoped session now returns the Go-style `status=none` outcome, and the no-session receipt no longer includes Zig's older extra `revoked=false` field.
     - cancel metadata now derives `revoked` from the actual `web_login.logout()` result, so explicit double-cancel / already-rejected session flows no longer over-report revocation success.
     - regression tests added/expanded:
       - `channels.telegram_runtime.test.telegram runtime auth cancel explicit rejected session reports revoked false`
