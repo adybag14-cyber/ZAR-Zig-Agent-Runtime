@@ -2778,7 +2778,7 @@ pub const TelegramRuntime = struct {
                 return .{
                     .is_command = true,
                     .command_name = "auth",
-                    .reply = try allocator.dupe(u8, "Missing code. Usage: /auth complete <provider> <callback_url_or_code> [session_id] [account]"),
+                    .reply = try allocator.dupe(u8, "Missing code. Usage: `/auth complete <provider> <callback_url_or_code> [session_id] [account]`"),
                     .provider = default_provider,
                     .model = default_model,
                     .login_session_id = "",
@@ -2821,7 +2821,7 @@ pub const TelegramRuntime = struct {
             }
 
             if (code_token.len == 0) {
-                return self.authInvalidOutcome(allocator, trimmed_target, "auth.complete", provider, account, try allocator.dupe(u8, "Missing code. Usage: /auth complete <provider> <callback_url_or_code> [session_id] [account]"), "missing_code", "pending", "", null);
+                return self.authInvalidOutcome(allocator, trimmed_target, "auth.complete", provider, account, try allocator.dupe(u8, "Missing code. Usage: `/auth complete <provider> <callback_url_or_code> [session_id] [account]`"), "missing_code", "pending", "", null);
             }
 
             if (!isKnownProvider(rest[0])) {
@@ -3038,7 +3038,7 @@ pub const TelegramRuntime = struct {
                 .is_command = true,
                 .command_name = "auth",
                 .reply = if (std.mem.trim(u8, login_session_label, " \t\r\n").len > 0)
-                    try std.fmt.allocPrint(allocator, "Auth session `{s}` cancelled for `{s}` account `{s}`.", .{ login_session_label, provider, normalizeAccount(account) })
+                    try std.fmt.allocPrint(allocator, "Auth session `{s}` cancelled.", .{login_session_label})
                 else
                     try std.fmt.allocPrint(allocator, "Auth binding cleared for `{s}` account `{s}`.", .{ provider, normalizeAccount(account) }),
                 .provider = provider,
@@ -3061,7 +3061,7 @@ pub const TelegramRuntime = struct {
         return .{
             .is_command = true,
             .command_name = "auth",
-            .reply = try allocator.dupe(u8, "Unknown `/auth` action. Use `/auth help`."),
+            .reply = try allocator.dupe(u8, "Unknown `/auth` action. Use `/auth help` for full usage."),
             .provider = default_provider,
             .model = default_model,
             .login_session_id = "",
@@ -5223,6 +5223,8 @@ test "telegram runtime auth cancel revokes scoped session" {
     try std.testing.expect(std.mem.eql(u8, cancel.authStatus, "cancelled"));
     try std.testing.expect(std.mem.eql(u8, cancel.loginSessionId, start.loginSessionId));
     try std.testing.expect(std.mem.indexOf(u8, cancel.reply, "Auth session `web-login-") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cancel.reply, "` cancelled.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cancel.reply, "for `qwen` account `mobile`") == null);
 
     const status_frame = try std.fmt.allocPrint(
         allocator,
@@ -5340,6 +5342,26 @@ test "telegram runtime auth parser rejects invalid options and trailing args" {
     try std.testing.expect(bad_cancel.metadataJson != null);
     try std.testing.expect(std.mem.indexOf(u8, bad_cancel.metadataJson.?, "\"type\":\"auth.cancel\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, bad_cancel.metadataJson.?, "\"error\":\"invalid_cancel_args\"") != null);
+}
+
+test "telegram runtime auth invalid action and missing code use go-style help text" {
+    var login = web_login.LoginManager.init(std.testing.allocator, 5 * 60 * 1000);
+    defer login.deinit();
+    var runtime = TelegramRuntime.init(std.testing.allocator, &login);
+    defer runtime.deinit();
+
+    const allocator = std.testing.allocator;
+
+    var invalid = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-invalid-action\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-auth-invalid\",\"sessionId\":\"sess-auth-invalid\",\"message\":\"/auth nonsense\"}}");
+    defer invalid.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, invalid.authStatus, "invalid"));
+    try std.testing.expect(std.mem.indexOf(u8, invalid.reply, "Unknown `/auth` action. Use `/auth help` for full usage.") != null);
+    try std.testing.expect(invalid.metadataJson != null);
+    try std.testing.expect(std.mem.indexOf(u8, invalid.metadataJson.?, "\"error\":\"unknown_action\"") != null);
+
+    var missing_code = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-missing-code\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-auth-invalid\",\"sessionId\":\"sess-auth-invalid\",\"message\":\"/auth complete\"}}");
+    defer missing_code.deinit(allocator);
+    try std.testing.expect(std.mem.indexOf(u8, missing_code.reply, "Missing code. Usage: `/auth complete <provider> <callback_url_or_code> [session_id] [account]`") != null);
 }
 
 test "telegram runtime cancel without active session returns none status metadata" {

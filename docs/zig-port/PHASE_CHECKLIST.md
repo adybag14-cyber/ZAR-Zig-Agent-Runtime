@@ -1,13 +1,23 @@
 # Phase Checklist
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
-Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `190/190`.
+Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `192/192`.
 
 ## Full-Stack Replacement Track (FS0..FS7)
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)
 - [ ] FS1 - Runtime/core consolidation
 - [ ] FS2 - Provider + channel completion
   - Latest delivered slice:
+    - Telegram auth operator text now matches Go more closely on the remaining command-surface wording:
+      - `/auth cancel` success replies now use the generic Go-style wording:
+        - `Auth session <id> cancelled.`
+      - unknown `/auth` actions now use the fuller Go-style help text:
+        - `Unknown /auth action. Use /auth help for full usage.`
+      - missing `/auth complete` codes now use the Go-style backticked usage string:
+        - `Missing code. Usage: \`/auth complete <provider> <callback_url_or_code> [session_id] [account]\``
+      - regression coverage added:
+        - `channels.telegram_runtime.test.telegram runtime auth invalid action and missing code use go-style help text`
+        - `gateway.dispatcher.test.dispatch send auth cancel and invalid action use go-style replies`
     - Telegram auth success/operator replies now match Go more closely:
       - `/auth url` now uses the compact Go-style reply shape:
         - `Auth URL: <verificationUriComplete>`

@@ -13142,6 +13142,32 @@ test "dispatch send cancel without active auth session returns none status metad
     try std.testing.expect(std.mem.eql(u8, cancel_none_status, "none"));
 }
 
+test "dispatch send auth cancel and invalid action use go-style replies" {
+    const allocator = std.testing.allocator;
+
+    const auth_start = try dispatch(allocator, "{\"id\":\"tg-auth-cancel-start-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta-cancel\",\"sessionId\":\"tg-meta-cancel\",\"message\":\"/auth start qwen mobile\"}}");
+    defer allocator.free(auth_start);
+    const login_session = try extractResultStringField(allocator, auth_start, "loginSessionId");
+    defer allocator.free(login_session);
+
+    const auth_cancel = try dispatch(allocator, "{\"id\":\"tg-auth-cancel-reply-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta-cancel\",\"sessionId\":\"tg-meta-cancel\",\"message\":\"/auth cancel qwen mobile\"}}");
+    defer allocator.free(auth_cancel);
+    const auth_cancel_reply = try extractResultStringField(allocator, auth_cancel, "reply");
+    defer allocator.free(auth_cancel_reply);
+    try std.testing.expect(std.mem.indexOf(u8, auth_cancel_reply, "Auth session `") != null);
+    try std.testing.expect(std.mem.indexOf(u8, auth_cancel_reply, "` cancelled.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, auth_cancel_reply, "for `qwen` account `mobile`") == null);
+
+    const invalid_action = try dispatch(allocator, "{\"id\":\"tg-auth-invalid-action-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta-cancel\",\"sessionId\":\"tg-meta-cancel\",\"message\":\"/auth nonsense\"}}");
+    defer allocator.free(invalid_action);
+    const invalid_action_reply = try extractResultStringField(allocator, invalid_action, "reply");
+    defer allocator.free(invalid_action_reply);
+    try std.testing.expect(std.mem.indexOf(u8, invalid_action_reply, "Unknown `/auth` action. Use `/auth help` for full usage.") != null);
+    const invalid_action_error = try extractResultObjectStringField(allocator, invalid_action, "metadata", "error");
+    defer allocator.free(invalid_action_error);
+    try std.testing.expect(std.mem.eql(u8, invalid_action_error, "unknown_action"));
+}
+
 test "dispatch send auth status and wait without session use go-style replies" {
     const allocator = std.testing.allocator;
 
