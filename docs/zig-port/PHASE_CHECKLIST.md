@@ -392,6 +392,7 @@ Registry status:
 - [ ] FS6 - Appliance/bare-metal maturity track
   - rollout boundary is now defined at the runtime contract level: `stable`, `canary`, and `edge` are separate update lanes, with `canary` no longer collapsing into `edge`.
   - latest required evidence now includes `scripts/appliance-rollout-boundary-smoke-check.ps1` (secure-boot block, canary apply, stable promotion).
+  - latest required bare-metal evidence now also includes `scripts/baremetal-qemu-vector-history-overflow-probe-check.ps1` (interrupt/exception counter resets, repeated dispatch saturation, history-ring overflow behavior, and per-vector telemetry against the freestanding PVH artifact).
   - minimal appliance profile readiness is now a live runtime contract surfaced on `status`, `doctor`, `system.boot.status`, and `system.maintenance.*`.
   - latest required evidence now also includes `scripts/appliance-minimal-profile-smoke-check.ps1` (persisted state path, control-plane auth, secure-boot update gate, signer policy, and current verification).
 - [ ] FS7 - Cutover + decommission gates
@@ -855,6 +856,7 @@ Phase 6 progress notes:
 - [x] `scripts/baremetal-qemu-wake-queue-summary-age-probe-check.ps1` (optional PVH/QEMU wake-queue summary/age probe proves exported summary and age-bucket telemetry snapshots stay correct before and after selective queue drains against the freestanding artifact)
 - [x] `scripts/baremetal-qemu-descriptor-table-content-probe-check.ps1` (optional PVH/QEMU descriptor-table content probe proves `gdtr/idtr` limits+bases, code/data `gdt` entry fields, and `idt[0]/idt[255]` selector/type/stub wiring survive live descriptor reinit/load against the freestanding artifact)
 - [x] `scripts/baremetal-qemu-descriptor-dispatch-probe-check.ps1` (optional PVH/QEMU descriptor-dispatch probe proves descriptor reinit/load and post-load `command_trigger_interrupt` + `command_trigger_exception` stay coherent with interrupt/exception counters and history-ring payloads against the freestanding artifact)
+- [x] `scripts/baremetal-qemu-vector-history-overflow-probe-check.ps1` (optional PVH/QEMU probe proves interrupt/exception counter resets, interrupt history saturation (`35 -> len 32 / overflow 3`), exception history saturation (`19 -> len 16 / overflow 3`), and per-vector telemetry against the freestanding artifact)
 - [x] `scripts/baremetal-qemu-interrupt-mask-profile-probe-check.ps1` (optional PVH/QEMU interrupt-mask profile probe proves external-all, custom unmask/remask, ignored-count reset, external-high, invalid profile rejection, and clear-all recovery against the freestanding artifact)
 - [x] `scripts/baremetal-qemu-allocator-syscall-probe-check.ps1` (optional PVH/QEMU allocator/syscall probe proves alloc/free and syscall register/invoke/block/disable/unregister paths end to end against the freestanding artifact)
 - [x] `scripts/baremetal-qemu-allocator-syscall-failure-probe-check.ps1` (optional PVH/QEMU allocator/syscall failure probe proves invalid-alignment, no-space, blocked-syscall, and disabled-syscall result semantics plus command-result counters end to end against the freestanding artifact)
