@@ -176,6 +176,7 @@ const AuthBridgeMetadata = struct {
 const AuthCommandMetadata = struct {
     type: []const u8,
     target: []const u8,
+    action: ?[]const u8 = null,
     provider: ?[]const u8 = null,
     account: ?[]const u8 = null,
     scope: ?[]const u8 = null,
@@ -3104,6 +3105,7 @@ pub const TelegramRuntime = struct {
         const metadata_json = try stringifyJsonAlloc(allocator, AuthCommandMetadata{
             .type = "auth.invalid",
             .target = trimmed_target,
+            .action = action,
             .provider = default_provider,
             .status = "invalid",
             .@"error" = "unknown_action",
@@ -5567,6 +5569,7 @@ test "telegram runtime auth invalid action and complete usage use go-style help 
     try std.testing.expect(std.mem.indexOf(u8, invalid.reply, "Unknown `/auth` action. Use `/auth help` for full usage.") != null);
     try std.testing.expect(invalid.metadataJson != null);
     try std.testing.expect(std.mem.indexOf(u8, invalid.metadataJson.?, "\"error\":\"unknown_action\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, invalid.metadataJson.?, "\"action\":\"nonsense\"") != null);
 
     var complete_usage = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-complete-usage\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-auth-invalid\",\"sessionId\":\"sess-auth-invalid\",\"message\":\"/auth complete\"}}");
     defer complete_usage.deinit(allocator);

@@ -124,6 +124,7 @@ Historical note: milestone validation counts below are preserved as captured at 
       - active `/auth cancel` receipts now omit Zig's older extra `status` field and keep the Go-style `revoked` + `loginSessionId` metadata only.
       - unknown `/auth` actions now use the fuller Go-style help text:
         - `Unknown /auth action. Use /auth help for full usage.`
+      - invalid `/auth` metadata now also carries the raw action token via `action=<verb>`, matching Go's `auth.invalid` receipt surface.
       - bare and provider-only `/auth complete` invocations now follow the Go parser contract:
         - `Usage: \`/auth complete <provider> <callback_url_or_code> [session_id] [account]\``
         - metadata `error=invalid_complete_args`

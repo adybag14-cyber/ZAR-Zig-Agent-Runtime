@@ -13336,6 +13336,9 @@ test "dispatch send auth cancel and invalid action use go-style replies" {
     const invalid_action_error = try extractResultObjectStringField(allocator, invalid_action, "metadata", "error");
     defer allocator.free(invalid_action_error);
     try std.testing.expect(std.mem.eql(u8, invalid_action_error, "unknown_action"));
+    const invalid_action_name = try extractResultObjectStringField(allocator, invalid_action, "metadata", "action");
+    defer allocator.free(invalid_action_name);
+    try std.testing.expect(std.mem.eql(u8, invalid_action_name, "nonsense"));
 }
 
 test "dispatch send auth status and wait without session use go-style replies" {

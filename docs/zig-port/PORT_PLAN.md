@@ -178,6 +178,7 @@ Full-stack replacement execution reference:
     - active `/auth cancel` receipts now omit Zig's older extra `status` field and keep the Go-style `revoked` + `loginSessionId` metadata surface only.
     - unknown `/auth` actions now use the fuller Go-style help text:
       - `Unknown \`/auth\` action. Use \`/auth help\` for full usage.`
+    - `auth.invalid` metadata now also includes the raw action token (`action=<verb>`) so Zig matches the Go invalid-action receipt surface.
     - bare and provider-only `/auth complete` invocations now follow the Go parser contract:
       - `Usage: \`/auth complete <provider> <callback_url_or_code> [session_id] [account]\``
       - metadata `error=invalid_complete_args`
