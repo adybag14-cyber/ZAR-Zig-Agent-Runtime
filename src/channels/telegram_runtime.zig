@@ -2098,8 +2098,6 @@ pub const TelegramRuntime = struct {
                 const metadata_json = try stringifyJsonAlloc(allocator, AuthCommandMetadata{
                     .type = "auth.url",
                     .target = trimmed_target,
-                    .provider = provider,
-                    .account = normalizeAccount(account),
                     .scope = scope,
                     .status = "none",
                 });
@@ -2811,8 +2809,6 @@ pub const TelegramRuntime = struct {
                 const metadata_json = try stringifyJsonAlloc(allocator, AuthCommandMetadata{
                     .type = "auth.complete",
                     .target = trimmed_target,
-                    .provider = provider,
-                    .account = account_norm,
                     .scope = scope,
                     .@"error" = "missing_session",
                 });
@@ -3066,9 +3062,6 @@ pub const TelegramRuntime = struct {
             .type = "auth.invalid",
             .target = trimmed_target,
             .action = action,
-            .provider = default_provider,
-            .status = "invalid",
-            .@"error" = "unknown_action",
         });
         return .{
             .is_command = true,
@@ -5094,7 +5087,17 @@ test "telegram runtime auth link and open aliases use url-style missing replies"
     defer link_none.deinit(allocator);
     try std.testing.expect(std.mem.eql(u8, link_none.authStatus, "none"));
     try std.testing.expect(std.mem.indexOf(u8, link_none.reply, "No active auth flow. Run `/auth start <provider>` first.") != null);
-    try std.testing.expect(std.mem.indexOf(u8, link_none.metadataJson.?, "\"type\":\"auth.url\"") != null);
+    {
+        const metadata_json = link_none.metadataJson orelse return error.TestUnexpectedResult;
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, metadata_json, .{});
+        defer parsed.deinit();
+        try std.testing.expect(parsed.value == .object);
+        try std.testing.expect(parsed.value.object.get("type") != null);
+        try std.testing.expect(parsed.value.object.get("scope") != null);
+        try std.testing.expect(parsed.value.object.get("status") != null);
+        try std.testing.expect(parsed.value.object.get("provider") == null);
+        try std.testing.expect(parsed.value.object.get("account") == null);
+    }
 
     try runtime.setAuthBinding("room-open-missing", "chatgpt", "default", "web-login-stale");
     var open_missing = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-open-missing\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-open-missing\",\"sessionId\":\"sess-open-missing\",\"message\":\"/auth open chatgpt\"}}");
@@ -5233,8 +5236,17 @@ test "telegram runtime auth complete missing session and bridge errors use go-st
     try std.testing.expect(std.mem.eql(u8, complete_missing.authStatus, "none"));
     try std.testing.expect(std.mem.indexOf(u8, complete_missing.reply, "No pending auth session for scope `qwen/mobile`. Run `/auth start qwen` first.") != null);
     try std.testing.expect(complete_missing.metadataJson != null);
-    try std.testing.expect(std.mem.indexOf(u8, complete_missing.metadataJson.?, "\"error\":\"missing_session\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, complete_missing.metadataJson.?, "\"status\":") == null);
+    {
+        const metadata_json = complete_missing.metadataJson orelse return error.TestUnexpectedResult;
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, metadata_json, .{});
+        defer parsed.deinit();
+        try std.testing.expect(parsed.value == .object);
+        const error_value = parsed.value.object.get("error") orelse return error.TestUnexpectedResult;
+        try std.testing.expect(error_value == .string and std.mem.eql(u8, error_value.string, "missing_session"));
+        try std.testing.expect(parsed.value.object.get("status") == null);
+        try std.testing.expect(parsed.value.object.get("provider") == null);
+        try std.testing.expect(parsed.value.object.get("account") == null);
+    }
 
     var start_invalid = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-complete-invalid-start\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-complete-invalid\",\"sessionId\":\"sess-complete-invalid\",\"message\":\"/auth start qwen mobile\"}}");
     defer start_invalid.deinit(allocator);
@@ -5548,8 +5560,17 @@ test "telegram runtime auth invalid action and complete usage use go-style help 
     try std.testing.expect(std.mem.eql(u8, invalid.authStatus, "invalid"));
     try std.testing.expect(std.mem.indexOf(u8, invalid.reply, "Unknown `/auth` action. Use `/auth help` for full usage.") != null);
     try std.testing.expect(invalid.metadataJson != null);
-    try std.testing.expect(std.mem.indexOf(u8, invalid.metadataJson.?, "\"error\":\"unknown_action\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, invalid.metadataJson.?, "\"action\":\"nonsense\"") != null);
+    {
+        const metadata_json = invalid.metadataJson orelse return error.TestUnexpectedResult;
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, metadata_json, .{});
+        defer parsed.deinit();
+        try std.testing.expect(parsed.value == .object);
+        const action_value = parsed.value.object.get("action") orelse return error.TestUnexpectedResult;
+        try std.testing.expect(action_value == .string and std.mem.eql(u8, action_value.string, "nonsense"));
+        try std.testing.expect(parsed.value.object.get("error") == null);
+        try std.testing.expect(parsed.value.object.get("provider") == null);
+        try std.testing.expect(parsed.value.object.get("status") == null);
+    }
 
     var complete_usage = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-complete-usage\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-auth-invalid\",\"sessionId\":\"sess-auth-invalid\",\"message\":\"/auth complete\"}}");
     defer complete_usage.deinit(allocator);

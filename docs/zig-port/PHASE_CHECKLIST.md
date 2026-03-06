@@ -8,6 +8,11 @@ Historical note: milestone validation counts below are preserved as captured at 
 - [ ] FS1 - Runtime/core consolidation
 - [ ] FS2 - Provider + channel completion
   - Latest delivered slice:
+    - Telegram auth fallback metadata now matches Go more closely on the remaining `/auth url`, `/auth complete`, and `auth.invalid` fallback paths:
+      - no-session `/auth url` metadata no longer emits Zig-only `provider` or `account`.
+      - missing-session `/auth complete` metadata no longer emits Zig-only `provider` or `account`.
+      - default `auth.invalid` metadata no longer emits Zig-only `provider`, `status`, or `error`.
+      - runtime and dispatcher regressions now assert those extra fields stay absent on the corresponding fallback receipts.
     - Telegram auth edge metadata now matches Go more closely on the remaining no-session wait and missing-code complete paths:
       - no-session `/auth wait` metadata no longer emits the Zig-only `timeoutSeconds` field.
       - `/auth complete` with an empty extracted code no longer emits the Zig-only top-level `loginSessionId`.

@@ -13351,12 +13351,17 @@ test "dispatch send auth cancel and invalid action use go-style replies" {
     const invalid_action_reply = try extractResultStringField(allocator, invalid_action, "reply");
     defer allocator.free(invalid_action_reply);
     try std.testing.expect(std.mem.indexOf(u8, invalid_action_reply, "Unknown `/auth` action. Use `/auth help` for full usage.") != null);
-    const invalid_action_error = try extractResultObjectStringField(allocator, invalid_action, "metadata", "error");
-    defer allocator.free(invalid_action_error);
-    try std.testing.expect(std.mem.eql(u8, invalid_action_error, "unknown_action"));
-    const invalid_action_name = try extractResultObjectStringField(allocator, invalid_action, "metadata", "action");
-    defer allocator.free(invalid_action_name);
-    try std.testing.expect(std.mem.eql(u8, invalid_action_name, "nonsense"));
+    {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, invalid_action, .{});
+        defer parsed.deinit();
+        const result = parsed.value.object.get("result") orelse return error.TestUnexpectedResult;
+        const metadata = result.object.get("metadata") orelse return error.TestUnexpectedResult;
+        const action = metadata.object.get("action") orelse return error.TestUnexpectedResult;
+        try std.testing.expect(action == .string and std.mem.eql(u8, action.string, "nonsense"));
+        try std.testing.expect(metadata.object.get("error") == null);
+        try std.testing.expect(metadata.object.get("provider") == null);
+        try std.testing.expect(metadata.object.get("status") == null);
+    }
 }
 
 test "dispatch send auth status and wait without session use go-style replies" {
@@ -13386,6 +13391,23 @@ test "dispatch send auth status and wait without session use go-style replies" {
     defer allocator.free(wait_none_error);
     try std.testing.expect(std.mem.eql(u8, wait_none_error, "missing_session"));
     try std.testing.expect(std.mem.indexOf(u8, wait_none, "\"timeoutSeconds\":") == null);
+
+    const url_none = try dispatch(allocator, "{\"id\":\"tg-auth-url-none-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta-url-none\",\"sessionId\":\"tg-meta-url-none\",\"message\":\"/auth url qwen mobile\"}}");
+    defer allocator.free(url_none);
+    const url_none_reply = try extractResultStringField(allocator, url_none, "reply");
+    defer allocator.free(url_none_reply);
+    try std.testing.expect(std.mem.indexOf(u8, url_none_reply, "No active auth flow. Run `/auth start <provider>` first.") != null);
+    {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, url_none, .{});
+        defer parsed.deinit();
+        const result = parsed.value.object.get("result") orelse return error.TestUnexpectedResult;
+        const metadata = result.object.get("metadata") orelse return error.TestUnexpectedResult;
+        try std.testing.expect(metadata.object.get("type") != null);
+        try std.testing.expect(metadata.object.get("status") != null);
+        try std.testing.expect(metadata.object.get("scope") != null);
+        try std.testing.expect(metadata.object.get("provider") == null);
+        try std.testing.expect(metadata.object.get("account") == null);
+    }
 }
 
 test "dispatch send auth wait bridge errors use go-style messages" {
@@ -13409,9 +13431,16 @@ test "dispatch send auth complete errors use go-style messages" {
     const complete_missing_reply = try extractResultStringField(allocator, complete_missing, "reply");
     defer allocator.free(complete_missing_reply);
     try std.testing.expect(std.mem.indexOf(u8, complete_missing_reply, "No pending auth session for scope `qwen/mobile`. Run `/auth start qwen` first.") != null);
-    const complete_missing_error = try extractResultObjectStringField(allocator, complete_missing, "metadata", "error");
-    defer allocator.free(complete_missing_error);
-    try std.testing.expect(std.mem.eql(u8, complete_missing_error, "missing_session"));
+    {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, complete_missing, .{});
+        defer parsed.deinit();
+        const result = parsed.value.object.get("result") orelse return error.TestUnexpectedResult;
+        const metadata = result.object.get("metadata") orelse return error.TestUnexpectedResult;
+        const error_value = metadata.object.get("error") orelse return error.TestUnexpectedResult;
+        try std.testing.expect(error_value == .string and std.mem.eql(u8, error_value.string, "missing_session"));
+        try std.testing.expect(metadata.object.get("provider") == null);
+        try std.testing.expect(metadata.object.get("account") == null);
+    }
 
     const start = try dispatch(allocator, "{\"id\":\"tg-auth-complete-invalid-start-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta-complete-invalid\",\"sessionId\":\"tg-meta-complete-invalid\",\"message\":\"/auth start qwen mobile\"}}");
     defer allocator.free(start);

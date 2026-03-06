@@ -58,6 +58,18 @@ Full-stack replacement execution reference:
 
 - Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `195/195`.
 - Full-stack replacement kickoff (2026-03-05):
+  - Phase 5 Telegram auth fallback-metadata parity hardened:
+    - no-session `/auth url` metadata now matches Go’s leaner fallback envelope and no longer emits Zig-only top-level:
+      - `provider`
+      - `account`
+    - missing-session `/auth complete` metadata now matches Go’s leaner fallback envelope and no longer emits Zig-only top-level:
+      - `provider`
+      - `account`
+    - default `auth.invalid` metadata now matches Go’s minimal contract and no longer emits Zig-only top-level:
+      - `provider`
+      - `status`
+      - `error`
+    - runtime and dispatcher regressions now parse these fallback receipts structurally and assert those extra fields stay absent.
   - Phase 5 Telegram auth edge-metadata parity hardened:
     - no-session `/auth wait` metadata no longer emits the Zig-only `timeoutSeconds` field; it now matches Go’s leaner `missing_session` envelope for that path.
     - `/auth complete` with an empty extracted code no longer emits the Zig-only top-level `loginSessionId`; it now matches Go’s leaner `missing_code` envelope for that path.
