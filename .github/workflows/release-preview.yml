@@ -200,6 +200,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-wake-queue-selective-probe-check.ps1
 
+      - name: Bare-metal QEMU wake queue summary age probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-summary-age-probe-check.ps1
+
       - name: Bare-metal QEMU allocator syscall probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-allocator-syscall-probe-check.ps1

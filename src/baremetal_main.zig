@@ -226,6 +226,8 @@ var wake_queue_head: u32 = 0;
 var wake_queue_tail: u32 = 0;
 var wake_queue_overflow: u32 = 0;
 var wake_queue_seq: u32 = 0;
+var wake_queue_summary_snapshot: BaremetalWakeQueueSummary = std.mem.zeroes(BaremetalWakeQueueSummary);
+var wake_queue_age_buckets_snapshot: BaremetalWakeQueueAgeBuckets = std.mem.zeroes(BaremetalWakeQueueAgeBuckets);
 
 pub export fn oc_status_ptr() *const abi.BaremetalStatus {
     return &status;
@@ -774,6 +776,20 @@ pub export fn oc_wake_queue_age_buckets(quantum_ticks: u64) BaremetalWakeQueueAg
         }
     }
     return buckets;
+}
+
+pub export fn oc_wake_queue_summary_ptr() *const BaremetalWakeQueueSummary {
+    wake_queue_summary_snapshot = oc_wake_queue_summary();
+    return &wake_queue_summary_snapshot;
+}
+
+pub export fn oc_wake_queue_age_buckets_ptr(quantum_ticks: u64) *const BaremetalWakeQueueAgeBuckets {
+    wake_queue_age_buckets_snapshot = oc_wake_queue_age_buckets(quantum_ticks);
+    return &wake_queue_age_buckets_snapshot;
+}
+
+pub export fn oc_wake_queue_age_buckets_ptr_quantum_2() *const BaremetalWakeQueueAgeBuckets {
+    return oc_wake_queue_age_buckets_ptr(2);
 }
 
 pub export fn oc_wake_queue_pop() BaremetalWakeEvent {
@@ -3299,6 +3315,12 @@ test "baremetal wake queue reason-vector pop command removes only exact pairs" {
     try std.testing.expectEqual(@as(u32, 3), buckets_before.stale_count);
     try std.testing.expectEqual(@as(u32, 1), buckets_before.stale_older_than_quantum_count);
     try std.testing.expectEqual(@as(u32, 1), buckets_before.future_count);
+    const summary_snapshot = oc_wake_queue_summary_ptr().*;
+    try std.testing.expectEqual(summary_before, summary_snapshot);
+    const age_bucket_snapshot = oc_wake_queue_age_buckets_ptr(2).*;
+    try std.testing.expectEqual(buckets_before, age_bucket_snapshot);
+    const age_bucket_snapshot_quantum_2 = oc_wake_queue_age_buckets_ptr_quantum_2().*;
+    try std.testing.expectEqual(buckets_before, age_bucket_snapshot_quantum_2);
 
     const pair_interrupt_13: u64 = @as(u64, abi.wake_reason_interrupt) | (@as(u64, 13) << 8);
     _ = oc_submit_command(abi.command_wake_queue_pop_reason_vector, pair_interrupt_13, 0);
@@ -3319,6 +3341,8 @@ test "baremetal wake queue reason-vector pop command removes only exact pairs" {
     try std.testing.expectEqual(@as(u32, 2), summary_after.len);
     try std.testing.expectEqual(@as(u32, 1), summary_after.reason_interrupt_count);
     try std.testing.expectEqual(@as(u32, 1), summary_after.reason_timer_count);
+    const summary_snapshot_after = oc_wake_queue_summary_ptr().*;
+    try std.testing.expectEqual(summary_after, summary_snapshot_after);
 
     _ = oc_submit_command(abi.command_wake_queue_pop_reason_vector, 0, 1);
     oc_tick();
