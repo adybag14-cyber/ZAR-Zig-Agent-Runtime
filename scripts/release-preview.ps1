@@ -155,6 +155,33 @@ if (Test-Path $docsStatusScript) {
     }
 }
 
+$packageRegistryStatusScript = Join-Path $repoRoot "scripts\package-registry-status.ps1"
+$packageRegistryStatusPath = Join-Path $releaseRoot "package-registry-status.json"
+if (Test-Path $packageRegistryStatusScript) {
+    try {
+        $packageRegistryArgs = @{
+            Repository     = $Repo
+            ReleaseTag     = $Version
+            NpmPackageName = "@adybag14-cyber/openclaw-zig-rpc-client"
+            PythonPackageName = "openclaw-zig-rpc-client"
+            OutputJsonPath = $packageRegistryStatusPath
+        }
+        if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
+            $packageRegistryArgs.GitHubToken = $env:GITHUB_TOKEN
+        }
+        & $packageRegistryStatusScript @packageRegistryArgs
+        if (-not $?) {
+            throw "package registry preflight failed."
+        }
+        if (Test-Path $packageRegistryStatusPath) {
+            $assets.Add($packageRegistryStatusPath) | Out-Null
+        }
+    }
+    catch {
+        throw "Package registry preflight failed in release-preview flow. $($_.Exception.Message)"
+    }
+}
+
 foreach ($target in $targets) {
     Write-Output "Building target: $($target.Triple)"
     try {
@@ -220,9 +247,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $releaseEvidenceAssets = @(
-    Join-Path $releaseRoot "release-manifest.json",
-    Join-Path $releaseRoot "sbom.spdx.json",
-    Join-Path $releaseRoot "provenance.intoto.json"
+    (Join-Path $releaseRoot "release-manifest.json"),
+    (Join-Path $releaseRoot "sbom.spdx.json"),
+    (Join-Path $releaseRoot "provenance.intoto.json")
 )
 foreach ($evidenceAsset in $releaseEvidenceAssets) {
     if (-not (Test-Path $evidenceAsset)) {

@@ -76,6 +76,31 @@ function New-RegistryState {
     }
 }
 
+function Resolve-PackageVersionsFromReleaseTag {
+    param(
+        [string]$Tag
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Tag)) {
+        return $null
+    }
+
+    $normalized = $Tag.Trim()
+    if ($normalized.StartsWith("v")) {
+        $normalized = $normalized.Substring(1)
+    }
+
+    $match = [regex]::Match($normalized, '^(?<base>\d+\.\d+\.\d+)-zig-(?<channel>[a-z0-9\-]+)\.(?<build>\d+)$')
+    if (-not $match.Success) {
+        return $null
+    }
+
+    return [pscustomobject]@{
+        NpmVersion    = $normalized
+        PythonVersion = "{0}.dev{1}" -f $match.Groups["base"].Value, $match.Groups["build"].Value
+    }
+}
+
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Push-Location $repoRoot
 try {
@@ -95,6 +120,14 @@ try {
     $resolvedPythonName = $PythonPackageName
     if ([string]::IsNullOrWhiteSpace($resolvedPythonName)) {
         $resolvedPythonName = "openclaw-zig-rpc-client"
+    }
+
+    $derivedVersions = Resolve-PackageVersionsFromReleaseTag -Tag $ReleaseTag
+    if ([string]::IsNullOrWhiteSpace($NpmVersion) -and $null -ne $derivedVersions) {
+        $NpmVersion = $derivedVersions.NpmVersion
+    }
+    if ([string]::IsNullOrWhiteSpace($PythonVersion) -and $null -ne $derivedVersions) {
+        $PythonVersion = $derivedVersions.PythonVersion
     }
 
     $report = [ordered]@{

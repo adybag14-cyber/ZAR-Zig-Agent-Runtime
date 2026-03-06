@@ -120,7 +120,8 @@ $defaultByproducts = @(
     "SHA256SUMS.txt",
     "parity-go-zig.json",
     "parity-go-zig.md",
-    "zig-master-freshness.json"
+    "zig-master-freshness.json",
+    "package-registry-status.json"
 )
 foreach ($byproductName in $defaultByproducts) {
     $byproductPath = Join-Path $ArtifactDir $byproductName

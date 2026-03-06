@@ -89,6 +89,10 @@ jobs:
         shell: pwsh
         run: ./scripts/docs-status-check.ps1 -ParityJsonPath parity-go-zig.json -GitHubToken "${{ github.token }}"
 
+      - name: Package registry preflight
+        shell: pwsh
+        run: ./scripts/package-registry-status.ps1 -Repository "${{ github.repository }}" -ReleaseTag "${{ inputs.version }}" -NpmPackageName "@adybag14-cyber/openclaw-zig-rpc-client" -PythonPackageName "openclaw-zig-rpc-client" -OutputJsonPath package-registry-status.json -GitHubToken "${{ github.token }}"
+
       - name: Upload parity report
         uses: actions/upload-artifact@v4
         with:
@@ -96,6 +100,12 @@ jobs:
           path: |
             parity-go-zig.json
             parity-go-zig.md
+
+      - name: Upload package registry preflight
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-registry-status
+          path: package-registry-status.json
 
       - name: Upload Zig freshness snapshot
         if: always()
@@ -326,6 +336,12 @@ jobs:
           path: dist
         continue-on-error: true
 
+      - name: Download package registry preflight
+        uses: actions/download-artifact@v4
+        with:
+          name: package-registry-status
+          path: dist
+
       - name: Build checksum manifest
         shell: bash
         run: |
@@ -387,6 +403,9 @@ jobs:
           fi
           if [ -f dist/zig-master-freshness.json ]; then
             ASSETS+=(dist/zig-master-freshness.json)
+          fi
+          if [ -f dist/package-registry-status.json ]; then
+            ASSETS+=(dist/package-registry-status.json)
           fi
 
           gh release create "${{ inputs.version }}" \

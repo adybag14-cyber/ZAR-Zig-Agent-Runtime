@@ -129,6 +129,9 @@ The workflow now uses the GitHub Actions environment `pypi`, and the repo-side O
   - attaches the built wheel and sdist to the GitHub release
   - attempts PyPI publish when token or trusted publisher is available
   - uploads `package-registry-status-python.json` preflight evidence for the target version/tag
+- `release-preview.yml`
+  - now generates and attaches `package-registry-status.json` to the edge release itself
+  - this gives each release a frozen snapshot of GitHub asset presence, npmjs visibility, PyPI visibility, and `uvx` fallback readiness
 
 ## Registry Preflight Script
 
