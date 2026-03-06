@@ -70,7 +70,7 @@ jobs:
 
       - name: Set package version
         working-directory: npm/openclaw-zig-rpc-client
-        run: npm version "${{ steps.meta.outputs.version }}" --no-git-tag-version
+        run: npm version "${{ steps.meta.outputs.version }}" --no-git-tag-version --allow-same-version
 
       - name: Validate npm package (dry-run)
         working-directory: npm/openclaw-zig-rpc-client

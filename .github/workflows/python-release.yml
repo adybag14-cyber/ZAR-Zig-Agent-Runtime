@@ -37,11 +37,16 @@ jobs:
           path = Path("python/openclaw-zig-rpc-client/pyproject.toml")
           text = path.read_text(encoding="utf-8")
           version = os.environ["PY_VERSION"]
-          updated = re.sub(r'^version = "[^"]+"$', f'version = "{version}"', text, count=1, flags=re.MULTILINE)
-          if updated == text:
-              raise SystemExit("Unable to update version in pyproject.toml")
-          path.write_text(updated, encoding="utf-8")
-          print(f"Updated pyproject version to {version}")
+          match = re.search(r'^version = "([^"]+)"$', text, flags=re.MULTILINE)
+          if not match:
+              raise SystemExit("Unable to locate version in pyproject.toml")
+          current = match.group(1)
+          if current == version:
+              print(f"pyproject version already set to {version}")
+          else:
+              updated = re.sub(r'^version = "[^"]+"$', f'version = "{version}"', text, count=1, flags=re.MULTILINE)
+              path.write_text(updated, encoding="utf-8")
+              print(f"Updated pyproject version to {version}")
           PY
         env:
           PY_VERSION: ${{ inputs.version }}
