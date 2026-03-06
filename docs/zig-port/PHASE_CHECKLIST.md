@@ -874,6 +874,7 @@ Phase 6 progress notes:
 - [x] `scripts/baremetal-qemu-smoke-check.ps1` added for optional boot smoke with debug-exit validation (`zig build baremetal -Dbaremetal-qemu-smoke=true`); script auto-skips when QEMU is unavailable.
 - [x] `scripts/baremetal-qemu-runtime-oc-tick-check.ps1` added for non-smoke runtime boot progression validation (`_start` -> `oc_tick`) under QEMU+GDB with PVH artifact build.
 - [x] `scripts/baremetal-qemu-command-loop-check.ps1` added for non-smoke mailbox command-loop validation under QEMU+GDB with PVH artifact build (`_start` -> injected `command_set_tick_batch_hint` -> `spinPause` with `ack=1`, `last_opcode=6`, `last_result=0`, `ticks=7`, `tick_batch_hint=7`).
+- [x] `scripts/baremetal-qemu-descriptor-bootdiag-probe-check.ps1` added for live boot-diagnostics and descriptor-load validation under QEMU+GDB with PVH artifact build (`command_reset_boot_diagnostics`, stack capture, boot-phase init, invalid phase rejection, descriptor reinit, and descriptor load with `ACK=6`, `LAST_OPCODE=10`, `INVALID_RESULT=-22`, `DESCRIPTOR_INIT_AFTER_REINIT=2`, `LOAD_ATTEMPTS_FINAL=2`, `LOAD_SUCCESSES_FINAL=2`).
 - [x] PVH boot shim now initializes SSE/XMM before entering Zig `_start` (`CR0.EM/TS clear`, `CR0.MP/NE set`, `CR4.OSFXSR/OSXMMEXCPT set`, `fninit`) to prevent early runtime traps in bootstrap `mem.zeroes` paths.
 - [x] Bare-metal command mailbox depth expanded with interrupt control opcodes:
   - `command_trigger_interrupt`

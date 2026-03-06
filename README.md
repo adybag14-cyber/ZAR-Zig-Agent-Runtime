@@ -34,7 +34,8 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
 - Bare-metal profile: `openclaw-zig-baremetal.elf` (`zig build baremetal`, freestanding runtime loop + Multiboot2 header)
   - smoke gate validates ELF class/endianness, Multiboot2 location/alignment, `.multiboot` section, and required exported symbols
   - smoke gate also validates Multiboot2 header field contract and checksum
-  - optional QEMU validation path available via `zig build baremetal -Dbaremetal-qemu-smoke=true`, `scripts/baremetal-qemu-smoke-check.ps1`, `scripts/baremetal-qemu-runtime-oc-tick-check.ps1`, `scripts/baremetal-qemu-command-loop-check.ps1`, `scripts/baremetal-qemu-scheduler-probe-check.ps1`, `scripts/baremetal-qemu-timer-wake-probe-check.ps1`, `scripts/baremetal-qemu-periodic-timer-probe-check.ps1`, `scripts/baremetal-qemu-periodic-interrupt-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-selective-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-summary-age-probe-check.ps1`, `scripts/baremetal-qemu-allocator-syscall-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-mask-exception-probe-check.ps1`, and `scripts/baremetal-qemu-interrupt-mask-profile-probe-check.ps1` (auto-skips when QEMU/GDB or PVH toolchain pieces are unavailable)
+  - optional QEMU validation path available via `zig build baremetal -Dbaremetal-qemu-smoke=true`, `scripts/baremetal-qemu-smoke-check.ps1`, `scripts/baremetal-qemu-runtime-oc-tick-check.ps1`, `scripts/baremetal-qemu-command-loop-check.ps1`, `scripts/baremetal-qemu-descriptor-bootdiag-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-probe-check.ps1`, `scripts/baremetal-qemu-timer-wake-probe-check.ps1`, `scripts/baremetal-qemu-periodic-timer-probe-check.ps1`, `scripts/baremetal-qemu-periodic-interrupt-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-selective-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-summary-age-probe-check.ps1`, `scripts/baremetal-qemu-allocator-syscall-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-mask-exception-probe-check.ps1`, and `scripts/baremetal-qemu-interrupt-mask-profile-probe-check.ps1` (auto-skips when QEMU/GDB or PVH toolchain pieces are unavailable)
+  - optional QEMU descriptor bootdiag probe validates `reset_boot_diagnostics`, stack capture, boot-phase transition, invalid boot-phase rejection, descriptor-table reinit, and descriptor-load telemetry against the freestanding PVH artifact
   - optional QEMU allocator/syscall failure probe validates invalid-alignment, no-space, blocked-syscall, and disabled-syscall result semantics plus command-result counters against the freestanding PVH artifact
   - optional QEMU scheduler probe validates scheduler reset/timeslice/task-create/policy-enable flow end to end against the freestanding PVH artifact
   - optional QEMU timer wake probe validates timer reset/quantum/task-wait flow end to end, including fired timer entries and wake-queue telemetry against the freestanding PVH artifact
@@ -416,6 +417,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU boot smoke gate
 - optional bare-metal QEMU runtime probe
 - optional bare-metal QEMU command-loop probe
+- optional bare-metal QEMU descriptor bootdiag probe
 - optional bare-metal QEMU scheduler probe
 - optional bare-metal QEMU timer wake probe
 - optional bare-metal QEMU periodic timer probe
@@ -451,6 +453,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU boot smoke validation
 - optional bare-metal QEMU runtime validation
 - optional bare-metal QEMU command-loop validation
+- optional bare-metal QEMU descriptor bootdiag validation
 - optional bare-metal QEMU scheduler validation
 - optional bare-metal QEMU timer wake validation
 - optional bare-metal QEMU periodic timer validation

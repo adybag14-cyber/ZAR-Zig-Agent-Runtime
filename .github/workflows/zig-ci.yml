@@ -122,6 +122,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-command-loop-check.ps1
 
+      - name: Bare-metal QEMU descriptor bootdiag probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-bootdiag-probe-check.ps1
+
       - name: Runtime smoke check (serve + rpc)
         shell: pwsh
         run: ./scripts/runtime-smoke-check.ps1 -SkipBuild

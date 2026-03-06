@@ -982,6 +982,10 @@ Full-stack replacement execution reference:
   - bare-metal QEMU command-loop validation shipped:
     - new script: `scripts/baremetal-qemu-command-loop-check.ps1` resolves `_start`, `spinPause`, `status`, and `command_mailbox` symbols from the freestanding ELF and injects a mailbox opcode through GDB under QEMU.
     - current proof path validates `command_set_tick_batch_hint` end to end (`ack=1`, `last_opcode=6`, `last_result=0`, `ticks=7`, `tick_batch_hint=7`) so FS6 now has boot, runtime progression, and command-loop evidence instead of boot-only smoke.
+  - bare-metal QEMU descriptor bootdiag validation shipped:
+    - new script: `scripts/baremetal-qemu-descriptor-bootdiag-probe-check.ps1` resolves boot diagnostics and descriptor-load telemetry symbols from the freestanding ELF and drives boot/descriptor commands through the mailbox under QEMU+GDB.
+    - current proof path validates `command_reset_boot_diagnostics`, `command_capture_stack_pointer`, `command_set_boot_phase(init)`, invalid `command_set_boot_phase(99)`, `command_reinit_descriptor_tables`, and `command_load_descriptor_tables` end to end over the PVH freestanding artifact.
+    - key probe evidence: `ACK=6`, `LAST_OPCODE=10`, `BOOT_SEQ_AFTER_RESET=1`, `STACK_SNAPSHOT_AFTER_CAPTURE=17574432`, `PHASE_AFTER_SET_INIT=1`, `INVALID_RESULT=-22`, `DESCRIPTOR_INIT_AFTER_REINIT=2`, `LOAD_ATTEMPTS_FINAL=2`, `LOAD_SUCCESSES_FINAL=2`.
   - bare-metal QEMU scheduler validation shipped:
     - new script: `scripts/baremetal-qemu-scheduler-probe-check.ps1` resolves scheduler state/task symbols from the freestanding ELF and drives scheduler commands through the mailbox under QEMU+GDB.
     - the probe validates `command_scheduler_reset`, `command_scheduler_set_timeslice`, `command_task_create`, `command_scheduler_set_policy`, and `command_scheduler_enable` end to end over the PVH freestanding artifact.
