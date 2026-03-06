@@ -114,6 +114,14 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-smoke-check.ps1 -SkipBuild
 
+      - name: Bare-metal QEMU runtime probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-runtime-oc-tick-check.ps1 -SkipBuild
+
+      - name: Bare-metal QEMU command-loop probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-loop-check.ps1 -SkipBuild
+
       - name: Runtime smoke check (serve + rpc)
         shell: pwsh
         run: ./scripts/runtime-smoke-check.ps1 -SkipBuild

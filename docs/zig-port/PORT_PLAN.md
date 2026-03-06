@@ -962,6 +962,9 @@ Full-stack replacement execution reference:
   - bare-metal QEMU runtime progression validation shipped:
     - new script: `scripts/baremetal-qemu-runtime-oc-tick-check.ps1` validates `_start` and runtime tick-loop progression (`oc_tick`) on non-smoke PVH artifacts via QEMU+GDB.
     - PVH long-mode entry now enables SSE/XMM (`CR0`/`CR4` + `fninit`) before Zig runtime entry to prevent early bootstrap traps in `mem.zeroes` paths.
+  - bare-metal QEMU command-loop validation shipped:
+    - new script: `scripts/baremetal-qemu-command-loop-check.ps1` resolves `_start`, `spinPause`, `status`, and `command_mailbox` symbols from the freestanding ELF and injects a mailbox opcode through GDB under QEMU.
+    - current proof path validates `command_set_tick_batch_hint` end to end (`ack=1`, `last_opcode=6`, `last_result=0`, `ticks=7`, `tick_batch_hint=7`) so FS6 now has boot, runtime progression, and command-loop evidence instead of boot-only smoke.
   - bare-metal mailbox interrupt-control expansion shipped:
     - new command opcodes wired in runtime: `command_trigger_interrupt`, `command_reset_interrupt_counters`, `command_reinit_descriptor_tables`.
     - reset path now clears runtime interrupt counters via bootstrap export to keep command-driven diagnostics deterministic.

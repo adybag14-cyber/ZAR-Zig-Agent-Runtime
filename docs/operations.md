@@ -22,6 +22,8 @@ Recommended sequence:
 ./scripts/runtime-smoke-check.ps1
 ./scripts/baremetal-smoke-check.ps1
 ./scripts/baremetal-qemu-smoke-check.ps1
+./scripts/baremetal-qemu-runtime-oc-tick-check.ps1
+./scripts/baremetal-qemu-command-loop-check.ps1
 ./scripts/gateway-auth-smoke-check.ps1
 ./scripts/websocket-smoke-check.ps1
 ./scripts/web-login-smoke-check.ps1

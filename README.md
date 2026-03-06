@@ -23,7 +23,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
 - Bare-metal profile: `openclaw-zig-baremetal.elf` (`zig build baremetal`, freestanding runtime loop + Multiboot2 header)
   - smoke gate validates ELF class/endianness, Multiboot2 location/alignment, `.multiboot` section, and required exported symbols
   - smoke gate also validates Multiboot2 header field contract and checksum
-  - optional QEMU boot smoke path available via `zig build baremetal -Dbaremetal-qemu-smoke=true` and `scripts/baremetal-qemu-smoke-check.ps1` (auto-skips when QEMU is unavailable)
+  - optional QEMU validation path available via `zig build baremetal -Dbaremetal-qemu-smoke=true`, `scripts/baremetal-qemu-smoke-check.ps1`, `scripts/baremetal-qemu-runtime-oc-tick-check.ps1`, and `scripts/baremetal-qemu-command-loop-check.ps1` (auto-skips when QEMU/GDB or PVH toolchain pieces are unavailable)
   - bare-metal ABI now includes exported kernel info + command mailbox hooks (`oc_kernel_info_ptr`, `oc_command_ptr`, `oc_submit_command`, `oc_tick_n`)
   - bare-metal boot diagnostics ABI now exported with phase/command/tick telemetry and stack snapshot helpers (`oc_boot_diag_ptr`, `oc_boot_diag_capture_stack`)
   - bare-metal command history ABI now exported for mailbox execution tracing (`oc_command_history_capacity`, `oc_command_history_len`, `oc_command_history_event`, `oc_command_history_clear`)
@@ -352,6 +352,9 @@ Run smoke checks:
 ```powershell
 ./scripts/docker-smoke-check.ps1
 ./scripts/baremetal-smoke-check.ps1
+./scripts/baremetal-qemu-smoke-check.ps1
+./scripts/baremetal-qemu-runtime-oc-tick-check.ps1
+./scripts/baremetal-qemu-command-loop-check.ps1
 ./scripts/runtime-smoke-check.ps1
 ./scripts/gateway-auth-smoke-check.ps1
 ./scripts/websocket-smoke-check.ps1

@@ -756,7 +756,7 @@ Phase 6 progress notes:
 ## Latest Validation Snapshot
 - [x] `zig build`
 - [x] `zig build test`
-- [x] `zig build test --summary all` -> `197/197` passing (includes gateway auth/rate-limit hardening tests, runtime file/exec policy hardening tests, config-hash diagnostics coverage, bind-policy token enforcement checks, secure-boot policy/update-gate enforcement coverage, TTS/completion execution-path coverage, PAL extraction coverage, secure secret-store backend coverage, bare-metal ABI v2 contract tests, and runtime persistence posture diagnostics coverage)
+- [x] `zig build test --summary all` -> `202/202` passing (includes gateway auth/rate-limit hardening tests, runtime file/exec policy hardening tests, config-hash diagnostics coverage, bind-policy token enforcement checks, secure-boot policy/update-gate enforcement coverage, TTS/completion execution-path coverage, PAL extraction coverage, secure secret-store backend coverage, bare-metal ABI v2 contract tests, and runtime persistence posture diagnostics coverage)
 - [x] Runtime policy hardening slice shipped:
   - `file.read` / `file.write` optional sandbox enforcement with traversal + symlink denial paths:
     - `OPENCLAW_ZIG_RUNTIME_FILE_SANDBOX_ENABLED`
@@ -855,6 +855,7 @@ Phase 6 progress notes:
     - `oc_interrupt_count`, `oc_last_interrupt_vector`
 - [x] `scripts/baremetal-qemu-smoke-check.ps1` added for optional boot smoke with debug-exit validation (`zig build baremetal -Dbaremetal-qemu-smoke=true`); script auto-skips when QEMU is unavailable.
 - [x] `scripts/baremetal-qemu-runtime-oc-tick-check.ps1` added for non-smoke runtime boot progression validation (`_start` -> `oc_tick`) under QEMU+GDB with PVH artifact build.
+- [x] `scripts/baremetal-qemu-command-loop-check.ps1` added for non-smoke mailbox command-loop validation under QEMU+GDB with PVH artifact build (`_start` -> injected `command_set_tick_batch_hint` -> `spinPause` with `ack=1`, `last_opcode=6`, `last_result=0`, `ticks=7`, `tick_batch_hint=7`).
 - [x] PVH boot shim now initializes SSE/XMM before entering Zig `_start` (`CR0.EM/TS clear`, `CR0.MP/NE set`, `CR4.OSFXSR/OSXMMEXCPT set`, `fninit`) to prevent early runtime traps in bootstrap `mem.zeroes` paths.
 - [x] Bare-metal command mailbox depth expanded with interrupt control opcodes:
   - `command_trigger_interrupt`
