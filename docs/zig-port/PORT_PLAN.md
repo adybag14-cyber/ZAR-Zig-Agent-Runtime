@@ -56,7 +56,7 @@ Full-stack replacement execution reference:
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `201/201`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `202/202`.
 - Release/package lane status (2026-03-06):
   - GitHub prerelease `v0.2.0-zig-edge.26` is live with desktop/android/bare-metal artifacts, parity reports, manifest, SBOM, provenance, npm tarball, wheel, and sdist.
   - release evidence now also includes `release-status.json` + `release-status.md` so every edge cut carries a frozen workflow-status + registry-status snapshot in addition to package preflight evidence.
@@ -84,6 +84,24 @@ Full-stack replacement execution reference:
     - on restart, leased jobs are re-queued ahead of later pending jobs so interrupted work resumes in deterministic order.
     - new regression proves a job dequeued but not released before shutdown is replayed after restore:
       - `runtime state restart replay preserves leased jobs that were dequeued but not released`
+  - FS1 live runtime recovery visibility slice shipped:
+    - runtime-state load now normalizes replayed `leasedJobs` back into persisted `pendingJobs` immediately after bootstrap, so the on-disk state file stops reporting stale in-flight work once recovery has happened.
+    - `ToolRuntime.snapshot()` now exposes shared runtime posture:
+      - `statePath`
+      - `persisted`
+      - `sessions`
+      - `queueDepth`
+      - `leasedJobs`
+      - `recoveryBacklog`
+    - live RPC/operator surfaces now expose the same runtime snapshot:
+      - `status`
+      - `doctor`
+      - `doctor.memory.status`
+      - `agent.identity.get`
+      - `system.maintenance.plan`
+      - `system.maintenance.run`
+      - `system.maintenance.status`
+    - new regressions cover both the normalized persisted replay file and the exported runtime snapshot contract.
   - Full-stack replacement kickoff (2026-03-05):
   - Phase 5 Telegram auth fallback-metadata parity hardened:
     - no-session `/auth url` metadata now matches Go’s leaner fallback envelope and no longer emits Zig-only top-level:

@@ -13,6 +13,16 @@ pub const SessionSnapshot = struct {
     last_message: []const u8,
 };
 
+pub const Snapshot = struct {
+    statePath: []const u8,
+    persisted: bool,
+    sessions: usize,
+    pendingJobs: usize,
+    leasedJobs: usize,
+    recoveryBacklog: usize,
+    nextJobId: u64,
+};
+
 pub const JobKind = enum {
     exec,
     file_read,
@@ -170,8 +180,26 @@ pub const RuntimeState = struct {
         return self.pending_jobs.items.len - self.pending_jobs_head;
     }
 
+    pub fn leasedDepth(self: *const RuntimeState) usize {
+        return self.leased_jobs.items.len;
+    }
+
     pub fn sessionCount(self: *const RuntimeState) usize {
         return self.sessions.count();
+    }
+
+    pub fn snapshot(self: *const RuntimeState) Snapshot {
+        const pending = self.queueDepth();
+        const leased = self.leasedDepth();
+        return .{
+            .statePath = if (self.state_path) |path| path else "memory://runtime-state",
+            .persisted = self.persistent,
+            .sessions = self.sessionCount(),
+            .pendingJobs = pending,
+            .leasedJobs = leased,
+            .recoveryBacklog = pending + leased,
+            .nextJobId = self.next_job_id,
+        };
     }
 
     fn compactPendingJobs(self: *RuntimeState) void {
@@ -219,6 +247,7 @@ pub const RuntimeState = struct {
 
         var parsed = try std.json.parseFromSlice(PersistedState, self.allocator, raw, .{ .ignore_unknown_fields = true });
         defer parsed.deinit();
+        const normalize_leased_jobs = parsed.value.leasedJobs.len > 0;
 
         self.clearState();
         var max_job_id: u64 = 0;
@@ -247,6 +276,9 @@ pub const RuntimeState = struct {
         self.pending_jobs_head = 0;
         self.next_job_id = parsed.value.nextJobId;
         if (self.next_job_id <= max_job_id) self.next_job_id = max_job_id + 1;
+        if (normalize_leased_jobs and self.persistent) {
+            try self.persist();
+        }
     }
 
     fn persist(self: *RuntimeState) !void {
@@ -487,6 +519,17 @@ test "runtime state restart replay preserves leased jobs that were dequeued but 
         defer restored.deinit();
         try restored.configurePersistence(root);
         try std.testing.expectEqual(@as(usize, 2), restored.queueDepth());
+        try std.testing.expectEqual(@as(usize, 0), restored.leasedDepth());
+
+        const normalized_path = try std.fs.path.join(allocator, &.{ root, "runtime-state.json" });
+        defer allocator.free(normalized_path);
+        const raw = try std.Io.Dir.cwd().readFileAlloc(io, normalized_path, allocator, .limited(4 * 1024 * 1024));
+        defer allocator.free(raw);
+
+        var parsed = try std.json.parseFromSlice(PersistedState, allocator, raw, .{});
+        defer parsed.deinit();
+        try std.testing.expectEqual(@as(usize, 0), parsed.value.leasedJobs.len);
+        try std.testing.expectEqual(@as(usize, 2), parsed.value.pendingJobs.len);
 
         const first = restored.dequeueJob().?;
         defer restored.releaseJob(first);

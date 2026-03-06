@@ -68,6 +68,15 @@ pub const FileWriteResult = struct {
     }
 };
 
+pub const Snapshot = struct {
+    statePath: []const u8,
+    persisted: bool,
+    sessions: usize,
+    queueDepth: usize,
+    leasedJobs: usize,
+    recoveryBacklog: usize,
+};
+
 pub const ToolRuntime = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -104,6 +113,18 @@ pub const ToolRuntime = struct {
 
     pub fn sessionCount(self: *const ToolRuntime) usize {
         return self.runtime_state.sessionCount();
+    }
+
+    pub fn snapshot(self: *const ToolRuntime) Snapshot {
+        const runtime_snapshot = self.runtime_state.snapshot();
+        return .{
+            .statePath = runtime_snapshot.statePath,
+            .persisted = runtime_snapshot.persisted,
+            .sessions = runtime_snapshot.sessions,
+            .queueDepth = runtime_snapshot.pendingJobs,
+            .leasedJobs = runtime_snapshot.leasedJobs,
+            .recoveryBacklog = runtime_snapshot.recoveryBacklog,
+        };
     }
 
     pub fn configureRuntimePolicy(
@@ -553,4 +574,29 @@ test "tool runtime exec policy denies non-allowlisted commands" {
 
     const blocked = if (builtin.os.tag == .windows) "dir" else "uname -a";
     try std.testing.expectError(error.CommandDenied, runtime.execRun(allocator, "sess-exec-policy", blocked, 20_000));
+}
+
+test "tool runtime snapshot exposes queue and persistence posture" {
+    const allocator = std.testing.allocator;
+    var runtime = ToolRuntime.init(std.heap.page_allocator, std.testing.io);
+    defer runtime.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const root = try tmp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+
+    try runtime.configureStatePersistence(root);
+    _ = try runtime.runtime_state.enqueueJob(.exec, "{\"cmd\":\"echo hi\"}");
+    _ = try runtime.runtime_state.enqueueJob(.file_read, "{\"path\":\"README.md\"}");
+    const leased = runtime.runtime_state.dequeueJob().?;
+    defer runtime.runtime_state.releaseJob(leased);
+
+    const snapshot = runtime.snapshot();
+    try std.testing.expect(snapshot.persisted);
+    try std.testing.expect(std.mem.endsWith(u8, snapshot.statePath, "runtime-state.json"));
+    try std.testing.expectEqual(@as(usize, 1), snapshot.queueDepth);
+    try std.testing.expectEqual(@as(usize, 1), snapshot.leasedJobs);
+    try std.testing.expectEqual(@as(usize, 2), snapshot.recoveryBacklog);
 }

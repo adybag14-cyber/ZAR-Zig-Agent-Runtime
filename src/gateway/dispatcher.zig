@@ -121,6 +121,12 @@ const MaintenancePlan = struct {
     memoryUsageRatio: f64,
     heartbeatEnabled: bool,
     suggestedCompactLimit: usize,
+    runtimeStatePath: []const u8,
+    runtimePersisted: bool,
+    runtimeSessions: usize,
+    runtimeQueueDepth: usize,
+    runtimeLeasedJobs: usize,
+    runtimeRecoveryBacklog: usize,
     actions: []MaintenanceAction,
 };
 
@@ -2402,13 +2408,16 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         const cfg = currentConfig();
         const gateway_token_required = cfg.gateway.require_token or !isLoopbackBind(cfg.http_bind);
         const runtime = getRuntime();
+        const runtime_snapshot = runtime.snapshot();
         const guard = try getGuard();
         return protocol.encodeResult(allocator, req.id, .{
             .service = "openclaw-zig",
             .browser_bridge = "lightpanda",
             .supported_methods = registry.count(),
             .runtime_queue_depth = runtime.queueDepth(),
+            .runtime_leased_jobs = runtime_snapshot.leasedJobs,
             .runtime_sessions = runtime.sessionCount(),
+            .runtime = runtime_snapshot,
             .security = guard.snapshot(),
             .gateway_auth_mode = if (gateway_token_required) "token" else "none",
             .configHash = config.fingerprintHex(cfg),
@@ -2846,14 +2855,12 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
 
     if (std.ascii.eqlIgnoreCase(req.method, "agent.identity.get")) {
         const runtime = getRuntime();
+        const runtime_snapshot = runtime.snapshot();
         return protocol.encodeResult(allocator, req.id, .{
             .id = "openclaw-zig",
             .service = "openclaw-zig-port",
             .version = "dev",
-            .runtime = .{
-                .queueDepth = runtime.queueDepth(),
-                .sessions = runtime.sessionCount(),
-            },
+            .runtime = runtime_snapshot,
             .authMode = "keyless",
             .startedAtMs = time_util.nowMs(),
         });
@@ -3994,10 +4001,11 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         defer parsed.deinit();
         const params = getParamsObjectOrNull(parsed.value);
         const deep = firstParamBool(params, "deep", false);
+        const runtime = getRuntime();
         const guard = try getGuard();
         const memory = try getMemoryStore();
         const compat = try getCompatState();
-        const plan = try buildMaintenancePlan(allocator, currentConfig(), guard, compat, memory, deep);
+        const plan = try buildMaintenancePlan(allocator, currentConfig(), runtime, guard, compat, memory, deep);
         defer allocator.free(plan.actions);
 
         return protocol.encodeResult(allocator, req.id, .{
@@ -4021,6 +4029,14 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             .heartbeat = .{
                 .enabled = plan.heartbeatEnabled,
             },
+            .runtime = .{
+                .statePath = plan.runtimeStatePath,
+                .persisted = plan.runtimePersisted,
+                .sessions = plan.runtimeSessions,
+                .queueDepth = plan.runtimeQueueDepth,
+                .leasedJobs = plan.runtimeLeasedJobs,
+                .recoveryBacklog = plan.runtimeRecoveryBacklog,
+            },
             .actions = plan.actions,
             .actionCount = plan.actions.len,
             .recommendedCount = countRecommendedMaintenanceActions(plan.actions),
@@ -4037,10 +4053,11 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         const apply = if (dry_run) false else firstParamBool(params, "apply", true);
         const compact_limit_param = firstParamInt(params, "compactLimit", 0);
 
+        const runtime = getRuntime();
         const guard = try getGuard();
         const memory = try getMemoryStore();
         const compat = try getCompatState();
-        const plan = try buildMaintenancePlan(allocator, currentConfig(), guard, compat, memory, deep);
+        const plan = try buildMaintenancePlan(allocator, currentConfig(), runtime, guard, compat, memory, deep);
         defer allocator.free(plan.actions);
 
         var action_results: std.ArrayList(MaintenanceActionResult) = .empty;
@@ -4182,6 +4199,14 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
                 .info = plan.info,
                 .healthScore = plan.healthScore,
             },
+            .runtime = .{
+                .statePath = plan.runtimeStatePath,
+                .persisted = plan.runtimePersisted,
+                .sessions = plan.runtimeSessions,
+                .queueDepth = plan.runtimeQueueDepth,
+                .leasedJobs = plan.runtimeLeasedJobs,
+                .recoveryBacklog = plan.runtimeRecoveryBacklog,
+            },
             .counts = .{
                 .total = action_slice.len,
                 .applied = applied_count,
@@ -4210,10 +4235,11 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         defer parsed.deinit();
         const params = getParamsObjectOrNull(parsed.value);
         const deep = firstParamBool(params, "deep", false);
+        const runtime = getRuntime();
         const guard = try getGuard();
         const memory = try getMemoryStore();
         const compat = try getCompatState();
-        const plan = try buildMaintenancePlan(allocator, currentConfig(), guard, compat, memory, deep);
+        const plan = try buildMaintenancePlan(allocator, currentConfig(), runtime, guard, compat, memory, deep);
         defer allocator.free(plan.actions);
 
         var latest_maintenance: ?CompatUpdateJob = null;
@@ -4254,6 +4280,14 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             },
             .heartbeat = .{
                 .enabled = plan.heartbeatEnabled,
+            },
+            .runtime = .{
+                .statePath = plan.runtimeStatePath,
+                .persisted = plan.runtimePersisted,
+                .sessions = plan.runtimeSessions,
+                .queueDepth = plan.runtimeQueueDepth,
+                .leasedJobs = plan.runtimeLeasedJobs,
+                .recoveryBacklog = plan.runtimeRecoveryBacklog,
             },
         });
     }
@@ -6485,7 +6519,20 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
 
     if (std.ascii.eqlIgnoreCase(req.method, "doctor.memory.status")) {
         const memory = try getMemoryStore();
-        return protocol.encodeResult(allocator, req.id, memory.stats());
+        const runtime = getRuntime();
+        const stats = memory.stats();
+        return protocol.encodeResult(allocator, req.id, .{
+            .entries = stats.entries,
+            .vectors = stats.vectors,
+            .graphNodes = stats.graphNodes,
+            .graphEdges = stats.graphEdges,
+            .maxEntries = stats.maxEntries,
+            .unlimited = stats.unlimited,
+            .persistent = stats.persistent,
+            .statePath = stats.statePath,
+            .lastError = stats.lastError,
+            .runtime = runtime.snapshot(),
+        });
     }
 
     if (std.ascii.eqlIgnoreCase(req.method, "edge.wasm.marketplace.list")) {
@@ -8001,7 +8048,12 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         const guard = try getGuard();
         var report = try security_audit.doctor(allocator, currentConfig(), guard, opts);
         defer report.deinit(allocator);
-        return protocol.encodeResult(allocator, req.id, report);
+        return protocol.encodeResult(allocator, req.id, .{
+            .checks = report.checks,
+            .security = report.security,
+            .configHash = report.configHash,
+            .runtime = getRuntime().snapshot(),
+        });
     }
 
     if (std.ascii.eqlIgnoreCase(req.method, "browser.request") or std.ascii.eqlIgnoreCase(req.method, "browser.open")) {
@@ -8564,6 +8616,7 @@ fn shouldEnforceGuard(method: []const u8) bool {
 fn buildMaintenancePlan(
     allocator: std.mem.Allocator,
     cfg: config.Config,
+    runtime: *tool_runtime.ToolRuntime,
     runtime_guard: *security_guard.Guard,
     compat: *CompatState,
     memory: *memory_store.Store,
@@ -8586,6 +8639,7 @@ fn buildMaintenancePlan(
         @max(mem.maxEntries * 3 / 4, @as(usize, 128))
     else
         @as(usize, 500);
+    const runtime_snapshot = runtime.snapshot();
 
     var actions: std.ArrayList(MaintenanceAction) = .empty;
     defer actions.deinit(allocator);
@@ -8658,6 +8712,12 @@ fn buildMaintenancePlan(
         .memoryUsageRatio = usage_ratio,
         .heartbeatEnabled = compat.heartbeat_enabled,
         .suggestedCompactLimit = suggested_compact_limit,
+        .runtimeStatePath = runtime_snapshot.statePath,
+        .runtimePersisted = runtime_snapshot.persisted,
+        .runtimeSessions = runtime_snapshot.sessions,
+        .runtimeQueueDepth = runtime_snapshot.queueDepth,
+        .runtimeLeasedJobs = runtime_snapshot.leasedJobs,
+        .runtimeRecoveryBacklog = runtime_snapshot.recoveryBacklog,
         .actions = try actions.toOwnedSlice(allocator),
     };
 }
@@ -12887,7 +12947,9 @@ test "dispatch file.write and file.read lifecycle updates status counters" {
     const status_out = try dispatch(allocator, "{\"id\":\"life-status\",\"method\":\"status\",\"params\":{}}");
     defer allocator.free(status_out);
     try std.testing.expect(std.mem.indexOf(u8, status_out, "\"runtime_queue_depth\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, status_out, "\"runtime_leased_jobs\":0") != null);
     try std.testing.expect(std.mem.indexOf(u8, status_out, "\"runtime_sessions\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, status_out, "\"runtime\":{\"statePath\":") != null);
     try std.testing.expect(std.mem.indexOf(u8, status_out, "\"security\":") != null);
 }
 
@@ -12921,6 +12983,7 @@ test "dispatch exposes security.audit and doctor methods" {
     try std.testing.expect(std.mem.indexOf(u8, doctor, "\"message\":\"memory://dispatcher-doctor-state\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, doctor, "\"id\":\"security.policy_bundle\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, doctor, "\"message\":\"memory://dispatcher-policy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doctor, "\"runtime\":{\"statePath\":\"memory://dispatcher-doctor-state\"") != null);
 }
 
 test "dispatch security.audit fix exposes manual runtime persistence blockers" {
@@ -14038,6 +14101,7 @@ test "dispatch memory history handlers return persisted send activity" {
     defer allocator.free(memory_status);
     try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"entries\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"statePath\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"runtime\":{\"statePath\":") != null);
 }
 
 test "dispatch compat usage and session lifecycle methods return contracts" {
@@ -14203,16 +14267,19 @@ test "dispatch compat talk tts models and control methods return contracts" {
     defer allocator.free(maintenance_plan);
     try std.testing.expect(std.mem.indexOf(u8, maintenance_plan, "\"healthScore\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, maintenance_plan, "\"actions\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, maintenance_plan, "\"runtime\":{\"statePath\":") != null);
 
     const maintenance_run = try dispatch(allocator, "{\"id\":\"compat-maint-run\",\"method\":\"system.maintenance.run\",\"params\":{\"dryRun\":true}}");
     defer allocator.free(maintenance_run);
     try std.testing.expect(std.mem.indexOf(u8, maintenance_run, "\"status\":\"planned\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, maintenance_run, "\"updateJob\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, maintenance_run, "\"runtime\":{\"statePath\":") != null);
 
     const maintenance_status = try dispatch(allocator, "{\"id\":\"compat-maint-status\",\"method\":\"system.maintenance.status\",\"params\":{}}");
     defer allocator.free(maintenance_status);
     try std.testing.expect(std.mem.indexOf(u8, maintenance_status, "\"latestRun\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, maintenance_status, "\"healthScore\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, maintenance_status, "\"runtime\":{\"statePath\":") != null);
 
     const boot_status = try dispatch(allocator, "{\"id\":\"compat-boot-status\",\"method\":\"system.boot.status\",\"params\":{}}");
     defer allocator.free(boot_status);
@@ -14469,6 +14536,7 @@ test "dispatch compat agent and skills methods return contracts" {
     const identity = try dispatch(allocator, "{\"id\":\"compat-agent-identity\",\"method\":\"agent.identity.get\",\"params\":{}}");
     defer allocator.free(identity);
     try std.testing.expect(std.mem.indexOf(u8, identity, "\"id\":\"openclaw-zig\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, identity, "\"runtime\":{\"statePath\":") != null);
 
     const created = try dispatch(allocator, "{\"id\":\"compat-agent-create\",\"method\":\"agents.create\",\"params\":{\"name\":\"zig-agent\",\"description\":\"parity test\",\"model\":\"gpt-5.2\"}}");
     defer allocator.free(created);
