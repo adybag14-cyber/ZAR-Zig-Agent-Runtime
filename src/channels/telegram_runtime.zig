@@ -2221,7 +2221,7 @@ pub const TelegramRuntime = struct {
                     return .{
                         .is_command = true,
                         .command_name = "auth",
-                        .reply = try std.fmt.allocPrint(allocator, "Unknown option `{s}`. Usage: /auth start <provider> [account] [--force]", .{token}),
+                        .reply = try std.fmt.allocPrint(allocator, "Unknown option `{s}`. Usage: `/auth start <provider> [account] [--force]`", .{token}),
                         .provider = provider,
                         .model = defaultModelForProvider(provider),
                         .login_session_id = "",
@@ -2249,7 +2249,7 @@ pub const TelegramRuntime = struct {
                 return .{
                     .is_command = true,
                     .command_name = "auth",
-                    .reply = try allocator.dupe(u8, "Usage: /auth start <provider> [account] [--force]"),
+                    .reply = try allocator.dupe(u8, "Usage: `/auth start <provider> [account] [--force]`"),
                     .provider = provider,
                     .model = defaultModelForProvider(provider),
                     .login_session_id = "",
@@ -2265,17 +2265,11 @@ pub const TelegramRuntime = struct {
                 if (self.login_manager.get(existing_session)) |existing| {
                     if (std.ascii.eqlIgnoreCase(existing.status, "pending")) {
                         const account_norm = normalizeAccount(account);
-                        const account_is_default = std.mem.eql(u8, account_norm, "default");
-                        const reply = if (existing.guestBypassSupported)
-                            (if (account_is_default)
-                                try std.fmt.allocPrint(allocator, "Auth already {s} for `{s}`.\nOpen: {s}\nThen run `/auth guest {s}` or `/auth complete {s} <callback_url_or_code>`.\nUse `--force` to replace session.", .{ existing.status, provider, existing.verificationUriComplete, provider, provider })
-                            else
-                                try std.fmt.allocPrint(allocator, "Auth already {s} for `{s}` account `{s}`.\nOpen: {s}\nThen run `/auth guest {s} {s}` or `/auth complete {s} <callback_url_or_code> {s}`.\nUse `--force` to replace session.", .{ existing.status, provider, account_norm, existing.verificationUriComplete, provider, account_norm, provider, account_norm }))
-                        else
-                            (if (account_is_default)
-                                try std.fmt.allocPrint(allocator, "Auth already {s} for `{s}`.\nOpen: {s}\nThen run `/auth complete {s} <callback_url_or_code>`.\nUse `--force` to replace session.", .{ existing.status, provider, existing.verificationUriComplete, provider })
-                            else
-                                try std.fmt.allocPrint(allocator, "Auth already {s} for `{s}` account `{s}`.\nOpen: {s}\nThen run `/auth complete {s} <callback_url_or_code> {s}`.\nUse `--force` to replace session.", .{ existing.status, provider, account_norm, existing.verificationUriComplete, provider, account_norm }));
+                        const reply = try std.fmt.allocPrint(
+                            allocator,
+                            "Auth already pending for `{s}` account `{s}`.\nOpen: {s}\nThen run: `/auth complete {s} {s}`",
+                            .{ provider, account_norm, existing.verificationUriComplete, provider, existing.code },
+                        );
                         const scope = try authScopeAlloc(allocator, provider, account_norm);
                         defer allocator.free(scope);
                         const metadata_json = try stringifyJsonAlloc(allocator, AuthCommandMetadata{
@@ -2313,16 +2307,18 @@ pub const TelegramRuntime = struct {
             try self.setAuthBinding(target, provider, account, started.loginSessionId);
             const account_norm = normalizeAccount(account);
             const account_is_default = std.mem.eql(u8, account_norm, "default");
-            const reply = if (started.guestBypassSupported)
-                (if (account_is_default)
-                    try std.fmt.allocPrint(allocator, "Auth started for `{s}`.\nOpen: {s}\n{s}\nThen run `/auth guest {s}` (or `/auth complete {s} <callback_url_or_code>`).", .{ provider, started.verificationUriComplete, started.guestBypassHint, provider, provider })
-                else
-                    try std.fmt.allocPrint(allocator, "Auth started for `{s}` account `{s}`.\nOpen: {s}\n{s}\nThen run `/auth guest {s} {s}` (or `/auth complete {s} <callback_url_or_code> {s}`).", .{ provider, account_norm, started.verificationUriComplete, started.guestBypassHint, provider, account_norm, provider, account_norm }))
+            const reply = if (account_is_default)
+                try std.fmt.allocPrint(
+                    allocator,
+                    "Auth started for `{s}`.\nOpen: {s}\nIf prompted, use code `{s}`.\nThen run: `/auth complete {s} {s}`",
+                    .{ provider, started.verificationUriComplete, started.code, provider, started.code },
+                )
             else
-                (if (account_is_default)
-                    try std.fmt.allocPrint(allocator, "Auth started for `{s}`.\nOpen: {s}\nThen run `/auth complete {s} <callback_url_or_code>`", .{ provider, started.verificationUriComplete, provider })
-                else
-                    try std.fmt.allocPrint(allocator, "Auth started for `{s}` account `{s}`.\nOpen: {s}\nThen run `/auth complete {s} <callback_url_or_code> {s}`", .{ provider, account_norm, started.verificationUriComplete, provider, account_norm }));
+                try std.fmt.allocPrint(
+                    allocator,
+                    "Auth started for `{s}` account `{s}`.\nOpen: {s}\nIf prompted, use code `{s}`.\nThen run: `/auth complete {s} {s} {s}`",
+                    .{ provider, account_norm, started.verificationUriComplete, started.code, provider, started.code, account_norm },
+                );
             const scope = try authScopeAlloc(allocator, provider, account_norm);
             defer allocator.free(scope);
             const metadata_json = try stringifyJsonAlloc(allocator, AuthCommandMetadata{
@@ -4834,7 +4830,10 @@ test "telegram runtime qwen guest auth lifecycle" {
     var start_result = try runtime.sendFromFrame(allocator, start_frame);
     defer start_result.deinit(allocator);
     try std.testing.expect(std.mem.eql(u8, start_result.provider, "qwen"));
-    try std.testing.expect(std.mem.indexOf(u8, start_result.reply, "/auth guest qwen") != null);
+    try std.testing.expect(std.mem.indexOf(u8, start_result.reply, "Auth started for `qwen`.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, start_result.reply, "If prompted, use code `") != null);
+    try std.testing.expect(std.mem.indexOf(u8, start_result.reply, "Then run: `/auth complete qwen ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, start_result.reply, "/auth guest qwen") == null);
 
     const guest_frame =
         \\{"id":"tg-auth-guest-qwen","method":"send","params":{"channel":"telegram","to":"room-qwen","sessionId":"sess-qwen","message":"/auth guest qwen"}}
@@ -4944,13 +4943,21 @@ test "telegram runtime auth supports account scope and force restart" {
     var start_mobile = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-start-mobile\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-acc\",\"sessionId\":\"sess-acc\",\"message\":\"/auth start qwen mobile\"}}");
     defer start_mobile.deinit(allocator);
     try std.testing.expect(start_mobile.loginSessionId.len > 0);
+    try std.testing.expect(std.mem.indexOf(u8, start_mobile.reply, "Auth started for `qwen` account `mobile`.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, start_mobile.reply, "If prompted, use code `") != null);
+    try std.testing.expect(std.mem.indexOf(u8, start_mobile.reply, "Then run: `/auth complete qwen ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, start_mobile.reply, " mobile`") != null);
+    try std.testing.expect(std.mem.indexOf(u8, start_mobile.reply, "/auth guest") == null);
     const mobile_session_1 = try allocator.dupe(u8, start_mobile.loginSessionId);
     defer allocator.free(mobile_session_1);
 
     var start_mobile_repeat = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-start-mobile-repeat\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-acc\",\"sessionId\":\"sess-acc\",\"message\":\"/auth start qwen mobile\"}}");
     defer start_mobile_repeat.deinit(allocator);
     try std.testing.expect(std.mem.eql(u8, start_mobile_repeat.loginSessionId, mobile_session_1));
-    try std.testing.expect(std.mem.indexOf(u8, start_mobile_repeat.reply, "Auth already") != null);
+    try std.testing.expect(std.mem.indexOf(u8, start_mobile_repeat.reply, "Auth already pending for `qwen` account `mobile`.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, start_mobile_repeat.reply, "Then run: `/auth complete qwen ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, start_mobile_repeat.reply, "Use `--force` to replace session.") == null);
+    try std.testing.expect(std.mem.indexOf(u8, start_mobile_repeat.reply, "/auth guest") == null);
 
     var start_mobile_force = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-start-mobile-force\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-acc\",\"sessionId\":\"sess-acc\",\"message\":\"/auth start qwen mobile --force\"}}");
     defer start_mobile_force.deinit(allocator);
@@ -5332,6 +5339,22 @@ test "telegram runtime auth parser rejects invalid options and trailing args" {
     const allocator = std.testing.allocator;
     var start = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-start-invalid-auth\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-invalid-auth\",\"sessionId\":\"sess-invalid-auth\",\"message\":\"/auth start qwen mobile\"}}");
     defer start.deinit(allocator);
+
+    var bad_start_option = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-bad-start-option-auth\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-invalid-auth\",\"sessionId\":\"sess-invalid-auth\",\"message\":\"/auth start qwen mobile --bogus\"}}");
+    defer bad_start_option.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, bad_start_option.authStatus, "invalid"));
+    try std.testing.expect(std.mem.indexOf(u8, bad_start_option.reply, "Unknown option `--bogus`. Usage: `/auth start <provider> [account] [--force]`") != null);
+    try std.testing.expect(bad_start_option.metadataJson != null);
+    try std.testing.expect(std.mem.indexOf(u8, bad_start_option.metadataJson.?, "\"type\":\"auth.start\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bad_start_option.metadataJson.?, "\"error\":\"invalid_start_args\"") != null);
+
+    var bad_start_usage = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-bad-start-usage-auth\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-invalid-auth\",\"sessionId\":\"sess-invalid-auth\",\"message\":\"/auth start qwen mobile extra\"}}");
+    defer bad_start_usage.deinit(allocator);
+    try std.testing.expect(std.mem.eql(u8, bad_start_usage.authStatus, "invalid"));
+    try std.testing.expect(std.mem.indexOf(u8, bad_start_usage.reply, "Usage: `/auth start <provider> [account] [--force]`") != null);
+    try std.testing.expect(bad_start_usage.metadataJson != null);
+    try std.testing.expect(std.mem.indexOf(u8, bad_start_usage.metadataJson.?, "\"type\":\"auth.start\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bad_start_usage.metadataJson.?, "\"error\":\"invalid_start_args\"") != null);
 
     var bad_status = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-bad-status-auth\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-invalid-auth\",\"sessionId\":\"sess-invalid-auth\",\"message\":\"/auth status qwen mobile --bogus\"}}");
     defer bad_status.deinit(allocator);

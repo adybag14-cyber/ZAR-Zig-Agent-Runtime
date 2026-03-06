@@ -58,6 +58,19 @@ Full-stack replacement execution reference:
 
 - Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `192/192`.
 - Full-stack replacement kickoff (2026-03-05):
+  - Phase 5 Telegram auth-start parity hardened:
+    - new `/auth start` replies now match the Go operator flow more closely:
+      - `Auth started for ...`
+      - `Open: ...`
+      - `If prompted, use code \`<code>\`.`
+      - `Then run: \`/auth complete <provider> <code>\``
+    - account-scoped starts now append the account to the completion command in the same Go-style layout.
+    - repeat `/auth start` against an existing pending session now uses the Go-style pending wording:
+      - `Auth already pending for \`<provider>\` account \`<account>\`.`
+      - the older Zig-only `Use \`--force\` to replace session.` and `/auth guest ...` reply guidance were removed from that pending-start path.
+    - invalid `/auth start` replies now use backticked Go-style usage:
+      - `Usage: \`/auth start <provider> [account] [--force]\``
+    - runtime and dispatcher regression coverage now assert success, repeat-start, and invalid-start reply text directly.
   - Phase 5 Telegram auth-help parity hardened:
     - `/auth help` now leads with the Go canonical `Auth command usage:` surface instead of Zig's older custom usage/examples block.
     - canonical help lines now cover:

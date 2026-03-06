@@ -13008,6 +13008,12 @@ test "dispatch send auth commands expose go-compatible metadata envelope" {
 
     const auth_start = try dispatch(allocator, "{\"id\":\"tg-auth-start-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta\",\"sessionId\":\"tg-meta\",\"message\":\"/auth start codex mobile --force\"}}");
     defer allocator.free(auth_start);
+    const auth_start_reply = try extractResultStringField(allocator, auth_start, "reply");
+    defer allocator.free(auth_start_reply);
+    try std.testing.expect(std.mem.indexOf(u8, auth_start_reply, "Auth started for `codex` account `mobile`.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, auth_start_reply, "If prompted, use code `") != null);
+    try std.testing.expect(std.mem.indexOf(u8, auth_start_reply, "Then run: `/auth complete codex ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, auth_start_reply, " mobile`") != null);
     const login_session = try extractResultStringField(allocator, auth_start, "loginSessionId");
     defer allocator.free(login_session);
     const login_code = try extractResultStringField(allocator, auth_start, "loginCode");
@@ -13021,6 +13027,14 @@ test "dispatch send auth commands expose go-compatible metadata envelope" {
     const metadata_account = try extractResultObjectStringField(allocator, auth_start, "metadata", "account");
     defer allocator.free(metadata_account);
     try std.testing.expect(std.mem.eql(u8, metadata_account, "mobile"));
+
+    const auth_start_repeat = try dispatch(allocator, "{\"id\":\"tg-auth-start-repeat-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta\",\"sessionId\":\"tg-meta\",\"message\":\"/auth start codex mobile\"}}");
+    defer allocator.free(auth_start_repeat);
+    const auth_start_repeat_reply = try extractResultStringField(allocator, auth_start_repeat, "reply");
+    defer allocator.free(auth_start_repeat_reply);
+    try std.testing.expect(std.mem.indexOf(u8, auth_start_repeat_reply, "Auth already pending for `codex` account `mobile`.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, auth_start_repeat_reply, "Then run: `/auth complete codex ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, auth_start_repeat_reply, "Use `--force` to replace session.") == null);
 
     const auth_status = try dispatch(allocator, "{\"id\":\"tg-auth-status-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta\",\"sessionId\":\"tg-meta\",\"message\":\"/auth status codex mobile\"}}");
     defer allocator.free(auth_status);
@@ -13099,6 +13113,30 @@ test "dispatch send auth commands expose go-compatible metadata envelope" {
 
 test "dispatch send invalid auth parser replies preserve metadata envelope" {
     const allocator = std.testing.allocator;
+
+    const bad_start_option = try dispatch(allocator, "{\"id\":\"tg-auth-bad-start-option-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta-invalid-auth\",\"sessionId\":\"tg-meta-invalid-auth\",\"message\":\"/auth start qwen mobile --bogus\"}}");
+    defer allocator.free(bad_start_option);
+    const bad_start_option_reply = try extractResultStringField(allocator, bad_start_option, "reply");
+    defer allocator.free(bad_start_option_reply);
+    try std.testing.expect(std.mem.indexOf(u8, bad_start_option_reply, "Unknown option `--bogus`. Usage: `/auth start <provider> [account] [--force]`") != null);
+    const bad_start_option_type = try extractResultObjectStringField(allocator, bad_start_option, "metadata", "type");
+    defer allocator.free(bad_start_option_type);
+    try std.testing.expect(std.mem.eql(u8, bad_start_option_type, "auth.start"));
+    const bad_start_option_error = try extractResultObjectStringField(allocator, bad_start_option, "metadata", "error");
+    defer allocator.free(bad_start_option_error);
+    try std.testing.expect(std.mem.eql(u8, bad_start_option_error, "invalid_start_args"));
+
+    const bad_start_usage = try dispatch(allocator, "{\"id\":\"tg-auth-bad-start-usage-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta-invalid-auth\",\"sessionId\":\"tg-meta-invalid-auth\",\"message\":\"/auth start qwen mobile extra\"}}");
+    defer allocator.free(bad_start_usage);
+    const bad_start_usage_reply = try extractResultStringField(allocator, bad_start_usage, "reply");
+    defer allocator.free(bad_start_usage_reply);
+    try std.testing.expect(std.mem.indexOf(u8, bad_start_usage_reply, "Usage: `/auth start <provider> [account] [--force]`") != null);
+    const bad_start_usage_type = try extractResultObjectStringField(allocator, bad_start_usage, "metadata", "type");
+    defer allocator.free(bad_start_usage_type);
+    try std.testing.expect(std.mem.eql(u8, bad_start_usage_type, "auth.start"));
+    const bad_start_usage_error = try extractResultObjectStringField(allocator, bad_start_usage, "metadata", "error");
+    defer allocator.free(bad_start_usage_error);
+    try std.testing.expect(std.mem.eql(u8, bad_start_usage_error, "invalid_start_args"));
 
     const bad_status = try dispatch(allocator, "{\"id\":\"tg-auth-bad-status-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta-invalid-auth\",\"sessionId\":\"tg-meta-invalid-auth\",\"message\":\"/auth status qwen mobile --bogus\"}}");
     defer allocator.free(bad_status);

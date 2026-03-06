@@ -8,6 +8,18 @@ Historical note: milestone validation counts below are preserved as captured at 
 - [ ] FS1 - Runtime/core consolidation
 - [ ] FS2 - Provider + channel completion
   - Latest delivered slice:
+    - Telegram `/auth start` now matches Go more closely on success, repeat-start, and invalid-start reply text:
+      - new auth-start replies now include the explicit Go-style code line:
+        - `If prompted, use code <code>.`
+      - new auth-start replies now use the concrete Go-style completion command instead of the older generic callback placeholder:
+        - `Then run: \`/auth complete <provider> <code>\``
+        - account-scoped starts append the account to that command as in Go.
+      - repeat `/auth start` against an existing pending session now uses the Go-style pending wording:
+        - `Auth already pending for <provider> account <account>.`
+        - the old Zig-only `Use --force to replace session.` and `/auth guest ...` guidance were removed from that reply path.
+      - invalid `/auth start` replies now use Go-style backticked usage:
+        - `Usage: \`/auth start <provider> [account] [--force]\``
+      - regression coverage tightened at both runtime and dispatcher layers for started, repeat-start, and invalid-start reply paths.
     - Telegram `/auth help` now presents the Go canonical command surface first while keeping Zig-only auth helpers explicit:
       - help replies now begin with `Auth command usage:` and include the Go canonical lines for:
         - `/auth providers`
