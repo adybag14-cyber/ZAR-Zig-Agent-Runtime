@@ -26,16 +26,18 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - bare-metal timer wake behavior is now enforced by a live QEMU+GDB probe (`command_timer_reset`, `command_timer_set_quantum`, `command_task_create`, `command_task_wait_for`) against the freestanding PVH artifact
   - bare-metal allocator/syscall behavior is now enforced by a live QEMU+GDB probe (`command_allocator_*`, `command_syscall_*`) including blocked and disabled syscall paths
   - bare-metal interrupt-mask/exception behavior is now enforced by a live QEMU+GDB probe (masked external interrupt remains blocked while exception delivery still wakes a waiting task and records interrupt/exception histories)
+  - bare-metal periodic timer pause/resume behavior is now enforced by a live QEMU+GDB probe (`command_timer_schedule_periodic`, `command_timer_disable`, `command_timer_enable`) that snapshots the first resumed periodic fire against the freestanding PVH artifact
   - bare-metal wake-queue summary/age telemetry is now enforced by a live QEMU+GDB probe (`oc_wake_queue_summary_ptr`, `oc_wake_queue_age_buckets_ptr_quantum_2`) before and after selective queue drains over mixed timer/interrupt/manual wake queues
 - Dual runtime profiles available:
   - OS-hosted profile: `openclaw-zig` (`--serve`, doctor, security audit, full RPC stack)
 - Bare-metal profile: `openclaw-zig-baremetal.elf` (`zig build baremetal`, freestanding runtime loop + Multiboot2 header)
   - smoke gate validates ELF class/endianness, Multiboot2 location/alignment, `.multiboot` section, and required exported symbols
   - smoke gate also validates Multiboot2 header field contract and checksum
-  - optional QEMU validation path available via `zig build baremetal -Dbaremetal-qemu-smoke=true`, `scripts/baremetal-qemu-smoke-check.ps1`, `scripts/baremetal-qemu-runtime-oc-tick-check.ps1`, `scripts/baremetal-qemu-command-loop-check.ps1`, `scripts/baremetal-qemu-scheduler-probe-check.ps1`, `scripts/baremetal-qemu-timer-wake-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-selective-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-summary-age-probe-check.ps1`, `scripts/baremetal-qemu-allocator-syscall-probe-check.ps1`, and `scripts/baremetal-qemu-interrupt-mask-exception-probe-check.ps1` (auto-skips when QEMU/GDB or PVH toolchain pieces are unavailable)
+  - optional QEMU validation path available via `zig build baremetal -Dbaremetal-qemu-smoke=true`, `scripts/baremetal-qemu-smoke-check.ps1`, `scripts/baremetal-qemu-runtime-oc-tick-check.ps1`, `scripts/baremetal-qemu-command-loop-check.ps1`, `scripts/baremetal-qemu-scheduler-probe-check.ps1`, `scripts/baremetal-qemu-timer-wake-probe-check.ps1`, `scripts/baremetal-qemu-periodic-timer-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-selective-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-summary-age-probe-check.ps1`, `scripts/baremetal-qemu-allocator-syscall-probe-check.ps1`, and `scripts/baremetal-qemu-interrupt-mask-exception-probe-check.ps1` (auto-skips when QEMU/GDB or PVH toolchain pieces are unavailable)
   - optional QEMU allocator/syscall failure probe validates invalid-alignment, no-space, blocked-syscall, and disabled-syscall result semantics plus command-result counters against the freestanding PVH artifact
   - optional QEMU scheduler probe validates scheduler reset/timeslice/task-create/policy-enable flow end to end against the freestanding PVH artifact
   - optional QEMU timer wake probe validates timer reset/quantum/task-wait flow end to end, including fired timer entries and wake-queue telemetry against the freestanding PVH artifact
+  - optional QEMU periodic timer probe validates periodic timer scheduling plus disable/enable pause-resume behavior end to end, capturing the first resumed periodic fire and queued wake telemetry against the freestanding PVH artifact
   - optional QEMU interrupt-timeout probe validates `task_wait_interrupt_for` wakeup precedence end to end, proving an interrupt wake clears the timeout arm and does not later leak a second timer wake against the freestanding PVH artifact
   - optional QEMU wake-queue selective probe validates timer, interrupt, and manual wake generation plus `pop_reason`, `pop_vector`, `pop_reason_vector`, and `pop_before_tick` queue drains end to end against the freestanding PVH artifact
   - optional QEMU wake-queue summary/age probe validates exported summary and age-bucket telemetry snapshots before and after selective queue drains against the freestanding PVH artifact
@@ -413,6 +415,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU command-loop probe
 - optional bare-metal QEMU scheduler probe
 - optional bare-metal QEMU timer wake probe
+- optional bare-metal QEMU periodic timer probe
 - optional bare-metal QEMU interrupt timeout probe
 - optional bare-metal QEMU wake-queue selective probe
 - optional bare-metal QEMU wake-queue summary/age probe
@@ -445,6 +448,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU command-loop validation
 - optional bare-metal QEMU scheduler validation
 - optional bare-metal QEMU timer wake validation
+- optional bare-metal QEMU periodic timer validation
 - optional bare-metal QEMU interrupt timeout validation
 - optional bare-metal QEMU wake-queue selective validation
 - optional bare-metal QEMU wake-queue summary/age validation

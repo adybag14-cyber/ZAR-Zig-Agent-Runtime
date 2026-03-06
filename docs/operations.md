@@ -26,6 +26,7 @@ Recommended sequence:
 ./scripts/baremetal-qemu-command-loop-check.ps1
 ./scripts/baremetal-qemu-scheduler-probe-check.ps1
 ./scripts/baremetal-qemu-timer-wake-probe-check.ps1
+./scripts/baremetal-qemu-periodic-timer-probe-check.ps1
 ./scripts/baremetal-qemu-interrupt-timeout-probe-check.ps1
 ./scripts/baremetal-qemu-wake-queue-selective-probe-check.ps1
 ./scripts/baremetal-qemu-allocator-syscall-probe-check.ps1
@@ -57,6 +58,7 @@ Recommended sequence:
 - appliance minimal profile smoke check (persisted state + auth + secure-boot/readiness contract)
 - optional bare-metal QEMU scheduler probe (scheduler reset/timeslice/task-create/policy-enable against the freestanding PVH artifact)
 - optional bare-metal QEMU timer wake probe (timer reset/quantum/task-wait to fired timer entry + wake queue telemetry against the freestanding PVH artifact)
+- optional bare-metal QEMU periodic timer probe (periodic schedule + timer disable/enable pause-resume, capturing the first resumed periodic fire and queued wake telemetry against the freestanding PVH artifact)
 - optional bare-metal QEMU interrupt timeout probe (`task_wait_interrupt_for` wakes on interrupt before deadline, clears the timeout arm, and does not later leak a second timer wake against the freestanding PVH artifact)
 - optional bare-metal QEMU wake-queue selective probe (timer, interrupt, and manual wake generation plus `pop_reason`, `pop_vector`, `pop_reason_vector`, and `pop_before_tick` queue drains against the freestanding PVH artifact)
 - optional bare-metal QEMU wake-queue summary/age probe (exported `oc_wake_queue_summary_ptr` and `oc_wake_queue_age_buckets_ptr_quantum_2` snapshots before and after selective queue drains against the freestanding PVH artifact)
@@ -83,6 +85,7 @@ Recommended sequence:
 - appliance minimal profile smoke check in validate stage
 - bare-metal optional QEMU scheduler probe in validate stage
 - bare-metal optional QEMU timer wake probe in validate stage
+- bare-metal optional QEMU periodic timer probe in validate stage
 - bare-metal optional QEMU interrupt timeout probe in validate stage
 - bare-metal optional QEMU wake-queue selective probe in validate stage
 - bare-metal optional QEMU wake-queue summary/age probe in validate stage
