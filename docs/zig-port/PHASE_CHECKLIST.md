@@ -390,6 +390,8 @@ Registry status:
 - [ ] FS4 - Security + trust hardening
 - [ ] FS5 - Edge/WASM/marketplace depth
 - [ ] FS6 - Appliance/bare-metal maturity track
+  - rollout boundary is now defined at the runtime contract level: `stable`, `canary`, and `edge` are separate update lanes, with `canary` no longer collapsing into `edge`.
+  - latest required evidence now includes `scripts/appliance-rollout-boundary-smoke-check.ps1` (secure-boot block, canary apply, stable promotion).
 - [ ] FS7 - Cutover + decommission gates
 
 ## Phase 1 - Foundation
@@ -1003,6 +1005,7 @@ Phase 6 progress notes:
 - [x] Added system maintenance smoke gate (`scripts/system-maintenance-smoke-check.ps1`) and wired it into `zig-ci` + `release-preview` validate jobs (`system.maintenance.plan`, `system.maintenance.run`, `system.maintenance.status` contract checks).
 - [x] Added appliance control-plane smoke gate (`scripts/appliance-control-plane-smoke-check.ps1`) and wired it into `zig-ci` + `release-preview` validate jobs (`system.boot.*`, `system.rollback.*`, signed `system.boot.attest.verify`, and secure-boot-gated `update.run` contract checks).
 - [x] Added appliance restart recovery smoke gate (`scripts/appliance-restart-recovery-smoke-check.ps1`) and wired it into `zig-ci` + `release-preview` validate jobs (persisted `compat-state.json` replay of boot policy, boot verification, update head, and rollback plan across restart).
+- [x] Added appliance rollout boundary smoke gate (`scripts/appliance-rollout-boundary-smoke-check.ps1`) and wired it into `zig-ci` + `release-preview` validate jobs (real `canary` lane selection, secure-boot block, canary apply, and stable promotion over live RPC).
 - [x] Added bare-metal smoke gate (`scripts/baremetal-smoke-check.ps1`) and wired it into `zig-ci` + `release-preview` validate jobs.
 - [x] Added bare-metal release packaging to `release-preview` (publishes `openclaw-zig-<version>-x86_64-freestanding-none.elf` with checksums).
 - [x] CI regression fixed for Zig master environ API mismatch (`std.process.Environ`):

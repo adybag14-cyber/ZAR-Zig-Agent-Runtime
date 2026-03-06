@@ -949,6 +949,11 @@ Full-stack replacement execution reference:
     - `compat-state.json` now persists boot policy, boot verification telemetry, boot slot state, and rollback plan/run fields instead of only generic compat metadata.
     - added restart acceptance script (`scripts/appliance-restart-recovery-smoke-check.ps1`) and made it a required gate in both `zig-ci` and `release-preview` validate jobs.
     - the restart gate proves persisted boot policy + verification + update head + rollback plan survive stop/start and remain actionable after recovery.
+  - appliance staged rollout boundary depth shipped:
+    - `update.*` now treats `canary` as a first-class rollout lane instead of collapsing it into `edge`.
+    - `update.plan` channel metadata is now generated from the full update-channel table so new rollout lanes stay visible in the public RPC contract.
+    - added rollout acceptance script (`scripts/appliance-rollout-boundary-smoke-check.ps1`) and made it a required gate in both `zig-ci` and `release-preview` validate jobs.
+    - the rollout gate proves secure-boot block/allow behavior, real `canary` selection, successful canary apply, and stable promotion over live HTTP RPC.
   - added bare-metal runtime profile (`src/baremetal_main.zig`) and build target (`zig build baremetal`) plus smoke gate (`scripts/baremetal-smoke-check.ps1`) in both `zig-ci` and `release-preview` validate jobs.
   - release-preview packaging now ships the freestanding image artifact (`openclaw-zig-<version>-x86_64-freestanding-none.elf`) alongside desktop/android zips + checksums.
   - bare-metal runtime now embeds Multiboot2 header and smoke gate checks ELF magic + Multiboot2 magic bytes to reduce boot-regression risk.

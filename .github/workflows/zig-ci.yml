@@ -150,6 +150,10 @@ jobs:
         shell: pwsh
         run: ./scripts/appliance-restart-recovery-smoke-check.ps1 -SkipBuild
 
+      - name: Appliance rollout boundary smoke check (canary to stable promotion)
+        shell: pwsh
+        run: ./scripts/appliance-rollout-boundary-smoke-check.ps1 -SkipBuild
+
   cross-targets:
     runs-on: ubuntu-latest
     strategy:

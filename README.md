@@ -18,6 +18,9 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - `doctor.memory.status` now includes Go-visible health envelope fields
   - `agent.identity.get` now reports stable `startedAt` + gateway `authMode`
   - `status` now includes Go-visible summary keys alongside Zig runtime/security telemetry
+- Recent FS6 progress (2026-03-06):
+  - `update.*` now has a real `canary` rollout lane instead of collapsing `canary` into `edge`
+  - appliance rollout boundary is now enforced by live smoke validation (`canary` selection, secure-boot block, canary apply, stable promotion)
 - Dual runtime profiles available:
   - OS-hosted profile: `openclaw-zig` (`--serve`, doctor, security audit, full RPC stack)
 - Bare-metal profile: `openclaw-zig-baremetal.elf` (`zig build baremetal`, freestanding runtime loop + Multiboot2 header)
@@ -394,6 +397,7 @@ Run local preview packaging with CI-aligned validate gates:
 - runtime smoke gate
 - appliance control-plane smoke gate (`system.boot.*`, `system.rollback.*`, secure-boot-gated `update.run`)
 - appliance restart recovery smoke gate (persisted `compat-state.json` replay across stop/start)
+- appliance rollout boundary smoke gate (real `canary` lane selection, secure-boot block, canary-to-stable promotion)
 - parity evidence artifact publication (`parity-go-zig.json`, `parity-go-zig.md`)
 
 `docs-pages` workflow (`.github/workflows/docs-pages.yml`):
@@ -412,6 +416,7 @@ Run local preview packaging with CI-aligned validate gates:
 - freestanding bare-metal smoke validation
 - appliance control-plane smoke validation
 - appliance restart recovery validation
+- appliance rollout boundary validation
 - full preview artifact matrix build and publish
 - includes bare-metal release artifact: `openclaw-zig-<version>-x86_64-freestanding-none.elf`
 - duplicate release tag guard

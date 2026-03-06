@@ -93,6 +93,12 @@ const update_channels = [_]UpdateChannelSpec{
         .npm_dist_tag = "latest",
     },
     .{
+        .id = "canary",
+        .label = "Canary rollout channel",
+        .target_version = "v0.2.0-zig-canary",
+        .npm_dist_tag = "canary",
+    },
+    .{
         .id = "edge",
         .label = "Edge preview channel",
         .target_version = "v0.2.0-zig-edge",
@@ -4964,25 +4970,20 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         const resolved = resolveUpdateTarget(params, compat.update_channel);
         const gate = compat.bootGateStatus(time_util.nowMs());
         const update_required = !std.ascii.eqlIgnoreCase(resolved.target_version, compat.update_current_version);
-        const channels = [_]struct {
+        var channels: [update_channels.len]struct {
             id: []const u8,
             label: []const u8,
             targetVersion: []const u8,
             npmDistTag: []const u8,
-        }{
-            .{
-                .id = update_channels[0].id,
-                .label = update_channels[0].label,
-                .targetVersion = update_channels[0].target_version,
-                .npmDistTag = update_channels[0].npm_dist_tag,
-            },
-            .{
-                .id = update_channels[1].id,
-                .label = update_channels[1].label,
-                .targetVersion = update_channels[1].target_version,
-                .npmDistTag = update_channels[1].npm_dist_tag,
-            },
-        };
+        } = undefined;
+        inline for (update_channels, 0..) |entry, idx| {
+            channels[idx] = .{
+                .id = entry.id,
+                .label = entry.label,
+                .targetVersion = entry.target_version,
+                .npmDistTag = entry.npm_dist_tag,
+            };
+        }
         return protocol.encodeResult(allocator, req.id, .{
             .currentVersion = compat.update_current_version,
             .currentChannel = compat.update_channel,
@@ -9767,10 +9768,12 @@ fn normalizeUpdateChannel(raw: []const u8) []const u8 {
     {
         return "stable";
     }
+    if (std.ascii.eqlIgnoreCase(trimmed, "canary")) {
+        return "canary";
+    }
     if (std.ascii.eqlIgnoreCase(trimmed, "edge") or
         std.ascii.eqlIgnoreCase(trimmed, "nightly") or
-        std.ascii.eqlIgnoreCase(trimmed, "preview") or
-        std.ascii.eqlIgnoreCase(trimmed, "canary"))
+        std.ascii.eqlIgnoreCase(trimmed, "preview"))
     {
         return "edge";
     }
@@ -9787,7 +9790,7 @@ fn lookupUpdateChannel(channel: []const u8) ?UpdateChannelSpec {
 fn resolveUpdateTarget(params: ?std.json.ObjectMap, fallback_channel: []const u8) ResolvedUpdateTarget {
     const requested_channel = normalizeUpdateChannel(firstParamString(params, "channel", fallback_channel));
     const requested_target = std.mem.trim(u8, firstParamString(params, "targetVersion", ""), " \t\r\n");
-    const default_spec = lookupUpdateChannel(requested_channel) orelse update_channels[1];
+    const default_spec = lookupUpdateChannel(requested_channel) orelse (lookupUpdateChannel("edge") orelse update_channels[update_channels.len - 1]);
 
     if (requested_target.len == 0) {
         return .{
@@ -9815,12 +9818,24 @@ fn resolveUpdateTarget(params: ?std.json.ObjectMap, fallback_channel: []const u8
         };
     }
 
+    if (std.ascii.eqlIgnoreCase(requested_target, "canary")) {
+        const canary = lookupUpdateChannel("canary") orelse default_spec;
+        return .{
+            .requested_channel = requested_channel,
+            .requested_target = requested_target,
+            .channel = canary.id,
+            .target_version = canary.target_version,
+            .npm_dist_tag = canary.npm_dist_tag,
+            .source = "target-alias",
+        };
+    }
+
     if (std.ascii.eqlIgnoreCase(requested_target, "edge") or
         std.ascii.eqlIgnoreCase(requested_target, "nightly") or
         std.ascii.eqlIgnoreCase(requested_target, "preview") or
-        std.ascii.eqlIgnoreCase(requested_target, "canary"))
+        std.ascii.eqlIgnoreCase(requested_target, "beta"))
     {
-        const edge = lookupUpdateChannel("edge") orelse update_channels[1];
+        const edge = lookupUpdateChannel("edge") orelse default_spec;
         return .{
             .requested_channel = requested_channel,
             .requested_target = requested_target,
@@ -14343,6 +14358,12 @@ test "dispatch compat talk tts models and control methods return contracts" {
     try std.testing.expect(std.mem.indexOf(u8, update_plan, "\"targetVersion\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, update_plan, "\"channels\"") != null);
 
+    const update_plan_canary = try dispatch(allocator, "{\"id\":\"compat-update-plan-canary\",\"method\":\"update.plan\",\"params\":{\"channel\":\"canary\"}}");
+    defer allocator.free(update_plan_canary);
+    try std.testing.expect(std.mem.indexOf(u8, update_plan_canary, "\"channel\":\"canary\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, update_plan_canary, "\"targetVersion\":\"v0.2.0-zig-canary\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, update_plan_canary, "\"npmDistTag\":\"canary\"") != null);
+
     const update_run = try dispatch(allocator, "{\"id\":\"compat-update-run\",\"method\":\"update.run\",\"params\":{\"targetVersion\":\"edge-next\",\"dryRun\":true}}");
     defer allocator.free(update_run);
     try std.testing.expect(std.mem.indexOf(u8, update_run, "\"status\":\"completed\"") != null);
@@ -14352,6 +14373,28 @@ test "dispatch compat talk tts models and control methods return contracts" {
     defer allocator.free(update_status);
     try std.testing.expect(std.mem.indexOf(u8, update_status, "\"counts\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, update_status, "\"items\"") != null);
+
+    const update_run_canary = try dispatch(allocator, "{\"id\":\"compat-update-run-canary\",\"method\":\"update.run\",\"params\":{\"channel\":\"canary\",\"force\":true}}");
+    defer allocator.free(update_run_canary);
+    try std.testing.expect(std.mem.indexOf(u8, update_run_canary, "\"channel\":\"canary\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, update_run_canary, "\"targetVersion\":\"v0.2.0-zig-canary\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, update_run_canary, "\"npmDistTag\":\"canary\"") != null);
+
+    const update_status_canary = try dispatch(allocator, "{\"id\":\"compat-update-status-canary\",\"method\":\"update.status\",\"params\":{\"limit\":5}}");
+    defer allocator.free(update_status_canary);
+    try std.testing.expect(std.mem.indexOf(u8, update_status_canary, "\"currentChannel\":\"canary\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, update_status_canary, "\"currentVersion\":\"v0.2.0-zig-canary\"") != null);
+
+    const update_run_stable = try dispatch(allocator, "{\"id\":\"compat-update-run-stable\",\"method\":\"update.run\",\"params\":{\"channel\":\"stable\",\"force\":true}}");
+    defer allocator.free(update_run_stable);
+    try std.testing.expect(std.mem.indexOf(u8, update_run_stable, "\"channel\":\"stable\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, update_run_stable, "\"targetVersion\":\"v0.2.0-zig-stable\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, update_run_stable, "\"npmDistTag\":\"latest\"") != null);
+
+    const update_status_stable = try dispatch(allocator, "{\"id\":\"compat-update-status-stable\",\"method\":\"update.status\",\"params\":{\"limit\":5}}");
+    defer allocator.free(update_status_stable);
+    try std.testing.expect(std.mem.indexOf(u8, update_status_stable, "\"currentChannel\":\"stable\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, update_status_stable, "\"currentVersion\":\"v0.2.0-zig-stable\"") != null);
 
     const maintenance_plan = try dispatch(allocator, "{\"id\":\"compat-maint-plan\",\"method\":\"system.maintenance.plan\",\"params\":{\"deep\":false}}");
     defer allocator.free(maintenance_plan);
