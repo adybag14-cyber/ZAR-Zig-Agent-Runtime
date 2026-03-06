@@ -56,8 +56,15 @@ Full-stack replacement execution reference:
 
 ## Current Progress Snapshot
 
-- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `193/193`.
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `195/195`.
 - Full-stack replacement kickoff (2026-03-05):
+  - Phase 5 Telegram auth-start metadata parity hardened:
+    - auth-start success metadata now includes the explicit Go-style `expiresAt` field at the top level instead of leaving expiry only inside the nested login payload.
+    - repeat auth-start metadata for already-pending sessions now includes the same `expiresAt` field.
+    - Zig now has a deterministic RFC3339 helper in `src/util/time.zig`:
+      - `unixMsToRfc3339Alloc`
+    - direct timestamp-format tests were added for the unix epoch and a stable known timestamp.
+    - runtime and dispatcher regression coverage now assert `metadata.expiresAt` on auth-start receipts.
   - Phase 5 Telegram auth providers/bridge reply parity hardened:
     - `/auth providers` now emits the compact Go-style operator reply:
       - `Auth providers: <provider> (browser:<bool>, apiKey:<bool>), ...`

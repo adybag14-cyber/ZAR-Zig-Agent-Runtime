@@ -1,13 +1,18 @@
 # Phase Checklist
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
-Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `193/193`.
+Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `195/195`.
 
 ## Full-Stack Replacement Track (FS0..FS7)
 - [x] FS0 - Scope lock + baseline freeze (`docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`, issue `#2`)
 - [ ] FS1 - Runtime/core consolidation
 - [ ] FS2 - Provider + channel completion
   - Latest delivered slice:
+    - Telegram auth-start metadata now includes the explicit Go-style `expiresAt` field:
+      - `/auth start` success metadata now exposes RFC3339 `expiresAt` alongside the existing login/session fields.
+      - repeat `/auth start` against an already-pending session now also exposes the same top-level `expiresAt` field, instead of leaving it only inside the nested login object.
+      - Zig now has a deterministic `unixMsToRfc3339Alloc` helper in `src/util/time.zig`, covered by direct timestamp formatting tests.
+      - runtime and dispatcher regression coverage now assert the presence and shape of `metadata.expiresAt` on auth-start receipts.
     - Telegram `/auth providers` and `/auth bridge` now align more closely with Go on operator-visible reply text while preserving Zig’s richer metadata:
       - `/auth providers` now uses the compact Go-style reply surface:
         - `Auth providers: chatgpt (browser:true, apiKey:false), ...`

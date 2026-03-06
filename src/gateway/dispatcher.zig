@@ -13040,6 +13040,10 @@ test "dispatch send auth commands expose go-compatible metadata envelope" {
     const metadata_account = try extractResultObjectStringField(allocator, auth_start, "metadata", "account");
     defer allocator.free(metadata_account);
     try std.testing.expect(std.mem.eql(u8, metadata_account, "mobile"));
+    const metadata_expires_at = try extractResultObjectStringField(allocator, auth_start, "metadata", "expiresAt");
+    defer allocator.free(metadata_expires_at);
+    try std.testing.expect(std.mem.indexOf(u8, metadata_expires_at, "T") != null);
+    try std.testing.expect(std.mem.endsWith(u8, metadata_expires_at, "Z"));
 
     const auth_start_repeat = try dispatch(allocator, "{\"id\":\"tg-auth-start-repeat-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta\",\"sessionId\":\"tg-meta\",\"message\":\"/auth start codex mobile\"}}");
     defer allocator.free(auth_start_repeat);
@@ -13048,6 +13052,10 @@ test "dispatch send auth commands expose go-compatible metadata envelope" {
     try std.testing.expect(std.mem.indexOf(u8, auth_start_repeat_reply, "Auth already pending for `codex` account `mobile`.") != null);
     try std.testing.expect(std.mem.indexOf(u8, auth_start_repeat_reply, "Then run: `/auth complete codex ") != null);
     try std.testing.expect(std.mem.indexOf(u8, auth_start_repeat_reply, "Use `--force` to replace session.") == null);
+    const metadata_repeat_expires_at = try extractResultObjectStringField(allocator, auth_start_repeat, "metadata", "expiresAt");
+    defer allocator.free(metadata_repeat_expires_at);
+    try std.testing.expect(std.mem.indexOf(u8, metadata_repeat_expires_at, "T") != null);
+    try std.testing.expect(std.mem.endsWith(u8, metadata_repeat_expires_at, "Z"));
 
     const auth_status = try dispatch(allocator, "{\"id\":\"tg-auth-status-meta\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-meta\",\"sessionId\":\"tg-meta\",\"message\":\"/auth status codex mobile\"}}");
     defer allocator.free(auth_status);

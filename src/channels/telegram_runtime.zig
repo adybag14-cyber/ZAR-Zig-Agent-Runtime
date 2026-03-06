@@ -184,6 +184,7 @@ const AuthCommandMetadata = struct {
     @"error": ?[]const u8 = null,
     loginSessionId: ?[]const u8 = null,
     code: ?[]const u8 = null,
+    expiresAt: ?[]const u8 = null,
     verificationUri: ?[]const u8 = null,
     verificationUriComplete: ?[]const u8 = null,
     model: ?[]const u8 = null,
@@ -2264,6 +2265,8 @@ pub const TelegramRuntime = struct {
                 if (self.login_manager.get(existing_session)) |existing| {
                     if (std.ascii.eqlIgnoreCase(existing.status, "pending")) {
                         const account_norm = normalizeAccount(account);
+                        const expires_at = try time_util.unixMsToRfc3339Alloc(allocator, existing.expiresAtMs);
+                        defer allocator.free(expires_at);
                         const reply = try std.fmt.allocPrint(
                             allocator,
                             "Auth already pending for `{s}` account `{s}`.\nOpen: {s}\nThen run: `/auth complete {s} {s}`",
@@ -2281,6 +2284,7 @@ pub const TelegramRuntime = struct {
                             .status = existing.status,
                             .loginSessionId = existing.loginSessionId,
                             .code = existing.code,
+                            .expiresAt = expires_at,
                             .verificationUri = existing.verificationUri,
                             .verificationUriComplete = existing.verificationUriComplete,
                             .model = existing.model,
@@ -2306,6 +2310,8 @@ pub const TelegramRuntime = struct {
             try self.setAuthBinding(target, provider, account, started.loginSessionId);
             const account_norm = normalizeAccount(account);
             const account_is_default = std.mem.eql(u8, account_norm, "default");
+            const expires_at = try time_util.unixMsToRfc3339Alloc(allocator, started.expiresAtMs);
+            defer allocator.free(expires_at);
             const reply = if (account_is_default)
                 try std.fmt.allocPrint(
                     allocator,
@@ -2330,6 +2336,7 @@ pub const TelegramRuntime = struct {
                 .status = started.status,
                 .loginSessionId = started.loginSessionId,
                 .code = started.code,
+                .expiresAt = expires_at,
                 .verificationUri = started.verificationUri,
                 .verificationUriComplete = started.verificationUriComplete,
                 .model = model,
@@ -4941,6 +4948,8 @@ test "telegram runtime auth supports account scope and force restart" {
     try std.testing.expect(std.mem.indexOf(u8, start_mobile.reply, "Then run: `/auth complete qwen ") != null);
     try std.testing.expect(std.mem.indexOf(u8, start_mobile.reply, " mobile`") != null);
     try std.testing.expect(std.mem.indexOf(u8, start_mobile.reply, "/auth guest") == null);
+    const start_mobile_metadata = start_mobile.metadataJson orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.indexOf(u8, start_mobile_metadata, "\"expiresAt\":\"") != null);
     const mobile_session_1 = try allocator.dupe(u8, start_mobile.loginSessionId);
     defer allocator.free(mobile_session_1);
 
@@ -4951,6 +4960,8 @@ test "telegram runtime auth supports account scope and force restart" {
     try std.testing.expect(std.mem.indexOf(u8, start_mobile_repeat.reply, "Then run: `/auth complete qwen ") != null);
     try std.testing.expect(std.mem.indexOf(u8, start_mobile_repeat.reply, "Use `--force` to replace session.") == null);
     try std.testing.expect(std.mem.indexOf(u8, start_mobile_repeat.reply, "/auth guest") == null);
+    const start_mobile_repeat_metadata = start_mobile_repeat.metadataJson orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.indexOf(u8, start_mobile_repeat_metadata, "\"expiresAt\":\"") != null);
 
     var start_mobile_force = try runtime.sendFromFrame(allocator, "{\"id\":\"tg-auth-start-mobile-force\",\"method\":\"send\",\"params\":{\"channel\":\"telegram\",\"to\":\"room-acc\",\"sessionId\":\"sess-acc\",\"message\":\"/auth start qwen mobile --force\"}}");
     defer start_mobile_force.deinit(allocator);
