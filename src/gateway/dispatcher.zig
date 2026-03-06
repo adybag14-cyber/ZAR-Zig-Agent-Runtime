@@ -13385,6 +13385,7 @@ test "dispatch send auth status and wait without session use go-style replies" {
     const wait_none_error = try extractResultObjectStringField(allocator, wait_none, "metadata", "error");
     defer allocator.free(wait_none_error);
     try std.testing.expect(std.mem.eql(u8, wait_none_error, "missing_session"));
+    try std.testing.expect(std.mem.indexOf(u8, wait_none, "\"timeoutSeconds\":") == null);
 }
 
 test "dispatch send auth wait bridge errors use go-style messages" {
@@ -13445,6 +13446,13 @@ test "dispatch send auth complete errors use go-style messages" {
     const complete_missing_code_error = try extractResultObjectStringField(allocator, complete_missing_code_result, "metadata", "error");
     defer allocator.free(complete_missing_code_error);
     try std.testing.expect(std.mem.eql(u8, complete_missing_code_error, "missing_code"));
+    {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, complete_missing_code_result, .{});
+        defer parsed.deinit();
+        const result = parsed.value.object.get("result") orelse return error.TestUnexpectedResult;
+        const metadata = result.object.get("metadata") orelse return error.TestUnexpectedResult;
+        try std.testing.expect(metadata.object.get("loginSessionId") == null);
+    }
 
     const start_code = try extractResultStringField(allocator, start, "loginCode");
     defer allocator.free(start_code);

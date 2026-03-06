@@ -8,6 +8,10 @@ Historical note: milestone validation counts below are preserved as captured at 
 - [ ] FS1 - Runtime/core consolidation
 - [ ] FS2 - Provider + channel completion
   - Latest delivered slice:
+    - Telegram auth edge metadata now matches Go more closely on the remaining no-session wait and missing-code complete paths:
+      - no-session `/auth wait` metadata no longer emits the Zig-only `timeoutSeconds` field.
+      - `/auth complete` with an empty extracted code no longer emits the Zig-only top-level `loginSessionId`.
+      - runtime and dispatcher regressions now assert those extra fields stay absent on the corresponding receipts.
     - Telegram auth success metadata now matches Go more closely on `status|wait|complete` success paths:
       - success receipts now rely on nested `metadata.login` for auth session details.
       - the following top-level success metadata fields were removed on those paths:

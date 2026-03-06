@@ -2426,7 +2426,6 @@ pub const TelegramRuntime = struct {
                     .scope = scope,
                     .status = if (is_wait) null else "none",
                     .@"error" = if (is_wait) "missing_session" else null,
-                    .timeoutSeconds = if (is_wait) timeout_secs else null,
                 });
                 return .{
                     .is_command = true,
@@ -2862,7 +2861,6 @@ pub const TelegramRuntime = struct {
                     .account = account_norm,
                     .scope = scope,
                     .@"error" = "missing_code",
-                    .loginSessionId = login_session,
                 });
                 return .{
                     .is_command = true,
@@ -5201,6 +5199,7 @@ test "telegram runtime auth status and wait without session use go-style replies
     try std.testing.expect(std.mem.indexOf(u8, wait.metadataJson.?, "\"type\":\"auth.wait\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, wait.metadataJson.?, "\"error\":\"missing_session\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, wait.metadataJson.?, "\"status\":") == null);
+    try std.testing.expect(std.mem.indexOf(u8, wait.metadataJson.?, "\"timeoutSeconds\":") == null);
 }
 
 test "telegram runtime auth wait missing session uses go-style bridge error" {
@@ -5265,7 +5264,7 @@ test "telegram runtime auth complete missing session and bridge errors use go-st
     try std.testing.expect(std.mem.indexOf(u8, complete_missing_code.reply, "Missing code. Usage: `/auth complete <provider> <callback_url_or_code> [session_id] [account]`") != null);
     try std.testing.expect(complete_missing_code.metadataJson != null);
     try std.testing.expect(std.mem.indexOf(u8, complete_missing_code.metadataJson.?, "\"error\":\"missing_code\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, complete_missing_code.metadataJson.?, "\"loginSessionId\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, complete_missing_code.metadataJson.?, "\"loginSessionId\":") == null);
 
     const authorize_frame = try std.fmt.allocPrint(
         allocator,

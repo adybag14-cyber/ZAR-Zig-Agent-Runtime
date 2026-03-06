@@ -58,6 +58,10 @@ Full-stack replacement execution reference:
 
 - Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `195/195`.
 - Full-stack replacement kickoff (2026-03-05):
+  - Phase 5 Telegram auth edge-metadata parity hardened:
+    - no-session `/auth wait` metadata no longer emits the Zig-only `timeoutSeconds` field; it now matches Go’s leaner `missing_session` envelope for that path.
+    - `/auth complete` with an empty extracted code no longer emits the Zig-only top-level `loginSessionId`; it now matches Go’s leaner `missing_code` envelope for that path.
+    - runtime and dispatcher regressions now assert the absence of those extra fields on the corresponding no-session wait and missing-code complete receipts.
   - Phase 5 Telegram auth success-metadata parity hardened:
     - success-path `/auth status`, `/auth wait`, and `/auth complete` receipts now rely on the nested Go-style `metadata.login` object for session state instead of duplicating those fields at the top level.
     - the following top-level success metadata fields were removed on those paths to match Go more closely:
