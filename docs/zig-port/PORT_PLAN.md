@@ -1070,6 +1070,11 @@ Full-stack replacement execution reference:
     - runtime now suppresses masked non-exception vectors while preserving exception delivery semantics for vectors `<32`.
     - profile-aware masking now supports deterministic windows (`none`, `external_all`, `external_high`) with automatic `custom` profile drift tracking after manual per-vector edits.
     - validated with `zig build test --summary all` (`124/124`) and `scripts/baremetal-smoke-check.ps1`.
+  - bare-metal QEMU interrupt-mask/exception validation shipped:
+    - new script: `scripts/baremetal-qemu-interrupt-mask-exception-probe-check.ps1`.
+    - live PVH/QEMU+GDB sequence proves `command_interrupt_mask_apply_profile(external_all)` blocks vector `200` without waking the waiting task, while `command_trigger_exception(13, 51966)` still wakes the task and records interrupt/exception histories.
+    - key probe evidence: `TASK0_STATE_AFTER_MASK=6`, `WAKE_QUEUE_COUNT_AFTER_MASK=0`, `MASKED_INTERRUPT_IGNORED_COUNT=1`, `INTERRUPT_COUNT=1`, `EXCEPTION_COUNT=1`, `WAKE0_REASON=2`, `WAKE0_VECTOR=13`.
+    - probe is wired into both `zig-ci` and `release-preview` validate stages so interrupt-mask regressions now block CI.
   - Week-3 control-plane completion slice shipped:
     - gateway now exposes `GET /ui` for minimal bootstrap control operations (`status`, `doctor`, `logs.tail`, `node.pair.list`) through a token-aware browser panel.
     - node-pair protocol handling consolidated across payload variants: request aliases (`node_id/deviceId`) and action aliases (`pair_id/nodePairId/id` + optional `status|decision`) now normalize into the same state transitions and response schema.

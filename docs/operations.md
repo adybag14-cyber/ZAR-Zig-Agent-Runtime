@@ -55,6 +55,7 @@ Recommended sequence:
 - optional bare-metal QEMU scheduler probe (scheduler reset/timeslice/task-create/policy-enable against the freestanding PVH artifact)
 - optional bare-metal QEMU timer wake probe (timer reset/quantum/task-wait to fired timer entry + wake queue telemetry against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator syscall probe (alloc/free plus syscall register/invoke/block/disable/unregister against the freestanding PVH artifact)
+- optional bare-metal QEMU interrupt mask exception probe (masked external vector remains blocked while an exception vector still wakes the waiting task and records history telemetry against the freestanding PVH artifact)
 - parity evidence artifacts
   - websocket smoke validates `/ws` and root compatibility route `/`, including binary-frame RPC dispatch
   - gateway-auth and websocket smokes use bounded receive timeouts to prevent hanging CI jobs
@@ -76,6 +77,7 @@ Recommended sequence:
 - bare-metal optional QEMU scheduler probe in validate stage
 - bare-metal optional QEMU timer wake probe in validate stage
 - bare-metal optional QEMU allocator syscall probe in validate stage
+- bare-metal optional QEMU interrupt mask exception probe in validate stage
 - npm package dry-run validation in release validate stage
 - python package validation (unit tests + build + twine check) in release validate stage
 - local `scripts/release-preview.ps1` mirrors parity/docs/freshness gates before artifact packaging
