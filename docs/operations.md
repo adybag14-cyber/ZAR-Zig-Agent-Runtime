@@ -5,10 +5,10 @@
 - Latest published edge release: `v0.2.0-zig-edge.26`
 - Latest local test gate: `zig build test --summary all` -> main `203/203` + bare-metal host `47/47` passing
 - Latest parity gate: `scripts/check-go-method-parity.ps1` -> `GO_MISSING_IN_ZIG=0`, `ORIGINAL_MISSING_IN_ZIG=0`, `ORIGINAL_BETA_MISSING_IN_ZIG=0`, `UNION_MISSING_IN_ZIG=0`, `UNION_EVENTS_MISSING_IN_ZIG=0`, `ZIG_COUNT=169`, `ZIG_EVENTS_COUNT=19`
-- Current head: `ccf905b`
+- Current head: `f707532`
 - Latest CI:
-  - `zig-ci` `22752747937` -> success
-  - `docs-pages` `22752747922` -> success
+  - `zig-ci` `22790152153` -> success
+  - `docs-pages` `22790152152` -> success
 
 ## Local Validation Matrix
 
