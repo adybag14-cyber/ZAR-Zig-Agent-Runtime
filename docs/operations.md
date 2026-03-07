@@ -66,6 +66,7 @@ Recommended sequence:
 - optional bare-metal QEMU descriptor dispatch probe (descriptor reinit/load plus post-load interrupt and exception dispatch coherence, including interrupt/exception history rings, against the freestanding PVH artifact)
 - optional bare-metal QEMU vector history overflow probe (interrupt/exception counter resets plus repeated dispatch saturation, proving history-ring overflow and per-vector telemetry against the freestanding PVH artifact)
 - optional bare-metal QEMU command-health history probe (repeated `command_set_health_code` mailbox execution, proving command-history overflow, health-history overflow, and retained oldest/newest payload ordering against the freestanding PVH artifact)
+- optional bare-metal QEMU mode/boot-phase history probe (command/runtime/panic reason ordering plus post-clear saturation of the 64-entry mode-history and boot-phase-history rings against the freestanding PVH artifact)
 - optional bare-metal QEMU timer wake probe (timer reset/quantum/task-wait to fired timer entry + wake queue telemetry against the freestanding PVH artifact)
 - optional bare-metal QEMU periodic timer probe (periodic schedule + timer disable/enable pause-resume, capturing the first resumed periodic fire and queued wake telemetry against the freestanding PVH artifact)
 - optional bare-metal QEMU periodic interrupt probe (mixed periodic timer + interrupt wake ordering, proving the interrupt arrives before deadline while the periodic source keeps cadence and timer cancellation prevents a later timeout leak against the freestanding PVH artifact)
@@ -104,6 +105,7 @@ Recommended sequence:
 - bare-metal optional QEMU descriptor dispatch probe in validate stage
 - bare-metal optional QEMU vector history overflow probe in validate stage
 - bare-metal optional QEMU command-health history probe in validate stage
+- bare-metal optional QEMU mode/boot-phase history probe in validate stage
 - bare-metal optional QEMU wake-queue selective probe in validate stage
 - bare-metal optional QEMU wake-queue summary/age probe in validate stage
 - bare-metal optional QEMU allocator syscall probe in validate stage
