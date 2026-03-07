@@ -77,6 +77,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - optional QEMU wake-queue FIFO probe validates `command_wake_queue_pop` end to end, proving the oldest queued manual wake is removed first, the second queued wake becomes the new logical head (`seq=2`, `tick=7`), and a final pop on the empty queue returns `result_not_found`
   - optional QEMU wake-queue selective probe validates timer, interrupt, and manual wake generation plus `pop_reason`, `pop_vector`, `pop_reason_vector`, and `pop_before_tick` queue drains end to end against the freestanding PVH artifact
   - optional QEMU wake-queue selective-overflow probe validates wrapped-ring selective drains end to end, proving `66` alternating `interrupt@13` / `interrupt@31` wakes retain FIFO survivor ordering through `command_wake_queue_pop_vector` and `command_wake_queue_pop_reason_vector`
+  - optional QEMU wake-queue before-tick-overflow probe validates wrapped-ring deadline drains end to end, proving the same `66` alternating `interrupt@13` / `interrupt@31` wakes can be drained in FIFO windows via `command_wake_queue_pop_before_tick` down to empty, with the final empty-queue call returning `result_not_found`
   - optional QEMU wake-queue summary/age probe validates exported summary and age-bucket telemetry snapshots before and after selective queue drains against the freestanding PVH artifact
   - optional QEMU wake-queue overflow probe validates sustained manual wake pressure end to end, proving the 64-entry ring saturates cleanly with `head/tail=2`, `overflow=2`, and retained oldest/newest manual wake payloads at `seq 3` and `seq 66`
   - optional QEMU wake-queue batch-pop probe validates post-overflow recovery end to end, proving a `62`-entry batch drain leaves `seq 65/66`, a default pop leaves only `seq 66`, a final drain empties the queue, and the next manual wake reuses the ring at `seq 67`
@@ -476,6 +477,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU manual wait interrupt probe
 - optional bare-metal QEMU wake-queue selective probe
 - optional bare-metal QEMU wake-queue selective-overflow probe
+- optional bare-metal QEMU wake-queue before-tick-overflow probe
 - optional bare-metal QEMU wake-queue summary/age probe
 - optional bare-metal QEMU wake-queue overflow probe
 - optional bare-metal QEMU wake-queue batch-pop probe
@@ -527,6 +529,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU manual wait interrupt validation
 - optional bare-metal QEMU wake-queue selective validation
 - optional bare-metal QEMU wake-queue selective-overflow validation
+- optional bare-metal QEMU wake-queue before-tick-overflow validation
 - optional bare-metal QEMU wake-queue summary/age validation
 - optional bare-metal QEMU wake-queue overflow validation
 - optional bare-metal QEMU wake-queue batch-pop validation
