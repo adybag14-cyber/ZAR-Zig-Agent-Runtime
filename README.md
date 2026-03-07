@@ -67,6 +67,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - optional QEMU scheduler probe validates scheduler reset/timeslice/task-create/policy-enable flow end to end against the freestanding PVH artifact
   - optional QEMU scheduler priority/budget probe validates `command_scheduler_set_default_budget` and `command_task_set_priority` end to end, proving a zero-budget low-priority task inherits the configured default budget (`9`) and a later reprioritization flips dispatch from the high-priority task to the low-priority task (`ACK=9`, `LAST_OPCODE=56`, low task `run_count 0 -> 1`)
   - optional QEMU scheduler round-robin probe validates the default scheduler policy ignores priority bias and rotates dispatch fairly across two live tasks (`ACK=6`, `POLICY=0`, run counts `1/0 -> 1/1 -> 2/1`, budgets `3 -> 3 -> 2`) against the freestanding PVH artifact
+  - optional QEMU scheduler timeslice-update probe validates live `command_scheduler_set_timeslice` changes under active load, proving budget consumption immediately follows the new timeslice (`1 -> 4 -> 2`) and invalid zero is rejected without changing the active value (`ACK=6`, `LAST_OPCODE=29`, `LAST_RESULT=-22`, task budget remaining `9 -> 5 -> 3 -> 1`)
   - optional QEMU scheduler saturation probe validates the 16-slot task-table pressure path end to end, proving the 17th `command_task_create` returns `result_no_space`, task count holds at `16`, then a terminated slot is reused cleanly with a fresh task ID (`6 -> 17`) and the requested replacement priority/budget (`99`, `7`)
   - optional QEMU timer wake probe validates timer reset/quantum/task-wait flow end to end, including fired timer entries and wake-queue telemetry against the freestanding PVH artifact
   - optional QEMU timer quantum probe validates one-shot timer quantum suppression end to end, proving the task stays waiting with an empty wake queue at the pre-boundary tick and only wakes on the next quantum boundary against the freestanding PVH artifact
@@ -474,6 +475,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU vector history clear probe
 - optional bare-metal QEMU mode/boot-phase history clear probe
 - optional bare-metal QEMU scheduler probe
+- optional bare-metal QEMU scheduler timeslice-update probe
 - optional bare-metal QEMU scheduler saturation probe
 - optional bare-metal QEMU timer wake probe
 - optional bare-metal QEMU timer quantum probe

@@ -1030,6 +1030,10 @@ Full-stack replacement execution reference:
     - new script: `scripts/baremetal-qemu-scheduler-round-robin-probe-check.ps1` resolves scheduler state, policy, and multi-slot task telemetry from the freestanding ELF and drives the default scheduler policy through the mailbox under QEMU+GDB.
     - the probe validates `command_scheduler_reset`, `command_wake_queue_clear`, `command_scheduler_disable`, two `command_task_create` calls, and `command_scheduler_enable` end to end over the PVH freestanding artifact.
     - current proof path validates `ACK=6`, `LAST_OPCODE=24`, `LAST_RESULT=0`, `POLICY=0`, fair live rotation across a lower-priority first task and higher-priority second task (`FIRST/SECOND run_count 1/0 -> 1/1 -> 2/1`), and deterministic budget consumption (`3 -> 3 -> 2`) without switching into priority scheduling.
+  - bare-metal QEMU scheduler timeslice-update validation shipped:
+    - new script: `scripts/baremetal-qemu-scheduler-timeslice-update-probe-check.ps1` reuses the scheduler PVH artifact, resolves scheduler/task telemetry from the freestanding ELF, and drives live timeslice updates through the mailbox under QEMU+GDB.
+    - the probe validates `command_scheduler_reset`, `command_scheduler_enable`, `command_task_create`, two successful `command_scheduler_set_timeslice` updates, and an invalid zero-timeslice rejection end to end over the PVH freestanding artifact.
+    - current proof path validates `ACK=6`, `LAST_OPCODE=29`, `LAST_RESULT=-22`, active timeslice progression `1 -> 4 -> 2`, dispatch count `>=4`, and immediate budget-consumption changes on the same live task (`9 -> 5 -> 3 -> 1`) without letting the invalid zero request change the active timeslice.
   - bare-metal QEMU timer/wake validation shipped:
     - new script: `scripts/baremetal-qemu-timer-wake-probe-check.ps1` resolves timer state/entry and wake-queue symbols from the freestanding ELF and drives timer commands through the mailbox under QEMU+GDB.
     - the probe validates `command_timer_reset`, `command_timer_set_quantum`, `command_task_create`, and `command_task_wait_for` end to end over the PVH freestanding artifact.
