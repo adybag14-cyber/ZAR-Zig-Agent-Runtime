@@ -58,6 +58,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - optional QEMU periodic timer probe validates periodic timer scheduling plus disable/enable pause-resume behavior end to end, capturing the first resumed periodic fire and queued wake telemetry against the freestanding PVH artifact
   - optional QEMU periodic interrupt probe validates mixed periodic timer plus interrupt wake ordering end to end, proving the interrupt wake lands before the deadline, the periodic source keeps its cadence, and cancellation prevents a later timeout leak against the freestanding PVH artifact
   - optional QEMU interrupt-timeout probe validates `task_wait_interrupt_for` wakeup precedence end to end, proving an interrupt wake clears the timeout arm and does not later leak a second timer wake against the freestanding PVH artifact
+  - optional QEMU interrupt-timeout clamp probe validates the near-`u64::max` timeout path end to end, proving the armed deadline saturates at `18446744073709551615`, the wake event records that saturated tick, and the runtime wake boundary wraps cleanly to `0` without losing the queued timer wake
   - optional QEMU interrupt-filter probe validates `command_task_wait_interrupt` vector filtering end to end, proving interrupt-any waiters wake on `200`, vector-scoped waiters ignore non-matching `200`, then wake on matching `13`, and invalid vector `65536` is rejected with `LAST_RESULT=-22` against the freestanding PVH artifact
   - optional QEMU manual-wait interrupt probe validates `command_task_wait` isolation end to end, proving a manual waiter remains blocked with an empty wake queue after interrupt `44`, then resumes correctly through an explicit `command_scheduler_wake_task` against the freestanding PVH artifact
   - optional QEMU wake-queue selective probe validates timer, interrupt, and manual wake generation plus `pop_reason`, `pop_vector`, `pop_reason_vector`, and `pop_before_tick` queue drains end to end against the freestanding PVH artifact
@@ -446,6 +447,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU periodic timer probe
 - optional bare-metal QEMU periodic interrupt probe
 - optional bare-metal QEMU interrupt timeout probe
+- optional bare-metal QEMU interrupt timeout clamp probe
 - optional bare-metal QEMU interrupt filter probe
 - optional bare-metal QEMU manual wait interrupt probe
 - optional bare-metal QEMU wake-queue selective probe
@@ -488,6 +490,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU timer wake validation
 - optional bare-metal QEMU periodic timer validation
 - optional bare-metal QEMU interrupt timeout validation
+- optional bare-metal QEMU interrupt timeout clamp validation
 - optional bare-metal QEMU interrupt filter validation
 - optional bare-metal QEMU manual wait interrupt validation
 - optional bare-metal QEMU wake-queue selective validation
