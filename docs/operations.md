@@ -31,6 +31,7 @@ Recommended sequence:
 ./scripts/baremetal-qemu-scheduler-probe-check.ps1
 ./scripts/baremetal-qemu-scheduler-priority-budget-probe-check.ps1
 ./scripts/baremetal-qemu-timer-wake-probe-check.ps1
+./scripts/baremetal-qemu-timer-cancel-probe-check.ps1
 ./scripts/baremetal-qemu-periodic-timer-probe-check.ps1
 ./scripts/baremetal-qemu-interrupt-timeout-probe-check.ps1
 ./scripts/baremetal-qemu-wake-queue-selective-probe-check.ps1
@@ -75,6 +76,7 @@ Recommended sequence:
 - optional bare-metal QEMU scheduler round-robin probe (default scheduler policy remains round-robin under live QEMU execution, rotating dispatch `1/0 -> 1/1 -> 2/1` across a lower-priority first task and higher-priority second task while budgets decrement deterministically)
 - optional bare-metal QEMU timer wake probe (timer reset/quantum/task-wait to fired timer entry + wake queue telemetry against the freestanding PVH artifact)
 - optional bare-metal QEMU timer quantum probe (one-shot `command_timer_schedule` respects `command_timer_set_quantum`, keeps the task waiting with `wake_queue_len=0` at the pre-boundary tick, and only wakes on the next quantum boundary against the freestanding PVH artifact)
+- optional bare-metal QEMU timer cancel probe (capture the live timer ID from the armed entry, cancel that exact timer via `command_timer_cancel`, preserve the canceled slot state, and get `result_not_found` on a second cancel against the freestanding PVH artifact)
 - optional bare-metal QEMU timer cancel task probe (one-shot + periodic task timer arming followed by `command_timer_cancel_task`, proving the first cancel collapses `timer_entry_count` to `0`, preserves the canceled timer slot state, and the second cancel returns `result_not_found` against the freestanding PVH artifact)
 - optional bare-metal QEMU periodic timer probe (periodic schedule + timer disable/enable pause-resume, capturing the first resumed periodic fire and queued wake telemetry against the freestanding PVH artifact)
 - optional bare-metal QEMU periodic interrupt probe (mixed periodic timer + interrupt wake ordering, proving the interrupt arrives before deadline while the periodic source keeps cadence and timer cancellation prevents a later timeout leak against the freestanding PVH artifact)
@@ -114,6 +116,7 @@ Recommended sequence:
 - bare-metal optional QEMU scheduler probe in validate stage
 - bare-metal optional QEMU timer wake probe in validate stage
 - bare-metal optional QEMU timer quantum probe in validate stage
+- bare-metal optional QEMU timer cancel probe in validate stage
 - bare-metal optional QEMU timer cancel task probe in validate stage
 - bare-metal optional QEMU periodic timer probe in validate stage
 - bare-metal optional QEMU periodic interrupt probe in validate stage
