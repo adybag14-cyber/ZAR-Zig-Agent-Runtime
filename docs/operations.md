@@ -34,6 +34,7 @@ Recommended sequence:
 ./scripts/baremetal-qemu-periodic-timer-probe-check.ps1
 ./scripts/baremetal-qemu-interrupt-timeout-probe-check.ps1
 ./scripts/baremetal-qemu-wake-queue-selective-probe-check.ps1
+./scripts/baremetal-qemu-wake-queue-fifo-probe-check.ps1
 ./scripts/baremetal-qemu-allocator-syscall-probe-check.ps1
 ./scripts/baremetal-qemu-allocator-syscall-failure-probe-check.ps1
 ./scripts/baremetal-qemu-reset-counters-probe-check.ps1
@@ -83,6 +84,7 @@ Recommended sequence:
 - optional bare-metal QEMU interrupt filter probe (`task_wait_interrupt(any)` wakes on vector `200`, vector-scoped `task_wait_interrupt(13)` ignores non-matching `200`, then wakes on matching `13`, and invalid vector `65536` is rejected with `-22` against the freestanding PVH artifact)
 - optional bare-metal QEMU manual-wait interrupt probe (`task_wait` remains blocked with `wake_queue_len=0` and manual wait-kind intact after interrupt `44`, then recovers via explicit `scheduler_wake_task` against the freestanding PVH artifact)
 - optional bare-metal QEMU wake-queue selective probe (timer, interrupt, and manual wake generation plus `pop_reason`, `pop_vector`, `pop_reason_vector`, and `pop_before_tick` queue drains against the freestanding PVH artifact)
+- optional bare-metal QEMU wake-queue FIFO probe (`command_wake_queue_pop` removes the logical oldest wake first, preserves the second queued manual wake as the new head, and returns `result_not_found` once the queue is empty)
 - optional bare-metal QEMU wake-queue summary/age probe (exported `oc_wake_queue_summary_ptr` and `oc_wake_queue_age_buckets_ptr_quantum_2` snapshots before and after selective queue drains against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator syscall probe (alloc/free plus syscall register/invoke/block/disable/unregister against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator syscall failure probe (invalid-alignment, no-space, blocked-syscall, and disabled-syscall result semantics plus command-result counters against the freestanding PVH artifact)
@@ -130,6 +132,7 @@ Recommended sequence:
 - bare-metal optional QEMU scheduler priority budget probe in validate stage
 - bare-metal optional QEMU scheduler round-robin probe in validate stage
 - bare-metal optional QEMU wake-queue selective probe in validate stage
+- bare-metal optional QEMU wake-queue FIFO probe in validate stage
 - bare-metal optional QEMU wake-queue summary/age probe in validate stage
 - bare-metal optional QEMU allocator syscall probe in validate stage
 - bare-metal optional QEMU allocator syscall failure probe in validate stage

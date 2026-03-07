@@ -970,6 +970,9 @@ Phase 6 progress notes:
   - wake queue exports: `oc_wake_queue_tail_index`, `oc_wake_queue_pop`
   - ABI additions/opcodes: `command_task_wait_for`, `command_wake_queue_pop`
   - runtime behavior: `task_wait_for` now atomically transitions a task to waiting with a one-shot timer deadline, and wake queue pop semantics remove oldest entries in-order with ring-buffer tail tracking.
+- [x] Bare-metal wake-queue FIFO QEMU proof shipped:
+  - new script: `scripts/baremetal-qemu-wake-queue-fifo-probe-check.ps1`
+  - live PVH/QEMU+GDB sequence proves two queued manual wakes preserve FIFO ordering through `command_wake_queue_pop`, with the second wake becoming the new logical head after the first pop and a final empty-queue pop returning `result_not_found`.
 - [x] Bare-metal scheduler policy + priority-control depth added:
   - scheduler export: `oc_scheduler_policy`
   - ABI additions/opcodes: `command_scheduler_set_policy`, `command_task_set_priority`, `scheduler_policy_round_robin`, `scheduler_policy_priority`
