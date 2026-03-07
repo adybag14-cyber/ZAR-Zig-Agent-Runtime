@@ -260,6 +260,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-reset-counters-probe-check.ps1
 
+      - name: Bare-metal QEMU task lifecycle probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-lifecycle-probe-check.ps1
+
       - name: Bare-metal QEMU interrupt mask exception probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-interrupt-mask-exception-probe-check.ps1
