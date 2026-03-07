@@ -484,6 +484,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU interrupt timeout timer probe
 - optional bare-metal QEMU interrupt timeout clamp probe
 - optional bare-metal QEMU interrupt filter probe
+- optional bare-metal QEMU timer-disable interrupt probe
 - optional bare-metal QEMU manual wait interrupt probe
 - optional bare-metal QEMU wake-queue selective probe
 - optional bare-metal QEMU wake-queue selective-overflow probe

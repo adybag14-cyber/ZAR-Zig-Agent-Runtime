@@ -1390,8 +1390,6 @@ fn recordCommandResult(seq: u32, opcode: u16, result: i16) void {
 }
 
 fn timerTick(current_tick: u64) void {
-    if (timer_state.enabled != abi.timer_state_enabled) return;
-
     const interrupt_count = x86_bootstrap.oc_interrupt_count();
     if (interrupt_count > timer_state.last_interrupt_count) {
         const interrupt_vector = x86_bootstrap.oc_last_interrupt_vector();
@@ -1403,6 +1401,8 @@ fn timerTick(current_tick: u64) void {
         }
     }
     timer_state.last_interrupt_count = interrupt_count;
+
+    if (timer_state.enabled != abi.timer_state_enabled) return;
 
     var slot_idx: usize = 0;
     while (slot_idx < scheduler_task_capacity) : (slot_idx += 1) {
@@ -3300,6 +3300,79 @@ test "baremetal timer cancel task command cancels armed task timers" {
     _ = oc_submit_command(abi.command_timer_cancel_task, task_id, 0);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
+}
+
+test "baremetal timer disable suppresses timer wake but not interrupt wake" {
+    status.mode = abi.mode_running;
+    status.ticks = 0;
+    status.command_seq_ack = 0;
+    status.last_command_opcode = abi.command_nop;
+    status.last_command_result = abi.result_ok;
+    status.tick_batch_hint = 1;
+    command_mailbox = .{
+        .magic = abi.command_magic,
+        .api_version = abi.api_version,
+        .opcode = abi.command_nop,
+        .seq = 0,
+        .arg0 = 0,
+        .arg1 = 0,
+    };
+    oc_scheduler_reset();
+    oc_timer_reset();
+    oc_wake_queue_clear();
+    x86_bootstrap.oc_reset_interrupt_counters();
+
+    _ = oc_submit_command(abi.command_scheduler_disable, 0, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_task_create, 5, 0);
+    oc_tick();
+    const interrupt_task_id = oc_scheduler_task(0).task_id;
+    try std.testing.expect(interrupt_task_id != 0);
+
+    _ = oc_submit_command(abi.command_task_create, 6, 0);
+    oc_tick();
+    const timer_task_id = oc_scheduler_task(1).task_id;
+    try std.testing.expect(timer_task_id != 0);
+
+    _ = oc_submit_command(abi.command_task_wait_interrupt, interrupt_task_id, abi.wait_interrupt_any_vector);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+
+    _ = oc_submit_command(abi.command_task_wait_for, timer_task_id, 2);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_entry_count());
+
+    _ = oc_submit_command(abi.command_timer_disable, 0, 0);
+    oc_tick();
+    try std.testing.expect(!oc_timer_enabled());
+
+    _ = oc_submit_command(abi.command_trigger_interrupt, 200, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+    const interrupt_evt = oc_wake_queue_event(0);
+    try std.testing.expectEqual(interrupt_task_id, interrupt_evt.task_id);
+    try std.testing.expectEqual(@as(u8, abi.wake_reason_interrupt), interrupt_evt.reason);
+    try std.testing.expectEqual(@as(u8, 200), interrupt_evt.vector);
+    try std.testing.expectEqual(@as(u8, abi.task_state_ready), oc_scheduler_task(0).state);
+    try std.testing.expectEqual(@as(u8, abi.task_state_waiting), oc_scheduler_task(1).state);
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u64, 0), oc_timer_state_ptr().dispatch_count);
+
+    oc_tick_n(4);
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u8, abi.task_state_waiting), oc_scheduler_task(1).state);
+    try std.testing.expectEqual(@as(u64, 0), oc_timer_state_ptr().dispatch_count);
+
+    _ = oc_submit_command(abi.command_timer_enable, 0, 0);
+    oc_tick();
+    try std.testing.expect(oc_timer_enabled());
+    try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_len());
+    const timer_evt = oc_wake_queue_event(1);
+    try std.testing.expectEqual(timer_task_id, timer_evt.task_id);
+    try std.testing.expectEqual(@as(u8, abi.wake_reason_timer), timer_evt.reason);
+    try std.testing.expectEqual(@as(u8, abi.task_state_ready), oc_scheduler_task(1).state);
+    try std.testing.expect(oc_timer_state_ptr().dispatch_count >= 1);
 }
 
 test "baremetal timer pressure reuses canceled slot with fresh timer id" {

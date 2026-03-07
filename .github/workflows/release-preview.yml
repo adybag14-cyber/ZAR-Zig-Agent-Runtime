@@ -288,6 +288,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-interrupt-filter-probe-check.ps1
 
+      - name: Bare-metal QEMU timer-disable interrupt probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-disable-interrupt-probe-check.ps1
+
       - name: Bare-metal QEMU interrupt mask profile probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-interrupt-mask-profile-probe-check.ps1
