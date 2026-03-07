@@ -3,7 +3,7 @@
 ## Current Snapshot
 
 - Latest published edge release: `v0.2.0-zig-edge.26`
-- Latest local test gate: `zig build test --summary all` -> `203/203` passing
+- Latest local test gate: `zig build test --summary all` -> main `203/203` + bare-metal host `47/47` passing
 - Latest parity gate: `scripts/check-go-method-parity.ps1` -> `GO_MISSING_IN_ZIG=0`, `ORIGINAL_MISSING_IN_ZIG=0`, `ORIGINAL_BETA_MISSING_IN_ZIG=0`, `UNION_MISSING_IN_ZIG=0`, `UNION_EVENTS_MISSING_IN_ZIG=0`, `ZIG_COUNT=169`, `ZIG_EVENTS_COUNT=19`
 - Current head: `ccf905b`
 - Latest CI:
@@ -35,6 +35,7 @@ Recommended sequence:
 ./scripts/baremetal-qemu-wake-queue-selective-probe-check.ps1
 ./scripts/baremetal-qemu-allocator-syscall-probe-check.ps1
 ./scripts/baremetal-qemu-allocator-syscall-failure-probe-check.ps1
+./scripts/baremetal-qemu-reset-counters-probe-check.ps1
 ./scripts/appliance-control-plane-smoke-check.ps1
 ./scripts/appliance-restart-recovery-smoke-check.ps1
 ./scripts/appliance-rollout-boundary-smoke-check.ps1
@@ -77,6 +78,7 @@ Recommended sequence:
 - optional bare-metal QEMU allocator syscall probe (alloc/free plus syscall register/invoke/block/disable/unregister against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator syscall failure probe (invalid-alignment, no-space, blocked-syscall, and disabled-syscall result semantics plus command-result counters against the freestanding PVH artifact)
 - optional bare-metal QEMU command-result counters probe (live mailbox result-category accounting plus `command_reset_command_result_counters` reset semantics against the freestanding PVH artifact)
+- optional bare-metal QEMU reset counters probe (live `command_reset_counters` proof after dirtying interrupt, exception, scheduler, allocator, syscall, timer, wake-queue, mode, boot-phase, command-history, and health-history state against the freestanding PVH artifact)
 - optional bare-metal QEMU interrupt mask exception probe (masked external vector remains blocked while an exception vector still wakes the waiting task and records history telemetry against the freestanding PVH artifact)
 - optional bare-metal QEMU interrupt mask profile probe (external-all, custom unmask/remask, ignored-count reset, external-high, invalid profile rejection, and clear-all recovery against the freestanding PVH artifact)
 - parity evidence artifacts
@@ -114,6 +116,7 @@ Recommended sequence:
 - bare-metal optional QEMU allocator syscall probe in validate stage
 - bare-metal optional QEMU allocator syscall failure probe in validate stage
 - bare-metal optional QEMU command-result counters probe in validate stage
+- bare-metal optional QEMU reset counters probe in validate stage
 - bare-metal optional QEMU interrupt mask exception probe in validate stage
 - bare-metal optional QEMU interrupt mask profile probe in validate stage
 - npm package dry-run validation in release validate stage

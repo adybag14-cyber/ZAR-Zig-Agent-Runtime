@@ -36,6 +36,11 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     const test_step = b.step("test", "Run unit tests");
+    const baremetal_test_module = b.createModule(.{
+        .root_source_file = b.path("src/baremetal_main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
     if (target.result.os.tag == .windows) {
         // Work around a Zig master Windows build-runner regression around `--listen`.
         const test_cmd = b.addSystemCommand(&.{
@@ -44,12 +49,23 @@ pub fn build(b: *std.Build) void {
             "src/main.zig",
         });
         test_step.dependOn(&test_cmd.step);
+        const baremetal_test_cmd = b.addSystemCommand(&.{
+            b.graph.zig_exe,
+            "test",
+            "src/baremetal_main.zig",
+        });
+        test_step.dependOn(&baremetal_test_cmd.step);
     } else {
         const tests = b.addTest(.{
             .root_module = root_module,
         });
         const run_tests = b.addRunArtifact(tests);
         test_step.dependOn(&run_tests.step);
+        const baremetal_tests = b.addTest(.{
+            .root_module = baremetal_test_module,
+        });
+        const run_baremetal_tests = b.addRunArtifact(baremetal_tests);
+        test_step.dependOn(&run_baremetal_tests.step);
     }
 
     const baremetal_target = b.resolveTargetQuery(.{

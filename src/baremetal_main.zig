@@ -2209,6 +2209,50 @@ fn defaultBootPhaseForMode(mode: u8) u8 {
     };
 }
 
+fn resetBaremetalRuntimeForTest() void {
+    status = .{
+        .magic = abi.status_magic,
+        .api_version = abi.api_version,
+        .mode = abi.mode_running,
+        .reserved0 = 0,
+        .ticks = 0,
+        .last_health_code = 0,
+        .reserved1 = 0,
+        .feature_flags = abi.defaultFeatureFlags(),
+        .panic_count = 0,
+        .command_seq_ack = 0,
+        .last_command_opcode = abi.command_nop,
+        .last_command_result = abi.result_ok,
+        .tick_batch_hint = 1,
+    };
+    command_mailbox = .{
+        .magic = abi.command_magic,
+        .api_version = abi.api_version,
+        .opcode = abi.command_nop,
+        .seq = 0,
+        .arg0 = 0,
+        .arg1 = 0,
+    };
+    resetBootDiagnostics();
+    x86_bootstrap.oc_interrupt_mask_clear_all();
+    x86_bootstrap.oc_interrupt_mask_reset_ignored_counts();
+    x86_bootstrap.oc_reset_interrupt_counters();
+    x86_bootstrap.oc_reset_exception_counters();
+    x86_bootstrap.oc_reset_vector_counters();
+    x86_bootstrap.oc_exception_history_clear();
+    x86_bootstrap.oc_interrupt_history_clear();
+    oc_command_history_clear();
+    oc_health_history_clear();
+    oc_mode_history_clear();
+    oc_boot_phase_history_clear();
+    oc_command_result_counters_clear();
+    oc_scheduler_reset();
+    oc_allocator_reset();
+    oc_syscall_reset();
+    oc_timer_reset();
+    oc_wake_queue_clear();
+}
+
 fn captureStackPointer() u64 {
     const fp = @frameAddress();
     return @as(u64, @intCast(fp));
@@ -2544,6 +2588,125 @@ test "baremetal command result counters track categories and reset flow" {
     try std.testing.expectEqual(@as(u32, 0), oc_command_result_count_not_supported());
     const reset_counters = oc_command_result_counters_ptr().*;
     try std.testing.expectEqual(@as(u16, abi.command_reset_command_result_counters), reset_counters.last_opcode);
+}
+
+test "baremetal reset counters clears representative runtime subsystems" {
+    status.mode = abi.mode_running;
+    status.ticks = 0;
+    status.last_health_code = 0;
+    status.panic_count = 0;
+    status.command_seq_ack = 0;
+    status.last_command_opcode = abi.command_nop;
+    status.last_command_result = abi.result_ok;
+    status.tick_batch_hint = 1;
+    command_mailbox = .{
+        .magic = abi.command_magic,
+        .api_version = abi.api_version,
+        .opcode = abi.command_nop,
+        .seq = 0,
+        .arg0 = 0,
+        .arg1 = 0,
+    };
+    x86_bootstrap.init();
+    x86_bootstrap.oc_interrupt_mask_clear_all();
+    x86_bootstrap.oc_interrupt_mask_reset_ignored_counts();
+    x86_bootstrap.oc_reset_interrupt_counters();
+    x86_bootstrap.oc_reset_exception_counters();
+    x86_bootstrap.oc_reset_vector_counters();
+    x86_bootstrap.oc_exception_history_clear();
+    x86_bootstrap.oc_interrupt_history_clear();
+    oc_command_history_clear();
+    oc_health_history_clear();
+    oc_mode_history_clear();
+    oc_boot_phase_history_clear();
+    oc_command_result_counters_clear();
+    oc_scheduler_reset();
+    oc_allocator_reset();
+    oc_syscall_reset();
+    oc_timer_reset();
+
+    _ = oc_submit_command(abi.command_set_health_code, 123, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_trigger_panic_flag, 0, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_set_mode, abi.mode_running, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_set_boot_phase, abi.boot_phase_runtime, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_task_create, 8, 2);
+    oc_tick();
+    const task_id = oc_scheduler_task(0).task_id;
+    try std.testing.expect(task_id != 0);
+    _ = oc_submit_command(abi.command_allocator_alloc, 4096, 4096);
+    oc_tick();
+    _ = oc_submit_command(abi.command_syscall_register, 9, 0xBEEF);
+    oc_tick();
+    _ = oc_submit_command(abi.command_timer_set_quantum, 3, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_timer_schedule, task_id, 20);
+    oc_tick();
+    _ = oc_submit_command(abi.command_task_wait_interrupt, task_id, 200);
+    oc_tick();
+    _ = oc_submit_command(abi.command_trigger_interrupt, 200, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_trigger_exception, 13, 0xCAFE);
+    oc_tick();
+
+    try std.testing.expectEqual(@as(u32, 1), status.panic_count);
+    try std.testing.expect(x86_bootstrap.oc_interrupt_count() > 0);
+    try std.testing.expect(x86_bootstrap.oc_exception_count() > 0);
+    try std.testing.expectEqual(@as(u64, 1), x86_bootstrap.oc_interrupt_vector_count(200));
+    try std.testing.expectEqual(@as(u64, 1), x86_bootstrap.oc_exception_vector_count(13));
+    try std.testing.expect(x86_bootstrap.oc_interrupt_history_len() >= 2);
+    try std.testing.expect(x86_bootstrap.oc_exception_history_len() >= 1);
+    try std.testing.expect(oc_command_history_len() > 0);
+    try std.testing.expect(oc_health_history_len() > 0);
+    try std.testing.expect(oc_mode_history_len() > 0);
+    try std.testing.expect(oc_boot_phase_history_len() > 0);
+    try std.testing.expect(oc_command_result_total_count() > 0);
+    try std.testing.expectEqual(@as(u32, 1), oc_scheduler_task_count());
+    try std.testing.expectEqual(@as(u32, 1), oc_allocator_allocation_count());
+    try std.testing.expectEqual(@as(u32, 1), oc_syscall_entry_count());
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u32, 3), oc_timer_quantum());
+
+    _ = oc_submit_command(abi.command_reset_counters, 0, 0);
+    oc_tick();
+
+    try std.testing.expectEqual(@as(u64, 1), status.ticks);
+    try std.testing.expectEqual(@as(u32, 0), status.panic_count);
+    try std.testing.expectEqual(@as(u16, 200), status.last_health_code);
+    try std.testing.expectEqual(@as(u16, abi.command_reset_counters), status.last_command_opcode);
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u64, 0), x86_bootstrap.oc_interrupt_count());
+    try std.testing.expectEqual(@as(u64, 0), x86_bootstrap.oc_exception_count());
+    try std.testing.expectEqual(@as(u64, 0), x86_bootstrap.oc_interrupt_vector_count(200));
+    try std.testing.expectEqual(@as(u64, 0), x86_bootstrap.oc_exception_vector_count(13));
+    try std.testing.expectEqual(@as(u32, 0), x86_bootstrap.oc_interrupt_history_len());
+    try std.testing.expectEqual(@as(u32, 0), x86_bootstrap.oc_exception_history_len());
+    try std.testing.expectEqual(@as(u32, 1), oc_command_history_len());
+    try std.testing.expectEqual(@as(u16, abi.command_reset_counters), oc_command_history_event(0).opcode);
+    try std.testing.expectEqual(@as(u32, 1), oc_health_history_len());
+    try std.testing.expectEqual(@as(u16, 200), oc_health_history_event(0).health_code);
+    try std.testing.expectEqual(@as(u32, 0), oc_mode_history_len());
+    try std.testing.expectEqual(@as(u32, 0), oc_boot_phase_history_len());
+    try std.testing.expectEqual(@as(u32, 1), oc_command_result_total_count());
+    try std.testing.expectEqual(@as(u32, 1), oc_command_result_count_ok());
+    try std.testing.expectEqual(@as(u32, 0), oc_command_result_count_invalid_argument());
+    try std.testing.expectEqual(@as(u32, 0), oc_command_result_count_not_supported());
+    try std.testing.expectEqual(@as(u32, 0), oc_command_result_count_other_error());
+    try std.testing.expectEqual(@as(u16, abi.command_reset_counters), oc_command_result_counters_ptr().last_opcode);
+    try std.testing.expectEqual(@as(u32, 0), oc_scheduler_task_count());
+    try std.testing.expect(!oc_scheduler_enabled());
+    try std.testing.expectEqual(@as(u32, 0), oc_allocator_allocation_count());
+    try std.testing.expectEqual(@as(u64, 0), oc_allocator_state_ptr().bytes_in_use);
+    try std.testing.expectEqual(@as(u32, 0), oc_syscall_entry_count());
+    try std.testing.expect(oc_syscall_enabled());
+    try std.testing.expectEqual(@as(u32, 0), oc_timer_entry_count());
+    try std.testing.expect(oc_timer_enabled());
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_quantum());
+    try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
 }
 
 test "baremetal scheduler command flow creates dispatches and completes tasks" {
@@ -3062,23 +3225,7 @@ test "baremetal task wait for command arms deadline and wakes on timer fire" {
 }
 
 test "baremetal wake queue pop command removes oldest entries in order" {
-    status.mode = abi.mode_running;
-    status.ticks = 0;
-    status.command_seq_ack = 0;
-    status.last_command_opcode = abi.command_nop;
-    status.last_command_result = abi.result_ok;
-    status.tick_batch_hint = 1;
-    command_mailbox = .{
-        .magic = abi.command_magic,
-        .api_version = abi.api_version,
-        .opcode = abi.command_nop,
-        .seq = 0,
-        .arg0 = 0,
-        .arg1 = 0,
-    };
-    oc_scheduler_reset();
-    oc_timer_reset();
-    oc_wake_queue_clear();
+    resetBaremetalRuntimeForTest();
 
     _ = oc_submit_command(abi.command_scheduler_disable, 0, 0);
     oc_tick();
@@ -3119,23 +3266,7 @@ test "baremetal wake queue pop command removes oldest entries in order" {
 }
 
 test "baremetal wake queue reason pop command removes only matching reasons" {
-    status.mode = abi.mode_running;
-    status.ticks = 0;
-    status.command_seq_ack = 0;
-    status.last_command_opcode = abi.command_nop;
-    status.last_command_result = abi.result_ok;
-    status.tick_batch_hint = 1;
-    command_mailbox = .{
-        .magic = abi.command_magic,
-        .api_version = abi.api_version,
-        .opcode = abi.command_nop,
-        .seq = 0,
-        .arg0 = 0,
-        .arg1 = 0,
-    };
-    oc_scheduler_reset();
-    oc_timer_reset();
-    oc_wake_queue_clear();
+    resetBaremetalRuntimeForTest();
 
     wakeQueuePush(1001, 11, abi.wake_reason_timer, 0, 1, 0);
     wakeQueuePush(1002, 12, abi.wake_reason_interrupt, 31, 2, 10);
@@ -3153,7 +3284,7 @@ test "baremetal wake queue reason pop command removes only matching reasons" {
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
     try std.testing.expectEqual(@as(u32, 3), oc_wake_queue_len());
     try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_reason_count(abi.wake_reason_interrupt));
-    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_event(1).reason);
+    try std.testing.expectEqual(@as(u32, abi.wake_reason_interrupt), oc_wake_queue_event(1).reason);
     try std.testing.expectEqual(@as(u32, 1003), oc_wake_queue_event(1).task_id);
 
     _ = oc_submit_command(abi.command_wake_queue_pop_reason, abi.wake_reason_interrupt, 8);
@@ -3174,23 +3305,7 @@ test "baremetal wake queue reason pop command removes only matching reasons" {
 }
 
 test "baremetal wake queue vector pop command removes only matching vectors" {
-    status.mode = abi.mode_running;
-    status.ticks = 0;
-    status.command_seq_ack = 0;
-    status.last_command_opcode = abi.command_nop;
-    status.last_command_result = abi.result_ok;
-    status.tick_batch_hint = 1;
-    command_mailbox = .{
-        .magic = abi.command_magic,
-        .api_version = abi.api_version,
-        .opcode = abi.command_nop,
-        .seq = 0,
-        .arg0 = 0,
-        .arg1 = 0,
-    };
-    oc_scheduler_reset();
-    oc_timer_reset();
-    oc_wake_queue_clear();
+    resetBaremetalRuntimeForTest();
 
     wakeQueuePush(2001, 21, abi.wake_reason_timer, 0, 1, 0);
     wakeQueuePush(2002, 22, abi.wake_reason_interrupt, 13, 2, 10);
@@ -3224,23 +3339,7 @@ test "baremetal wake queue vector pop command removes only matching vectors" {
 }
 
 test "baremetal wake queue before-tick pop command removes stale entries" {
-    status.mode = abi.mode_running;
-    status.ticks = 0;
-    status.command_seq_ack = 0;
-    status.last_command_opcode = abi.command_nop;
-    status.last_command_result = abi.result_ok;
-    status.tick_batch_hint = 1;
-    command_mailbox = .{
-        .magic = abi.command_magic,
-        .api_version = abi.api_version,
-        .opcode = abi.command_nop,
-        .seq = 0,
-        .arg0 = 0,
-        .arg1 = 0,
-    };
-    oc_scheduler_reset();
-    oc_timer_reset();
-    oc_wake_queue_clear();
+    resetBaremetalRuntimeForTest();
 
     wakeQueuePush(3001, 31, abi.wake_reason_timer, 0, 10, 0);
     wakeQueuePush(3002, 32, abi.wake_reason_interrupt, 4, 20, 5);
@@ -3272,23 +3371,7 @@ test "baremetal wake queue before-tick pop command removes stale entries" {
 }
 
 test "baremetal wake queue reason-vector pop command removes only exact pairs" {
-    status.mode = abi.mode_running;
-    status.ticks = 0;
-    status.command_seq_ack = 0;
-    status.last_command_opcode = abi.command_nop;
-    status.last_command_result = abi.result_ok;
-    status.tick_batch_hint = 1;
-    command_mailbox = .{
-        .magic = abi.command_magic,
-        .api_version = abi.api_version,
-        .opcode = abi.command_nop,
-        .seq = 0,
-        .arg0 = 0,
-        .arg1 = 0,
-    };
-    oc_scheduler_reset();
-    oc_timer_reset();
-    oc_wake_queue_clear();
+    resetBaremetalRuntimeForTest();
 
     wakeQueuePush(4001, 41, abi.wake_reason_interrupt, 13, 10, 1);
     wakeQueuePush(4002, 42, abi.wake_reason_interrupt, 13, 11, 2);
