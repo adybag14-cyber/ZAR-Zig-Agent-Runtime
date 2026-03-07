@@ -62,6 +62,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - optional QEMU command-health history probe validates repeated `command_set_health_code` mailbox execution against the freestanding PVH artifact, proving command history overflow (`35 -> len 32 / overflow 3`), health history overflow (`71 -> len 64 / overflow 7`), and retained oldest/newest command + health payload ordering
   - optional QEMU task lifecycle probe validates `task_wait -> scheduler_wake_task -> task_resume -> task_terminate` against the freestanding PVH artifact, including post-terminate rejection (`ACK=10`, `LAST_OPCODE=45`, `LAST_RESULT=-2`, manual wake queue `1 -> 2`, terminated state `4`)
   - optional QEMU mode/boot-phase history probe validates live command/runtime/panic reason ordering, then clears and saturates both 64-entry rings against the freestanding PVH artifact, proving retained oldest/newest mode + boot-phase payload ordering (`66 -> len 64 / overflow 2`)
+  - optional QEMU mode/boot-phase history clear probe validates the dedicated mailbox clear paths end to end, proving `command_clear_mode_history` and `command_clear_boot_phase_history` zero ring len/head/overflow/seq independently, preserve the non-cleared companion ring until its own clear, and restart both histories at `seq=1` on the next live transitions
   - optional QEMU allocator/syscall failure probe validates invalid-alignment, no-space, blocked-syscall, and disabled-syscall result semantics plus command-result counters against the freestanding PVH artifact
   - optional QEMU scheduler probe validates scheduler reset/timeslice/task-create/policy-enable flow end to end against the freestanding PVH artifact
   - optional QEMU scheduler priority/budget probe validates `command_scheduler_set_default_budget` and `command_task_set_priority` end to end, proving a zero-budget low-priority task inherits the configured default budget (`9`) and a later reprioritization flips dispatch from the high-priority task to the low-priority task (`ACK=9`, `LAST_OPCODE=56`, low task `run_count 0 -> 1`)
@@ -471,6 +472,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU descriptor dispatch probe
 - optional bare-metal QEMU vector counter reset probe
 - optional bare-metal QEMU vector history clear probe
+- optional bare-metal QEMU mode/boot-phase history clear probe
 - optional bare-metal QEMU scheduler probe
 - optional bare-metal QEMU scheduler saturation probe
 - optional bare-metal QEMU timer wake probe

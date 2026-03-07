@@ -2492,6 +2492,20 @@ test "baremetal mode history captures command and panic transitions and clear co
     _ = oc_submit_command(abi.command_clear_mode_history, 0, 0);
     oc_tick();
     try std.testing.expectEqual(@as(u32, 0), oc_mode_history_len());
+    try std.testing.expectEqual(@as(u32, 0), oc_mode_history_head_index());
+    try std.testing.expectEqual(@as(u32, 0), oc_mode_history_overflow_count());
+    try std.testing.expectEqual(@as(u32, 0), mode_history_seq);
+
+    status.mode = abi.mode_running;
+    status.panic_count = 0;
+    _ = oc_submit_command(abi.command_set_mode, abi.mode_booting, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(u32, 2), oc_mode_history_len());
+    try std.testing.expectEqual(@as(u32, 2), oc_mode_history_head_index());
+    const m_after_clear = oc_mode_history_event(0);
+    try std.testing.expectEqual(@as(u32, 1), m_after_clear.seq);
+    try std.testing.expectEqual(@as(u8, abi.mode_running), m_after_clear.previous_mode);
+    try std.testing.expectEqual(@as(u8, abi.mode_booting), m_after_clear.new_mode);
 }
 
 test "baremetal boot phase history captures command runtime and panic transitions" {
@@ -2545,6 +2559,22 @@ test "baremetal boot phase history captures command runtime and panic transition
     _ = oc_submit_command(abi.command_clear_boot_phase_history, 0, 0);
     oc_tick();
     try std.testing.expectEqual(@as(u32, 0), oc_boot_phase_history_len());
+    try std.testing.expectEqual(@as(u32, 0), oc_boot_phase_history_head_index());
+    try std.testing.expectEqual(@as(u32, 0), oc_boot_phase_history_overflow_count());
+    try std.testing.expectEqual(@as(u32, 0), boot_phase_history_seq);
+
+    status.mode = abi.mode_running;
+    status.panic_count = 0;
+    boot_diagnostics.phase = abi.boot_phase_runtime;
+    boot_diagnostics.phase_changes = 0;
+    _ = oc_submit_command(abi.command_set_boot_phase, abi.boot_phase_init, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(u32, 1), oc_boot_phase_history_len());
+    try std.testing.expectEqual(@as(u32, 1), oc_boot_phase_history_head_index());
+    const p_after_clear = oc_boot_phase_history_event(0);
+    try std.testing.expectEqual(@as(u32, 1), p_after_clear.seq);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_runtime), p_after_clear.previous_phase);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_init), p_after_clear.new_phase);
 }
 
 test "baremetal command result counters track categories and reset flow" {
