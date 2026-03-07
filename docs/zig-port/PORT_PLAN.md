@@ -704,6 +704,10 @@ Full-stack replacement execution reference:
     - new control opcodes: `command_task_wait`, `command_task_resume`, `command_timer_cancel_task`.
     - scheduler/timer telemetry exports extended: `oc_scheduler_waiting_count`, `oc_timer_fire_total_count`.
     - runtime now supports explicit task waiting/resume transitions with manual wake events and cancellation of all armed timers associated with a task.
+  - bare-metal QEMU timer cancel-task validation shipped:
+    - new script: `scripts/baremetal-qemu-timer-cancel-task-probe-check.ps1`.
+    - live PVH/QEMU+GDB sequence proves `command_timer_schedule`, `command_timer_schedule_periodic`, and `command_timer_cancel_task` over a single task, with the first cancel collapsing `TIMER_ENTRY_COUNT=0` while preserving `TIMER0_STATE=3`.
+    - second cancel returns `LAST_RESULT=-2`, matching the hosted parity test for task-targeted timer cancellation.
   - Bare-metal deadline-wait + wake-queue consumption depth expansion shipped:
     - new opcodes: `command_task_wait_for`, `command_wake_queue_pop`.
     - wake queue exports extended: `oc_wake_queue_tail_index`, `oc_wake_queue_pop`.
