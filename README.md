@@ -61,6 +61,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - optional QEMU vector history clear probe validates the dedicated mailbox clear paths end to end, proving `command_clear_interrupt_history` and `command_clear_exception_history` zero only their history rings/overflow counters while preserving aggregate interrupt/exception counts and the pre-clear payload shapes against the freestanding PVH artifact
   - optional QEMU command-health history probe validates repeated `command_set_health_code` mailbox execution against the freestanding PVH artifact, proving command history overflow (`35 -> len 32 / overflow 3`), health history overflow (`71 -> len 64 / overflow 7`), and retained oldest/newest command + health payload ordering
   - optional QEMU task lifecycle probe validates `task_wait -> scheduler_wake_task -> task_resume -> task_terminate` against the freestanding PVH artifact, including post-terminate rejection (`ACK=10`, `LAST_OPCODE=45`, `LAST_RESULT=-2`, manual wake queue `1 -> 2`, terminated state `4`)
+  - optional QEMU active-task terminate probe validates terminating the currently running high-priority task against the freestanding PVH artifact, proving immediate failover to the remaining ready task (`POST_TERMINATE_TASK_COUNT=1`, `POST_TERMINATE_RUNNING_SLOT=0`, `LOW_RUN=0 -> 1`), idempotent repeat terminate semantics (`REPEAT_TERMINATE_RESULT=0`), and final empty-run collapse (`ACK=10`, `LAST_OPCODE=28`, `LAST_RESULT=0`, `TASK_COUNT=0`, `RUNNING_SLOT=255`)
   - optional QEMU mode/boot-phase history probe validates live command/runtime/panic reason ordering, then clears and saturates both 64-entry rings against the freestanding PVH artifact, proving retained oldest/newest mode + boot-phase payload ordering (`66 -> len 64 / overflow 2`)
   - optional QEMU mode/boot-phase history clear probe validates the dedicated mailbox clear paths end to end, proving `command_clear_mode_history` and `command_clear_boot_phase_history` zero ring len/head/overflow/seq independently, preserve the non-cleared companion ring until its own clear, and restart both histories at `seq=1` on the next live transitions
   - optional QEMU allocator/syscall failure probe validates invalid-alignment, no-space, blocked-syscall, and disabled-syscall result semantics plus command-result counters against the freestanding PVH artifact
@@ -508,6 +509,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU command-result counters probe
 - optional bare-metal QEMU reset counters probe
 - optional bare-metal QEMU task lifecycle probe
+- optional bare-metal QEMU active-task terminate probe
 - optional bare-metal QEMU interrupt mask exception probe
 - optional bare-metal QEMU interrupt mask profile probe
 - runtime smoke gate
