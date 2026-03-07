@@ -76,6 +76,7 @@ Recommended sequence:
 - optional bare-metal QEMU periodic timer probe (periodic schedule + timer disable/enable pause-resume, capturing the first resumed periodic fire and queued wake telemetry against the freestanding PVH artifact)
 - optional bare-metal QEMU periodic interrupt probe (mixed periodic timer + interrupt wake ordering, proving the interrupt arrives before deadline while the periodic source keeps cadence and timer cancellation prevents a later timeout leak against the freestanding PVH artifact)
 - optional bare-metal QEMU interrupt timeout probe (`task_wait_interrupt_for` wakes on interrupt before deadline, clears the timeout arm, and does not later leak a second timer wake against the freestanding PVH artifact)
+- optional bare-metal QEMU interrupt filter probe (`task_wait_interrupt(any)` wakes on vector `200`, vector-scoped `task_wait_interrupt(13)` ignores non-matching `200`, then wakes on matching `13`, and invalid vector `65536` is rejected with `-22` against the freestanding PVH artifact)
 - optional bare-metal QEMU wake-queue selective probe (timer, interrupt, and manual wake generation plus `pop_reason`, `pop_vector`, `pop_reason_vector`, and `pop_before_tick` queue drains against the freestanding PVH artifact)
 - optional bare-metal QEMU wake-queue summary/age probe (exported `oc_wake_queue_summary_ptr` and `oc_wake_queue_age_buckets_ptr_quantum_2` snapshots before and after selective queue drains against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator syscall probe (alloc/free plus syscall register/invoke/block/disable/unregister against the freestanding PVH artifact)
@@ -108,6 +109,7 @@ Recommended sequence:
 - bare-metal optional QEMU periodic timer probe in validate stage
 - bare-metal optional QEMU periodic interrupt probe in validate stage
 - bare-metal optional QEMU interrupt timeout probe in validate stage
+- bare-metal optional QEMU interrupt filter probe in validate stage
 - bare-metal optional QEMU descriptor bootdiag probe in validate stage
 - bare-metal optional QEMU bootdiag/history-clear probe in validate stage
 - bare-metal optional QEMU descriptor table content probe in validate stage

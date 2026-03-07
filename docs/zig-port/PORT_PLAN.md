@@ -1064,6 +1064,10 @@ Full-stack replacement execution reference:
     - new script: `scripts/baremetal-qemu-task-lifecycle-probe-check.ps1` resolves scheduler state, task slots, wake-queue state, status, and command-mailbox symbols from the freestanding ELF and drives task lifecycle commands under QEMU+GDB.
     - the probe validates `command_task_wait`, `command_scheduler_wake_task`, `command_task_resume`, and `command_task_terminate` end to end over the PVH freestanding artifact, then proves a post-terminate manual wake attempt is rejected with `result_not_found`.
     - current proof path validates `ACK=10`, `LAST_OPCODE=45`, `LAST_RESULT=-2`, `TASK_ID=1`, first manual wake queue length `1`, second manual wake queue length `2`, both wait transitions at task state `6`, both wake transitions at task state `1`, and final terminate state `4` with task count returning to `0`.
+  - bare-metal QEMU interrupt-filter validation shipped:
+    - new script: `scripts/baremetal-qemu-interrupt-filter-probe-check.ps1` resolves scheduler state, task slots, wait arrays, wake queue, interrupt counters, status, and command-mailbox symbols from the freestanding ELF and drives `command_task_wait_interrupt` under QEMU+GDB.
+    - the probe validates interrupt-any wake, vector-scoped non-match filtering, matching-vector wake, and invalid-vector rejection end to end over the PVH freestanding artifact.
+    - current proof path validates `ACK=14`, `LAST_OPCODE=57`, `LAST_RESULT=-22`, `TASK_COUNT=2`, first wake on vector `200`, vector-specific waiter still armed after non-matching `200`, final wake on vector `13`, `INTERRUPT_COUNT=3`, and `LAST_INTERRUPT_VECTOR=13`.
   - bare-metal mailbox interrupt-control expansion shipped:
     - new command opcodes wired in runtime: `command_trigger_interrupt`, `command_reset_interrupt_counters`, `command_reinit_descriptor_tables`.
     - reset path now clears runtime interrupt counters via bootstrap export to keep command-driven diagnostics deterministic.
