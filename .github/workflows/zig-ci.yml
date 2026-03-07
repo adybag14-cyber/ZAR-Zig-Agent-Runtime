@@ -234,6 +234,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-periodic-timer-probe-check.ps1
 
+      - name: Bare-metal QEMU periodic timer clamp probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-timer-clamp-probe-check.ps1
+
       - name: Bare-metal QEMU periodic interrupt probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-periodic-interrupt-probe-check.ps1
