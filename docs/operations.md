@@ -75,6 +75,7 @@ Recommended sequence:
 - optional bare-metal QEMU wake-queue summary/age probe (exported `oc_wake_queue_summary_ptr` and `oc_wake_queue_age_buckets_ptr_quantum_2` snapshots before and after selective queue drains against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator syscall probe (alloc/free plus syscall register/invoke/block/disable/unregister against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator syscall failure probe (invalid-alignment, no-space, blocked-syscall, and disabled-syscall result semantics plus command-result counters against the freestanding PVH artifact)
+- optional bare-metal QEMU command-result counters probe (live mailbox result-category accounting plus `command_reset_command_result_counters` reset semantics against the freestanding PVH artifact)
 - optional bare-metal QEMU interrupt mask exception probe (masked external vector remains blocked while an exception vector still wakes the waiting task and records history telemetry against the freestanding PVH artifact)
 - optional bare-metal QEMU interrupt mask profile probe (external-all, custom unmask/remask, ignored-count reset, external-high, invalid profile rejection, and clear-all recovery against the freestanding PVH artifact)
 - parity evidence artifacts
@@ -110,6 +111,7 @@ Recommended sequence:
 - bare-metal optional QEMU wake-queue summary/age probe in validate stage
 - bare-metal optional QEMU allocator syscall probe in validate stage
 - bare-metal optional QEMU allocator syscall failure probe in validate stage
+- bare-metal optional QEMU command-result counters probe in validate stage
 - bare-metal optional QEMU interrupt mask exception probe in validate stage
 - bare-metal optional QEMU interrupt mask profile probe in validate stage
 - npm package dry-run validation in release validate stage
