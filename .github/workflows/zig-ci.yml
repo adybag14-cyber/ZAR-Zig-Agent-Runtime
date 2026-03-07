@@ -138,6 +138,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-descriptor-dispatch-probe-check.ps1
 
+      - name: Bare-metal QEMU vector counter reset probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-counter-reset-probe-check.ps1
+
       - name: Bare-metal QEMU vector history overflow probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-vector-history-overflow-probe-check.ps1

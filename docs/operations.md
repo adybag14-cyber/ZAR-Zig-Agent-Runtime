@@ -27,6 +27,7 @@ Recommended sequence:
 ./scripts/baremetal-qemu-descriptor-bootdiag-probe-check.ps1
 ./scripts/baremetal-qemu-descriptor-table-content-probe-check.ps1
 ./scripts/baremetal-qemu-descriptor-dispatch-probe-check.ps1
+./scripts/baremetal-qemu-vector-counter-reset-probe-check.ps1
 ./scripts/baremetal-qemu-vector-history-overflow-probe-check.ps1
 ./scripts/baremetal-qemu-scheduler-probe-check.ps1
 ./scripts/baremetal-qemu-scheduler-priority-budget-probe-check.ps1
@@ -69,6 +70,7 @@ Recommended sequence:
 - optional bare-metal QEMU bootdiag/history-clear probe (boot-diagnostics reset plus live `command_clear_command_history` and `command_clear_health_history` control semantics against the freestanding PVH artifact)
 - optional bare-metal QEMU descriptor table content probe (live `gdtr/idtr` limits+bases, code/data `gdt` entry fields, and `idt[0]/idt[255]` selector/type/stub wiring against the freestanding PVH artifact)
 - optional bare-metal QEMU descriptor dispatch probe (descriptor reinit/load plus post-load interrupt and exception dispatch coherence, including interrupt/exception history rings, against the freestanding PVH artifact)
+- optional bare-metal QEMU vector counter reset probe (`command_reset_vector_counters` after live interrupt+exception dispatch, proving vectors `10/200/14` and exception vectors `10/14` zero while aggregate counts stay at `4/3` against the freestanding PVH artifact)
 - optional bare-metal QEMU vector history overflow probe (interrupt/exception counter resets plus repeated dispatch saturation, proving history-ring overflow and per-vector telemetry against the freestanding PVH artifact)
 - optional bare-metal QEMU command-health history probe (repeated `command_set_health_code` mailbox execution, proving command-history overflow, health-history overflow, and retained oldest/newest payload ordering against the freestanding PVH artifact)
 - optional bare-metal QEMU mode/boot-phase history probe (command/runtime/panic reason ordering plus post-clear saturation of the 64-entry mode-history and boot-phase-history rings against the freestanding PVH artifact)
@@ -129,6 +131,7 @@ Recommended sequence:
 - bare-metal optional QEMU bootdiag/history-clear probe in validate stage
 - bare-metal optional QEMU descriptor table content probe in validate stage
 - bare-metal optional QEMU descriptor dispatch probe in validate stage
+- bare-metal optional QEMU vector counter reset probe in validate stage
 - bare-metal optional QEMU vector history overflow probe in validate stage
 - bare-metal optional QEMU command-health history probe in validate stage
 - bare-metal optional QEMU mode/boot-phase history probe in validate stage
