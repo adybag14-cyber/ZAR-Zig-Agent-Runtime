@@ -11,7 +11,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - Original OpenClaw beta baseline (`v2026.3.2-beta.1`): `94/94` covered
   - Union baseline: `135/135` covered (`MISSING_IN_ZIG=0`)
   - Gateway events: stable `19/19`, beta `19/19`, union `19/19` (`UNION_EVENTS_MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> main `203/203` + bare-metal host `66/66` passing
+- Latest local validation: `zig build test --summary all` -> main `203/203` + bare-metal host `67/67` passing
 - Latest published edge release tag: `v0.2.0-zig-edge.26`
 - Recent FS1 progress (2026-03-06):
   - runtime recovery posture is now surfaced on live diagnostics and maintenance RPCs
@@ -25,6 +25,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - appliance profile readiness is now enforced by live smoke validation (persisted state, control-plane auth, secure-boot gate, signer, current verification)
   - bare-metal timer wake behavior is now enforced by a live QEMU+GDB probe (`command_timer_reset`, `command_timer_set_quantum`, `command_task_create`, `command_task_wait_for`) against the freestanding PVH artifact
   - bare-metal allocator/syscall behavior is now enforced by a live QEMU+GDB probe (`command_allocator_*`, `command_syscall_*`) including blocked and disabled syscall paths
+  - bare-metal allocator/syscall reset recovery is now enforced by both the host suite and the live QEMU+GDB probe, proving dirty allocator/syscall state is cleared by `command_allocator_reset` and `command_syscall_reset` after real alloc/register/invoke activity instead of only at setup time
   - bare-metal interrupt-mask/exception behavior is now enforced by a live QEMU+GDB probe (masked external interrupt remains blocked while exception delivery still wakes a waiting task and records interrupt/exception histories)
   - bare-metal interrupt-mask profile control is now enforced by a live QEMU+GDB probe (`command_interrupt_mask_apply_profile`, `command_interrupt_mask_set`, `command_interrupt_mask_reset_ignored_counts`, `command_interrupt_mask_clear_all`) covering external-all, custom unmask/remask, external-high, invalid profile rejection, and clear-all recovery
   - bare-metal panic freeze and recovery behavior is now enforced by a live QEMU+GDB probe (`command_trigger_panic_flag`, `command_set_mode(mode_running)`, `command_set_boot_phase(runtime)`) proving panic freezes dispatch cleanly, mode recovery resumes the same task immediately, and boot diagnostics stay panicked until explicitly restored
@@ -99,7 +100,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - optional QEMU wake-queue overflow probe validates sustained manual wake pressure end to end, proving the 64-entry ring saturates cleanly with `head/tail=2`, `overflow=2`, and retained oldest/newest manual wake payloads at `seq 3` and `seq 66`
   - optional QEMU wake-queue clear probe validates wrapped-ring clear-and-reuse end to end, proving `command_wake_queue_clear` resets `count/head/tail/overflow` to `0`, clears pending wake telemetry, and restarts the next manual wake at `seq 1`
   - optional QEMU wake-queue batch-pop probe validates post-overflow recovery end to end, proving a `62`-entry batch drain leaves `seq 65/66`, a default pop leaves only `seq 66`, a final drain empties the queue, and the next manual wake reuses the ring at `seq 67`
-  - optional QEMU allocator/syscall probe validates alloc/free plus syscall register/invoke/block/disable/re-enable/clear-flags/unregister flow end to end against the freestanding PVH artifact
+  - optional QEMU allocator/syscall probe validates alloc/free plus syscall register/invoke/block/disable/re-enable/clear-flags/unregister flow end to end against the freestanding PVH artifact, then proves `command_allocator_reset` and `command_syscall_reset` collapse the dirty runtime state back to allocator/syscall steady baseline
   - optional QEMU command-result counters probe validates categorized mailbox result accounting live under QEMU+GDB, proving `ok`, `invalid`, `not_supported`, and `other_error` buckets increment correctly and `command_reset_command_result_counters` collapses the struct back to a single reset `ok`
   - optional QEMU reset-counters probe validates `command_reset_counters` end to end after dirtying interrupt, exception, scheduler, allocator, syscall, timer, wake-queue, mode, boot-phase, command-history, and health-history state, proving the runtime collapses back to the expected steady baseline under QEMU+GDB
   - optional QEMU interrupt-mask/exception probe validates masked external vectors stay blocked while exception vectors still flow through wait/wake and history telemetry against the freestanding PVH artifact

@@ -3178,6 +3178,80 @@ test "baremetal syscall abi v2 supports enable disable and entry flags" {
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
 }
 
+test "baremetal allocator and syscall reset commands clear dirty runtime state" {
+    status.mode = abi.mode_running;
+    status.ticks = 0;
+    status.command_seq_ack = 0;
+    status.last_command_opcode = abi.command_nop;
+    status.last_command_result = abi.result_ok;
+    status.tick_batch_hint = 1;
+    command_mailbox = .{
+        .magic = abi.command_magic,
+        .api_version = abi.api_version,
+        .opcode = abi.command_nop,
+        .seq = 0,
+        .arg0 = 0,
+        .arg1 = 0,
+    };
+    oc_allocator_reset();
+    oc_syscall_reset();
+    oc_command_result_counters_clear();
+    oc_scheduler_reset();
+
+    _ = oc_submit_command(abi.command_allocator_alloc, 8192, 4096);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    const alloc_state_dirty = oc_allocator_state_ptr().*;
+    try std.testing.expectEqual(@as(u32, 1), alloc_state_dirty.allocation_count);
+    try std.testing.expectEqual(@as(u32, 1), alloc_state_dirty.alloc_ops);
+    try std.testing.expectEqual(@as(u64, 8192), alloc_state_dirty.bytes_in_use);
+    try std.testing.expectEqual(@as(u64, 8192), alloc_state_dirty.peak_bytes_in_use);
+    try std.testing.expect(alloc_state_dirty.last_alloc_ptr != 0);
+
+    _ = oc_submit_command(abi.command_syscall_register, 12, 0xCAFE);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    _ = oc_submit_command(abi.command_syscall_invoke, 12, 0x55AA);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    const syscall_state_dirty = oc_syscall_state_ptr().*;
+    try std.testing.expectEqual(@as(u32, 1), syscall_state_dirty.entry_count);
+    try std.testing.expect(syscall_state_dirty.dispatch_count > 0);
+    try std.testing.expectEqual(@as(u32, 12), syscall_state_dirty.last_syscall_id);
+    try std.testing.expect(syscall_state_dirty.last_invoke_tick > 0);
+    try std.testing.expectEqual(@as(u8, abi.syscall_entry_state_registered), oc_syscall_entry(0).state);
+
+    _ = oc_submit_command(abi.command_allocator_reset, 0, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    const alloc_state_reset = oc_allocator_state_ptr().*;
+    try std.testing.expectEqual(alloc_state_reset.total_pages, alloc_state_reset.free_pages);
+    try std.testing.expectEqual(@as(u32, 0), alloc_state_reset.allocation_count);
+    try std.testing.expectEqual(@as(u32, 0), alloc_state_reset.alloc_ops);
+    try std.testing.expectEqual(@as(u32, 0), alloc_state_reset.free_ops);
+    try std.testing.expectEqual(@as(u64, 0), alloc_state_reset.bytes_in_use);
+    try std.testing.expectEqual(@as(u64, 0), alloc_state_reset.peak_bytes_in_use);
+    try std.testing.expectEqual(@as(u64, 0), alloc_state_reset.last_alloc_ptr);
+    try std.testing.expectEqual(@as(u64, 0), alloc_state_reset.last_free_ptr);
+    try std.testing.expectEqual(@as(u8, abi.allocation_state_unused), oc_allocator_allocation(0).state);
+
+    _ = oc_submit_command(abi.command_syscall_reset, 0, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    const syscall_state_reset = oc_syscall_state_ptr().*;
+    try std.testing.expect(oc_syscall_enabled());
+    try std.testing.expectEqual(@as(u32, 0), syscall_state_reset.entry_count);
+    try std.testing.expectEqual(@as(u32, 0), syscall_state_reset.last_syscall_id);
+    try std.testing.expectEqual(@as(u64, 0), syscall_state_reset.dispatch_count);
+    try std.testing.expectEqual(@as(u64, 0), syscall_state_reset.last_invoke_tick);
+    try std.testing.expectEqual(@as(i64, 0), syscall_state_reset.last_result);
+    try std.testing.expectEqual(@as(u8, abi.syscall_entry_state_unused), oc_syscall_entry(0).state);
+
+    _ = oc_submit_command(abi.command_syscall_invoke, 12, 0x55AA);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
+}
+
 test "baremetal timer periodic flow rearms and honors enable disable controls" {
     status.mode = abi.mode_running;
     status.ticks = 0;

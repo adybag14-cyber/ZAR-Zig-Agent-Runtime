@@ -209,6 +209,11 @@ set pagination off
 set confirm off
 set `$stage = 0
 set `$alloc_ptr = 0
+set `$allocOpsBeforeReset = 0
+set `$freeOpsBeforeReset = 0
+set `$peakBytesBeforeReset = 0
+set `$syscallDispatchCountBeforeReset = 0
+set `$syscallLastIdBeforeReset = 0
 file $artifactForGdb
 handle SIGQUIT nostop noprint pass
 target remote :$GdbPort
@@ -378,7 +383,32 @@ if `$stage == 13
 end
 if `$stage == 14
   if *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset) == 14
+    set `$allocOpsBeforeReset = *(unsigned int*)(0x$allocatorStateAddress+$allocatorAllocOpsOffset)
+    set `$freeOpsBeforeReset = *(unsigned int*)(0x$allocatorStateAddress+$allocatorFreeOpsOffset)
+    set `$peakBytesBeforeReset = *(unsigned long long*)(0x$allocatorStateAddress+$allocatorPeakBytesInUseOffset)
+    set `$syscallDispatchCountBeforeReset = *(unsigned long long*)(0x$syscallStateAddress+$syscallStateDispatchCountOffset)
+    set `$syscallLastIdBeforeReset = *(unsigned int*)(0x$syscallStateAddress+$syscallStateLastIdOffset)
+    set *(unsigned short*)(0x$commandMailboxAddress+$commandOpcodeOffset) = $allocatorResetOpcode
+    set *(unsigned int*)(0x$commandMailboxAddress+$commandSeqOffset) = 15
+    set *(unsigned long long*)(0x$commandMailboxAddress+$commandArg0Offset) = 0
+    set *(unsigned long long*)(0x$commandMailboxAddress+$commandArg1Offset) = 0
     set `$stage = 15
+  end
+  continue
+end
+if `$stage == 15
+  if *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset) == 15
+    set *(unsigned short*)(0x$commandMailboxAddress+$commandOpcodeOffset) = $syscallResetOpcode
+    set *(unsigned int*)(0x$commandMailboxAddress+$commandSeqOffset) = 16
+    set *(unsigned long long*)(0x$commandMailboxAddress+$commandArg0Offset) = 0
+    set *(unsigned long long*)(0x$commandMailboxAddress+$commandArg1Offset) = 0
+    set `$stage = 16
+  end
+  continue
+end
+if `$stage == 16
+  if *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset) == 16
+    set `$stage = 17
   end
   continue
 end
@@ -389,6 +419,11 @@ printf "LAST_RESULT=%d\n", *(short*)(0x$statusAddress+$statusLastCommandResultOf
 printf "TICKS=%llu\n", *(unsigned long long*)(0x$statusAddress+$statusTicksOffset)
 printf "MAILBOX_OPCODE=%u\n", *(unsigned short*)(0x$commandMailboxAddress+$commandOpcodeOffset)
 printf "MAILBOX_SEQ=%u\n", *(unsigned int*)(0x$commandMailboxAddress+$commandSeqOffset)
+printf "ALLOC_OPS_BEFORE_RESET=%u\n", `$allocOpsBeforeReset
+printf "FREE_OPS_BEFORE_RESET=%u\n", `$freeOpsBeforeReset
+printf "PEAK_BYTES_BEFORE_RESET=%llu\n", `$peakBytesBeforeReset
+printf "SYSCALL_DISPATCH_COUNT_BEFORE_RESET=%llu\n", `$syscallDispatchCountBeforeReset
+printf "SYSCALL_LAST_ID_BEFORE_RESET=%u\n", `$syscallLastIdBeforeReset
 printf "HEAP_BASE=%llu\n", *(unsigned long long*)(0x$allocatorStateAddress+$allocatorHeapBaseOffset)
 printf "PAGE_SIZE=%u\n", *(unsigned int*)(0x$allocatorStateAddress+$allocatorPageSizeOffset)
 printf "FREE_PAGES=%u\n", *(unsigned int*)(0x$allocatorStateAddress+$allocatorFreePagesOffset)
@@ -457,6 +492,11 @@ $reenabledInvokeCountSnapshot = $null
 $reenabledLastArgSnapshot = $null
 $reenabledEntryFlagsSnapshot = $null
 $reenabledLastResultSnapshot = $null
+$allocOpsBeforeReset = $null
+$freeOpsBeforeReset = $null
+$peakBytesBeforeReset = $null
+$syscallDispatchCountBeforeReset = $null
+$syscallLastIdBeforeReset = $null
 $heapBase = $null
 $pageSize = $null
 $freePages = $null
@@ -515,6 +555,11 @@ if (Test-Path $gdbStdout) {
     $reenabledLastArgSnapshot = Extract-IntValue -Text $out -Name "REENABLED_LAST_ARG_SNAPSHOT"
     $reenabledEntryFlagsSnapshot = Extract-IntValue -Text $out -Name "REENABLED_ENTRY_FLAGS_SNAPSHOT"
     $reenabledLastResultSnapshot = Extract-IntValue -Text $out -Name "REENABLED_LAST_RESULT_SNAPSHOT"
+    $allocOpsBeforeReset = Extract-IntValue -Text $out -Name "ALLOC_OPS_BEFORE_RESET"
+    $freeOpsBeforeReset = Extract-IntValue -Text $out -Name "FREE_OPS_BEFORE_RESET"
+    $peakBytesBeforeReset = Extract-IntValue -Text $out -Name "PEAK_BYTES_BEFORE_RESET"
+    $syscallDispatchCountBeforeReset = Extract-IntValue -Text $out -Name "SYSCALL_DISPATCH_COUNT_BEFORE_RESET"
+    $syscallLastIdBeforeReset = Extract-IntValue -Text $out -Name "SYSCALL_LAST_ID_BEFORE_RESET"
     $heapBase = Extract-IntValue -Text $out -Name "HEAP_BASE"
     $pageSize = Extract-IntValue -Text $out -Name "PAGE_SIZE"
     $freePages = Extract-IntValue -Text $out -Name "FREE_PAGES"
@@ -590,6 +635,11 @@ Write-Output "BAREMETAL_QEMU_ALLOCATOR_SYSCALL_PROBE_REENABLED_INVOKE_COUNT_SNAP
 Write-Output "BAREMETAL_QEMU_ALLOCATOR_SYSCALL_PROBE_REENABLED_LAST_ARG_SNAPSHOT=$reenabledLastArgSnapshot"
 Write-Output "BAREMETAL_QEMU_ALLOCATOR_SYSCALL_PROBE_REENABLED_ENTRY_FLAGS_SNAPSHOT=$reenabledEntryFlagsSnapshot"
 Write-Output "BAREMETAL_QEMU_ALLOCATOR_SYSCALL_PROBE_REENABLED_LAST_RESULT_SNAPSHOT=$reenabledLastResultSnapshot"
+Write-Output "BAREMETAL_QEMU_ALLOCATOR_SYSCALL_PROBE_ALLOC_OPS_BEFORE_RESET=$allocOpsBeforeReset"
+Write-Output "BAREMETAL_QEMU_ALLOCATOR_SYSCALL_PROBE_FREE_OPS_BEFORE_RESET=$freeOpsBeforeReset"
+Write-Output "BAREMETAL_QEMU_ALLOCATOR_SYSCALL_PROBE_PEAK_BYTES_BEFORE_RESET=$peakBytesBeforeReset"
+Write-Output "BAREMETAL_QEMU_ALLOCATOR_SYSCALL_PROBE_SYSCALL_DISPATCH_COUNT_BEFORE_RESET=$syscallDispatchCountBeforeReset"
+Write-Output "BAREMETAL_QEMU_ALLOCATOR_SYSCALL_PROBE_SYSCALL_LAST_ID_BEFORE_RESET=$syscallLastIdBeforeReset"
 Write-Output "BAREMETAL_QEMU_ALLOCATOR_SYSCALL_PROBE_HEAP_BASE=$heapBase"
 Write-Output "BAREMETAL_QEMU_ALLOCATOR_SYSCALL_PROBE_PAGE_SIZE=$pageSize"
 Write-Output "BAREMETAL_QEMU_ALLOCATOR_SYSCALL_PROBE_FREE_PAGES=$freePages"
@@ -626,12 +676,13 @@ Write-Output "BAREMETAL_QEMU_ALLOCATOR_SYSCALL_PROBE_QEMU_STDERR=$qemuStderr"
 Write-Output "BAREMETAL_QEMU_ALLOCATOR_SYSCALL_PROBE_TIMED_OUT=$timedOut"
 
 $pass = (
-    $hitStart -and $hitAfterAllocatorSyscall -and (-not $timedOut) -and $ack -eq 14 -and $lastOpcode -eq $syscallUnregisterOpcode -and $lastResult -eq 0 -and $ticks -ge 12 -and $mailboxOpcode -eq $syscallUnregisterOpcode -and $mailboxSeq -eq 14 -and
+    $hitStart -and $hitAfterAllocatorSyscall -and (-not $timedOut) -and $ack -eq 16 -and $lastOpcode -eq $syscallResetOpcode -and $lastResult -eq 0 -and $ticks -ge 14 -and $mailboxOpcode -eq $syscallResetOpcode -and $mailboxSeq -eq 16 -and
     $allocPtrSnapshot -ne 0 -and $allocFreePagesAfterAlloc -eq 254 -and $allocRecordPageLenSnapshot -eq 2 -and $allocRecordStateSnapshot -eq 1 -and $allocBitmap0AfterAlloc -eq 1 -and $allocBitmap1AfterAlloc -eq 1 -and
     $invokeLastResultSnapshot -eq $expectedInvokeResult -and $invokeDispatchCountSnapshot -eq 1 -and $invokeCountSnapshot -eq 1 -and $invokeLastArgSnapshot -eq $invokeArg -and $blockedCommandResult -eq -17 -and $blockedInvokeCountSnapshot -eq 1 -and $disabledCommandResult -eq -38 -and
     $reenabledCommandResult -eq 0 -and $reenabledDispatchCountSnapshot -eq 2 -and $reenabledInvokeCountSnapshot -eq 2 -and $reenabledLastArgSnapshot -eq $invokeArg -and $reenabledEntryFlagsSnapshot -eq 0 -and $reenabledLastResultSnapshot -eq $expectedInvokeResult -and
-    $heapBase -eq $allocPtrSnapshot -and $pageSize -eq $allocAlignment -and $freePages -eq 256 -and $allocationCount -eq 0 -and $allocOps -eq 1 -and $freeOps -eq 1 -and $bytesInUse -eq 0 -and $peakBytesInUse -eq $allocSize -and $lastAllocPtr -eq $allocPtrSnapshot -and $lastAllocSize -eq $allocSize -and $lastFreePtr -eq $allocPtrSnapshot -and $lastFreeSize -eq $allocSize -and $bitmap0 -eq 0 -and $bitmap1 -eq 0 -and $allocRecord0State -eq 0 -and $allocRecord0Ptr -eq 0 -and $allocRecord0PageLen -eq 0 -and
-    $syscallEnabled -eq 1 -and $syscallEntryCount -eq 0 -and $syscallLastId -eq $syscallId -and $syscallDispatchCount -eq 2 -and $syscallLastInvokeTick -ge 1 -and $syscallLastResult -eq $expectedInvokeResult -and $syscallEntry0State -eq 0 -and $syscallEntry0Flags -eq 0 -and $syscallEntry0Token -eq 0 -and $syscallEntry0InvokeCount -eq 0 -and $syscallEntry0LastArg -eq 0 -and $syscallEntry0LastResult -eq 0
+    $allocOpsBeforeReset -eq 1 -and $freeOpsBeforeReset -eq 1 -and $peakBytesBeforeReset -eq $allocSize -and $syscallDispatchCountBeforeReset -eq 2 -and $syscallLastIdBeforeReset -eq $syscallId -and
+    $heapBase -eq $allocPtrSnapshot -and $pageSize -eq $allocAlignment -and $freePages -eq 256 -and $allocationCount -eq 0 -and $allocOps -eq 0 -and $freeOps -eq 0 -and $bytesInUse -eq 0 -and $peakBytesInUse -eq 0 -and $lastAllocPtr -eq 0 -and $lastAllocSize -eq 0 -and $lastFreePtr -eq 0 -and $lastFreeSize -eq 0 -and $bitmap0 -eq 0 -and $bitmap1 -eq 0 -and $allocRecord0State -eq 0 -and $allocRecord0Ptr -eq 0 -and $allocRecord0PageLen -eq 0 -and
+    $syscallEnabled -eq 1 -and $syscallEntryCount -eq 0 -and $syscallLastId -eq 0 -and $syscallDispatchCount -eq 0 -and $syscallLastInvokeTick -eq 0 -and $syscallLastResult -eq 0 -and $syscallEntry0State -eq 0 -and $syscallEntry0Flags -eq 0 -and $syscallEntry0Token -eq 0 -and $syscallEntry0InvokeCount -eq 0 -and $syscallEntry0LastArg -eq 0 -and $syscallEntry0LastResult -eq 0
 )
 if ($pass) { Write-Output "BAREMETAL_QEMU_ALLOCATOR_SYSCALL_PROBE=pass"; exit 0 }
 Write-Output "BAREMETAL_QEMU_ALLOCATOR_SYSCALL_PROBE=fail"
