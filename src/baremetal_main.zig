@@ -3302,6 +3302,87 @@ test "baremetal timer cancel task command cancels armed task timers" {
     try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
 }
 
+test "baremetal timer pressure reuses canceled slot with fresh timer id" {
+    status.mode = abi.mode_running;
+    status.ticks = 0;
+    status.command_seq_ack = 0;
+    status.last_command_opcode = abi.command_nop;
+    status.last_command_result = abi.result_ok;
+    status.tick_batch_hint = 1;
+    command_mailbox = .{
+        .magic = abi.command_magic,
+        .api_version = abi.api_version,
+        .opcode = abi.command_nop,
+        .seq = 0,
+        .arg0 = 0,
+        .arg1 = 0,
+    };
+    oc_scheduler_reset();
+    oc_timer_reset();
+    oc_wake_queue_clear();
+
+    _ = oc_submit_command(abi.command_scheduler_disable, 0, 0);
+    oc_tick();
+
+    const task_capacity_u32: u32 = @as(u32, @intCast(scheduler_task_capacity));
+    var idx: usize = 0;
+    while (idx < scheduler_task_capacity) : (idx += 1) {
+        _ = oc_submit_command(abi.command_task_create, 4 + @as(u64, idx), @as(u64, idx + 1));
+        oc_tick();
+        try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+
+        const task_id = oc_scheduler_task(@as(u32, @intCast(idx))).task_id;
+        try std.testing.expect(task_id != 0);
+
+        _ = oc_submit_command(abi.command_timer_schedule, task_id, 40 + @as(u64, idx));
+        oc_tick();
+        try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    }
+
+    try std.testing.expectEqual(task_capacity_u32, oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u32, scheduler_task_capacity + 1), oc_timer_state_ptr().next_timer_id);
+    try std.testing.expectEqual(@as(u16, 0), oc_timer_state_ptr().pending_wake_count);
+    try std.testing.expectEqual(@as(u64, 0), oc_timer_state_ptr().dispatch_count);
+    try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
+
+    idx = 0;
+    while (idx < scheduler_task_capacity) : (idx += 1) {
+        const task = oc_scheduler_task(@as(u32, @intCast(idx)));
+        const entry = oc_timer_entry(@as(u32, @intCast(idx)));
+        try std.testing.expectEqual(task.task_id, entry.task_id);
+        try std.testing.expectEqual(@as(u32, @intCast(idx + 1)), entry.timer_id);
+        try std.testing.expectEqual(@as(u8, abi.timer_entry_state_armed), entry.state);
+        try std.testing.expect(entry.next_fire_tick > status.ticks);
+    }
+
+    const reuse_slot_index: u32 = 5;
+    const reuse_task_id = oc_scheduler_task(reuse_slot_index).task_id;
+    const reuse_old_entry = oc_timer_entry(reuse_slot_index);
+    try std.testing.expect(reuse_task_id != 0);
+
+    _ = oc_submit_command(abi.command_timer_cancel_task, reuse_task_id, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(task_capacity_u32 - 1, oc_timer_entry_count());
+
+    const canceled_entry = oc_timer_entry(reuse_slot_index);
+    try std.testing.expectEqual(reuse_task_id, canceled_entry.task_id);
+    try std.testing.expectEqual(reuse_old_entry.timer_id, canceled_entry.timer_id);
+    try std.testing.expectEqual(@as(u8, abi.timer_entry_state_canceled), canceled_entry.state);
+
+    _ = oc_submit_command(abi.command_timer_schedule, reuse_task_id, 200);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(task_capacity_u32, oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u32, scheduler_task_capacity + 2), oc_timer_state_ptr().next_timer_id);
+
+    const reused_entry = oc_timer_entry(reuse_slot_index);
+    try std.testing.expectEqual(reuse_task_id, reused_entry.task_id);
+    try std.testing.expectEqual(@as(u32, scheduler_task_capacity + 1), reused_entry.timer_id);
+    try std.testing.expectEqual(@as(u8, abi.timer_entry_state_armed), reused_entry.state);
+    try std.testing.expect(reused_entry.next_fire_tick > status.ticks);
+}
+
 test "baremetal task wait for command arms deadline and wakes on timer fire" {
     status.mode = abi.mode_running;
     status.ticks = 0;
