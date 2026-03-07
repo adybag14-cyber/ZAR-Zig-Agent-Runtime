@@ -4537,6 +4537,97 @@ test "baremetal panic flag freezes scheduler until mode recovery under active lo
     try std.testing.expectEqual(@as(u32, 3), task.budget_remaining);
 }
 
+test "baremetal panic preserves interrupt and timer wakes until recovery" {
+    resetBaremetalRuntimeForTest();
+    x86_bootstrap.oc_reset_interrupt_counters();
+
+    _ = oc_submit_command(abi.command_scheduler_disable, 0, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_task_create, 6, 0);
+    oc_tick();
+    const interrupt_task_id = oc_scheduler_task(0).task_id;
+    try std.testing.expect(interrupt_task_id != 0);
+
+    _ = oc_submit_command(abi.command_task_create, 7, 1);
+    oc_tick();
+    const timer_task_id = oc_scheduler_task(1).task_id;
+    try std.testing.expect(timer_task_id != 0);
+
+    _ = oc_submit_command(abi.command_task_wait_interrupt, interrupt_task_id, abi.wait_interrupt_any_vector);
+    oc_tick();
+    _ = oc_submit_command(abi.command_task_wait_for, timer_task_id, 5);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 2), oc_scheduler_waiting_count());
+    try std.testing.expectEqual(@as(u32, 0), oc_scheduler_task_count());
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_entry_count());
+
+    _ = oc_submit_command(abi.command_scheduler_enable, 0, 0);
+    oc_tick();
+    try std.testing.expect(oc_scheduler_enabled());
+    try std.testing.expectEqual(@as(u64, 0), oc_scheduler_state_ptr().dispatch_count);
+    try std.testing.expectEqual(@as(u8, scheduler_no_slot), oc_scheduler_state_ptr().running_slot);
+
+    _ = oc_submit_command(abi.command_trigger_panic_flag, 0, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u8, abi.mode_panicked), status.mode);
+    try std.testing.expectEqual(@as(u32, 1), status.panic_count);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_panicked), boot_diagnostics.phase);
+    try std.testing.expectEqual(@as(u64, 0), oc_scheduler_state_ptr().dispatch_count);
+    try std.testing.expectEqual(@as(u8, scheduler_no_slot), oc_scheduler_state_ptr().running_slot);
+
+    _ = oc_submit_command(abi.command_trigger_interrupt, 200, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+    const interrupt_evt = oc_wake_queue_event(0);
+    try std.testing.expectEqual(interrupt_task_id, interrupt_evt.task_id);
+    try std.testing.expectEqual(@as(u8, abi.wake_reason_interrupt), interrupt_evt.reason);
+    try std.testing.expectEqual(@as(u8, 200), interrupt_evt.vector);
+    try std.testing.expectEqual(@as(u8, abi.task_state_ready), oc_scheduler_task(0).state);
+    try std.testing.expectEqual(@as(u8, abi.task_state_waiting), oc_scheduler_task(1).state);
+    try std.testing.expectEqual(@as(u32, 1), oc_scheduler_task_count());
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u64, 0), oc_scheduler_state_ptr().dispatch_count);
+
+    var spins: u32 = 0;
+    while (oc_wake_queue_len() < 2 and spins < 8) : (spins += 1) {
+        oc_tick();
+    }
+    try std.testing.expect(spins < 8);
+    try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_len());
+    const timer_evt = oc_wake_queue_event(1);
+    try std.testing.expectEqual(timer_task_id, timer_evt.task_id);
+    try std.testing.expectEqual(@as(u8, abi.wake_reason_timer), timer_evt.reason);
+    try std.testing.expectEqual(@as(u8, abi.task_state_ready), oc_scheduler_task(1).state);
+    try std.testing.expectEqual(@as(u32, 2), oc_scheduler_task_count());
+    try std.testing.expectEqual(@as(u32, 0), oc_timer_entry_count());
+    try std.testing.expect(oc_timer_state_ptr().dispatch_count >= 1);
+    try std.testing.expectEqual(@as(u64, 0), oc_scheduler_state_ptr().dispatch_count);
+
+    _ = oc_submit_command(abi.command_set_mode, abi.mode_running, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u8, abi.mode_running), status.mode);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_panicked), boot_diagnostics.phase);
+    try std.testing.expectEqual(@as(u64, 1), oc_scheduler_state_ptr().dispatch_count);
+    try std.testing.expectEqual(@as(u8, 0), oc_scheduler_state_ptr().running_slot);
+    try std.testing.expectEqual(@as(u32, 1), oc_scheduler_task(0).run_count);
+    try std.testing.expectEqual(@as(u32, 5), oc_scheduler_task(0).budget_remaining);
+    try std.testing.expectEqual(@as(u32, 0), oc_scheduler_task(1).run_count);
+    try std.testing.expectEqual(@as(u32, 7), oc_scheduler_task(1).budget_remaining);
+
+    _ = oc_submit_command(abi.command_set_boot_phase, abi.boot_phase_runtime, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_runtime), boot_diagnostics.phase);
+    try std.testing.expectEqual(@as(u64, 2), oc_scheduler_state_ptr().dispatch_count);
+    try std.testing.expectEqual(@as(u8, 1), oc_scheduler_state_ptr().running_slot);
+    try std.testing.expectEqual(@as(u32, 1), oc_scheduler_task(0).run_count);
+    try std.testing.expectEqual(@as(u32, 1), oc_scheduler_task(1).run_count);
+    try std.testing.expectEqual(@as(u32, 6), oc_scheduler_task(1).budget_remaining);
+}
+
 test "baremetal task wait interrupt command honors vector filters and any mode" {
     status.mode = abi.mode_running;
     status.ticks = 0;
