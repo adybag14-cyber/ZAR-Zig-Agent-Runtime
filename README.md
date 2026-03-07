@@ -29,6 +29,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - bare-metal interrupt-mask profile control is now enforced by a live QEMU+GDB probe (`command_interrupt_mask_apply_profile`, `command_interrupt_mask_set`, `command_interrupt_mask_reset_ignored_counts`, `command_interrupt_mask_clear_all`) covering external-all, custom unmask/remask, external-high, invalid profile rejection, and clear-all recovery
   - bare-metal periodic timer pause/resume behavior is now enforced by a live QEMU+GDB probe (`command_timer_schedule_periodic`, `command_timer_disable`, `command_timer_enable`) that snapshots the first resumed periodic fire against the freestanding PVH artifact
   - bare-metal wake-queue summary/age telemetry is now enforced by a live QEMU+GDB probe (`oc_wake_queue_summary_ptr`, `oc_wake_queue_age_buckets_ptr_quantum_2`) before and after selective queue drains over mixed timer/interrupt/manual wake queues
+  - bare-metal wake-queue overflow retention is now enforced by a live QEMU+GDB probe that drives `66` manual wakes through one waiting task and proves the 64-entry ring retains the newest window (`seq 3 -> 66`) with `overflow=2`
   - bare-metal descriptor-table contents are now enforced by a live QEMU+GDB probe (`gdtr`, `idtr`, `gdt`, `idt`, `oc_interrupt_stub`) across descriptor reinit/load, including segment entry fields and interrupt-stub wiring
   - bare-metal descriptor reinit/load plus post-load dispatch coherence is now enforced by a live QEMU+GDB probe (`command_trigger_interrupt`, `command_trigger_exception`, interrupt/exception history rings) in the same run as descriptor reinit/load
   - bare-metal vector-counter and history-overflow behavior is now enforced by a live QEMU+GDB probe covering interrupt saturation (`35 -> len 32 / overflow 3`) and exception saturation (`19 -> len 16 / overflow 3`) with per-vector counter validation
@@ -75,6 +76,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - optional QEMU wake-queue FIFO probe validates `command_wake_queue_pop` end to end, proving the oldest queued manual wake is removed first, the second queued wake becomes the new logical head (`seq=2`, `tick=7`), and a final pop on the empty queue returns `result_not_found`
   - optional QEMU wake-queue selective probe validates timer, interrupt, and manual wake generation plus `pop_reason`, `pop_vector`, `pop_reason_vector`, and `pop_before_tick` queue drains end to end against the freestanding PVH artifact
   - optional QEMU wake-queue summary/age probe validates exported summary and age-bucket telemetry snapshots before and after selective queue drains against the freestanding PVH artifact
+  - optional QEMU wake-queue overflow probe validates sustained manual wake pressure end to end, proving the 64-entry ring saturates cleanly with `head/tail=2`, `overflow=2`, and retained oldest/newest manual wake payloads at `seq 3` and `seq 66`
   - optional QEMU allocator/syscall probe validates alloc/free plus syscall register/invoke/block/disable/unregister flow end to end against the freestanding PVH artifact
   - optional QEMU command-result counters probe validates categorized mailbox result accounting live under QEMU+GDB, proving `ok`, `invalid`, `not_supported`, and `other_error` buckets increment correctly and `command_reset_command_result_counters` collapses the struct back to a single reset `ok`
   - optional QEMU reset-counters probe validates `command_reset_counters` end to end after dirtying interrupt, exception, scheduler, allocator, syscall, timer, wake-queue, mode, boot-phase, command-history, and health-history state, proving the runtime collapses back to the expected steady baseline under QEMU+GDB
@@ -471,6 +473,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU manual wait interrupt probe
 - optional bare-metal QEMU wake-queue selective probe
 - optional bare-metal QEMU wake-queue summary/age probe
+- optional bare-metal QEMU wake-queue overflow probe
 - optional bare-metal QEMU allocator syscall probe
 - optional bare-metal QEMU allocator syscall failure probe
 - optional bare-metal QEMU command-result counters probe
@@ -519,6 +522,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU manual wait interrupt validation
 - optional bare-metal QEMU wake-queue selective validation
 - optional bare-metal QEMU wake-queue summary/age validation
+- optional bare-metal QEMU wake-queue overflow validation
 - optional bare-metal QEMU allocator syscall validation
 - optional bare-metal QEMU allocator syscall failure validation
 - optional bare-metal QEMU command-result counters validation

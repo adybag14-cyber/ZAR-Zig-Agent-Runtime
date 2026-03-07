@@ -93,6 +93,7 @@ Recommended sequence:
 - optional bare-metal QEMU wake-queue selective probe (timer, interrupt, and manual wake generation plus `pop_reason`, `pop_vector`, `pop_reason_vector`, and `pop_before_tick` queue drains against the freestanding PVH artifact)
 - optional bare-metal QEMU wake-queue FIFO probe (`command_wake_queue_pop` removes the logical oldest wake first, preserves the second queued manual wake as the new head, and returns `result_not_found` once the queue is empty)
 - optional bare-metal QEMU wake-queue summary/age probe (exported `oc_wake_queue_summary_ptr` and `oc_wake_queue_age_buckets_ptr_quantum_2` snapshots before and after selective queue drains against the freestanding PVH artifact)
+- optional bare-metal QEMU wake-queue overflow probe (sustained manual wake pressure over one waiting task, proving the 64-entry ring retains the newest window with `overflow=2` against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator syscall probe (alloc/free plus syscall register/invoke/block/disable/unregister against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator syscall failure probe (invalid-alignment, no-space, blocked-syscall, and disabled-syscall result semantics plus command-result counters against the freestanding PVH artifact)
 - optional bare-metal QEMU command-result counters probe (live mailbox result-category accounting plus `command_reset_command_result_counters` reset semantics against the freestanding PVH artifact)
@@ -145,6 +146,7 @@ Recommended sequence:
 - bare-metal optional QEMU wake-queue selective probe in validate stage
 - bare-metal optional QEMU wake-queue FIFO probe in validate stage
 - bare-metal optional QEMU wake-queue summary/age probe in validate stage
+- bare-metal optional QEMU wake-queue overflow probe in validate stage
 - bare-metal optional QEMU allocator syscall probe in validate stage
 - bare-metal optional QEMU allocator syscall failure probe in validate stage
 - bare-metal optional QEMU command-result counters probe in validate stage
