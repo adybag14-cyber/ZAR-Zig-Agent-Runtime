@@ -4193,6 +4193,64 @@ test "baremetal scheduler live timeslice updates change subsequent budget consum
     try std.testing.expect(oc_scheduler_state_ptr().dispatch_count >= 4);
 }
 
+test "baremetal scheduler disable and re-enable gate dispatch under active load" {
+    status.mode = abi.mode_running;
+    status.ticks = 0;
+    status.command_seq_ack = 0;
+    status.last_command_opcode = abi.command_nop;
+    status.last_command_result = abi.result_ok;
+    status.tick_batch_hint = 1;
+    command_mailbox = .{
+        .magic = abi.command_magic,
+        .api_version = abi.api_version,
+        .opcode = abi.command_nop,
+        .seq = 0,
+        .arg0 = 0,
+        .arg1 = 0,
+    };
+    oc_scheduler_reset();
+    oc_timer_reset();
+    oc_wake_queue_clear();
+
+    _ = oc_submit_command(abi.command_scheduler_enable, 0, 0);
+    oc_tick();
+    try std.testing.expect(oc_scheduler_enabled());
+
+    _ = oc_submit_command(abi.command_task_create, 5, 2);
+    oc_tick();
+    var task = oc_scheduler_task(0);
+    try std.testing.expect(task.task_id != 0);
+    try std.testing.expectEqual(@as(u32, 1), task.run_count);
+    try std.testing.expectEqual(@as(u32, 4), task.budget_remaining);
+    const dispatch_before_disable = oc_scheduler_state_ptr().dispatch_count;
+
+    _ = oc_submit_command(abi.command_scheduler_disable, 0, 0);
+    oc_tick();
+    try std.testing.expect(!oc_scheduler_enabled());
+    try std.testing.expectEqual(@as(u8, scheduler_no_slot), oc_scheduler_state_ptr().running_slot);
+    task = oc_scheduler_task(0);
+    try std.testing.expectEqual(@as(u32, 1), task.run_count);
+    try std.testing.expectEqual(@as(u32, 4), task.budget_remaining);
+    try std.testing.expectEqual(dispatch_before_disable, oc_scheduler_state_ptr().dispatch_count);
+
+    oc_tick();
+    try std.testing.expect(!oc_scheduler_enabled());
+    try std.testing.expectEqual(@as(u8, scheduler_no_slot), oc_scheduler_state_ptr().running_slot);
+    task = oc_scheduler_task(0);
+    try std.testing.expectEqual(@as(u32, 1), task.run_count);
+    try std.testing.expectEqual(@as(u32, 4), task.budget_remaining);
+    try std.testing.expectEqual(dispatch_before_disable, oc_scheduler_state_ptr().dispatch_count);
+
+    _ = oc_submit_command(abi.command_scheduler_enable, 0, 0);
+    oc_tick();
+    try std.testing.expect(oc_scheduler_enabled());
+    try std.testing.expectEqual(dispatch_before_disable +% 1, oc_scheduler_state_ptr().dispatch_count);
+    task = oc_scheduler_task(0);
+    try std.testing.expectEqual(@as(u32, 2), task.run_count);
+    try std.testing.expectEqual(@as(u32, 3), task.budget_remaining);
+    try std.testing.expectEqual(@as(u8, abi.task_state_ready), task.state);
+}
+
 test "baremetal task wait interrupt command honors vector filters and any mode" {
     status.mode = abi.mode_running;
     status.ticks = 0;
