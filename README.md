@@ -7,11 +7,11 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
 - RPC method surface in Zig: `170`
 - Latest parity gate (tri-baseline):
   - Go baseline (`v2.14.0-go`): `134/134` covered
-  - Original OpenClaw baseline (`v2026.3.2`): `94/94` covered
-  - Original OpenClaw beta baseline (`v2026.3.2-beta.1`): `94/94` covered
-  - Union baseline: `135/135` covered (`MISSING_IN_ZIG=0`)
+  - Original OpenClaw baseline (`v2026.3.7`): `95/95` covered
+  - Original OpenClaw beta baseline (`v2026.3.7-beta.1`): `95/95` covered
+  - Union baseline: `136/136` covered (`MISSING_IN_ZIG=0`)
   - Gateway events: stable `19/19`, beta `19/19`, union `19/19` (`UNION_EVENTS_MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> main `203/203` + bare-metal host `76/76` passing
+- Latest local validation: `zig build test --summary all` -> main `203/203` + bare-metal host `77/77` passing
 - Latest published edge release tag: `v0.2.0-zig-edge.26`
 - Recent FS1 progress (2026-03-06):
   - runtime recovery posture is now surfaced on live diagnostics and maintenance RPCs
@@ -115,6 +115,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - optional QEMU wake-queue vector-pop probe validates the dedicated `command_wake_queue_pop_vector` lane end to end, proving a four-entry mixed queue (`manual`, `interrupt@13`, `interrupt@13`, `interrupt@31`) removes only the matching vector-`13` wakes in FIFO order and returns `result_not_found` for vector `255`
   - optional QEMU wake-queue reason-vector-pop probe validates the dedicated `command_wake_queue_pop_reason_vector` lane end to end, proving a four-entry mixed queue (`manual`, `interrupt@13`, `interrupt@13`, `interrupt@19`) removes only the exact `interrupt@13` pairs in FIFO order and rejects `reason+vector=0` with `-22`
   - optional QEMU allocator/syscall probe validates alloc/free plus syscall register/invoke/block/disable/re-enable/clear-flags/unregister flow end to end against the freestanding PVH artifact, then proves `command_allocator_reset` and `command_syscall_reset` collapse the dirty runtime state back to allocator/syscall steady baseline
+  - optional QEMU allocator/syscall reset probe validates the dedicated dirty-state recovery lane without saturation noise, proving live allocator alloc plus syscall register/invoke state is visible before reset, `command_allocator_reset` and `command_syscall_reset` independently collapse both subsystems back to steady baseline, and a final missing-entry invoke returns `result_not_found`
   - optional QEMU syscall saturation probe validates the dedicated syscall-table capacity and reuse lane without allocator noise, proving 64/64 registration, overflow rejection, reclaimed-slot reuse, and fresh invoke telemetry against the freestanding PVH artifact
   - optional QEMU syscall saturation reset probe validates the dedicated reset lane without allocator noise, proving a fully saturated syscall table plus dirty dispatch telemetry collapse back to reset steady state and that the next fresh syscall register/invoke path restarts cleanly from slot `0`
   - optional QEMU allocator saturation reset probe validates the dedicated allocator-table reset lane without syscall noise, proving all 64 allocator records fill cleanly, the next allocation returns `no_space`, `command_allocator_reset` collapses counters/bitmap/records to steady state, and a fresh 2-page allocation restarts cleanly from slot `0`
@@ -535,6 +536,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU wake-queue vector-pop probe
 - optional bare-metal QEMU wake-queue reason-vector-pop probe
 - optional bare-metal QEMU allocator syscall probe
+- optional bare-metal QEMU allocator syscall reset probe
 - optional bare-metal QEMU syscall saturation probe
 - optional bare-metal QEMU syscall saturation reset probe
 - optional bare-metal QEMU allocator saturation reset probe

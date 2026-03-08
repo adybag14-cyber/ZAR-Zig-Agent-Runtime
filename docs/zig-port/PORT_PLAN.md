@@ -1318,6 +1318,12 @@ Full-stack replacement execution reference:
     - live PVH/QEMU+GDB sequence fills all `64` allocator records with one-page allocations, proves the next `command_allocator_alloc` returns `result_no_space`, frees allocator record slot `5`, proves that slot becomes reusable while the table returns to full occupancy, and proves first-fit page search advances to pages `64-65` because page `6` still blocks the freed region.
     - key probe evidence: `ACK=68`, `LAST_OPCODE=32`, `LAST_RESULT=0`, `PRE_FREE_REUSE_RECORD_PTR=1069056`, `POST_FREE_LAST_FREE_PTR=1069056`, `POST_REUSE_PTR=1310720`, `POST_REUSE_PAGE_START=64`, `POST_REUSE_PAGE_LEN=2`, `POST_REUSE_ALLOCATION_COUNT=64`, `POST_REUSE_FREE_PAGES=191`, `POST_REUSE_BITMAP64=1`, `POST_REUSE_BITMAP65=1`.
     - probe is wired into both `zig-ci` and `release-preview` validate stages so allocator-table reuse regressions now block CI.
+  - bare-metal allocator/syscall reset validation shipped:
+    - new script: `scripts/baremetal-qemu-allocator-syscall-reset-probe-check.ps1`.
+    - added matching host regression in `src/baremetal_main.zig`.
+    - live PVH/QEMU+GDB sequence dirties allocator state with `command_allocator_alloc(8192, 4096)`, dirties syscall state with `command_syscall_register(12, 0xCAFE)` plus `command_syscall_invoke(12, 0x55AA)`, then runs dedicated `command_allocator_reset` and `command_syscall_reset` to prove both subsystems collapse independently back to steady baseline.
+    - key probe evidence: `ACK=8`, `LAST_OPCODE=36`, `LAST_RESULT=-2`, dirty allocator count `1`, dirty syscall dispatch count `1`, post-reset allocator count `0`, post-reset free pages `256`, post-reset syscall entry count `0`, post-reset syscall dispatch count `0`.
+    - probe is wired into both `zig-ci` and `release-preview` validate stages so dedicated allocator/syscall reset regressions now block CI.
   - bare-metal allocator free-failure validation shipped:
     - new script: `scripts/baremetal-qemu-allocator-free-failure-probe-check.ps1`.
     - added matching host regression in `src/baremetal_main.zig`.

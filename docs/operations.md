@@ -120,6 +120,7 @@ Recommended sequence:
 - optional bare-metal QEMU wake-queue reason-vector-pop probe (dedicated exact-pair drain proof over a four-entry `manual` / `interrupt@13` / `interrupt@13` / `interrupt@19` queue, preserving surrounding FIFO survivors while rejecting `reason+vector=0` against the freestanding PVH artifact)
 - optional bare-metal QEMU wake-queue vector-pop probe (dedicated `command_wake_queue_pop_vector` proof over a four-entry mixed queue, proving only vector `13` wakes are removed in FIFO order and the final vector `255` drain returns `result_not_found` against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator syscall probe (alloc/free plus syscall register/invoke/block/disable/re-enable/clear-flags/unregister, then live `command_allocator_reset` + `command_syscall_reset` recovery proof against the freestanding PVH artifact)
+- optional bare-metal QEMU allocator syscall reset probe (dirty allocator alloc plus syscall register/invoke state, then dedicated `command_allocator_reset` + `command_syscall_reset` recovery proof showing both subsystems collapse independently back to steady baseline against the freestanding PVH artifact)
 - optional bare-metal QEMU syscall saturation probe (fill the 64-entry syscall table, reject the 65th `register`, reclaim one slot with `unregister`, reuse it with a fresh syscall ID/token, and prove the reused slot invokes cleanly against the freestanding PVH artifact)
 - optional bare-metal QEMU syscall saturation reset probe (fill the 64-entry syscall table, dirty dispatch telemetry with a real invoke, run `command_syscall_reset`, prove the fully saturated table returns to steady state, and then prove a fresh syscall restarts cleanly from slot `0` against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator saturation reset probe (fill all 64 allocator records, reject the next `command_allocator_alloc` with `no_space`, run `command_allocator_reset`, prove counters/bitmap/records collapse to steady state, and then prove a fresh 2-page allocation restarts cleanly from slot `0` against the freestanding PVH artifact)
@@ -195,6 +196,7 @@ Recommended sequence:
 - bare-metal optional QEMU wake-queue batch-pop probe in validate stage
 - bare-metal optional QEMU wake-queue vector-pop probe in validate stage
 - bare-metal optional QEMU allocator syscall probe in validate stage
+- bare-metal optional QEMU allocator syscall reset probe in validate stage
 - bare-metal optional QEMU syscall saturation probe in validate stage
 - bare-metal optional QEMU syscall saturation reset probe in validate stage
 - bare-metal optional QEMU allocator saturation reset probe in validate stage
