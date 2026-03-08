@@ -1163,7 +1163,12 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
         },
         abi.command_task_resume => {
             if (arg0 == 0 or arg0 > std.math.maxInt(u32)) return abi.result_invalid_argument;
-            if (!schedulerWakeTask(@as(u32, @truncate(arg0)), abi.wake_reason_manual, 0, 0, status.ticks)) {
+            const task_id = @as(u32, @truncate(arg0));
+            const slot = schedulerFindTaskSlot(task_id) orelse return abi.result_not_found;
+            if (scheduler_wait_kind[slot] == wait_condition_timer) {
+                _ = timerCancelTask(task_id);
+            }
+            if (!schedulerWakeTask(task_id, abi.wake_reason_manual, 0, 0, status.ticks)) {
                 return abi.result_not_found;
             }
             return abi.result_ok;
@@ -4018,6 +4023,51 @@ test "baremetal task wait and resume commands control runnable state and wake qu
     const evt = oc_wake_queue_event(0);
     try std.testing.expectEqual(task_id, evt.task_id);
     try std.testing.expectEqual(@as(u8, abi.wake_reason_manual), evt.reason);
+}
+
+test "baremetal task resume clears timer-backed wait and prevents stale wake" {
+    resetBaremetalRuntimeForTest();
+
+    _ = oc_submit_command(abi.command_scheduler_disable, 0, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_task_create, 5, 0);
+    oc_tick();
+    const task_id = oc_scheduler_task(0).task_id;
+    try std.testing.expect(task_id != 0);
+
+    _ = oc_submit_command(abi.command_timer_set_quantum, 5, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+
+    _ = oc_submit_command(abi.command_task_wait_for, task_id, 10);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u8, abi.task_state_waiting), oc_scheduler_task(0).state);
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u32, 2), oc_timer_state_ptr().next_timer_id);
+    try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
+
+    _ = oc_submit_command(abi.command_task_resume, task_id, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u8, abi.task_state_ready), oc_scheduler_task(0).state);
+    try std.testing.expectEqual(@as(u32, 0), oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u8, abi.timer_entry_state_canceled), oc_timer_entry(0).state);
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+    const evt = oc_wake_queue_event(0);
+    try std.testing.expectEqual(task_id, evt.task_id);
+    try std.testing.expectEqual(@as(u8, abi.wake_reason_manual), evt.reason);
+
+    oc_tick_n(20);
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u64, 0), oc_timer_state_ptr().dispatch_count);
+
+    _ = oc_submit_command(abi.command_task_wait_for, task_id, 3);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u32, 2), oc_timer_entry(0).timer_id);
+    try std.testing.expectEqual(@as(u32, 3), oc_timer_state_ptr().next_timer_id);
 }
 
 test "baremetal timer cancel task command cancels armed task timers" {

@@ -266,6 +266,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-timer-reset-recovery-probe-check.ps1
 
+      - name: Bare-metal QEMU task resume timer-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-timer-clear-probe-check.ps1
+
       - name: Bare-metal QEMU periodic timer probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-periodic-timer-probe-check.ps1

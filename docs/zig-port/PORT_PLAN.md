@@ -1345,6 +1345,13 @@ Full-stack replacement execution reference:
     - live PVH/QEMU+GDB sequence allocates two pages, proves wrong-pointer `command_allocator_free` returns `result_not_found`, wrong-size returns `result_invalid_argument`, successful free updates `last_free_*`, double-free returns `result_not_found`, and a fresh allocation still restarts from page `0`.
     - key probe evidence: `ACK=7`, `LAST_OPCODE=32`, `LAST_RESULT=0`, `ALLOC_PTR=1048576`, `BAD_PTR_RESULT=-2`, `BAD_SIZE_RESULT=-22`, `GOOD_FREE_RESULT=0`, `DOUBLE_FREE_RESULT=-2`, `GOOD_FREE_LAST_FREE_PTR=1048576`, `GOOD_FREE_LAST_FREE_SIZE=8192`, `REALLOC_PTR=1048576`, `REALLOC_PAGE_START=0`, `REALLOC_PAGE_LEN=1`, `REALLOC_FREE_PAGES=255`.
     - probe is wired into both `zig-ci` and `release-preview` validate stages so allocator-free failure regressions now block CI.
+  - bare-metal task-resume timer-clear validation shipped:
+    - new script: `scripts/baremetal-qemu-task-resume-timer-clear-probe-check.ps1`.
+    - added matching host regression in `src/baremetal_main.zig`.
+    - narrowed runtime behavior so only `command_task_resume` cancels a timer-backed wait; generic `command_scheduler_wake_task` semantics remain unchanged.
+    - live PVH/QEMU+GDB sequence proves a timer-backed wait resumes through exactly one manual wake, the armed timer entry is canceled in place, no ghost timer wake appears after idle ticks, timer quantum is preserved, and fresh timer scheduling restarts from the preserved `next_timer_id`.
+    - key probe evidence: `ACK=8`, `LAST_OPCODE=27`, `LAST_RESULT=0`, `PRE_TIMER_COUNT=1`, `POST_RESUME_TIMER_COUNT=0`, `POST_RESUME_WAKE_COUNT=1`, `POST_RESUME_WAKE_REASON=3`, `POST_IDLE_WAKE_COUNT=1`, `POST_IDLE_TIMER_COUNT=0`, `REARM_TIMER_ID=2`, `REARM_NEXT_TIMER_ID=3`.
+    - probe is wired into both `zig-ci` and `release-preview` validate stages so timer-backed task-resume regressions now block CI.
   - Week-3 control-plane completion slice shipped:
     - gateway now exposes `GET /ui` for minimal bootstrap control operations (`status`, `doctor`, `logs.tail`, `node.pair.list`) through a token-aware browser panel.
     - node-pair protocol handling consolidated across payload variants: request aliases (`node_id/deviceId`) and action aliases (`pair_id/nodePairId/id` + optional `status|decision`) now normalize into the same state transitions and response schema.
