@@ -16,6 +16,14 @@ $invoke.GdbPort = $GdbPort
 $output = & $probe @invoke 2>&1
 $exitCode = $LASTEXITCODE
 $outputText = ($output | Out-String)
+
+if ($outputText -match '(?m)^BAREMETAL_QEMU_INTERRUPT_MASK_CONTROL_PROBE=skipped\r?$') {
+    if ($outputText) { Write-Output $outputText.TrimEnd() }
+    Write-Output 'BAREMETAL_QEMU_INTERRUPT_MASK_CLEAR_ALL_RECOVERY_PROBE=skipped'
+    Write-Output 'BAREMETAL_QEMU_INTERRUPT_MASK_CLEAR_ALL_RECOVERY_PROBE_SOURCE=baremetal-qemu-interrupt-mask-control-probe-check.ps1'
+    exit 0
+}
+
 if ($exitCode -ne 0) {
     if ($outputText) { Write-Output $outputText.TrimEnd() }
     throw "Interrupt mask control prerequisite probe failed with exit code $exitCode"
