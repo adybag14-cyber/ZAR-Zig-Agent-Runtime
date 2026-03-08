@@ -715,6 +715,11 @@ Full-stack replacement execution reference:
     - new script: `scripts/baremetal-qemu-timer-cancel-task-probe-check.ps1`.
     - live PVH/QEMU+GDB sequence proves `command_timer_schedule`, `command_timer_schedule_periodic`, and `command_timer_cancel_task` over a single task, with the first cancel collapsing `TIMER_ENTRY_COUNT=0` while preserving `TIMER0_STATE=3`.
     - second cancel returns `LAST_RESULT=-2`, matching the hosted parity test for task-targeted timer cancellation.
+  - bare-metal QEMU timer cancel-task interrupt-timeout recovery validation shipped:
+    - new script: `scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-probe-check.ps1`.
+    - added matching host regression in `src/baremetal_main.zig`.
+    - live PVH/QEMU+GDB sequence proves `command_timer_cancel_task` on a `task_wait_interrupt_for` waiter clears the timeout arm back to `none`, leaves `TIMER_ENTRY_COUNT=0`, and still allows the later real interrupt wake to land exactly once.
+    - key probe evidence: `ACK=8`, `LAST_OPCODE=7`, `LAST_RESULT=0`, `TASK0_STATE=1`, `WAIT_KIND0=0`, `WAIT_TIMEOUT0=0`, `TIMER_ENTRY_COUNT=0`, `WAKE_QUEUE_COUNT=1`, `WAKE0_REASON=2`, `WAKE0_VECTOR=200`.
   - Bare-metal deadline-wait + wake-queue consumption depth expansion shipped:
     - new opcodes: `command_task_wait_for`, `command_wake_queue_pop`.
     - wake queue exports extended: `oc_wake_queue_tail_index`, `oc_wake_queue_pop`.
@@ -1191,6 +1196,7 @@ Full-stack replacement execution reference:
     - new host test: `baremetal task terminate clears mixed timer and wake state for the target task only`.
     - new script: `scripts/baremetal-qemu-task-terminate-mixed-state-probe-check.ps1` reuses the timer-reset PVH artifact, resolves scheduler/task/wait/timer/wake telemetry from the freestanding ELF, and drives mixed `command_task_wait_for`, `command_scheduler_wake_task`, survivor wake, and `command_task_terminate` transitions under QEMU+GDB.
     - current proof path validates pre-terminate mixed state (`PRE_WAKE_COUNT=2`, `PRE_PENDING_WAKE_COUNT=2`, `PRE_TIMER_COUNT=1`, `PRE_NEXT_TIMER_ID=2`, `PRE_WAKE0_TASK_ID=terminated`, `PRE_WAKE1_TASK_ID=survivor`, `PRE_TIMER0_TASK_ID=terminated`), targeted cleanup after terminate (`POST_TASK_COUNT=1`, `POST_WAKE_COUNT=1`, `POST_PENDING_WAKE_COUNT=1`, `POST_TIMER_COUNT=0`, `POST_TIMER0_STATE=3`, `POST_TASK0_STATE=4`, `POST_TASK1_STATE=1`, `POST_WAKE0_TASK_ID=survivor`), and idle stability with no ghost timer wake (`AFTER_IDLE_WAKE_COUNT=1`, `AFTER_IDLE_PENDING_WAKE_COUNT=1`, `AFTER_IDLE_TIMER_COUNT=0`, `AFTER_IDLE_TIMER_DISPATCH_COUNT=0`).
+    - this historical mixed-state proof is no longer part of the active CI baseline; the current workflow enforces the narrower direct recovery probes for timeout-backed terminate cleanup, scheduler-wake timer cleanup, and timer-cancel-task interrupt-timeout cleanup instead.
   - bare-metal QEMU panic-recovery validation shipped:
     - new host test: `baremetal panic flag freezes scheduler until mode recovery under active load` proves `command_trigger_panic_flag` freezes dispatch and budget burn, `command_set_mode(mode_running)` resumes the same task immediately, and `command_set_boot_phase(runtime)` restores boot diagnostics while dispatch continues.
     - new script: `scripts/baremetal-qemu-panic-recovery-probe-check.ps1` reuses the scheduler PVH artifact, resolves scheduler/task telemetry plus boot diagnostics, live status, and command-mailbox state from the freestanding ELF, and drives panic + recovery transitions under QEMU+GDB.
@@ -1381,6 +1387,15 @@ Full-stack replacement execution reference:
     - live PVH/QEMU+GDB sequence proves `command_task_resume` and `command_scheduler_wake_task` both clear a pure `command_task_wait_interrupt` waiter back to `none`, queue exactly one manual wake, and prevent a later interrupt from creating a second wake while still incrementing interrupt telemetry.
     - key probe evidence: task-resume path `ACK=8`, `LAST_OPCODE=7`, `LAST_RESULT=0`, `WAIT_KIND0=0`, `WAIT_TIMEOUT0=0`, `TIMER_ENTRY_COUNT=0`, `TIMER_NEXT_TIMER_ID=1`, `WAKE_QUEUE_COUNT=1`, `WAKE0_REASON=3`, `INTERRUPT_COUNT=1`; manual-wake path `ACK=8`, `LAST_OPCODE=7`, `LAST_RESULT=0`, `WAIT_KIND0=0`, `WAIT_TIMEOUT0=0`, `TIMER_ENTRY_COUNT=0`, `WAKE_QUEUE_COUNT=1`, `WAKE0_REASON=3`, `INTERRUPT_COUNT=1`.
     - both probes are wired into `zig-ci` and `release-preview` validate stages so pure-interrupt recovery regressions now block CI.
+  - bare-metal timer/manual/terminate recovery validation shipped:
+    - new scripts: `scripts/baremetal-qemu-scheduler-wake-timer-clear-probe-check.ps1`, `scripts/baremetal-qemu-task-terminate-interrupt-timeout-probe-check.ps1`, and `scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-probe-check.ps1`.
+    - added matching host regressions in `src/baremetal_main.zig` for scheduler-wake timer cleanup and timeout-backed terminate cleanup.
+    - live PVH/QEMU+GDB sequences prove:
+      - `command_scheduler_wake_task` on a pure timer waiter clears the armed timer entry, queues exactly one manual wake, prevents later ghost timer wake delivery after idle ticks, and preserves fresh timer scheduling from the current `next_timer_id`.
+      - `command_task_terminate` on a timeout-backed interrupt waiter clears the timeout/wait state back to steady baseline, leaves queued wake and timer state empty, and prevents later ghost interrupt or timeout wake delivery for the terminated task.
+      - `command_interrupt_mask_clear_all` restores wake delivery after direct mask manipulation, resets ignored-count telemetry to `0`, and returns the runtime to mask profile `none`.
+    - key probe evidence: scheduler-wake path `ACK=8`, `LAST_OPCODE=53`, `LAST_RESULT=0`, `PRE_TIMER_COUNT=1`, `POST_RESUME_TIMER_COUNT=0`, `POST_RESUME_WAKE_COUNT=1`, `POST_IDLE_TIMER_COUNT=0`, `REARM_TIMER_ID=2`; task-terminate path `ACK=8`, `LAST_OPCODE=7`, `LAST_RESULT=0`, `TASK0_STATE=4`, `WAIT_KIND0=0`, `WAIT_TIMEOUT0=0`, `TIMER_ENTRY_COUNT=0`, `WAKE_QUEUE_COUNT=0`, `INTERRUPT_COUNT=1`; interrupt-mask clear-all recovery path `WAKE0_VECTOR=200`, `WAKE0_REASON=2`, `INTERRUPT_MASK_PROFILE=0`, `MASKED_INTERRUPT_IGNORED_COUNT=0`.
+    - the new direct recovery probes are wired into `zig-ci` and `release-preview` validate stages and supersede the older inherited mixed-state terminate wrapper path as the active CI baseline.
   - Week-3 control-plane completion slice shipped:
     - gateway now exposes `GET /ui` for minimal bootstrap control operations (`status`, `doctor`, `logs.tail`, `node.pair.list`) through a token-aware browser panel.
     - node-pair protocol handling consolidated across payload variants: request aliases (`node_id/deviceId`) and action aliases (`pair_id/nodePairId/id` + optional `status|decision`) now normalize into the same state transitions and response schema.

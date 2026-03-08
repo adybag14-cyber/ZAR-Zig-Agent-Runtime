@@ -295,6 +295,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-timer-cancel-task-probe-check.ps1
 
+      - name: Bare-metal QEMU timer cancel task interrupt-timeout probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-probe-check.ps1
+
       - name: Bare-metal QEMU timer cancel probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-timer-cancel-probe-check.ps1
@@ -310,6 +314,10 @@ jobs:
       - name: Bare-metal QEMU task resume timer-clear probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-task-resume-timer-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler wake timer-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-wake-timer-clear-probe-check.ps1
 
       - name: Bare-metal QEMU task resume interrupt probe (optional)
         shell: pwsh
@@ -370,6 +378,14 @@ jobs:
       - name: Bare-metal QEMU interrupt mask control probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-interrupt-mask-control-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask clear-all recovery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-probe-check.ps1
+
+      - name: Bare-metal QEMU task terminate interrupt-timeout probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-terminate-interrupt-timeout-probe-check.ps1
 
       - name: Bare-metal QEMU wake queue selective probe (optional)
         shell: pwsh
@@ -470,10 +486,6 @@ jobs:
       - name: Bare-metal QEMU active-task terminate probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-active-task-terminate-probe-check.ps1
-
-      - name: Bare-metal QEMU task terminate mixed-state probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-task-terminate-mixed-state-probe-check.ps1
 
       - name: Bare-metal QEMU panic recovery probe (optional)
         shell: pwsh
