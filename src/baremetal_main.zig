@@ -1804,6 +1804,37 @@ fn wakeQueuePopReasonVector(reason: u8, vector: u8, requested: u32) bool {
     return true;
 }
 
+fn wakeQueueRemoveTask(task_id: u32) u32 {
+    if (wake_queue_count == 0) return 0;
+
+    var kept: [wake_queue_capacity]BaremetalWakeEvent = std.mem.zeroes([wake_queue_capacity]BaremetalWakeEvent);
+    var kept_count: u32 = 0;
+    var removed: u32 = 0;
+    var idx: u32 = 0;
+    while (idx < wake_queue_count) : (idx += 1) {
+        const event = oc_wake_queue_event(idx);
+        if (event.task_id == task_id) {
+            removed += 1;
+            continue;
+        }
+        kept[kept_count] = event;
+        kept_count += 1;
+    }
+
+    if (removed == 0) return 0;
+
+    @memset(&wake_queue, std.mem.zeroes(BaremetalWakeEvent));
+    var write_idx: u32 = 0;
+    while (write_idx < kept_count) : (write_idx += 1) {
+        wake_queue[@as(usize, @intCast(write_idx))] = kept[write_idx];
+    }
+    wake_queue_tail = 0;
+    wake_queue_count = kept_count;
+    wake_queue_head = if (kept_count == 0) 0 else @mod(kept_count, @as(u32, wake_queue_capacity));
+    timer_state.pending_wake_count = @as(u16, @intCast(wake_queue_count));
+    return removed;
+}
+
 fn schedulerFindTaskSlot(task_id: u32) ?usize {
     var slot: usize = 0;
     while (slot < scheduler_task_capacity) : (slot += 1) {
@@ -2044,6 +2075,7 @@ fn schedulerTerminateTask(task_id: u32) bool {
                     entry.state = abi.timer_entry_state_canceled;
                 }
             }
+            _ = wakeQueueRemoveTask(task_id);
             timerRecountEntries();
             schedulerRecountTasks();
             return true;
@@ -5644,6 +5676,70 @@ test "baremetal task terminate command fails over cleanly under active load" {
     try std.testing.expectEqual(dispatch_before_final_terminate, oc_scheduler_state_ptr().dispatch_count);
     low_task = oc_scheduler_task(0);
     try std.testing.expectEqual(@as(u8, abi.task_state_terminated), low_task.state);
+}
+
+test "baremetal task terminate clears mixed timer and wake state for the target task only" {
+    resetBaremetalRuntimeForTest();
+
+    _ = oc_submit_command(abi.command_scheduler_disable, 0, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_task_create, 5, 1);
+    oc_tick();
+    _ = oc_submit_command(abi.command_task_create, 6, 2);
+    oc_tick();
+    const terminated_task_id = oc_scheduler_task(0).task_id;
+    const survivor_task_id = oc_scheduler_task(1).task_id;
+    try std.testing.expect(terminated_task_id != 0 and survivor_task_id != 0);
+
+    _ = oc_submit_command(abi.command_timer_set_quantum, 5, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+
+    _ = oc_submit_command(abi.command_task_wait_for, terminated_task_id, 10);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u8, abi.task_state_waiting), oc_scheduler_task(0).state);
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_entry_count());
+
+    _ = oc_submit_command(abi.command_scheduler_wake_task, terminated_task_id, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u8, abi.task_state_ready), oc_scheduler_task(0).state);
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+    var event = oc_wake_queue_event(0);
+    try std.testing.expectEqual(terminated_task_id, event.task_id);
+
+    _ = oc_submit_command(abi.command_task_wait, survivor_task_id, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    _ = oc_submit_command(abi.command_scheduler_wake_task, survivor_task_id, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_len());
+    event = oc_wake_queue_event(1);
+    try std.testing.expectEqual(survivor_task_id, event.task_id);
+
+    _ = oc_submit_command(abi.command_task_terminate, terminated_task_id, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u8, abi.task_state_terminated), oc_scheduler_task(0).state);
+    try std.testing.expectEqual(@as(u32, 0), oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u8, abi.timer_entry_state_canceled), oc_timer_entry(0).state);
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u16, 1), oc_timer_state_ptr().pending_wake_count);
+    event = oc_wake_queue_event(0);
+    try std.testing.expectEqual(survivor_task_id, event.task_id);
+    try std.testing.expectEqual(@as(u8, abi.wake_reason_manual), event.reason);
+    try std.testing.expectEqual(@as(u8, wait_condition_none), scheduler_wait_kind[0]);
+    try std.testing.expectEqual(@as(u64, 0), scheduler_wait_timeout_tick[0]);
+    try std.testing.expectEqual(@as(u32, 2), oc_timer_state_ptr().next_timer_id);
+
+    oc_tick_n(20);
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u32, 0), oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u64, 0), oc_timer_state_ptr().dispatch_count);
+    event = oc_wake_queue_event(0);
+    try std.testing.expectEqual(survivor_task_id, event.task_id);
 }
 
 test "baremetal panic flag freezes scheduler until mode recovery under active load" {
