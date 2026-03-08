@@ -28,6 +28,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - bare-metal syscall saturation behavior is now enforced by a dedicated live QEMU+GDB probe that fills the 64-entry syscall table, rejects the 65th registration with `no_space`, reclaims one slot, and proves clean slot reuse plus invoke behavior
   - bare-metal syscall saturation reset recovery is now enforced by a dedicated live QEMU+GDB probe that fills the 64-entry syscall table, dirties dispatch telemetry with a real invoke, proves `command_syscall_reset` clears the fully saturated table back to steady state, and then proves a fresh syscall restarts cleanly from slot `0`
   - bare-metal allocator saturation reset recovery is now enforced by both the host suite and a dedicated live QEMU+GDB probe that fills all 64 allocator records, rejects the next allocation with `no_space`, proves `command_allocator_reset` collapses counters/bitmap/records back to steady state, and then proves a fresh 2-page allocation restarts cleanly from slot `0`
+  - bare-metal allocator saturation reuse is now enforced by both the host suite and a dedicated live QEMU+GDB probe that fills all 64 allocator records, rejects the next allocation with `no_space`, frees record slot `5`, proves that slot becomes reusable while the table stays saturated after a fresh 2-page allocation, and proves first-fit page search advances to pages `64-65` when page `6` still blocks the freed region
   - bare-metal syscall control mutation behavior is now enforced by a dedicated live QEMU+GDB probe (`command_syscall_register`, `command_syscall_set_flags`, `command_syscall_disable`, `command_syscall_enable`, `command_syscall_unregister`) proving re-register, blocked/disabled invoke, successful invoke, and missing-entry mutation semantics against the freestanding PVH artifact
   - bare-metal allocator/syscall reset recovery is now enforced by both the host suite and the live QEMU+GDB probe, proving dirty allocator/syscall state is cleared by `command_allocator_reset` and `command_syscall_reset` after real alloc/register/invoke activity instead of only at setup time
   - bare-metal interrupt-mask/exception behavior is now enforced by a live QEMU+GDB probe (masked external interrupt remains blocked while exception delivery still wakes a waiting task and records interrupt/exception histories)
@@ -112,6 +113,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - optional QEMU syscall saturation probe validates the dedicated syscall-table capacity and reuse lane without allocator noise, proving 64/64 registration, overflow rejection, reclaimed-slot reuse, and fresh invoke telemetry against the freestanding PVH artifact
   - optional QEMU syscall saturation reset probe validates the dedicated reset lane without allocator noise, proving a fully saturated syscall table plus dirty dispatch telemetry collapse back to reset steady state and that the next fresh syscall register/invoke path restarts cleanly from slot `0`
   - optional QEMU allocator saturation reset probe validates the dedicated allocator-table reset lane without syscall noise, proving all 64 allocator records fill cleanly, the next allocation returns `no_space`, `command_allocator_reset` collapses counters/bitmap/records to steady state, and a fresh 2-page allocation restarts cleanly from slot `0`
+  - optional QEMU allocator saturation reuse probe validates the dedicated allocator-table reuse lane without syscall noise, proving the full 64-record table rejects overflow, `command_allocator_free` reclaims a middle slot, the next 2-page allocation reuses that record slot, and first-fit page search moves to pages `64-65` because page `6` still blocks the freed region
   - optional QEMU syscall control probe validates the dedicated mutation lane (`command_syscall_register`, `command_syscall_set_flags`, `command_syscall_disable`, `command_syscall_enable`, `command_syscall_unregister`) plus invoke behavior without allocator noise against the freestanding PVH artifact
   - optional QEMU command-result counters probe validates categorized mailbox result accounting live under QEMU+GDB, proving `ok`, `invalid`, `not_supported`, and `other_error` buckets increment correctly and `command_reset_command_result_counters` collapses the struct back to a single reset `ok`
   - optional QEMU reset-counters probe validates `command_reset_counters` end to end after dirtying interrupt, exception, scheduler, allocator, syscall, timer, wake-queue, mode, boot-phase, command-history, and health-history state, proving the runtime collapses back to the expected steady baseline under QEMU+GDB
@@ -525,6 +527,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU syscall saturation probe
 - optional bare-metal QEMU syscall saturation reset probe
 - optional bare-metal QEMU allocator saturation reset probe
+- optional bare-metal QEMU allocator saturation reuse probe
 - optional bare-metal QEMU syscall control probe
 - optional bare-metal QEMU allocator syscall failure probe
 - optional bare-metal QEMU command-result counters probe
@@ -585,6 +588,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU syscall saturation validation
 - optional bare-metal QEMU syscall saturation reset validation
 - optional bare-metal QEMU allocator saturation reset validation
+- optional bare-metal QEMU allocator saturation reuse validation
 - optional bare-metal QEMU syscall control validation
 - optional bare-metal QEMU allocator syscall failure validation
 - optional bare-metal QEMU command-result counters validation
@@ -636,3 +640,4 @@ Manual python release trigger:
 ```powershell
 gh workflow run python-release.yml -R adybag14-cyber/openclaw-zig-port -f version=<pep440-version> -f release_tag=<release-tag>
 ```
+
