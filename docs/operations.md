@@ -41,6 +41,7 @@ Recommended sequence:
 ./scripts/baremetal-qemu-wake-queue-reason-overflow-probe-check.ps1
 ./scripts/baremetal-qemu-wake-queue-fifo-probe-check.ps1
 ./scripts/baremetal-qemu-allocator-syscall-probe-check.ps1
+./scripts/baremetal-qemu-syscall-saturation-probe-check.ps1
 ./scripts/baremetal-qemu-syscall-control-probe-check.ps1
 ./scripts/baremetal-qemu-allocator-syscall-failure-probe-check.ps1
 ./scripts/baremetal-qemu-reset-counters-probe-check.ps1
@@ -114,6 +115,7 @@ Recommended sequence:
 - optional bare-metal QEMU wake-queue overflow probe (sustained manual wake pressure over one waiting task, proving the 64-entry ring retains the newest window with `overflow=2` against the freestanding PVH artifact)
 - optional bare-metal QEMU wake-queue batch-pop probe (post-overflow batch-drain and refill proof over one waiting task, proving survivor ordering `65/66`, empty recovery, and reuse at `seq=67` against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator syscall probe (alloc/free plus syscall register/invoke/block/disable/re-enable/clear-flags/unregister, then live `command_allocator_reset` + `command_syscall_reset` recovery proof against the freestanding PVH artifact)
+- optional bare-metal QEMU syscall saturation probe (fill the 64-entry syscall table, reject the 65th `register`, reclaim one slot with `unregister`, reuse it with a fresh syscall ID/token, and prove the reused slot invokes cleanly against the freestanding PVH artifact)
 - optional bare-metal QEMU syscall control probe (isolated live `command_syscall_register` re-register, `command_syscall_set_flags`, blocked invoke, disable/enable, successful invoke, unregister, and missing-entry mutation proof against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator syscall failure probe (invalid-alignment, no-space, blocked-syscall, and disabled-syscall result semantics plus command-result counters against the freestanding PVH artifact)
 - optional bare-metal QEMU command-result counters probe (live mailbox result-category accounting plus `command_reset_command_result_counters` reset semantics against the freestanding PVH artifact)
@@ -180,6 +182,7 @@ Recommended sequence:
 - bare-metal optional QEMU wake-queue clear probe in validate stage
 - bare-metal optional QEMU wake-queue batch-pop probe in validate stage
 - bare-metal optional QEMU allocator syscall probe in validate stage
+- bare-metal optional QEMU syscall saturation probe in validate stage
 - bare-metal optional QEMU syscall control probe in validate stage
 - bare-metal optional QEMU allocator syscall failure probe in validate stage
 - bare-metal optional QEMU command-result counters probe in validate stage
