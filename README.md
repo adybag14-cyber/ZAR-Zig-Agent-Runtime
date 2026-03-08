@@ -111,6 +111,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - optional QEMU wake-queue overflow probe validates sustained manual wake pressure end to end, proving the 64-entry ring saturates cleanly with `head/tail=2`, `overflow=2`, and retained oldest/newest manual wake payloads at `seq 3` and `seq 66`
   - optional QEMU wake-queue clear probe validates wrapped-ring clear-and-reuse end to end, proving `command_wake_queue_clear` resets `count/head/tail/overflow` to `0`, clears pending wake telemetry, and restarts the next manual wake at `seq 1`
   - optional QEMU wake-queue batch-pop probe validates post-overflow recovery end to end, proving a `62`-entry batch drain leaves `seq 65/66`, a default pop leaves only `seq 66`, a final drain empties the queue, and the next manual wake reuses the ring at `seq 67`
+  - optional QEMU wake-queue vector-pop probe validates the dedicated `command_wake_queue_pop_vector` lane end to end, proving a four-entry mixed queue (`manual`, `interrupt@13`, `interrupt@13`, `interrupt@31`) removes only the matching vector-`13` wakes in FIFO order and returns `result_not_found` for vector `255`
   - optional QEMU allocator/syscall probe validates alloc/free plus syscall register/invoke/block/disable/re-enable/clear-flags/unregister flow end to end against the freestanding PVH artifact, then proves `command_allocator_reset` and `command_syscall_reset` collapse the dirty runtime state back to allocator/syscall steady baseline
   - optional QEMU syscall saturation probe validates the dedicated syscall-table capacity and reuse lane without allocator noise, proving 64/64 registration, overflow rejection, reclaimed-slot reuse, and fresh invoke telemetry against the freestanding PVH artifact
   - optional QEMU syscall saturation reset probe validates the dedicated reset lane without allocator noise, proving a fully saturated syscall table plus dirty dispatch telemetry collapse back to reset steady state and that the next fresh syscall register/invoke path restarts cleanly from slot `0`
@@ -527,6 +528,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU wake-queue summary/age probe
 - optional bare-metal QEMU wake-queue overflow probe
 - optional bare-metal QEMU wake-queue batch-pop probe
+- optional bare-metal QEMU wake-queue vector-pop probe
 - optional bare-metal QEMU allocator syscall probe
 - optional bare-metal QEMU syscall saturation probe
 - optional bare-metal QEMU syscall saturation reset probe
@@ -590,6 +592,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU wake-queue summary/age validation
 - optional bare-metal QEMU wake-queue overflow validation
 - optional bare-metal QEMU wake-queue batch-pop validation
+- optional bare-metal QEMU wake-queue vector-pop validation
 - optional bare-metal QEMU allocator syscall validation
 - optional bare-metal QEMU syscall saturation validation
 - optional bare-metal QEMU syscall saturation reset validation

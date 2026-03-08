@@ -1111,6 +1111,10 @@ Full-stack replacement execution reference:
   - bare-metal QEMU wake-queue batch-pop validation shipped:
     - new script: `scripts/baremetal-qemu-wake-queue-batch-pop-probe-check.ps1` builds a dedicated PVH artifact, drives the same `66`-wake overflow setup, then issues `command_wake_queue_pop` batch and default drains plus a final reuse cycle through the mailbox under QEMU+GDB.
     - the probe validates post-overflow recovery over the PVH freestanding artifact with no queue clear/reset: a `62`-entry batch pop leaves `seq=65/66`, a default pop leaves only `seq=66`, a final drain empties the queue with `head=tail=2`, and the next manual wake reuses the ring at `seq=67`.
+  - bare-metal QEMU wake-queue vector-pop validation shipped:
+    - new script: `scripts/baremetal-qemu-wake-queue-vector-pop-probe-check.ps1` builds a dedicated PVH artifact, drives `command_scheduler_reset`, `command_wake_queue_clear`, `command_reset_interrupt_counters`, `command_scheduler_disable`, then creates a four-entry live mixed queue through `command_task_wait`, `command_task_wait_interrupt`, `command_scheduler_wake_task`, and `command_trigger_interrupt` under QEMU+GDB.
+    - the probe validates the dedicated `command_wake_queue_pop_vector` lane over the PVH freestanding artifact: first removing only the oldest `interrupt@13` wake, then draining the remaining vector-`13` survivor, while preserving the surrounding `manual` and `interrupt@31` wakes in FIFO order.
+    - current proof path validates `ACK=19`, `LAST_OPCODE=60`, `LAST_RESULT=-2`, pre-drain queue order `task1/manual`, `task2/13`, `task3/13`, `task4/31`, mid-drain queue order `task1/manual`, `task3/13`, `task4/31`, post-drain queue order `task1/manual`, `task4/31`, and final vector `255` `result_not_found`.
   - bare-metal QEMU allocator/syscall validation shipped:
     - new script: `scripts/baremetal-qemu-allocator-syscall-probe-check.ps1` resolves allocator state/record, page bitmap, and syscall state/entry symbols from the freestanding ELF and drives allocator/syscall commands through the mailbox under QEMU+GDB.
     - the probe validates `command_allocator_reset`, `command_allocator_alloc`, `command_allocator_free`, `command_syscall_reset`, `command_syscall_register`, `command_syscall_invoke`, `command_syscall_set_flags`, `command_syscall_disable`, `command_syscall_enable`, and `command_syscall_unregister` end to end over the PVH freestanding artifact, including the recovery path after re-enable.
@@ -1312,4 +1316,3 @@ Full-stack replacement execution reference:
     - node-pair protocol handling consolidated across payload variants: request aliases (`node_id/deviceId`) and action aliases (`pair_id/nodePairId/id` + optional `status|decision`) now normalize into the same state transitions and response schema.
     - node-pair responses now include a consolidated `pairing` envelope for easier adapter compatibility, and `node.pair.list` now mirrors `items` into `pairs`.
     - validated with `zig build test --summary all` (`117/117`).
-
