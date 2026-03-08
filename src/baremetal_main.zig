@@ -518,11 +518,19 @@ pub export fn oc_scheduler_tasks_ptr() *const [scheduler_task_capacity]Baremetal
     return &scheduler_tasks;
 }
 
+fn timerClearEntriesPreserveState() void {
+    @memset(&timer_entries, std.mem.zeroes(BaremetalTimerEntry));
+    timer_state.timer_count = 0;
+    timer_state.pending_wake_count = @as(u16, @intCast(wake_queue_count));
+}
+
 pub export fn oc_scheduler_reset() void {
     @memset(&scheduler_tasks, std.mem.zeroes(BaremetalTask));
     @memset(&scheduler_wait_kind, wait_condition_none);
     @memset(&scheduler_wait_interrupt_vector, 0);
     @memset(&scheduler_wait_timeout_tick, 0);
+    oc_wake_queue_clear();
+    timerClearEntriesPreserveState();
     scheduler_state = .{
         .enabled = abi.scheduler_state_disabled,
         .task_count = 0,
@@ -5168,6 +5176,75 @@ test "baremetal scheduler reset clears active state and restarts ids" {
     try std.testing.expectEqual(@as(u32, 1), task.run_count);
     try std.testing.expectEqual(@as(u32, 5), task.budget_remaining);
     try std.testing.expectEqual(@as(u8, abi.task_state_ready), task.state);
+}
+
+test "baremetal scheduler reset clears stale waits wake queue and timer entries" {
+    resetBaremetalRuntimeForTest();
+
+    _ = oc_submit_command(abi.command_task_create, 5, 0);
+    oc_tick();
+    const timer_task_id = oc_scheduler_task(0).task_id;
+    try std.testing.expect(timer_task_id != 0);
+
+    _ = oc_submit_command(abi.command_task_create, 6, 1);
+    oc_tick();
+    const interrupt_task_id = oc_scheduler_task(1).task_id;
+    try std.testing.expect(interrupt_task_id != 0);
+
+    _ = oc_submit_command(abi.command_timer_set_quantum, 5, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+
+    _ = oc_submit_command(abi.command_task_wait_for, timer_task_id, 10);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+
+    _ = oc_submit_command(abi.command_task_wait_interrupt_for, interrupt_task_id, 20);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+
+    _ = oc_submit_command(abi.command_scheduler_wake_task, timer_task_id, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u16, 1), oc_timer_state_ptr().pending_wake_count);
+    try std.testing.expectEqual(@as(u32, 2), oc_timer_state_ptr().next_timer_id);
+    try std.testing.expectEqual(@as(u32, 5), oc_timer_quantum());
+    try std.testing.expectEqual(@as(u32, 1), oc_scheduler_waiting_count());
+    try std.testing.expectEqual(@as(u32, 1), oc_scheduler_wait_interrupt_count());
+    try std.testing.expectEqual(@as(u32, 1), oc_scheduler_wait_timeout_count());
+
+    _ = oc_submit_command(abi.command_scheduler_reset, 0, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expect(!oc_scheduler_enabled());
+    try std.testing.expectEqual(@as(u32, 0), oc_scheduler_task_count());
+    try std.testing.expectEqual(@as(u32, 0), oc_scheduler_waiting_count());
+    try std.testing.expectEqual(@as(u32, 0), oc_scheduler_wait_interrupt_count());
+    try std.testing.expectEqual(@as(u32, 0), oc_scheduler_wait_timeout_count());
+    try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u32, 0), oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u16, 0), oc_timer_state_ptr().pending_wake_count);
+    try std.testing.expectEqual(@as(u32, 2), oc_timer_state_ptr().next_timer_id);
+    try std.testing.expectEqual(@as(u32, 5), oc_timer_quantum());
+
+    oc_tick_n(25);
+    try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u32, 0), oc_timer_entry_count());
+
+    _ = oc_submit_command(abi.command_task_create, 4, 9);
+    oc_tick();
+    const fresh_task_id = oc_scheduler_task(0).task_id;
+    try std.testing.expectEqual(@as(u32, 1), fresh_task_id);
+
+    _ = oc_submit_command(abi.command_task_wait_for, fresh_task_id, 3);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u32, 2), oc_timer_entry(0).timer_id);
+    try std.testing.expectEqual(@as(u32, 3), oc_timer_state_ptr().next_timer_id);
 }
 
 test "baremetal scheduler policy switching stays deterministic under active load" {

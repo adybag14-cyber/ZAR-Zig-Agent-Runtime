@@ -88,6 +88,7 @@ Recommended sequence:
 - optional bare-metal QEMU scheduler timeslice-update probe (live `command_scheduler_set_timeslice` updates under active load, proving budget consumption immediately follows `timeslice 1 -> 4 -> 2` and invalid zero is rejected without changing the active timeslice against the freestanding PVH artifact)
 - optional bare-metal QEMU scheduler disable-enable probe (live `command_scheduler_disable` and `command_scheduler_enable` under active load, proving dispatch count and task budget stay frozen across idle disabled ticks and resume immediately after re-enable against the freestanding PVH artifact)
 - optional bare-metal QEMU scheduler reset probe (live `command_scheduler_reset` under active load, proving scheduler state returns to defaults, active task state is cleared, task IDs restart at `1`, and a fresh task dispatches cleanly after re-enable against the freestanding PVH artifact)
+- optional bare-metal QEMU scheduler reset mixed-state probe (live `command_scheduler_reset` against stale mixed load, proving queued wakes and armed task timers are scrubbed alongside the task table, timeout arms are cleared, timer quantum is preserved, and fresh timer scheduling resumes from the preserved `next_timer_id` against the freestanding PVH artifact)
 - optional bare-metal QEMU scheduler policy-switch probe (live round-robin to priority to round-robin transitions under active load, proving dispatch order flips immediately, low-task reprioritization takes effect on the next priority tick, and invalid policy `9` is rejected without changing the active round-robin policy against the freestanding PVH artifact)
 - optional bare-metal QEMU scheduler saturation probe (fills the 16-slot scheduler task table, proves the 17th `command_task_create` returns `result_no_space`, then terminates one slot and reuses it with a fresh task ID plus replacement priority/budget against the freestanding PVH artifact)
 - optional bare-metal QEMU timer wake probe (timer reset/quantum/task-wait to fired timer entry + wake queue telemetry against the freestanding PVH artifact)
@@ -159,6 +160,7 @@ Recommended sequence:
 - bare-metal optional QEMU scheduler timeslice-update probe in validate stage
 - bare-metal optional QEMU scheduler disable-enable probe in validate stage
 - bare-metal optional QEMU scheduler reset probe in validate stage
+- bare-metal optional QEMU scheduler reset mixed-state probe in validate stage
 - bare-metal optional QEMU scheduler policy-switch probe in validate stage
 - bare-metal optional QEMU scheduler saturation probe in validate stage
 - bare-metal optional QEMU timer wake probe in validate stage
