@@ -129,11 +129,14 @@ Recommended sequence:
 - optional bare-metal QEMU interrupt timeout clamp probe (near-`u64::max` `task_wait_interrupt_for` deadline saturates to `18446744073709551615`, the queued wake records that saturated tick, and the live wake boundary wraps cleanly to `0` under the freestanding PVH artifact)
 - optional bare-metal QEMU interrupt filter probe (`task_wait_interrupt(any)` wakes on vector `200`, vector-scoped `task_wait_interrupt(13)` ignores non-matching `200`, then wakes on matching `13`, and invalid vector `65536` is rejected with `-22` against the freestanding PVH artifact)
 - optional bare-metal QEMU task-terminate interrupt-timeout probe (`command_task_terminate` on a `task_wait_interrupt_for` waiter clears the timeout arm and wait state, leaves no wake-queue residue, prevents later ghost interrupt/timeout wake delivery for the terminated task, and keeps `timer_dispatch_count=0` against the freestanding PVH artifact)
+- optional bare-metal QEMU task-terminate mixed-state probe (live mixed `command_task_wait_for`, `command_scheduler_wake_task`, survivor wake, and `command_task_terminate` proof, validating current timer-cancel-on-manual-wake semantics plus targeted wake-queue cleanup for the terminated task against the freestanding PVH artifact)
 - optional bare-metal QEMU timer-disable interrupt probe (`command_timer_disable` suppresses timer dispatch while `command_trigger_interrupt` still wakes an interrupt waiter immediately, and the deferred one-shot timer wake is only delivered after `command_timer_enable` against the freestanding PVH artifact)
 - optional bare-metal QEMU panic-recovery probe (`command_trigger_panic_flag` freezes dispatch and budget burn under active load, `command_set_mode(mode_running)` resumes the same task immediately, and `command_set_boot_phase(runtime)` restores boot diagnostics against the freestanding PVH artifact)
 - optional bare-metal QEMU panic-wake recovery probe (`command_trigger_panic_flag` preserves interrupt + timer wake delivery while dispatch stays frozen, then `command_set_mode(mode_running)` and `command_set_boot_phase(runtime)` resume the preserved ready queue in order against the freestanding PVH artifact)
 - optional bare-metal QEMU manual-wait interrupt probe (`task_wait` remains blocked with `wake_queue_len=0` and manual wait-kind intact after interrupt `44`, then recovers via explicit `scheduler_wake_task` against the freestanding PVH artifact)
 - optional bare-metal QEMU wake-queue selective probe (timer, interrupt, and manual wake generation plus `pop_reason`, `pop_vector`, `pop_reason_vector`, and `pop_before_tick` queue drains, with live vector/reason+vector/before-tick telemetry snapshot checks against the freestanding PVH artifact)
+- optional bare-metal QEMU wake-queue reason-pop probe (dedicated `command_wake_queue_pop_reason` lane on a small mixed queue, proving FIFO removal of only the matching `interrupt` wakes and invalid-reason rejection without vector/overflow setup noise)
+- optional bare-metal QEMU wake-queue before-tick probe (dedicated `command_wake_queue_pop_before_tick` lane on a small mixed queue, proving single oldest stale removal, bounded deadline-window drain, and final `result_not_found` without overflow setup noise)
 - optional bare-metal QEMU wake-queue selective-overflow probe (wrapped 64-entry interrupt wake ring selective drain proof, preserving FIFO survivor ordering after `pop_vector(13,31)` and final `pop_reason_vector(interrupt@13)` against the freestanding PVH artifact)
 - optional bare-metal QEMU wake-queue before-tick-overflow probe (wrapped 64-entry interrupt wake ring deadline-drain proof, preserving FIFO survivor ordering through two `pop_before_tick` threshold drains and a final empty-queue `result_not_found` against the freestanding PVH artifact)
 - optional bare-metal QEMU wake-queue reason-overflow probe (wrapped 64-entry mixed `manual`/`interrupt` wake ring drain proof, preserving FIFO survivor ordering through `pop_reason(manual,31)` and final `pop_reason(manual,99)` against the freestanding PVH artifact)
@@ -207,6 +210,7 @@ Recommended sequence:
 - bare-metal optional QEMU interrupt timeout clamp probe in validate stage
 - bare-metal optional QEMU interrupt filter probe in validate stage
 - bare-metal optional QEMU task-terminate interrupt-timeout probe in validate stage
+- bare-metal optional QEMU task-terminate mixed-state probe in validate stage
 - bare-metal optional QEMU manual-wait interrupt probe in validate stage
 - bare-metal optional QEMU descriptor bootdiag probe in validate stage
 - bare-metal optional QEMU bootdiag/history-clear probe in validate stage
@@ -229,6 +233,8 @@ Recommended sequence:
 - bare-metal optional QEMU scheduler default-budget invalid probe in validate stage
 - bare-metal optional QEMU scheduler round-robin probe in validate stage
 - bare-metal optional QEMU wake-queue selective probe in validate stage
+- bare-metal optional QEMU wake-queue reason-pop probe in validate stage
+- bare-metal optional QEMU wake-queue before-tick probe in validate stage
 - bare-metal optional QEMU wake-queue selective-overflow probe in validate stage
 - bare-metal optional QEMU wake-queue before-tick-overflow probe in validate stage
 - bare-metal optional QEMU wake-queue reason-overflow probe in validate stage

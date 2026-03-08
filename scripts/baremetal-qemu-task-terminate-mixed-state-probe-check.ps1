@@ -299,7 +299,7 @@ if $stage == 8
   continue
 end
 if $stage == 9
-  if *(unsigned int*)(0x__STATUS__+__STATUS_ACK_OFFSET__) == 9 && *(unsigned int*)(0x__WAKE_QUEUE_COUNT__) == 2 && *(unsigned char*)(0x__TIMER_STATE__+__TIMER_ENTRY_COUNT_OFFSET__) == 1 && *(unsigned short*)(0x__TIMER_STATE__+__TIMER_PENDING_WAKE_COUNT_OFFSET__) == 2 && *(unsigned int*)(0x__TIMER_STATE__+__TIMER_NEXT_ID_OFFSET__) == 2 && *(unsigned int*)(0x__TIMER_STATE__+__TIMER_QUANTUM_OFFSET__) == __TIMER_QUANTUM__ && *(unsigned char*)(0x__TASKS__+__TASK_STATE_OFFSET__) == __TASK_STATE_READY__ && *(unsigned char*)(0x__TASKS__+__TASK_STRIDE__+__TASK_STATE_OFFSET__) == __TASK_STATE_READY__ && *(unsigned char*)(0x__WAIT_KIND__) == __WAIT_KIND_NONE__ && *(unsigned char*)(0x__WAIT_KIND__+1) == __WAIT_KIND_NONE__ && *(unsigned int*)(0x__WAKE_QUEUE__+__WAKE0_TASK_ID_OFFSET__) == $task0_id && *(unsigned int*)(0x__WAKE_QUEUE__+__WAKE1_TASK_ID_OFFSET__) == $task1_id && *(unsigned int*)(0x__TIMER_ENTRIES__+__TIMER_ENTRY_TASK_ID_OFFSET__) == $task0_id
+  if *(unsigned int*)(0x__STATUS__+__STATUS_ACK_OFFSET__) == 9 && *(unsigned int*)(0x__WAKE_QUEUE_COUNT__) == 2 && *(unsigned char*)(0x__TIMER_STATE__+__TIMER_ENTRY_COUNT_OFFSET__) == 0 && *(unsigned short*)(0x__TIMER_STATE__+__TIMER_PENDING_WAKE_COUNT_OFFSET__) == 2 && *(unsigned int*)(0x__TIMER_STATE__+__TIMER_NEXT_ID_OFFSET__) == 2 && *(unsigned int*)(0x__TIMER_STATE__+__TIMER_QUANTUM_OFFSET__) == __TIMER_QUANTUM__ && *(unsigned char*)(0x__TASKS__+__TASK_STATE_OFFSET__) == __TASK_STATE_READY__ && *(unsigned char*)(0x__TASKS__+__TASK_STRIDE__+__TASK_STATE_OFFSET__) == __TASK_STATE_READY__ && *(unsigned char*)(0x__WAIT_KIND__) == __WAIT_KIND_NONE__ && *(unsigned char*)(0x__WAIT_KIND__+1) == __WAIT_KIND_NONE__ && *(unsigned int*)(0x__WAKE_QUEUE__+__WAKE0_TASK_ID_OFFSET__) == $task0_id && *(unsigned int*)(0x__WAKE_QUEUE__+__WAKE1_TASK_ID_OFFSET__) == $task1_id && *(unsigned char*)(0x__TIMER_ENTRIES__+__TIMER_ENTRY_STATE_OFFSET__) == 3
     printf "PRE_TERMINATED_TASK_ID=%u\n", $task0_id
     printf "PRE_SURVIVOR_TASK_ID=%u\n", $task1_id
     printf "PRE_WAKE_COUNT=%u\n", *(unsigned int*)(0x__WAKE_QUEUE_COUNT__)
@@ -309,8 +309,7 @@ if $stage == 9
     printf "PRE_QUANTUM=%u\n", *(unsigned int*)(0x__TIMER_STATE__+__TIMER_QUANTUM_OFFSET__)
     printf "PRE_WAKE0_TASK_ID=%u\n", *(unsigned int*)(0x__WAKE_QUEUE__+__WAKE0_TASK_ID_OFFSET__)
     printf "PRE_WAKE1_TASK_ID=%u\n", *(unsigned int*)(0x__WAKE_QUEUE__+__WAKE1_TASK_ID_OFFSET__)
-    printf "PRE_TIMER0_ID=%u\n", *(unsigned int*)(0x__TIMER_ENTRIES__+__TIMER_ENTRY_TIMER_ID_OFFSET__)
-    printf "PRE_TIMER0_TASK_ID=%u\n", *(unsigned int*)(0x__TIMER_ENTRIES__+__TIMER_ENTRY_TASK_ID_OFFSET__)
+    printf "PRE_TIMER0_STATE=%u\n", *(unsigned char*)(0x__TIMER_ENTRIES__+__TIMER_ENTRY_STATE_OFFSET__)
     set *(unsigned short*)(0x__COMMAND_MAILBOX__+__COMMAND_OPCODE_OFFSET__) = __TASK_TERMINATE_OPCODE__
     set *(unsigned int*)(0x__COMMAND_MAILBOX__+__COMMAND_SEQ_OFFSET__) = 10
     set *(unsigned long long*)(0x__COMMAND_MAILBOX__+__COMMAND_ARG0_OFFSET__) = $task0_id
@@ -485,9 +484,10 @@ $required = @(
     @{ Name = 'LAST_RESULT'; Expected = 0 },
     @{ Name = 'PRE_WAKE_COUNT'; Expected = 2 },
     @{ Name = 'PRE_PENDING_WAKE_COUNT'; Expected = 2 },
-    @{ Name = 'PRE_TIMER_COUNT'; Expected = 1 },
+    @{ Name = 'PRE_TIMER_COUNT'; Expected = 0 },
     @{ Name = 'PRE_NEXT_TIMER_ID'; Expected = 2 },
     @{ Name = 'PRE_QUANTUM'; Expected = $timerQuantum },
+    @{ Name = 'PRE_TIMER0_STATE'; Expected = 3 },
     @{ Name = 'POST_TASK_COUNT'; Expected = 1 },
     @{ Name = 'POST_WAKE_COUNT'; Expected = 1 },
     @{ Name = 'POST_PENDING_WAKE_COUNT'; Expected = 1 },
@@ -516,7 +516,6 @@ $preTerminatedTaskId = Extract-IntValue -Text $probeText -Name 'PRE_TERMINATED_T
 $preSurvivorTaskId = Extract-IntValue -Text $probeText -Name 'PRE_SURVIVOR_TASK_ID'
 $preWake0TaskId = Extract-IntValue -Text $probeText -Name 'PRE_WAKE0_TASK_ID'
 $preWake1TaskId = Extract-IntValue -Text $probeText -Name 'PRE_WAKE1_TASK_ID'
-$preTimer0TaskId = Extract-IntValue -Text $probeText -Name 'PRE_TIMER0_TASK_ID'
 $postWake0TaskId = Extract-IntValue -Text $probeText -Name 'POST_WAKE0_TASK_ID'
 $afterIdleWake0TaskId = Extract-IntValue -Text $probeText -Name 'AFTER_IDLE_WAKE0_TASK_ID'
 
@@ -531,9 +530,6 @@ if ($preWake0TaskId -ne $preTerminatedTaskId) {
 }
 if ($preWake1TaskId -ne $preSurvivorTaskId) {
     throw "Unexpected PRE_WAKE1_TASK_ID: got $preWake1TaskId expected $preSurvivorTaskId"
-}
-if ($preTimer0TaskId -ne $preTerminatedTaskId) {
-    throw "Unexpected PRE_TIMER0_TASK_ID: got $preTimer0TaskId expected $preTerminatedTaskId"
 }
 if ($postWake0TaskId -ne $preSurvivorTaskId) {
     throw "Unexpected POST_WAKE0_TASK_ID: got $postWake0TaskId expected $preSurvivorTaskId"
