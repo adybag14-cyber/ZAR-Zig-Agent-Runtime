@@ -3,12 +3,12 @@
 ## Current Snapshot
 
 - Latest published edge release: `v0.2.0-zig-edge.26`
-- Latest local test gate: `zig build test --summary all` -> main `203/203` + bare-metal host `69/69` passing
+- Latest local test gate: `zig build test --summary all` -> main `203/203` + bare-metal host `75/75` passing
 - Latest parity gate: `scripts/check-go-method-parity.ps1` -> `GO_MISSING_IN_ZIG=0`, `ORIGINAL_MISSING_IN_ZIG=0`, `ORIGINAL_BETA_MISSING_IN_ZIG=0`, `UNION_MISSING_IN_ZIG=0`, `UNION_EVENTS_MISSING_IN_ZIG=0`, `ZIG_COUNT=169`, `ZIG_EVENTS_COUNT=19`
-- Current head: `main + mode/boot-phase setter slice`
+- Current head: `main + allocator free failure slice`
 - Latest CI:
-  - `zig-ci` `22804683149` -> success
-  - `docs-pages` `22804683158` -> success
+  - `zig-ci` `22813604542` -> success
+  - `docs-pages` `22813604538` -> success
 
 ## Local Validation Matrix
 
@@ -119,6 +119,7 @@ Recommended sequence:
 - optional bare-metal QEMU syscall saturation reset probe (fill the 64-entry syscall table, dirty dispatch telemetry with a real invoke, run `command_syscall_reset`, prove the fully saturated table returns to steady state, and then prove a fresh syscall restarts cleanly from slot `0` against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator saturation reset probe (fill all 64 allocator records, reject the next `command_allocator_alloc` with `no_space`, run `command_allocator_reset`, prove counters/bitmap/records collapse to steady state, and then prove a fresh 2-page allocation restarts cleanly from slot `0` against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator saturation reuse probe (fill all 64 allocator records, reject the next `command_allocator_alloc` with `no_space`, free allocator record slot `5`, prove the slot becomes reusable while the table returns to full occupancy, and prove first-fit page search lands on pages `64-65` against the freestanding PVH artifact)
+- optional bare-metal QEMU allocator free failure probe (allocate 2 pages, prove wrong-pointer `command_allocator_free` returns `result_not_found`, wrong-size returns `result_invalid_argument`, successful free updates `last_free_*`, double-free returns `result_not_found`, and a fresh allocation restarts from page `0` against the freestanding PVH artifact)
 - optional bare-metal QEMU syscall control probe (isolated live `command_syscall_register` re-register, `command_syscall_set_flags`, blocked invoke, disable/enable, successful invoke, unregister, and missing-entry mutation proof against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator syscall failure probe (invalid-alignment, no-space, blocked-syscall, and disabled-syscall result semantics plus command-result counters against the freestanding PVH artifact)
 - optional bare-metal QEMU command-result counters probe (live mailbox result-category accounting plus `command_reset_command_result_counters` reset semantics against the freestanding PVH artifact)
@@ -189,6 +190,7 @@ Recommended sequence:
 - bare-metal optional QEMU syscall saturation reset probe in validate stage
 - bare-metal optional QEMU allocator saturation reset probe in validate stage
 - bare-metal optional QEMU allocator saturation reuse probe in validate stage
+- bare-metal optional QEMU allocator free failure probe in validate stage
 - bare-metal optional QEMU syscall control probe in validate stage
 - bare-metal optional QEMU allocator syscall failure probe in validate stage
 - bare-metal optional QEMU command-result counters probe in validate stage

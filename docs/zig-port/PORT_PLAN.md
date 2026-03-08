@@ -1297,6 +1297,12 @@ Full-stack replacement execution reference:
     - live PVH/QEMU+GDB sequence fills all `64` allocator records with one-page allocations, proves the next `command_allocator_alloc` returns `result_no_space`, frees allocator record slot `5`, proves that slot becomes reusable while the table returns to full occupancy, and proves first-fit page search advances to pages `64-65` because page `6` still blocks the freed region.
     - key probe evidence: `ACK=68`, `LAST_OPCODE=32`, `LAST_RESULT=0`, `PRE_FREE_REUSE_RECORD_PTR=1069056`, `POST_FREE_LAST_FREE_PTR=1069056`, `POST_REUSE_PTR=1310720`, `POST_REUSE_PAGE_START=64`, `POST_REUSE_PAGE_LEN=2`, `POST_REUSE_ALLOCATION_COUNT=64`, `POST_REUSE_FREE_PAGES=191`, `POST_REUSE_BITMAP64=1`, `POST_REUSE_BITMAP65=1`.
     - probe is wired into both `zig-ci` and `release-preview` validate stages so allocator-table reuse regressions now block CI.
+  - bare-metal allocator free-failure validation shipped:
+    - new script: `scripts/baremetal-qemu-allocator-free-failure-probe-check.ps1`.
+    - added matching host regression in `src/baremetal_main.zig`.
+    - live PVH/QEMU+GDB sequence allocates two pages, proves wrong-pointer `command_allocator_free` returns `result_not_found`, wrong-size returns `result_invalid_argument`, successful free updates `last_free_*`, double-free returns `result_not_found`, and a fresh allocation still restarts from page `0`.
+    - key probe evidence: `ACK=7`, `LAST_OPCODE=32`, `LAST_RESULT=0`, `ALLOC_PTR=1048576`, `BAD_PTR_RESULT=-2`, `BAD_SIZE_RESULT=-22`, `GOOD_FREE_RESULT=0`, `DOUBLE_FREE_RESULT=-2`, `GOOD_FREE_LAST_FREE_PTR=1048576`, `GOOD_FREE_LAST_FREE_SIZE=8192`, `REALLOC_PTR=1048576`, `REALLOC_PAGE_START=0`, `REALLOC_PAGE_LEN=1`, `REALLOC_FREE_PAGES=255`.
+    - probe is wired into both `zig-ci` and `release-preview` validate stages so allocator-free failure regressions now block CI.
   - Week-3 control-plane completion slice shipped:
     - gateway now exposes `GET /ui` for minimal bootstrap control operations (`status`, `doctor`, `logs.tail`, `node.pair.list`) through a token-aware browser panel.
     - node-pair protocol handling consolidated across payload variants: request aliases (`node_id/deviceId`) and action aliases (`pair_id/nodePairId/id` + optional `status|decision`) now normalize into the same state transitions and response schema.

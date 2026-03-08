@@ -3764,6 +3764,94 @@ test "baremetal allocator saturation free reuses record slot and first fit pages
     try std.testing.expectEqual(@as(u8, 1), oc_allocator_page_bitmap_ptr().*[@as(usize, @intCast(capacity + 1))]);
 }
 
+test "baremetal allocator free command rejects bad pointer size and double free without clobbering state" {
+    status.mode = abi.mode_running;
+    status.ticks = 0;
+    status.command_seq_ack = 0;
+    status.last_command_opcode = abi.command_nop;
+    status.last_command_result = abi.result_ok;
+    status.tick_batch_hint = 1;
+    command_mailbox = .{
+        .magic = abi.command_magic,
+        .api_version = abi.api_version,
+        .opcode = abi.command_nop,
+        .seq = 0,
+        .arg0 = 0,
+        .arg1 = 0,
+    };
+    oc_allocator_reset();
+    oc_command_result_counters_clear();
+
+    const initial_free = oc_allocator_state_ptr().free_pages;
+    const alloc_size: u64 = allocator_default_page_size * 2;
+    const alloc_alignment: u64 = allocator_default_page_size;
+
+    _ = oc_submit_command(abi.command_allocator_alloc, alloc_size, alloc_alignment);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    const alloc = oc_allocator_allocation(0);
+    try std.testing.expectEqual(@as(u8, abi.allocation_state_active), alloc.state);
+    try std.testing.expectEqual(allocator_default_heap_base, alloc.ptr);
+    try std.testing.expectEqual(alloc_size, alloc.size_bytes);
+    try std.testing.expectEqual(@as(u32, 2), alloc.page_len);
+
+    _ = oc_submit_command(abi.command_allocator_free, alloc.ptr + allocator_default_page_size, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
+    const state_after_bad_ptr = oc_allocator_state_ptr().*;
+    try std.testing.expectEqual(@as(u32, 1), state_after_bad_ptr.allocation_count);
+    try std.testing.expectEqual(initial_free - 2, state_after_bad_ptr.free_pages);
+    try std.testing.expectEqual(@as(u64, 0), state_after_bad_ptr.last_free_ptr);
+    try std.testing.expectEqual(@as(u64, 0), state_after_bad_ptr.last_free_size);
+    try std.testing.expectEqual(@as(u8, abi.allocation_state_active), oc_allocator_allocation(0).state);
+
+    _ = oc_submit_command(abi.command_allocator_free, alloc.ptr, allocator_default_page_size);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_invalid_argument), status.last_command_result);
+    const state_after_bad_size = oc_allocator_state_ptr().*;
+    try std.testing.expectEqual(@as(u32, 1), state_after_bad_size.allocation_count);
+    try std.testing.expectEqual(initial_free - 2, state_after_bad_size.free_pages);
+    try std.testing.expectEqual(@as(u64, 0), state_after_bad_size.last_free_ptr);
+    try std.testing.expectEqual(@as(u64, 0), state_after_bad_size.last_free_size);
+    try std.testing.expectEqual(@as(u8, abi.allocation_state_active), oc_allocator_allocation(0).state);
+
+    _ = oc_submit_command(abi.command_allocator_free, alloc.ptr, alloc_size);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    const state_after_free = oc_allocator_state_ptr().*;
+    try std.testing.expectEqual(@as(u32, 0), state_after_free.allocation_count);
+    try std.testing.expectEqual(initial_free, state_after_free.free_pages);
+    try std.testing.expectEqual(alloc.ptr, state_after_free.last_free_ptr);
+    try std.testing.expectEqual(alloc_size, state_after_free.last_free_size);
+    try std.testing.expectEqual(@as(u8, abi.allocation_state_unused), oc_allocator_allocation(0).state);
+
+    _ = oc_submit_command(abi.command_allocator_free, alloc.ptr, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
+    const state_after_double_free = oc_allocator_state_ptr().*;
+    try std.testing.expectEqual(@as(u32, 0), state_after_double_free.allocation_count);
+    try std.testing.expectEqual(initial_free, state_after_double_free.free_pages);
+    try std.testing.expectEqual(alloc.ptr, state_after_double_free.last_free_ptr);
+    try std.testing.expectEqual(alloc_size, state_after_double_free.last_free_size);
+    try std.testing.expectEqual(@as(u8, abi.allocation_state_unused), oc_allocator_allocation(0).state);
+
+    _ = oc_submit_command(abi.command_allocator_alloc, allocator_default_page_size, alloc_alignment);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    const state_after_realloc = oc_allocator_state_ptr().*;
+    const realloc = oc_allocator_allocation(0);
+    try std.testing.expectEqual(@as(u32, 1), state_after_realloc.allocation_count);
+    try std.testing.expectEqual(initial_free - 1, state_after_realloc.free_pages);
+    try std.testing.expectEqual(allocator_default_heap_base, state_after_realloc.last_alloc_ptr);
+    try std.testing.expectEqual(allocator_default_page_size, state_after_realloc.last_alloc_size);
+    try std.testing.expectEqual(alloc.ptr, state_after_realloc.last_free_ptr);
+    try std.testing.expectEqual(alloc_size, state_after_realloc.last_free_size);
+    try std.testing.expectEqual(@as(u8, abi.allocation_state_active), realloc.state);
+    try std.testing.expectEqual(allocator_default_heap_base, realloc.ptr);
+    try std.testing.expectEqual(@as(u32, 0), realloc.page_start);
+    try std.testing.expectEqual(@as(u32, 1), realloc.page_len);
+}
+
 test "baremetal timer periodic flow rearms and honors enable disable controls" {
     status.mode = abi.mode_running;
     status.ticks = 0;

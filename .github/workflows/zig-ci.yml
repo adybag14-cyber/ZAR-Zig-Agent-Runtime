@@ -350,6 +350,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-allocator-saturation-reuse-probe-check.ps1
 
+      - name: Bare-metal QEMU allocator free failure probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-free-failure-probe-check.ps1
+
       - name: Bare-metal QEMU syscall control probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-syscall-control-probe-check.ps1
