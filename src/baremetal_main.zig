@@ -844,6 +844,20 @@ pub export fn oc_wake_queue_clear() void {
 
 pub export fn oc_timer_reset() void {
     @memset(&timer_entries, std.mem.zeroes(BaremetalTimerEntry));
+    var slot: usize = 0;
+    while (slot < scheduler_task_capacity) : (slot += 1) {
+        if (scheduler_tasks[slot].state != abi.task_state_waiting) continue;
+        const kind = scheduler_wait_kind[slot];
+        if (kind == wait_condition_timer) {
+            schedulerSetWaitCondition(slot, wait_condition_manual, 0);
+            continue;
+        }
+        if ((kind == wait_condition_interrupt_any or kind == wait_condition_interrupt_vector) and
+            scheduler_wait_timeout_tick[slot] != 0)
+        {
+            schedulerSetWaitCondition(slot, kind, scheduler_wait_interrupt_vector[slot]);
+        }
+    }
     timer_state = .{
         .enabled = abi.timer_state_enabled,
         .timer_count = 0,
@@ -4194,6 +4208,91 @@ test "baremetal timer pressure reuses canceled slot with fresh timer id" {
     try std.testing.expectEqual(@as(u32, scheduler_task_capacity + 1), reused_entry.timer_id);
     try std.testing.expectEqual(@as(u8, abi.timer_entry_state_armed), reused_entry.state);
     try std.testing.expect(reused_entry.next_fire_tick > status.ticks);
+}
+
+test "baremetal timer reset clears timer entries and timer-backed waits" {
+    resetBaremetalRuntimeForTest();
+
+    _ = oc_submit_command(abi.command_scheduler_disable, 0, 0);
+    oc_tick();
+
+    _ = oc_submit_command(abi.command_task_create, 6, 0);
+    oc_tick();
+    const timer_task_id = oc_scheduler_task(0).task_id;
+    try std.testing.expect(timer_task_id != 0);
+
+    _ = oc_submit_command(abi.command_task_create, 7, 1);
+    oc_tick();
+    const interrupt_task_id = oc_scheduler_task(1).task_id;
+    try std.testing.expect(interrupt_task_id != 0);
+
+    _ = oc_submit_command(abi.command_task_wait_for, timer_task_id, 10);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+
+    _ = oc_submit_command(abi.command_task_wait_interrupt_for, interrupt_task_id, 20);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+
+    _ = oc_submit_command(abi.command_timer_set_quantum, 5, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    _ = oc_submit_command(abi.command_timer_disable, 0, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+
+    try std.testing.expect(!oc_timer_enabled());
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u32, 2), oc_scheduler_waiting_count());
+    try std.testing.expectEqual(@as(u32, 1), oc_scheduler_wait_interrupt_count());
+    try std.testing.expectEqual(@as(u32, 1), oc_scheduler_wait_timeout_count());
+    try std.testing.expectEqual(@as(u32, 2), oc_timer_state_ptr().next_timer_id);
+    try std.testing.expectEqual(@as(u32, 5), oc_timer_quantum());
+
+    _ = oc_submit_command(abi.command_timer_reset, 0, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expect(oc_timer_enabled());
+    try std.testing.expectEqual(@as(u32, 0), oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u16, 0), oc_timer_state_ptr().pending_wake_count);
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_state_ptr().next_timer_id);
+    try std.testing.expectEqual(@as(u64, 0), oc_timer_state_ptr().dispatch_count);
+    try std.testing.expectEqual(@as(u64, 0), oc_timer_state_ptr().last_wake_tick);
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_quantum());
+    try std.testing.expectEqual(@as(u32, 2), oc_scheduler_waiting_count());
+    try std.testing.expectEqual(@as(u32, 1), oc_scheduler_wait_interrupt_count());
+    try std.testing.expectEqual(@as(u32, 0), oc_scheduler_wait_timeout_count());
+
+    oc_tick_n(25);
+    try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u32, 2), oc_scheduler_waiting_count());
+    try std.testing.expectEqual(@as(u32, 1), oc_scheduler_wait_interrupt_count());
+    try std.testing.expectEqual(@as(u32, 0), oc_scheduler_wait_timeout_count());
+
+    _ = oc_submit_command(abi.command_scheduler_wake_task, timer_task_id, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+    const manual_evt = oc_wake_queue_event(0);
+    try std.testing.expectEqual(timer_task_id, manual_evt.task_id);
+    try std.testing.expectEqual(@as(u8, abi.wake_reason_manual), manual_evt.reason);
+
+    _ = oc_submit_command(abi.command_trigger_interrupt, 31, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_len());
+    const interrupt_evt = oc_wake_queue_event(1);
+    try std.testing.expectEqual(interrupt_task_id, interrupt_evt.task_id);
+    try std.testing.expectEqual(@as(u8, abi.wake_reason_interrupt), interrupt_evt.reason);
+    try std.testing.expectEqual(@as(u8, 31), interrupt_evt.vector);
+
+    _ = oc_submit_command(abi.command_task_wait_for, timer_task_id, 3);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_entry(0).timer_id);
+    try std.testing.expectEqual(@as(u32, 2), oc_timer_state_ptr().next_timer_id);
 }
 
 test "baremetal task wait for command arms deadline and wakes on timer fire" {
