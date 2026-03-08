@@ -823,6 +823,10 @@ Phase 6 progress notes:
   - new export telemetry: `oc_wake_queue_age_buckets(quantum_ticks)` (`current_tick`, `quantum_ticks`, `stale_count`, `stale_older_than_quantum_count`, `future_count`)
   - ABI contract extended with `BaremetalWakeQueueAgeBuckets`
   - regression coverage added for age-bucket field correctness under mixed stale/future wake entries
+- [x] Bare-metal wake queue count-snapshot slice shipped:
+  - new live QEMU gate: `scripts/baremetal-qemu-wake-queue-count-snapshot-probe-check.ps1`
+  - exported count-query snapshot pointers (`oc_wake_queue_count_query_ptr`, `oc_wake_queue_count_snapshot_ptr`) are now exercised against a five-entry mixed timer/interrupt/manual queue without mutating queue state
+  - live proof validates three query shapes end to end: `interrupt@13 <= tick(11)` -> `2/2/2`, `interrupt@31 <= tick(17)` -> `1/4/1`, and `manual@31 <= tick(20)` -> `1/5/0`
 - [x] Bare-metal interrupt mask control slice shipped:
   - new mailbox opcodes: `command_interrupt_mask_set` (`arg0=vector`, `arg1=masked 0|1`), `command_interrupt_mask_clear_all`, `command_interrupt_mask_reset_ignored_counts`, and `command_interrupt_mask_apply_profile`
   - new x86 bootstrap exports: `oc_interrupt_mask_ptr`, `oc_interrupt_mask_is_set`, `oc_interrupt_masked_count`, `oc_interrupt_mask_ignored_count`, `oc_interrupt_mask_profile`, `oc_interrupt_last_masked_vector`, `oc_interrupt_mask_ignored_vector_counts_ptr`, `oc_interrupt_mask_ignored_vector_count`, `oc_interrupt_mask_set`, `oc_interrupt_mask_clear_all`, `oc_interrupt_mask_reset_ignored_counts`, `oc_interrupt_mask_apply_profile`

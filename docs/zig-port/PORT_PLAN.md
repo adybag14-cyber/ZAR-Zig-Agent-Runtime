@@ -1281,6 +1281,10 @@ Full-stack replacement execution reference:
     - new export: `oc_wake_queue_age_buckets(quantum_ticks)` for compact age diagnostics (`current_tick`, `quantum_ticks`, `stale_count`, `stale_older_than_quantum_count`, `future_count`).
     - ABI contract extended with `BaremetalWakeQueueAgeBuckets` size/layout checks.
     - validated with `zig build test --summary all` (`118/118`) and `scripts/baremetal-smoke-check.ps1`.
+  - bare-metal wake queue count-snapshot slice shipped:
+    - new live script: `scripts/baremetal-qemu-wake-queue-count-snapshot-probe-check.ps1` reuses the mixed timer/interrupt/manual wake generation lane and exercises `oc_wake_queue_count_query_ptr` + `oc_wake_queue_count_snapshot_ptr` under QEMU+GDB without mutating queue state.
+    - current proof path validates `ACK=19`, `LAST_OPCODE=45`, `LAST_RESULT=0`, queue order `1/2/3/4/5`, and three snapshot queries: `interrupt@13<=11 -> 2/2/2`, `interrupt@31<=17 -> 1/4/1`, `manual@31<=20 -> 1/5/0`.
+    - validated locally with `scripts/baremetal-qemu-wake-queue-count-snapshot-probe-check.ps1` and `-SkipBuild`.
   - bare-metal interrupt mask control slice shipped:
     - new mailbox opcodes: `command_interrupt_mask_set` (`arg0=vector`, `arg1=masked 0|1`), `command_interrupt_mask_clear_all`, `command_interrupt_mask_reset_ignored_counts`, and `command_interrupt_mask_apply_profile`.
     - new x86 bootstrap exports: `oc_interrupt_mask_ptr`, `oc_interrupt_mask_is_set`, `oc_interrupt_masked_count`, `oc_interrupt_mask_ignored_count`, `oc_interrupt_mask_profile`, `oc_interrupt_last_masked_vector`, `oc_interrupt_mask_ignored_vector_counts_ptr`, `oc_interrupt_mask_ignored_vector_count`, `oc_interrupt_mask_set`, `oc_interrupt_mask_clear_all`, `oc_interrupt_mask_reset_ignored_counts`, `oc_interrupt_mask_apply_profile`.
