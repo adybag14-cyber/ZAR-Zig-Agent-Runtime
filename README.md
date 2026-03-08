@@ -97,6 +97,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - optional QEMU periodic interrupt probe validates mixed periodic timer plus interrupt wake ordering end to end, proving the interrupt wake lands before the deadline, the periodic source keeps its cadence, and cancellation prevents a later timeout leak against the freestanding PVH artifact
   - optional QEMU interrupt-timeout probe validates `task_wait_interrupt_for` wakeup precedence end to end, proving an interrupt wake clears the timeout arm and does not later leak a second timer wake against the freestanding PVH artifact
   - optional QEMU interrupt-timeout timer probe validates the no-interrupt timeout path end to end, proving the waiter stays blocked until the deadline, then wakes with `reason=timer`, `vector=0`, and zero interrupt telemetry against the freestanding PVH artifact
+  - optional QEMU interrupt-timeout manual-wake probe validates the manual-recovery path end to end, proving `command_scheduler_wake_task` clears the pending timeout, queues exactly one manual wake, and does not allow a delayed timer wake to appear against the freestanding PVH artifact
   - optional QEMU masked-interrupt timeout probe validates the masked-interrupt timeout path end to end, proving `command_interrupt_mask_apply_profile(external_all)` suppresses vector `200`, preserves the waiting task with no wake-queue entry, and then falls through to a timer wake with `reason=timer`, `vector=0` against the freestanding PVH artifact
   - optional QEMU interrupt-timeout clamp probe validates the near-`u64::max` timeout path end to end, proving the armed deadline saturates at `18446744073709551615`, the wake event records that saturated tick, and the runtime wake boundary wraps cleanly to `0` without losing the queued timer wake
   - optional QEMU periodic timer clamp probe validates the periodic helper saturation path end to end, proving a timer armed at `u64::max-1` first fires at `18446744073709551615`, re-arms to the same saturated deadline, and then remains stable after the runtime tick counter wraps to `0`
@@ -517,6 +518,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU periodic timer probe
 - optional bare-metal QEMU periodic interrupt probe
 - optional bare-metal QEMU interrupt timeout probe
+- optional bare-metal QEMU interrupt timeout manual wake probe
 - optional bare-metal QEMU interrupt timeout timer probe
 - optional bare-metal QEMU masked interrupt timeout probe
 - optional bare-metal QEMU interrupt timeout clamp probe
@@ -583,6 +585,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU timer pressure validation
 - optional bare-metal QEMU periodic timer validation
 - optional bare-metal QEMU interrupt timeout validation
+- optional bare-metal QEMU interrupt timeout manual-wake validation
 - optional bare-metal QEMU interrupt timeout timer validation
 - optional bare-metal QEMU masked interrupt timeout validation
 - optional bare-metal QEMU interrupt timeout clamp validation
