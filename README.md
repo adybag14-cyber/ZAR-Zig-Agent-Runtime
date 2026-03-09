@@ -12,7 +12,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - Union baseline: `136/136` covered (`MISSING_IN_ZIG=0`)
   - Gateway events: stable `19/19`, beta `19/19`, union `19/19` (`UNION_EVENTS_MISSING_IN_ZIG=0`)
 - Latest local validation: `zig build test --summary all` -> main `203/203` + bare-metal host `106/106` passing
-- Latest published edge release tag: `v0.2.0-zig-edge.26`
+- Latest published edge release tag: `v0.2.0-zig-edge.27`
 - Toolchain policy: Codeberg `master` is canonical; `adybag14-cyber/zig` publishes rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
 - Recent FS1 progress (2026-03-06):
   - runtime recovery posture is now surfaced on live diagnostics and maintenance RPCs
@@ -61,6 +61,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - bare-metal mailbox header-validation and sequence-control invariants are now enforced by live QEMU+GDB probes proving invalid `magic` and `api_version` are rejected without execution, stale `command_seq` replays stay no-op, and `u64` mailbox sequence wraparound still preserves deterministic `ack` and command-history ordering
   - bare-metal scheduler default-budget rejection behavior is now enforced by a live QEMU+GDB probe proving `command_scheduler_set_default_budget(0)` returns `result_invalid_argument` without clobbering the active default budget or fresh zero-budget task inheritance
   - bare-metal feature-flags and tick-batch control is now enforced by both a host test and a live QEMU+GDB probe, proving `command_set_feature_flags` persists a new flag mask, `command_set_tick_batch_hint` changes runtime tick progression from `1` to `4`, and an invalid zero hint is rejected without clobbering the active batch size
+  - feature-flags/tick-batch wrapper probes now enforce the narrow boundaries directly: stage-1 feature-flag success, stage-2 valid tick-batch update, stage-3 invalid-zero preservation, final mailbox opcode/sequence stability, and final preserved flag/batch/tick accumulation over the same live PVH run
   - `zig build test` now includes the host-run `src/baremetal_main.zig` suite, and that newly surfaced bare-metal wake-queue assertion drift has been corrected instead of remaining hidden outside the default test gate
   - bare-metal wake-queue FIFO consumption is now enforced by a live QEMU+GDB probe, proving `command_wake_queue_pop` removes the logical oldest event first, preserves the second queued manual wake as the new head (`seq=2`, `tick=7`), and returns `result_not_found` once the queue is empty
   - bare-metal direct timer-ID cancellation is now enforced by a live QEMU+GDB probe, proving `command_timer_cancel` captures the armed timer ID from the live entry, cancels that exact timer in place, preserves the canceled slot metadata, and returns `result_not_found` on a second cancel

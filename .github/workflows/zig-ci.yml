@@ -153,6 +153,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-feature-flags-tick-batch-probe-check.ps1
 
+      - name: Bare-metal QEMU feature-flags set-success probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-feature-flags-set-success-probe-check.ps1
+
+      - name: Bare-metal QEMU tick-batch valid-update probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-tick-batch-valid-update-probe-check.ps1
+
+      - name: Bare-metal QEMU tick-batch invalid-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-tick-batch-invalid-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU feature-flags tick-batch mailbox-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-feature-flags-tick-batch-mailbox-state-probe-check.ps1
+
+      - name: Bare-metal QEMU feature-flags tick-batch state-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-feature-flags-tick-batch-state-preserve-probe-check.ps1
+
       - name: Bare-metal QEMU descriptor bootdiag probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-descriptor-bootdiag-probe-check.ps1

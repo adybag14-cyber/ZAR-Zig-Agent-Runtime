@@ -320,6 +320,13 @@ if `$stage == 0
 end
 if `$stage == 1
   if *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset) == 1 && *(unsigned int*)(0x$statusAddress+$statusFeatureFlagsOffset) == $featureFlagsValue && *(unsigned int*)(0x$statusAddress+$statusTickBatchHintOffset) == 1 && *(unsigned long long*)(0x$statusAddress+$statusTicksOffset) == 1
+    printf "AFTER_STAGE1_FEATURE_FLAGS\n"
+    printf "STAGE1_ACK=%u\n", *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset)
+    printf "STAGE1_LAST_OPCODE=%u\n", *(unsigned short*)(0x$statusAddress+$statusLastCommandOpcodeOffset)
+    printf "STAGE1_LAST_RESULT=%d\n", *(short*)(0x$statusAddress+$statusLastCommandResultOffset)
+    printf "STAGE1_TICKS=%llu\n", *(unsigned long long*)(0x$statusAddress+$statusTicksOffset)
+    printf "STAGE1_FEATURE_FLAGS=%u\n", *(unsigned int*)(0x$statusAddress+$statusFeatureFlagsOffset)
+    printf "STAGE1_TICK_BATCH_HINT=%u\n", *(unsigned int*)(0x$statusAddress+$statusTickBatchHintOffset)
     set *(unsigned short*)(0x$commandMailboxAddress+$commandOpcodeOffset) = $setTickBatchHintOpcode
     set *(unsigned int*)(0x$commandMailboxAddress+$commandSeqOffset) = 2
     set *(unsigned long long*)(0x$commandMailboxAddress+$commandArg0Offset) = $validTickBatchHint
@@ -330,6 +337,13 @@ if `$stage == 1
 end
 if `$stage == 2
   if *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset) == 2 && *(unsigned int*)(0x$statusAddress+$statusTickBatchHintOffset) == $validTickBatchHint && *(unsigned long long*)(0x$statusAddress+$statusTicksOffset) == 5
+    printf "AFTER_STAGE2_TICK_BATCH_VALID\n"
+    printf "STAGE2_ACK=%u\n", *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset)
+    printf "STAGE2_LAST_OPCODE=%u\n", *(unsigned short*)(0x$statusAddress+$statusLastCommandOpcodeOffset)
+    printf "STAGE2_LAST_RESULT=%d\n", *(short*)(0x$statusAddress+$statusLastCommandResultOffset)
+    printf "STAGE2_TICKS=%llu\n", *(unsigned long long*)(0x$statusAddress+$statusTicksOffset)
+    printf "STAGE2_FEATURE_FLAGS=%u\n", *(unsigned int*)(0x$statusAddress+$statusFeatureFlagsOffset)
+    printf "STAGE2_TICK_BATCH_HINT=%u\n", *(unsigned int*)(0x$statusAddress+$statusTickBatchHintOffset)
     set *(unsigned short*)(0x$commandMailboxAddress+$commandOpcodeOffset) = $setTickBatchHintOpcode
     set *(unsigned int*)(0x$commandMailboxAddress+$commandSeqOffset) = 3
     set *(unsigned long long*)(0x$commandMailboxAddress+$commandArg0Offset) = $invalidTickBatchHint
@@ -340,6 +354,13 @@ if `$stage == 2
 end
 if `$stage == 3
   if *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset) == 3 && *(short*)(0x$statusAddress+$statusLastCommandResultOffset) == -22 && *(unsigned int*)(0x$statusAddress+$statusTickBatchHintOffset) == $validTickBatchHint && *(unsigned long long*)(0x$statusAddress+$statusTicksOffset) == 9
+    printf "AFTER_STAGE3_TICK_BATCH_INVALID\n"
+    printf "STAGE3_ACK=%u\n", *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset)
+    printf "STAGE3_LAST_OPCODE=%u\n", *(unsigned short*)(0x$statusAddress+$statusLastCommandOpcodeOffset)
+    printf "STAGE3_LAST_RESULT=%d\n", *(short*)(0x$statusAddress+$statusLastCommandResultOffset)
+    printf "STAGE3_TICKS=%llu\n", *(unsigned long long*)(0x$statusAddress+$statusTicksOffset)
+    printf "STAGE3_FEATURE_FLAGS=%u\n", *(unsigned int*)(0x$statusAddress+$statusFeatureFlagsOffset)
+    printf "STAGE3_TICK_BATCH_HINT=%u\n", *(unsigned int*)(0x$statusAddress+$statusTickBatchHintOffset)
     printf "AFTER_FEATURE_FLAGS_TICK_BATCH\n"
     printf "ACK=%u\n", *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset)
     printf "LAST_OPCODE=%u\n", *(unsigned short*)(0x$statusAddress+$statusLastCommandOpcodeOffset)
@@ -405,7 +426,7 @@ Write-Output "BAREMETAL_QEMU_FEATURE_FLAGS_TICK_BATCH_GDB_STDERR=$gdbStderr"
 Write-Output "BAREMETAL_QEMU_FEATURE_FLAGS_TICK_BATCH_QEMU_STDOUT=$qemuStdout"
 Write-Output "BAREMETAL_QEMU_FEATURE_FLAGS_TICK_BATCH_QEMU_STDERR=$qemuStderr"
 
-if ($stdout -notmatch 'HIT_START' -or $stdout -notmatch 'AFTER_FEATURE_FLAGS_TICK_BATCH') {
+if ($stdout -notmatch 'HIT_START' -or $stdout -notmatch 'AFTER_STAGE1_FEATURE_FLAGS' -or $stdout -notmatch 'AFTER_STAGE2_TICK_BATCH_VALID' -or $stdout -notmatch 'AFTER_STAGE3_TICK_BATCH_INVALID' -or $stdout -notmatch 'AFTER_FEATURE_FLAGS_TICK_BATCH') {
     Write-Output $stdout
     if ($stderr) { Write-Output $stderr }
     throw "Feature flags / tick batch probe did not reach the expected GDB checkpoints"
@@ -434,3 +455,36 @@ foreach ($entry in $expectedInts.GetEnumerator()) {
 }
 
 Write-Output "BAREMETAL_QEMU_FEATURE_FLAGS_TICK_BATCH_PROBE=pass"
+
+$stageExpectedInts = @(
+    @{ Prefix = "STAGE1"; Name = "ACK"; Expected = 1 },
+    @{ Prefix = "STAGE1"; Name = "LAST_OPCODE"; Expected = $setFeatureFlagsOpcode },
+    @{ Prefix = "STAGE1"; Name = "LAST_RESULT"; Expected = 0 },
+    @{ Prefix = "STAGE1"; Name = "TICKS"; Expected = 1 },
+    @{ Prefix = "STAGE1"; Name = "FEATURE_FLAGS"; Expected = $featureFlagsValue },
+    @{ Prefix = "STAGE1"; Name = "TICK_BATCH_HINT"; Expected = 1 },
+    @{ Prefix = "STAGE2"; Name = "ACK"; Expected = 2 },
+    @{ Prefix = "STAGE2"; Name = "LAST_OPCODE"; Expected = $setTickBatchHintOpcode },
+    @{ Prefix = "STAGE2"; Name = "LAST_RESULT"; Expected = 0 },
+    @{ Prefix = "STAGE2"; Name = "TICKS"; Expected = 5 },
+    @{ Prefix = "STAGE2"; Name = "FEATURE_FLAGS"; Expected = $featureFlagsValue },
+    @{ Prefix = "STAGE2"; Name = "TICK_BATCH_HINT"; Expected = $validTickBatchHint },
+    @{ Prefix = "STAGE3"; Name = "ACK"; Expected = 3 },
+    @{ Prefix = "STAGE3"; Name = "LAST_OPCODE"; Expected = $setTickBatchHintOpcode },
+    @{ Prefix = "STAGE3"; Name = "LAST_RESULT"; Expected = -22 },
+    @{ Prefix = "STAGE3"; Name = "TICKS"; Expected = 9 },
+    @{ Prefix = "STAGE3"; Name = "FEATURE_FLAGS"; Expected = $featureFlagsValue },
+    @{ Prefix = "STAGE3"; Name = "TICK_BATCH_HINT"; Expected = $validTickBatchHint }
+)
+
+foreach ($entry in $stageExpectedInts) {
+    $label = "$($entry.Prefix)_$($entry.Name)"
+    $actual = Extract-IntValue -Text $stdout -Name $label
+    if ($null -eq $actual) {
+        throw "Missing expected stage output line for $label"
+    }
+    if ($actual -ne $entry.Expected) {
+        throw "Unexpected value for ${label}: expected $($entry.Expected), got $actual"
+    }
+    Write-Output "BAREMETAL_QEMU_FEATURE_FLAGS_TICK_BATCH_${label}=$actual"
+}

@@ -2,10 +2,10 @@
 
 ## Current Snapshot
 
-- Latest published edge release: `v0.2.0-zig-edge.26`
+- Latest published edge release: `v0.2.0-zig-edge.27`
 - Latest local test gate: `zig build test --summary all` -> main `203/203` + bare-metal host `106/106` passing
 - Latest parity gate: `scripts/check-go-method-parity.ps1` -> `GO_MISSING_IN_ZIG=0`, `ORIGINAL_MISSING_IN_ZIG=0`, `ORIGINAL_BETA_MISSING_IN_ZIG=0`, `UNION_MISSING_IN_ZIG=0`, `UNION_EVENTS_MISSING_IN_ZIG=0`, `ZIG_COUNT=170`, `ZIG_EVENTS_COUNT=19`
-- Current head: `main + FS6 timer-recovery wrappers`
+- Current head: `main + FS6 feature-flags/tick-batch wrappers`
 - Toolchain lane: Codeberg `master` is canonical; `adybag14-cyber/zig` is the Windows release mirror with rolling `latest-master` plus immutable `upstream-<sha>` releases.
 - Latest CI:
   - `zig-ci` `22813604542` -> success
@@ -26,6 +26,11 @@ Recommended sequence:
 ./scripts/baremetal-qemu-runtime-oc-tick-check.ps1
 ./scripts/baremetal-qemu-command-loop-check.ps1
 ./scripts/baremetal-qemu-feature-flags-tick-batch-probe-check.ps1
+./scripts/baremetal-qemu-feature-flags-set-success-probe-check.ps1
+./scripts/baremetal-qemu-tick-batch-valid-update-probe-check.ps1
+./scripts/baremetal-qemu-tick-batch-invalid-preserve-probe-check.ps1
+./scripts/baremetal-qemu-feature-flags-tick-batch-mailbox-state-probe-check.ps1
+./scripts/baremetal-qemu-feature-flags-tick-batch-state-preserve-probe-check.ps1
 ./scripts/baremetal-qemu-descriptor-bootdiag-probe-check.ps1
 ./scripts/baremetal-qemu-descriptor-table-content-probe-check.ps1
 ./scripts/baremetal-qemu-descriptor-dispatch-probe-check.ps1
@@ -103,6 +108,7 @@ Recommended sequence:
 - optional bare-metal QEMU descriptor table content probe (live `gdtr/idtr` limits+bases, code/data `gdt` entry fields, and `idt[0]/idt[255]` selector/type/stub wiring against the freestanding PVH artifact)
 - optional bare-metal QEMU descriptor dispatch probe (descriptor reinit/load plus post-load interrupt and exception dispatch coherence, including interrupt/exception history rings, against the freestanding PVH artifact)
 - optional bare-metal QEMU feature-flags/tick-batch probe (`command_set_feature_flags` updates the live flag mask, `command_set_tick_batch_hint` raises runtime tick progression from `1` to `4`, and an invalid zero hint is rejected without changing the active batch size against the freestanding PVH artifact)
+- optional bare-metal QEMU feature-flags/tick-batch wrapper probes (`baremetal-qemu-feature-flags-set-success-probe-check.ps1`, `baremetal-qemu-tick-batch-valid-update-probe-check.ps1`, `baremetal-qemu-tick-batch-invalid-preserve-probe-check.ps1`, `baremetal-qemu-feature-flags-tick-batch-mailbox-state-probe-check.ps1`, and `baremetal-qemu-feature-flags-tick-batch-state-preserve-probe-check.ps1`) reuse the broad probe and fail directly on the narrow stage-success, valid update, invalid preserve, mailbox-state, and final preserved-state boundaries
 - optional bare-metal QEMU vector counter reset probe (`command_reset_vector_counters` after live interrupt+exception dispatch, proving vectors `10/200/14` and exception vectors `10/14` zero while aggregate counts stay at `4/3` against the freestanding PVH artifact)
 - optional bare-metal QEMU vector history overflow probe (interrupt/exception counter resets plus repeated dispatch saturation, proving history-ring overflow and per-vector telemetry against the freestanding PVH artifact)
 - optional bare-metal QEMU vector history clear probe (dedicated mailbox clear-path proof for `command_reset_interrupt_counters` / `command_reset_exception_counters` plus `command_clear_interrupt_history` / `command_clear_exception_history`, validating that aggregate counters reset first without disturbing retained history/vector tables and that the later clear only zeroes history-ring/overflow state against the freestanding PVH artifact)
@@ -232,6 +238,11 @@ Recommended sequence:
 - appliance rollout boundary smoke check in validate stage
 - appliance minimal profile smoke check in validate stage
 - bare-metal optional QEMU feature-flags/tick-batch probe in validate stage
+- bare-metal optional QEMU feature-flags set-success probe in validate stage
+- bare-metal optional QEMU tick-batch valid-update probe in validate stage
+- bare-metal optional QEMU tick-batch invalid-preserve probe in validate stage
+- bare-metal optional QEMU feature-flags tick-batch mailbox-state probe in validate stage
+- bare-metal optional QEMU feature-flags tick-batch state-preserve probe in validate stage
 - bare-metal optional QEMU scheduler probe in validate stage
 - bare-metal optional QEMU scheduler timeslice-update probe in validate stage
 - bare-metal optional QEMU scheduler disable-enable probe in validate stage
