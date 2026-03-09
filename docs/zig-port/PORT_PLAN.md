@@ -1405,6 +1405,10 @@ Full-stack replacement execution reference:
     - new scripts: `scripts/baremetal-qemu-reset-counters-preserve-config-probe-check.ps1`, `scripts/baremetal-qemu-reset-bootdiag-preserve-state-probe-check.ps1`, `scripts/baremetal-qemu-clear-command-history-preserve-health-probe-check.ps1`, `scripts/baremetal-qemu-clear-health-history-preserve-command-probe-check.ps1`, and `scripts/baremetal-qemu-reset-command-result-preserve-runtime-probe-check.ps1`.
     - each wrapper reuses the broader live QEMU probe for its subsystem, then asserts the narrow reset-preservation boundary directly so these contracts fail independently in `zig-ci` and `release-preview`.
     - `scripts/baremetal-qemu-reset-counters-probe-check.ps1` was aligned with current runtime semantics by expecting zero live timer entries at the pre-reset snapshot while still requiring preserved timer quantum and wake-queue evidence.
+  - bare-metal interrupt/exception reset-isolation wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-reset-interrupt-counters-preserve-history-probe-check.ps1`, `scripts/baremetal-qemu-reset-exception-counters-preserve-history-probe-check.ps1`, `scripts/baremetal-qemu-clear-interrupt-history-preserve-exception-probe-check.ps1`, `scripts/baremetal-qemu-reset-vector-counters-preserve-aggregate-probe-check.ps1`, and `scripts/baremetal-qemu-reset-vector-counters-preserve-last-vector-probe-check.ps1`.
+    - each wrapper reuses one of the broad live vector probes, then asserts the narrow interrupt/exception preservation boundary directly so drift in aggregate resets, sibling-history preservation, or last-vector telemetry now fails independently in `zig-ci` and `release-preview`.
+    - the wrapper parsers were hardened for Windows CRLF output so the proof surface stays deterministic on local PowerShell and GitHub Actions runners.
   - bare-metal task-resume timer-clear validation shipped:
     - new script: `scripts/baremetal-qemu-task-resume-timer-clear-probe-check.ps1`.
     - added matching host regression in `src/baremetal_main.zig`.
