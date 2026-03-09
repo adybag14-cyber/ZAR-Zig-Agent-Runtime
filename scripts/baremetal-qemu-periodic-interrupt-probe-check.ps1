@@ -287,7 +287,7 @@ function Extract-IntValue {
         [string] $Name
     )
 
-    $pattern = [regex]::Escape($Name) + '=(-?\d+)'
+    $pattern = '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$'
     $match = [regex]::Match($Text, $pattern)
     if (-not $match.Success) {
         return $null

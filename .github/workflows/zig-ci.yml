@@ -465,6 +465,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-periodic-interrupt-probe-check.ps1
 
+      - name: Bare-metal QEMU periodic interrupt baseline fire probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-interrupt-baseline-fire-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic interrupt interrupt-wake-payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-interrupt-interrupt-wake-payload-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic interrupt periodic-cadence probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-interrupt-periodic-cadence-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic interrupt cancel-no-late-timeout probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-interrupt-cancel-no-late-timeout-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic interrupt telemetry-ordering probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-interrupt-telemetry-ordering-probe-check.ps1
+
       - name: Bare-metal QEMU interrupt timeout probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-interrupt-timeout-probe-check.ps1
