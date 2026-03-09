@@ -581,6 +581,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-probe-check.ps1
 
+      - name: Bare-metal QEMU interrupt-timeout disable-interrupt immediate-wake probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-immediate-wake-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout disable-interrupt timeout-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-timeout-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout disable-interrupt disabled-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-disabled-state-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout disable-interrupt reenable-no-stale-timer probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-reenable-no-stale-timer-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout disable-interrupt telemetry-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-telemetry-preserve-probe-check.ps1
+
       - name: Bare-metal QEMU interrupt-timeout disable-interrupt recovery probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-recovery-probe-check.ps1

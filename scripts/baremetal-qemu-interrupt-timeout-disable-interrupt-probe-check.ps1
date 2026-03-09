@@ -493,6 +493,30 @@ end
 if `$stage == 8
   if *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset) == 8 && *(unsigned int*)(0x$wakeQueueCountAddress) >= 1 && *(unsigned char*)(0x$schedulerTasksAddress+$taskStateOffset) == $taskStateReady && *(unsigned char*)(0x$schedulerWaitKindAddress) == $waitConditionNone && *(unsigned long long*)(0x$schedulerWaitTimeoutTickAddress) == 0 && *(unsigned char*)(0x$timerStateAddress+$timerEnabledOffset) == 0
     set `$post_wake_tick = *(unsigned long long*)(0x$statusAddress+$statusTicksOffset)
+    printf "AFTER_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_DISABLED\n"
+    printf "DISABLED_TICK=%llu\n", `$post_wake_tick
+    printf "DISABLED_ACK=%u\n", *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset)
+    printf "DISABLED_LAST_OPCODE=%u\n", *(unsigned short*)(0x$statusAddress+$statusLastCommandOpcodeOffset)
+    printf "DISABLED_LAST_RESULT=%d\n", *(short*)(0x$statusAddress+$statusLastCommandResultOffset)
+    printf "DISABLED_TASK0_STATE=%u\n", *(unsigned char*)(0x$schedulerTasksAddress+$taskStateOffset)
+    printf "DISABLED_WAIT_KIND0=%u\n", *(unsigned char*)(0x$schedulerWaitKindAddress)
+    printf "DISABLED_WAIT_VECTOR0=%u\n", *(unsigned char*)(0x$schedulerWaitInterruptVectorAddress)
+    printf "DISABLED_WAIT_TIMEOUT0=%llu\n", *(unsigned long long*)(0x$schedulerWaitTimeoutTickAddress)
+    printf "DISABLED_TIMER_ENABLED=%u\n", *(unsigned char*)(0x$timerStateAddress+$timerEnabledOffset)
+    printf "DISABLED_TIMER_ENTRY_COUNT=%u\n", *(unsigned char*)(0x$timerStateAddress+$timerEntryCountOffset)
+    printf "DISABLED_TIMER_PENDING_WAKE_COUNT=%u\n", *(unsigned short*)(0x$timerStateAddress+$timerPendingWakeCountOffset)
+    printf "DISABLED_TIMER_DISPATCH_COUNT=%llu\n", *(unsigned long long*)(0x$timerStateAddress+$timerDispatchCountOffset)
+    printf "DISABLED_TIMER_LAST_INTERRUPT_COUNT=%llu\n", *(unsigned long long*)(0x$timerStateAddress+$timerLastInterruptCountOffset)
+    printf "DISABLED_TIMER_LAST_WAKE_TICK=%llu\n", *(unsigned long long*)(0x$timerStateAddress+$timerLastWakeTickOffset)
+    printf "DISABLED_WAKE_QUEUE_COUNT=%u\n", *(unsigned int*)(0x$wakeQueueCountAddress)
+    printf "DISABLED_WAKE0_SEQ=%u\n", *(unsigned int*)(0x$wakeQueueAddress+$wakeEventSeqOffset)
+    printf "DISABLED_WAKE0_TASK_ID=%u\n", *(unsigned int*)(0x$wakeQueueAddress+$wakeEventTaskIdOffset)
+    printf "DISABLED_WAKE0_TIMER_ID=%u\n", *(unsigned int*)(0x$wakeQueueAddress+$wakeEventTimerIdOffset)
+    printf "DISABLED_WAKE0_REASON=%u\n", *(unsigned char*)(0x$wakeQueueAddress+$wakeEventReasonOffset)
+    printf "DISABLED_WAKE0_VECTOR=%u\n", *(unsigned char*)(0x$wakeQueueAddress+$wakeEventVectorOffset)
+    printf "DISABLED_WAKE0_TICK=%llu\n", *(unsigned long long*)(0x$wakeQueueAddress+$wakeEventTickOffset)
+    printf "DISABLED_INTERRUPT_COUNT=%llu\n", *(unsigned long long*)(0x$interruptStateAddress+$interruptStateInterruptCountOffset)
+    printf "DISABLED_LAST_INTERRUPT_VECTOR=%u\n", *(unsigned short*)(0x$interruptStateAddress+$interruptStateLastInterruptVectorOffset)
     set *(unsigned short*)(0x$commandMailboxAddress+$commandOpcodeOffset) = $timerEnableOpcode
     set *(unsigned int*)(0x$commandMailboxAddress+$commandSeqOffset) = 9
     set *(unsigned long long*)(0x$commandMailboxAddress+$commandArg0Offset) = 0
@@ -513,6 +537,29 @@ if `$stage == 10
   end
   continue
 end
+printf "AFTER_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_SETTLED\n"
+printf "FINAL_TICK=%llu\n", *(unsigned long long*)(0x$statusAddress+$statusTicksOffset)
+printf "FINAL_ACK=%u\n", *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset)
+printf "FINAL_LAST_OPCODE=%u\n", *(unsigned short*)(0x$statusAddress+$statusLastCommandOpcodeOffset)
+printf "FINAL_LAST_RESULT=%d\n", *(short*)(0x$statusAddress+$statusLastCommandResultOffset)
+printf "FINAL_TASK0_STATE=%u\n", *(unsigned char*)(0x$schedulerTasksAddress+$taskStateOffset)
+printf "FINAL_WAIT_KIND0=%u\n", *(unsigned char*)(0x$schedulerWaitKindAddress)
+printf "FINAL_WAIT_TIMEOUT0=%llu\n", *(unsigned long long*)(0x$schedulerWaitTimeoutTickAddress)
+printf "FINAL_TIMER_ENABLED=%u\n", *(unsigned char*)(0x$timerStateAddress+$timerEnabledOffset)
+printf "FINAL_TIMER_ENTRY_COUNT=%u\n", *(unsigned char*)(0x$timerStateAddress+$timerEntryCountOffset)
+printf "FINAL_TIMER_PENDING_WAKE_COUNT=%u\n", *(unsigned short*)(0x$timerStateAddress+$timerPendingWakeCountOffset)
+printf "FINAL_TIMER_DISPATCH_COUNT=%llu\n", *(unsigned long long*)(0x$timerStateAddress+$timerDispatchCountOffset)
+printf "FINAL_TIMER_LAST_INTERRUPT_COUNT=%llu\n", *(unsigned long long*)(0x$timerStateAddress+$timerLastInterruptCountOffset)
+printf "FINAL_TIMER_LAST_WAKE_TICK=%llu\n", *(unsigned long long*)(0x$timerStateAddress+$timerLastWakeTickOffset)
+printf "FINAL_WAKE_QUEUE_COUNT=%u\n", *(unsigned int*)(0x$wakeQueueCountAddress)
+printf "FINAL_WAKE0_SEQ=%u\n", *(unsigned int*)(0x$wakeQueueAddress+$wakeEventSeqOffset)
+printf "FINAL_WAKE0_TASK_ID=%u\n", *(unsigned int*)(0x$wakeQueueAddress+$wakeEventTaskIdOffset)
+printf "FINAL_WAKE0_TIMER_ID=%u\n", *(unsigned int*)(0x$wakeQueueAddress+$wakeEventTimerIdOffset)
+printf "FINAL_WAKE0_REASON=%u\n", *(unsigned char*)(0x$wakeQueueAddress+$wakeEventReasonOffset)
+printf "FINAL_WAKE0_VECTOR=%u\n", *(unsigned char*)(0x$wakeQueueAddress+$wakeEventVectorOffset)
+printf "FINAL_WAKE0_TICK=%llu\n", *(unsigned long long*)(0x$wakeQueueAddress+$wakeEventTickOffset)
+printf "FINAL_INTERRUPT_COUNT=%llu\n", *(unsigned long long*)(0x$interruptStateAddress+$interruptStateInterruptCountOffset)
+printf "FINAL_LAST_INTERRUPT_VECTOR=%u\n", *(unsigned short*)(0x$interruptStateAddress+$interruptStateLastInterruptVectorOffset)
 printf "AFTER_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT\n"
 printf "ACK=%u\n", *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset)
 printf "LAST_OPCODE=%u\n", *(unsigned short*)(0x$statusAddress+$statusLastCommandOpcodeOffset)
@@ -588,6 +635,8 @@ finally {
 
 $hitStart = $false
 $hitAfterInterruptTimeout = $false
+$hitDisabledStage = $false
+$hitSettledStage = $false
 $ack = $null
 $lastOpcode = $null
 $lastResult = $null
@@ -623,6 +672,8 @@ $lastInterruptVector = $null
 if (Test-Path $gdbStdout) {
     $gdbOutput = [string](Get-Content -Path $gdbStdout -Raw)
     $hitStart = $gdbOutput.Contains("HIT_START")
+    $hitDisabledStage = $gdbOutput.Contains("AFTER_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_DISABLED")
+    $hitSettledStage = $gdbOutput.Contains("AFTER_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_SETTLED")
     $hitAfterInterruptTimeout = $gdbOutput.Contains("AFTER_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT")
     $ack = Extract-IntValue -Text $gdbOutput -Name "ACK"
     $lastOpcode = Extract-IntValue -Text $gdbOutput -Name "LAST_OPCODE"
@@ -654,6 +705,51 @@ if (Test-Path $gdbStdout) {
     $wake0Vector = Extract-IntValue -Text $gdbOutput -Name "WAKE0_VECTOR"
     $wake0Tick = Extract-IntValue -Text $gdbOutput -Name "WAKE0_TICK"
     $pausedTick = Extract-IntValue -Text $gdbOutput -Name "PAUSED_TICK"
+    $disabledTick = Extract-IntValue -Text $gdbOutput -Name "DISABLED_TICK"
+    $disabledAck = Extract-IntValue -Text $gdbOutput -Name "DISABLED_ACK"
+    $disabledLastOpcode = Extract-IntValue -Text $gdbOutput -Name "DISABLED_LAST_OPCODE"
+    $disabledLastResult = Extract-IntValue -Text $gdbOutput -Name "DISABLED_LAST_RESULT"
+    $disabledTask0State = Extract-IntValue -Text $gdbOutput -Name "DISABLED_TASK0_STATE"
+    $disabledWaitKind0 = Extract-IntValue -Text $gdbOutput -Name "DISABLED_WAIT_KIND0"
+    $disabledWaitVector0 = Extract-IntValue -Text $gdbOutput -Name "DISABLED_WAIT_VECTOR0"
+    $disabledWaitTimeout0 = Extract-IntValue -Text $gdbOutput -Name "DISABLED_WAIT_TIMEOUT0"
+    $disabledTimerEnabled = Extract-IntValue -Text $gdbOutput -Name "DISABLED_TIMER_ENABLED"
+    $disabledTimerEntryCount = Extract-IntValue -Text $gdbOutput -Name "DISABLED_TIMER_ENTRY_COUNT"
+    $disabledTimerPendingWakeCount = Extract-IntValue -Text $gdbOutput -Name "DISABLED_TIMER_PENDING_WAKE_COUNT"
+    $disabledTimerDispatchCount = Extract-IntValue -Text $gdbOutput -Name "DISABLED_TIMER_DISPATCH_COUNT"
+    $disabledTimerLastInterruptCount = Extract-IntValue -Text $gdbOutput -Name "DISABLED_TIMER_LAST_INTERRUPT_COUNT"
+    $disabledTimerLastWakeTick = Extract-IntValue -Text $gdbOutput -Name "DISABLED_TIMER_LAST_WAKE_TICK"
+    $disabledWakeQueueCount = Extract-IntValue -Text $gdbOutput -Name "DISABLED_WAKE_QUEUE_COUNT"
+    $disabledWake0Seq = Extract-IntValue -Text $gdbOutput -Name "DISABLED_WAKE0_SEQ"
+    $disabledWake0TaskId = Extract-IntValue -Text $gdbOutput -Name "DISABLED_WAKE0_TASK_ID"
+    $disabledWake0TimerId = Extract-IntValue -Text $gdbOutput -Name "DISABLED_WAKE0_TIMER_ID"
+    $disabledWake0Reason = Extract-IntValue -Text $gdbOutput -Name "DISABLED_WAKE0_REASON"
+    $disabledWake0Vector = Extract-IntValue -Text $gdbOutput -Name "DISABLED_WAKE0_VECTOR"
+    $disabledWake0Tick = Extract-IntValue -Text $gdbOutput -Name "DISABLED_WAKE0_TICK"
+    $disabledInterruptCount = Extract-IntValue -Text $gdbOutput -Name "DISABLED_INTERRUPT_COUNT"
+    $disabledLastInterruptVector = Extract-IntValue -Text $gdbOutput -Name "DISABLED_LAST_INTERRUPT_VECTOR"
+    $finalTick = Extract-IntValue -Text $gdbOutput -Name "FINAL_TICK"
+    $finalAck = Extract-IntValue -Text $gdbOutput -Name "FINAL_ACK"
+    $finalLastOpcode = Extract-IntValue -Text $gdbOutput -Name "FINAL_LAST_OPCODE"
+    $finalLastResult = Extract-IntValue -Text $gdbOutput -Name "FINAL_LAST_RESULT"
+    $finalTask0State = Extract-IntValue -Text $gdbOutput -Name "FINAL_TASK0_STATE"
+    $finalWaitKind0 = Extract-IntValue -Text $gdbOutput -Name "FINAL_WAIT_KIND0"
+    $finalWaitTimeout0 = Extract-IntValue -Text $gdbOutput -Name "FINAL_WAIT_TIMEOUT0"
+    $finalTimerEnabled = Extract-IntValue -Text $gdbOutput -Name "FINAL_TIMER_ENABLED"
+    $finalTimerEntryCount = Extract-IntValue -Text $gdbOutput -Name "FINAL_TIMER_ENTRY_COUNT"
+    $finalTimerPendingWakeCount = Extract-IntValue -Text $gdbOutput -Name "FINAL_TIMER_PENDING_WAKE_COUNT"
+    $finalTimerDispatchCount = Extract-IntValue -Text $gdbOutput -Name "FINAL_TIMER_DISPATCH_COUNT"
+    $finalTimerLastInterruptCount = Extract-IntValue -Text $gdbOutput -Name "FINAL_TIMER_LAST_INTERRUPT_COUNT"
+    $finalTimerLastWakeTick = Extract-IntValue -Text $gdbOutput -Name "FINAL_TIMER_LAST_WAKE_TICK"
+    $finalWakeQueueCount = Extract-IntValue -Text $gdbOutput -Name "FINAL_WAKE_QUEUE_COUNT"
+    $finalWake0Seq = Extract-IntValue -Text $gdbOutput -Name "FINAL_WAKE0_SEQ"
+    $finalWake0TaskId = Extract-IntValue -Text $gdbOutput -Name "FINAL_WAKE0_TASK_ID"
+    $finalWake0TimerId = Extract-IntValue -Text $gdbOutput -Name "FINAL_WAKE0_TIMER_ID"
+    $finalWake0Reason = Extract-IntValue -Text $gdbOutput -Name "FINAL_WAKE0_REASON"
+    $finalWake0Vector = Extract-IntValue -Text $gdbOutput -Name "FINAL_WAKE0_VECTOR"
+    $finalWake0Tick = Extract-IntValue -Text $gdbOutput -Name "FINAL_WAKE0_TICK"
+    $finalInterruptCount = Extract-IntValue -Text $gdbOutput -Name "FINAL_INTERRUPT_COUNT"
+    $finalLastInterruptVector = Extract-IntValue -Text $gdbOutput -Name "FINAL_LAST_INTERRUPT_VECTOR"
     $interruptCount = Extract-IntValue -Text $gdbOutput -Name "INTERRUPT_COUNT"
     $lastInterruptVector = Extract-IntValue -Text $gdbOutput -Name "LAST_INTERRUPT_VECTOR"
 }
@@ -681,6 +777,8 @@ Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_WAKE_QUEU
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_WAKE_QUEUE_COUNT_ADDR=0x$wakeQueueCountAddress"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_INTERRUPT_STATE_ADDR=0x$interruptStateAddress"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_HIT_START=$hitStart"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_HIT_DISABLED_STAGE=$hitDisabledStage"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_HIT_SETTLED_STAGE=$hitSettledStage"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_HIT_AFTER_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT=$hitAfterInterruptTimeout"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_ACK=$ack"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_LAST_OPCODE=$lastOpcode"
@@ -711,7 +809,52 @@ Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_WAKE0_TIM
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_WAKE0_REASON=$wake0Reason"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_WAKE0_VECTOR=$wake0Vector"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_WAKE0_TICK=$wake0Tick"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_TICK=$disabledTick"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_ACK=$disabledAck"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_LAST_OPCODE=$disabledLastOpcode"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_LAST_RESULT=$disabledLastResult"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_TASK0_STATE=$disabledTask0State"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_WAIT_KIND0=$disabledWaitKind0"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_WAIT_VECTOR0=$disabledWaitVector0"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_WAIT_TIMEOUT0=$disabledWaitTimeout0"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_TIMER_ENABLED=$disabledTimerEnabled"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_TIMER_ENTRY_COUNT=$disabledTimerEntryCount"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_TIMER_PENDING_WAKE_COUNT=$disabledTimerPendingWakeCount"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_TIMER_DISPATCH_COUNT=$disabledTimerDispatchCount"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_TIMER_LAST_INTERRUPT_COUNT=$disabledTimerLastInterruptCount"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_TIMER_LAST_WAKE_TICK=$disabledTimerLastWakeTick"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_WAKE_QUEUE_COUNT=$disabledWakeQueueCount"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_WAKE0_SEQ=$disabledWake0Seq"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_WAKE0_TASK_ID=$disabledWake0TaskId"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_WAKE0_TIMER_ID=$disabledWake0TimerId"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_WAKE0_REASON=$disabledWake0Reason"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_WAKE0_VECTOR=$disabledWake0Vector"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_WAKE0_TICK=$disabledWake0Tick"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_INTERRUPT_COUNT=$disabledInterruptCount"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_DISABLED_LAST_INTERRUPT_VECTOR=$disabledLastInterruptVector"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_PAUSED_TICK=$pausedTick"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_TICK=$finalTick"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_ACK=$finalAck"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_LAST_OPCODE=$finalLastOpcode"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_LAST_RESULT=$finalLastResult"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_TASK0_STATE=$finalTask0State"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_WAIT_KIND0=$finalWaitKind0"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_WAIT_TIMEOUT0=$finalWaitTimeout0"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_TIMER_ENABLED=$finalTimerEnabled"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_TIMER_ENTRY_COUNT=$finalTimerEntryCount"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_TIMER_PENDING_WAKE_COUNT=$finalTimerPendingWakeCount"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_TIMER_DISPATCH_COUNT=$finalTimerDispatchCount"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_TIMER_LAST_INTERRUPT_COUNT=$finalTimerLastInterruptCount"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_TIMER_LAST_WAKE_TICK=$finalTimerLastWakeTick"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_WAKE_QUEUE_COUNT=$finalWakeQueueCount"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_WAKE0_SEQ=$finalWake0Seq"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_WAKE0_TASK_ID=$finalWake0TaskId"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_WAKE0_TIMER_ID=$finalWake0TimerId"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_WAKE0_REASON=$finalWake0Reason"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_WAKE0_VECTOR=$finalWake0Vector"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_WAKE0_TICK=$finalWake0Tick"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_INTERRUPT_COUNT=$finalInterruptCount"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_FINAL_LAST_INTERRUPT_VECTOR=$finalLastInterruptVector"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_INTERRUPT_COUNT=$interruptCount"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_LAST_INTERRUPT_VECTOR=$lastInterruptVector"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_GDB_STDOUT=$gdbStdout"
@@ -721,10 +864,12 @@ Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_QEMU_STDE
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE_TIMED_OUT=$timedOut"
 
 $probePassed = $hitStart -and
+    $hitDisabledStage -and
+    $hitSettledStage -and
     $hitAfterInterruptTimeout -and
     (-not $timedOut) -and
-    ($ack -eq 9) -and
-    ($lastOpcode -eq $timerEnableOpcode) -and
+    ($ack -eq ($triggerInterruptOpcode + 1)) -and
+    ($lastOpcode -eq $triggerInterruptOpcode) -and
     ($lastResult -eq 0) -and
     ($mailboxOpcode -eq $timerEnableOpcode) -and
     ($mailboxSeq -eq 9) -and
@@ -738,7 +883,7 @@ $probePassed = $hitStart -and
     ($waitKind0 -eq $waitConditionNone) -and
     ($waitVector0 -eq 0) -and
     ($waitTimeout0 -eq 0) -and
-    ($timerEnabled -eq $timerStateEnabled) -and
+    ($timerEnabled -eq 0) -and
     ($timerEntryCount -eq 0) -and
     ($timerPendingWakeCount -eq 1) -and
     ($timerDispatchCount -eq 0) -and
@@ -751,9 +896,52 @@ $probePassed = $hitStart -and
     ($wake0Vector -eq $interruptVector) -and
     ($pausedTick -gt 0) -and
     ($wake0Tick -ge $pausedTick) -and
+    ($disabledTick -ge $wake0Tick) -and
+    ($disabledAck -eq $triggerInterruptOpcode + 1) -and
+    ($disabledLastOpcode -eq $triggerInterruptOpcode) -and
+    ($disabledLastResult -eq 0) -and
+    ($disabledTask0State -eq $taskStateReady) -and
+    ($disabledWaitKind0 -eq $waitConditionNone) -and
+    ($disabledWaitVector0 -eq 0) -and
+    ($disabledWaitTimeout0 -eq 0) -and
+    ($disabledTimerEnabled -eq 0) -and
+    ($disabledTimerEntryCount -eq 0) -and
+    ($disabledTimerPendingWakeCount -eq 1) -and
+    ($disabledTimerDispatchCount -eq 0) -and
+    ($disabledTimerLastInterruptCount -eq 1) -and
+    ($disabledTimerLastWakeTick -eq $disabledWake0Tick) -and
+    ($disabledWakeQueueCount -eq 1) -and
+    ($disabledWake0Seq -eq 1) -and
+    ($disabledWake0TaskId -eq 1) -and
+    ($disabledWake0TimerId -eq 0) -and
+    ($disabledWake0Reason -eq $wakeReasonInterrupt) -and
+    ($disabledWake0Vector -eq $interruptVector) -and
+    ($disabledInterruptCount -eq 1) -and
+    ($disabledLastInterruptVector -eq $interruptVector) -and
+    ($finalTick -eq $ticks) -and
+    ($finalTask0State -eq $taskStateReady) -and
+    ($finalWaitKind0 -eq $waitConditionNone) -and
+    ($finalWaitTimeout0 -eq 0) -and
+    ($finalTimerEnabled -eq $timerStateEnabled) -and
+    ($finalTimerEntryCount -eq 0) -and
+    ($finalTimerPendingWakeCount -eq 1) -and
+    ($finalTimerDispatchCount -eq 0) -and
+    ($finalTimerLastInterruptCount -eq 1) -and
+    ($finalTimerLastWakeTick -eq $finalWake0Tick) -and
+    ($finalWakeQueueCount -eq 1) -and
+    ($finalWake0Seq -eq 1) -and
+    ($finalWake0TaskId -eq 1) -and
+    ($finalWake0TimerId -eq 0) -and
+    ($finalWake0Reason -eq $wakeReasonInterrupt) -and
+    ($finalWake0Vector -eq $interruptVector) -and
+    ($finalInterruptCount -eq 1) -and
+    ($finalLastInterruptVector -eq $interruptVector) -and
     ($interruptCount -eq 1) -and
     ($lastInterruptVector -eq $interruptVector) -and
     ($timerLastWakeTick -eq $wake0Tick) -and
+    ($finalAck -eq $mailboxSeq) -and
+    ($finalLastOpcode -eq $timerEnableOpcode) -and
+    ($finalLastResult -eq 0) -and
     ($ticks -ge ($wake0Tick + $postWakeSlackTicks))
 
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_INTERRUPT_PROBE=$($(if ($probePassed) { 'pass' } else { 'fail' }))"

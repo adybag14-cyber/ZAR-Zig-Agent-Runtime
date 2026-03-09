@@ -5,7 +5,7 @@
 - Latest published edge release: `v0.2.0-zig-edge.27`
 - Latest local test gate: `zig build test --summary all` -> main `203/203` + bare-metal host `106/106` passing
 - Latest parity gate: `scripts/check-go-method-parity.ps1` -> `GO_MISSING_IN_ZIG=0`, `ORIGINAL_MISSING_IN_ZIG=0`, `ORIGINAL_BETA_MISSING_IN_ZIG=0`, `UNION_MISSING_IN_ZIG=0`, `UNION_EVENTS_MISSING_IN_ZIG=0`, `ZIG_COUNT=170`, `ZIG_EVENTS_COUNT=19`
-- Current head: `main + FS6 mailbox wrapper probes`
+- Current head: `main + FS6 bare-metal wrapper coverage batches`
 - Toolchain lane: Codeberg `master` is canonical; `adybag14-cyber/zig` is the Windows release mirror with rolling `latest-master` plus immutable `upstream-<sha>` releases.
 - Latest CI:
   - `zig-ci` `22813604542` -> success
@@ -173,6 +173,11 @@ Recommended sequence:
 - optional bare-metal QEMU interrupt-timeout disable-enable telemetry-preserve probe (wrapper over the broad interrupt-timeout disable-enable path that fails specifically when the final timer-only wake stops preserving zero interrupt count, zero timer last-interrupt count, or zero last-interrupt vector)
 - optional bare-metal QEMU interrupt-timeout disable-reenable timer probe (wrapper over the broad interrupt-timeout disable-enable path that fails specifically when the overdue wake stops being timer-only with zero interrupt telemetry and no remaining armed entries after `command_timer_enable`)
 - optional bare-metal QEMU interrupt-timeout disable-interrupt probe (`command_task_wait_interrupt_for` survives `command_timer_disable`, wakes immediately on a real interrupt while timers stay disabled, clears the timeout arm, and does not leak a stale timer wake after `command_timer_enable` against the freestanding PVH artifact)
+- optional bare-metal QEMU interrupt-timeout disable-interrupt immediate-wake probe (wrapper over the broad interrupt-timeout disable-interrupt path that fails specifically when the first queued wake stops being the real interrupt wake, the task stops becoming ready immediately, or interrupt telemetry stops incrementing while timers stay disabled)
+- optional bare-metal QEMU interrupt-timeout disable-interrupt timeout-clear probe (wrapper over the broad interrupt-timeout disable-interrupt path that fails specifically when the interrupt wake stops clearing wait kind, wait vector, timeout arm, or timer-entry state immediately)
+- optional bare-metal QEMU interrupt-timeout disable-interrupt disabled-state probe (wrapper over the broad interrupt-timeout disable-interrupt path that fails specifically when timers stop remaining disabled, timer dispatch stops staying at `0`, or disabled-window pending-wake state drifts after the interrupt wake)
+- optional bare-metal QEMU interrupt-timeout disable-interrupt reenable-no-stale-timer probe (wrapper over the broad interrupt-timeout disable-interrupt path that fails specifically when `command_timer_enable` adds a stale timer wake or changes the retained wake away from the original interrupt event)
+- optional bare-metal QEMU interrupt-timeout disable-interrupt telemetry-preserve probe (wrapper over the broad interrupt-timeout disable-interrupt path that fails specifically when interrupt counters, last-interrupt vector, or last-wake telemetry stop staying coherent across re-enable)
 - optional bare-metal QEMU interrupt-timeout disable-interrupt recovery probe (wrapper over the broad interrupt-timeout disable-interrupt path that fails specifically when the direct interrupt wake stops winning with `reason=interrupt`, matching vector telemetry, and zero timer dispatch after re-enable)
 - optional bare-metal QEMU timer-reset wait-kind isolation probe (wrapper over the broad timer-reset recovery path that fails specifically when `command_timer_reset` stops collapsing pure timer waits to manual while preserving interrupt-wait mode and clearing only the timeout arm)
 - optional bare-metal QEMU timer-reset pure-wait recovery probe (wrapper over the broad timer-reset recovery path that fails specifically when the recovered pure timer waiter stops waking via the first manual wake with `reason=manual`, `vector=0`, and `timer_id=0`)
@@ -302,6 +307,11 @@ Recommended sequence:
 - bare-metal optional QEMU interrupt-timeout disable-enable telemetry-preserve probe in validate stage
 - bare-metal optional QEMU interrupt-timeout disable-reenable timer probe in validate stage
 - bare-metal optional QEMU interrupt-timeout disable-interrupt probe in validate stage
+- bare-metal optional QEMU interrupt-timeout disable-interrupt immediate-wake probe in validate stage
+- bare-metal optional QEMU interrupt-timeout disable-interrupt timeout-clear probe in validate stage
+- bare-metal optional QEMU interrupt-timeout disable-interrupt disabled-state probe in validate stage
+- bare-metal optional QEMU interrupt-timeout disable-interrupt reenable-no-stale-timer probe in validate stage
+- bare-metal optional QEMU interrupt-timeout disable-interrupt telemetry-preserve probe in validate stage
 - bare-metal optional QEMU interrupt-timeout disable-interrupt recovery probe in validate stage
 - bare-metal optional QEMU timer-disable interrupt immediate-wake probe in validate stage
 - bare-metal optional QEMU timer-disable interrupt arm-preservation probe in validate stage
