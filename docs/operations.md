@@ -137,6 +137,7 @@ Recommended sequence:
 - optional bare-metal QEMU scheduler default-budget invalid probe (live `command_scheduler_set_default_budget(0)` rejection with active default-budget preservation and clean zero-budget task inheritance after the rejected update against the freestanding PVH artifact)
 - optional bare-metal QEMU scheduler round-robin probe (default scheduler policy remains round-robin under live QEMU execution, rotating dispatch `1/0 -> 1/1 -> 2/1` across a lower-priority first task and higher-priority second task while budgets decrement deterministically)
 - optional bare-metal QEMU scheduler timeslice-update probe (live `command_scheduler_set_timeslice` updates under active load, proving budget consumption immediately follows `timeslice 1 -> 4 -> 2` and invalid zero is rejected without changing the active timeslice against the freestanding PVH artifact)
+- optional bare-metal QEMU scheduler timeslice wrapper probes (five isolated checks over the same broad lane: baseline `timeslice=1`, first update `timeslice=4`, second update `timeslice=2`, invalid-zero preservation, and final dispatch/task-state telemetry against the freestanding PVH artifact)
 - optional bare-metal QEMU scheduler disable-enable probe (live `command_scheduler_disable` and `command_scheduler_enable` under active load, proving dispatch count and task budget stay frozen across idle disabled ticks and resume immediately after re-enable against the freestanding PVH artifact)
 - optional bare-metal QEMU scheduler reset probe (live `command_scheduler_reset` under active load, proving scheduler state returns to defaults, active task state is cleared, task IDs restart at `1`, and a fresh task dispatches cleanly after re-enable against the freestanding PVH artifact)
 - optional bare-metal QEMU scheduler reset mixed-state probe (live `command_scheduler_reset` against stale mixed load, proving queued wakes and armed task timers are scrubbed alongside the task table, timeout arms are cleared, timer quantum is preserved, and fresh timer scheduling resumes from the preserved `next_timer_id` against the freestanding PVH artifact)
@@ -273,6 +274,11 @@ Recommended sequence:
 - bare-metal optional QEMU feature-flags tick-batch state-preserve probe in validate stage
 - bare-metal optional QEMU scheduler probe in validate stage
 - bare-metal optional QEMU scheduler timeslice-update probe in validate stage
+- bare-metal optional QEMU scheduler timeslice baseline probe in validate stage
+- bare-metal optional QEMU scheduler timeslice update-4 probe in validate stage
+- bare-metal optional QEMU scheduler timeslice update-2 probe in validate stage
+- bare-metal optional QEMU scheduler timeslice invalid-zero preserve probe in validate stage
+- bare-metal optional QEMU scheduler timeslice final task-state probe in validate stage
 - bare-metal optional QEMU scheduler disable-enable probe in validate stage
 - bare-metal optional QEMU scheduler reset probe in validate stage
 - bare-metal optional QEMU scheduler reset mixed-state probe in validate stage

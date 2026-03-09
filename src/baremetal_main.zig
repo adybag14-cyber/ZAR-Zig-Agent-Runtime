@@ -6026,6 +6026,8 @@ test "baremetal scheduler live timeslice updates change subsequent budget consum
     oc_tick();
     var task = oc_scheduler_task(0);
     try std.testing.expect(task.task_id != 0);
+    try std.testing.expectEqual(@as(u8, 1), oc_scheduler_state_ptr().task_count);
+    try std.testing.expectEqual(@as(u8, 0), oc_scheduler_state_ptr().running_slot);
     try std.testing.expectEqual(@as(u32, 1), task.run_count);
     try std.testing.expectEqual(@as(u32, 9), task.budget_remaining);
 
@@ -6047,8 +6049,12 @@ test "baremetal scheduler live timeslice updates change subsequent budget consum
 
     _ = oc_submit_command(abi.command_scheduler_set_timeslice, 0, 0);
     oc_tick();
+    try std.testing.expectEqual(@as(u16, abi.command_scheduler_set_timeslice), status.last_command_opcode);
     try std.testing.expectEqual(@as(i16, abi.result_invalid_argument), status.last_command_result);
     try std.testing.expectEqual(@as(u32, 2), oc_scheduler_state_ptr().timeslice_ticks);
+    try std.testing.expect(oc_scheduler_enabled());
+    try std.testing.expectEqual(@as(u8, 1), oc_scheduler_state_ptr().task_count);
+    try std.testing.expectEqual(@as(u8, 0), oc_scheduler_state_ptr().running_slot);
     task = oc_scheduler_task(0);
     try std.testing.expectEqual(@as(u32, 4), task.run_count);
     try std.testing.expectEqual(@as(u32, 1), task.budget_remaining);

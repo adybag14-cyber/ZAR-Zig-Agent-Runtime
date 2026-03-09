@@ -341,6 +341,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-scheduler-timeslice-update-probe-check.ps1
 
+      - name: Bare-metal QEMU scheduler timeslice baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-timeslice-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler timeslice update-4 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-timeslice-update-4-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler timeslice update-2 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-timeslice-update-2-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler timeslice invalid-zero preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-timeslice-invalid-zero-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler timeslice final task-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-timeslice-final-task-state-probe-check.ps1
+
       - name: Bare-metal QEMU scheduler disable enable probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-scheduler-disable-enable-probe-check.ps1

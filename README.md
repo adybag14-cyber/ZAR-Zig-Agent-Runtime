@@ -102,6 +102,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - optional QEMU scheduler priority/budget probe validates `command_scheduler_set_default_budget` and `command_task_set_priority` end to end, proving a zero-budget low-priority task inherits the configured default budget (`9`) and a later reprioritization flips dispatch from the high-priority task to the low-priority task (`ACK=9`, `LAST_OPCODE=56`, low task `run_count 0 -> 1`)
   - optional QEMU scheduler round-robin probe validates the default scheduler policy ignores priority bias and rotates dispatch fairly across two live tasks (`ACK=6`, `POLICY=0`, run counts `1/0 -> 1/1 -> 2/1`, budgets `3 -> 3 -> 2`) against the freestanding PVH artifact
   - optional QEMU scheduler timeslice-update probe validates live `command_scheduler_set_timeslice` changes under active load, proving budget consumption immediately follows the new timeslice (`1 -> 4 -> 2`) and invalid zero is rejected without changing the active value (`ACK=6`, `LAST_OPCODE=29`, `LAST_RESULT=-22`, task budget remaining `9 -> 5 -> 3 -> 1`)
+  - optional QEMU scheduler timeslice wrapper probes validate the same lane in five isolated checks: baseline `timeslice=1`, first update `timeslice=4`, second update `timeslice=2`, invalid-zero preservation, and final dispatch/task-state telemetry on the live task
   - optional QEMU scheduler disable-enable probe validates live `command_scheduler_disable` and `command_scheduler_enable` under active load, proving dispatch and budget burn freeze while disabled and resume immediately on re-enable (`ACK=5`, `LAST_OPCODE=24`, `DISPATCH_COUNT 1 -> 1 -> 2`, task budget remaining `4 -> 4 -> 3`)
   - optional QEMU scheduler reset probe validates live `command_scheduler_reset` under active load, proving scheduler state returns to defaults, task state is wiped, task IDs restart at `1`, and fresh dispatch resumes cleanly after re-enable (`ACK=6`, `POST_RESET_NEXT_TASK_ID=1`, `POST_CREATE_TASK0_ID=1`, final `TASK0_BUDGET_REMAINING=5`)
   - optional QEMU scheduler reset mixed-state probe validates live `command_scheduler_reset` against stale mixed load, proving queued wakes and armed task timers are scrubbed alongside the task table, timeout arms are cleared, timer quantum is preserved, and fresh timer scheduling resumes from the preserved `next_timer_id` (`ACK=10`, `PRE_WAKE_COUNT=1`, `PRE_TIMER_COUNT=1`, `POST_WAKE_COUNT=0`, `POST_TIMER_COUNT=0`, `REARM_TIMER_ID=2`)
@@ -586,6 +587,11 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU scheduler probe
 - optional bare-metal QEMU scheduler default-budget invalid probe
 - optional bare-metal QEMU scheduler timeslice-update probe
+- optional bare-metal QEMU scheduler timeslice baseline probe
+- optional bare-metal QEMU scheduler timeslice update-4 probe
+- optional bare-metal QEMU scheduler timeslice update-2 probe
+- optional bare-metal QEMU scheduler timeslice invalid-zero preserve probe
+- optional bare-metal QEMU scheduler timeslice final task-state probe
 - optional bare-metal QEMU scheduler disable-enable probe
 - optional bare-metal QEMU scheduler reset probe
 - optional bare-metal QEMU scheduler reset mixed-state probe
