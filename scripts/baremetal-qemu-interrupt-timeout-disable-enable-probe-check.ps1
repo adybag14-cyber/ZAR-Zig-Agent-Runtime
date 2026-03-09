@@ -272,7 +272,7 @@ function Extract-IntValue {
         [string] $Name
     )
 
-    $pattern = [regex]::Escape($Name) + '=(-?\d+)'
+    $pattern = '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$'
     $match = [regex]::Match($Text, $pattern)
     if (-not $match.Success) {
         return $null
@@ -402,9 +402,22 @@ set confirm off
 set `$stage = 0
 set `$armed_ticks = 0
 set `$armed_wait_timeout = 0
+set `$disabled_tick = 0
+set `$disabled_wait_kind0 = 0
+set `$disabled_wait_timeout0 = 0
+set `$disabled_task0_state = 0
+set `$disabled_wake_queue_count = 0
+set `$disabled_timer_entry_count = 0
+set `$disabled_interrupt_count = 0
 set `$pause_target_tick = 0
 set `$pre_wake_tick = 0
 set `$paused_tick = 0
+set `$paused_wait_kind0 = 0
+set `$paused_wait_timeout0 = 0
+set `$paused_task0_state = 0
+set `$paused_wake_queue_count = 0
+set `$paused_timer_entry_count = 0
+set `$paused_interrupt_count = 0
 set `$post_wake_tick = 0
 file $artifactForGdb
 handle SIGQUIT nostop noprint pass
@@ -505,7 +518,14 @@ if `$stage == 7
   continue
 end
 if `$stage == 8
-  if *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset) == 8 && *(unsigned char*)(0x$timerStateAddress+$timerEnabledOffset) == 0
+  if *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset) == 8 && *(unsigned char*)(0x$timerStateAddress+$timerEnabledOffset) == 0 && *(unsigned int*)(0x$wakeQueueCountAddress) == 0 && *(unsigned char*)(0x$schedulerTasksAddress+$taskStateOffset) == $taskStateWaiting && *(unsigned char*)(0x$schedulerWaitKindAddress) == $waitConditionInterruptAny && *(unsigned long long*)(0x$schedulerWaitTimeoutTickAddress) == `$armed_wait_timeout && *(unsigned long long*)(0x$interruptStateAddress+$interruptStateInterruptCountOffset) == 0
+    set `$disabled_tick = *(unsigned long long*)(0x$statusAddress+$statusTicksOffset)
+    set `$disabled_wait_kind0 = *(unsigned char*)(0x$schedulerWaitKindAddress)
+    set `$disabled_wait_timeout0 = *(unsigned long long*)(0x$schedulerWaitTimeoutTickAddress)
+    set `$disabled_task0_state = *(unsigned char*)(0x$schedulerTasksAddress+$taskStateOffset)
+    set `$disabled_wake_queue_count = *(unsigned int*)(0x$wakeQueueCountAddress)
+    set `$disabled_timer_entry_count = *(unsigned char*)(0x$timerStateAddress+$timerEntryCountOffset)
+    set `$disabled_interrupt_count = *(unsigned long long*)(0x$interruptStateAddress+$interruptStateInterruptCountOffset)
     set `$pause_target_tick = *(unsigned long long*)(0x$statusAddress+$statusTicksOffset) + $pauseTicks
     set `$stage = 9
   end
@@ -515,6 +535,12 @@ if `$stage == 9
   if *(unsigned long long*)(0x$statusAddress+$statusTicksOffset) >= `$pause_target_tick && *(unsigned int*)(0x$wakeQueueCountAddress) == 0 && *(unsigned char*)(0x$schedulerTasksAddress+$taskStateOffset) == $taskStateWaiting && *(unsigned char*)(0x$schedulerWaitKindAddress) == $waitConditionInterruptAny && *(unsigned long long*)(0x$schedulerWaitTimeoutTickAddress) > 0 && *(unsigned long long*)(0x$interruptStateAddress+$interruptStateInterruptCountOffset) == 0 && *(unsigned char*)(0x$timerStateAddress+$timerEnabledOffset) == 0 && *(unsigned long long*)(0x$timerStateAddress+$timerDispatchCountOffset) == 0
     set `$pre_wake_tick = *(unsigned long long*)(0x$statusAddress+$statusTicksOffset)
     set `$paused_tick = *(unsigned long long*)(0x$statusAddress+$statusTicksOffset)
+    set `$paused_wait_kind0 = *(unsigned char*)(0x$schedulerWaitKindAddress)
+    set `$paused_wait_timeout0 = *(unsigned long long*)(0x$schedulerWaitTimeoutTickAddress)
+    set `$paused_task0_state = *(unsigned char*)(0x$schedulerTasksAddress+$taskStateOffset)
+    set `$paused_wake_queue_count = *(unsigned int*)(0x$wakeQueueCountAddress)
+    set `$paused_timer_entry_count = *(unsigned char*)(0x$timerStateAddress+$timerEntryCountOffset)
+    set `$paused_interrupt_count = *(unsigned long long*)(0x$interruptStateAddress+$interruptStateInterruptCountOffset)
     set *(unsigned short*)(0x$commandMailboxAddress+$commandOpcodeOffset) = $timerEnableOpcode
     set *(unsigned int*)(0x$commandMailboxAddress+$commandSeqOffset) = 9
     set *(unsigned long long*)(0x$commandMailboxAddress+$commandArg0Offset) = 0
@@ -558,6 +584,13 @@ printf "TASK0_BUDGET=%u\n", *(unsigned int*)(0x$schedulerTasksAddress+$taskBudge
 printf "TASK0_BUDGET_REMAINING=%u\n", *(unsigned int*)(0x$schedulerTasksAddress+$taskBudgetRemainingOffset)
 printf "ARMED_TICKS=%llu\n", `$armed_ticks
 printf "ARMED_WAIT_TIMEOUT=%llu\n", `$armed_wait_timeout
+printf "DISABLED_TICK=%llu\n", `$disabled_tick
+printf "DISABLED_WAIT_KIND0=%u\n", `$disabled_wait_kind0
+printf "DISABLED_WAIT_TIMEOUT0=%llu\n", `$disabled_wait_timeout0
+printf "DISABLED_TASK0_STATE=%u\n", `$disabled_task0_state
+printf "DISABLED_WAKE_QUEUE_COUNT=%u\n", `$disabled_wake_queue_count
+printf "DISABLED_TIMER_ENTRY_COUNT=%u\n", `$disabled_timer_entry_count
+printf "DISABLED_INTERRUPT_COUNT=%llu\n", `$disabled_interrupt_count
 printf "PRE_WAKE_TICK=%llu\n", `$pre_wake_tick
 printf "POST_WAKE_TICK=%llu\n", `$post_wake_tick
 printf "WAIT_KIND0=%u\n", *(unsigned char*)(0x$schedulerWaitKindAddress)
@@ -577,6 +610,12 @@ printf "WAKE0_REASON=%u\n", *(unsigned char*)(0x$wakeQueueAddress+$wakeEventReas
 printf "WAKE0_VECTOR=%u\n", *(unsigned char*)(0x$wakeQueueAddress+$wakeEventVectorOffset)
 printf "WAKE0_TICK=%llu\n", *(unsigned long long*)(0x$wakeQueueAddress+$wakeEventTickOffset)
 printf "PAUSED_TICK=%llu\n", `$paused_tick
+printf "PAUSED_WAIT_KIND0=%u\n", `$paused_wait_kind0
+printf "PAUSED_WAIT_TIMEOUT0=%llu\n", `$paused_wait_timeout0
+printf "PAUSED_TASK0_STATE=%u\n", `$paused_task0_state
+printf "PAUSED_WAKE_QUEUE_COUNT=%u\n", `$paused_wake_queue_count
+printf "PAUSED_TIMER_ENTRY_COUNT=%u\n", `$paused_timer_entry_count
+printf "PAUSED_INTERRUPT_COUNT=%llu\n", `$paused_interrupt_count
 printf "INTERRUPT_COUNT=%llu\n", *(unsigned long long*)(0x$interruptStateAddress+$interruptStateInterruptCountOffset)
 printf "LAST_INTERRUPT_VECTOR=%u\n", *(unsigned short*)(0x$interruptStateAddress+$interruptStateLastInterruptVectorOffset)
 quit
@@ -636,6 +675,13 @@ $task0Budget = $null
 $task0BudgetRemaining = $null
 $armedTicks = $null
 $armedWaitTimeout = $null
+$disabledTick = $null
+$disabledWaitKind0 = $null
+$disabledWaitTimeout0 = $null
+$disabledTask0State = $null
+$disabledWakeQueueCount = $null
+$disabledTimerEntryCount = $null
+$disabledInterruptCount = $null
 $preWakeTick = $null
 $postWakeTick = $null
 $waitKind0 = $null
@@ -655,6 +701,12 @@ $wake0Reason = $null
 $wake0Vector = $null
 $wake0Tick = $null
 $pausedTick = $null
+$pausedWaitKind0 = $null
+$pausedWaitTimeout0 = $null
+$pausedTask0State = $null
+$pausedWakeQueueCount = $null
+$pausedTimerEntryCount = $null
+$pausedInterruptCount = $null
 $interruptCount = $null
 $lastInterruptVector = $null
 
@@ -677,6 +729,13 @@ if (Test-Path $gdbStdout) {
     $task0BudgetRemaining = Extract-IntValue -Text $gdbOutput -Name "TASK0_BUDGET_REMAINING"
     $armedTicks = Extract-IntValue -Text $gdbOutput -Name "ARMED_TICKS"
     $armedWaitTimeout = Extract-IntValue -Text $gdbOutput -Name "ARMED_WAIT_TIMEOUT"
+    $disabledTick = Extract-IntValue -Text $gdbOutput -Name "DISABLED_TICK"
+    $disabledWaitKind0 = Extract-IntValue -Text $gdbOutput -Name "DISABLED_WAIT_KIND0"
+    $disabledWaitTimeout0 = Extract-IntValue -Text $gdbOutput -Name "DISABLED_WAIT_TIMEOUT0"
+    $disabledTask0State = Extract-IntValue -Text $gdbOutput -Name "DISABLED_TASK0_STATE"
+    $disabledWakeQueueCount = Extract-IntValue -Text $gdbOutput -Name "DISABLED_WAKE_QUEUE_COUNT"
+    $disabledTimerEntryCount = Extract-IntValue -Text $gdbOutput -Name "DISABLED_TIMER_ENTRY_COUNT"
+    $disabledInterruptCount = Extract-IntValue -Text $gdbOutput -Name "DISABLED_INTERRUPT_COUNT"
     $preWakeTick = Extract-IntValue -Text $gdbOutput -Name "PRE_WAKE_TICK"
     $postWakeTick = Extract-IntValue -Text $gdbOutput -Name "POST_WAKE_TICK"
     $waitKind0 = Extract-IntValue -Text $gdbOutput -Name "WAIT_KIND0"
@@ -696,6 +755,12 @@ if (Test-Path $gdbStdout) {
     $wake0Vector = Extract-IntValue -Text $gdbOutput -Name "WAKE0_VECTOR"
     $wake0Tick = Extract-IntValue -Text $gdbOutput -Name "WAKE0_TICK"
     $pausedTick = Extract-IntValue -Text $gdbOutput -Name "PAUSED_TICK"
+    $pausedWaitKind0 = Extract-IntValue -Text $gdbOutput -Name "PAUSED_WAIT_KIND0"
+    $pausedWaitTimeout0 = Extract-IntValue -Text $gdbOutput -Name "PAUSED_WAIT_TIMEOUT0"
+    $pausedTask0State = Extract-IntValue -Text $gdbOutput -Name "PAUSED_TASK0_STATE"
+    $pausedWakeQueueCount = Extract-IntValue -Text $gdbOutput -Name "PAUSED_WAKE_QUEUE_COUNT"
+    $pausedTimerEntryCount = Extract-IntValue -Text $gdbOutput -Name "PAUSED_TIMER_ENTRY_COUNT"
+    $pausedInterruptCount = Extract-IntValue -Text $gdbOutput -Name "PAUSED_INTERRUPT_COUNT"
     $interruptCount = Extract-IntValue -Text $gdbOutput -Name "INTERRUPT_COUNT"
     $lastInterruptVector = Extract-IntValue -Text $gdbOutput -Name "LAST_INTERRUPT_VECTOR"
 }
@@ -739,6 +804,13 @@ Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_TASK0_BUDGET
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_TASK0_BUDGET_REMAINING=$task0BudgetRemaining"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_ARMED_TICKS=$armedTicks"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_ARMED_WAIT_TIMEOUT=$armedWaitTimeout"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_DISABLED_TICK=$disabledTick"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_DISABLED_WAIT_KIND0=$disabledWaitKind0"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_DISABLED_WAIT_TIMEOUT0=$disabledWaitTimeout0"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_DISABLED_TASK0_STATE=$disabledTask0State"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_DISABLED_WAKE_QUEUE_COUNT=$disabledWakeQueueCount"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_DISABLED_TIMER_ENTRY_COUNT=$disabledTimerEntryCount"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_DISABLED_INTERRUPT_COUNT=$disabledInterruptCount"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_PRE_WAKE_TICK=$preWakeTick"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_POST_WAKE_TICK=$postWakeTick"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_WAIT_KIND0=$waitKind0"
@@ -758,6 +830,12 @@ Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_WAKE0_REASON
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_WAKE0_VECTOR=$wake0Vector"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_WAKE0_TICK=$wake0Tick"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_PAUSED_TICK=$pausedTick"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_PAUSED_WAIT_KIND0=$pausedWaitKind0"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_PAUSED_WAIT_TIMEOUT0=$pausedWaitTimeout0"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_PAUSED_TASK0_STATE=$pausedTask0State"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_PAUSED_WAKE_QUEUE_COUNT=$pausedWakeQueueCount"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_PAUSED_TIMER_ENTRY_COUNT=$pausedTimerEntryCount"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_PAUSED_INTERRUPT_COUNT=$pausedInterruptCount"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_INTERRUPT_COUNT=$interruptCount"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_LAST_INTERRUPT_VECTOR=$lastInterruptVector"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_DISABLE_ENABLE_PROBE_GDB_STDOUT=$gdbStdout"
@@ -783,8 +861,21 @@ $probePassed = $hitStart -and
     ($task0BudgetRemaining -eq $taskBudget) -and
     ($armedTicks -ge 1) -and
     ($armedWaitTimeout -eq ($armedTicks + 1)) -and
+    ($disabledTick -ge $armedTicks) -and
+    ($disabledWaitKind0 -eq $waitConditionInterruptAny) -and
+    ($disabledWaitTimeout0 -eq $armedWaitTimeout) -and
+    ($disabledTask0State -eq $taskStateWaiting) -and
+    ($disabledWakeQueueCount -eq 0) -and
+    ($disabledTimerEntryCount -eq 0) -and
+    ($disabledInterruptCount -eq 0) -and
     ($preWakeTick -ge ($armedWaitTimeout + $pauseTicks)) -and
     ($pausedTick -eq $preWakeTick) -and
+    ($pausedWaitKind0 -eq $waitConditionInterruptAny) -and
+    ($pausedWaitTimeout0 -eq $armedWaitTimeout) -and
+    ($pausedTask0State -eq $taskStateWaiting) -and
+    ($pausedWakeQueueCount -eq 0) -and
+    ($pausedTimerEntryCount -eq 0) -and
+    ($pausedInterruptCount -eq 0) -and
     ($postWakeTick -ge $wake0Tick) -and
     ($waitKind0 -eq $waitConditionNone) -and
     ($waitVector0 -eq 0) -and
