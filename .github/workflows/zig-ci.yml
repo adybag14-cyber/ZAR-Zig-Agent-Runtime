@@ -161,6 +161,18 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-bootdiag-history-clear-probe-check.ps1
 
+      - name: Bare-metal QEMU reset-bootdiag preserve-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-bootdiag-preserve-state-probe-check.ps1
+
+      - name: Bare-metal QEMU clear-command-history preserve-health probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-clear-command-history-preserve-health-probe-check.ps1
+
+      - name: Bare-metal QEMU clear-health-history preserve-command probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-clear-health-history-preserve-command-probe-check.ps1
+
       - name: Bare-metal QEMU descriptor table content probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-descriptor-table-content-probe-check.ps1
@@ -505,9 +517,17 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-command-result-counters-probe-check.ps1
 
+      - name: Bare-metal QEMU reset-command-result preserve-runtime probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-command-result-preserve-runtime-probe-check.ps1
+
       - name: Bare-metal QEMU reset counters probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-reset-counters-probe-check.ps1
+
+      - name: Bare-metal QEMU reset-counters preserve-config probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-counters-preserve-config-probe-check.ps1
 
       - name: Bare-metal QEMU task lifecycle probe (optional)
         shell: pwsh

@@ -308,6 +308,7 @@ if $stage == 5
     printf "BOOTDIAG_OBSERVED_TICK=%llu\n", *(unsigned long long*)(0x__BOOTDIAG__+__BOOTDIAG_OBSERVEDTICK_OFFSET__)
     printf "BOOTDIAG_STACK=%llu\n", *(unsigned long long*)(0x__BOOTDIAG__+__BOOTDIAG_STACK_OFFSET__)
     printf "BOOTDIAG_PHASE_CHANGES=%u\n", *(unsigned int*)(0x__BOOTDIAG__+__BOOTDIAG_PHASECHANGES_OFFSET__)
+    printf "STATUS_MODE_RESET=%u\n", *(unsigned char*)(0x__STATUS__+__STATUS_MODE_OFFSET__)
     printf "BOOT_HISTORY_LEN=%u\n", *(unsigned int*)0x__BOOT_HISTORY_COUNT__
     printf "CMD_HISTORY_LEN=%u\n", *(unsigned int*)0x__CMD_HISTORY_COUNT__
     printf "CMD_HISTORY_HEAD=%u\n", *(unsigned int*)0x__CMD_HISTORY_HEAD__
@@ -480,6 +481,7 @@ $expectations = @{
     BOOTDIAG_OBSERVED_TICK = 4
     BOOTDIAG_STACK = 0
     BOOTDIAG_PHASE_CHANGES = 0
+    STATUS_MODE_RESET = $modeRunning
     BOOT_HISTORY_LEN = 3
     CMD_HISTORY_LEN = 4
     CMD_HISTORY_HEAD = 4

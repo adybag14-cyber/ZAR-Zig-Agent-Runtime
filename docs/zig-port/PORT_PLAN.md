@@ -1401,6 +1401,10 @@ Full-stack replacement execution reference:
     - `scripts/baremetal-qemu-command-result-counters-probe-check.ps1` now proves `mode` and `last_health_code` are preserved across `command_reset_command_result_counters`.
     - `scripts/baremetal-qemu-bootdiag-history-clear-probe-check.ps1` now proves boot-phase history survives `command_reset_boot_diagnostics`, health history survives `command_clear_command_history`, and command history survives `command_clear_health_history`.
     - `scripts/baremetal-qemu-reset-counters-probe-check.ps1` now proves `command_reset_counters` preserves `feature_flags=0xA55AA55A` and `tick_batch_hint=4`, including the resulting post-reset tick step size.
+  - bare-metal reset-preservation wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-reset-counters-preserve-config-probe-check.ps1`, `scripts/baremetal-qemu-reset-bootdiag-preserve-state-probe-check.ps1`, `scripts/baremetal-qemu-clear-command-history-preserve-health-probe-check.ps1`, `scripts/baremetal-qemu-clear-health-history-preserve-command-probe-check.ps1`, and `scripts/baremetal-qemu-reset-command-result-preserve-runtime-probe-check.ps1`.
+    - each wrapper reuses the broader live QEMU probe for its subsystem, then asserts the narrow reset-preservation boundary directly so these contracts fail independently in `zig-ci` and `release-preview`.
+    - `scripts/baremetal-qemu-reset-counters-probe-check.ps1` was aligned with current runtime semantics by expecting zero live timer entries at the pre-reset snapshot while still requiring preserved timer quantum and wake-queue evidence.
   - bare-metal task-resume timer-clear validation shipped:
     - new script: `scripts/baremetal-qemu-task-resume-timer-clear-probe-check.ps1`.
     - added matching host regression in `src/baremetal_main.zig`.

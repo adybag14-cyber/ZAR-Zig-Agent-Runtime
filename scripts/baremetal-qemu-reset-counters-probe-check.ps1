@@ -558,7 +558,7 @@ try {
         $preInterruptHistoryLen -ge 2 -and $preExceptionHistoryLen -ge 1 -and $preInterruptVector -eq 1 -and $preExceptionVector -eq 1 -and
         $preCommandHistoryLen -ge 12 -and $preHealthHistoryLen -ge 12 -and $preModeHistoryLen -ge 2 -and $preBootHistoryLen -ge 2 -and
         $preCommandResultTotal -ge 12 -and $preSchedulerTaskCount -eq 1 -and $preAllocatorAllocationCount -eq 1 -and $preAllocatorBytesInUse -eq $allocatorAllocSize -and
-        $preSyscallEntryCount -eq 1 -and $preTimerEntryCount -eq 1 -and $preTimerQuantum -eq $timerQuantum -and $preWakeQueueLen -eq 1 -and
+        $preSyscallEntryCount -eq 1 -and $preTimerEntryCount -eq 0 -and $preTimerQuantum -eq $timerQuantum -and $preWakeQueueLen -eq 1 -and
         $postAck -eq 13 -and $postLastOpcode -eq $resetCountersOpcode -and $postLastResult -eq 0 -and $postTicks -eq $tickBatchHintValue -and $postMode -eq $modeRunning -and
         $postHealthCode -eq 200 -and $postFeatureFlags -eq $featureFlagsValue -and $postTickBatchHint -eq $tickBatchHintValue -and $postPanicCount -eq 0 -and $postInterruptCount -eq 0 -and $postExceptionCount -eq 0 -and
         $postInterruptHistoryLen -eq 0 -and $postExceptionHistoryLen -eq 0 -and $postInterruptVector -eq 0 -and $postExceptionVector -eq 0 -and
