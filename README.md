@@ -588,6 +588,11 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU interrupt-timeout disable-interrupt probe
 - optional bare-metal QEMU interrupt-timeout disable-interrupt recovery probe
 - optional bare-metal QEMU timer-reset wait-kind isolation probe
+- optional bare-metal QEMU timer-reset pure-wait recovery probe
+- optional bare-metal QEMU timer-reset timeout-interrupt recovery probe
+- optional bare-metal QEMU scheduler reset wake-clear probe
+- optional bare-metal QEMU scheduler reset timer-clear probe
+- optional bare-metal QEMU scheduler reset config-preservation probe
 - optional bare-metal QEMU manual wait interrupt probe
 - optional bare-metal QEMU wake-queue selective probe
 - optional bare-metal QEMU wake-queue selective-overflow probe
@@ -735,3 +740,4 @@ Manual python release trigger:
 ```powershell
 gh workflow run python-release.yml -R adybag14-cyber/openclaw-zig-port -f version=<pep440-version> -f release_tag=<release-tag>
 ```
+

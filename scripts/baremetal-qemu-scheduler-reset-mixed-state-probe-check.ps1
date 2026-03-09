@@ -8,8 +8,8 @@ $ErrorActionPreference = "Stop"
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $releaseDir = Join-Path $repo "release"
-$prerequisiteScript = Join-Path $PSScriptRoot "baremetal-qemu-timer-reset-recovery-probe-check.ps1"
-$artifact = Join-Path $releaseDir "openclaw-zig-baremetal-pvh-timer-reset-recovery.elf"
+$prerequisiteScript = Join-Path $PSScriptRoot "baremetal-qemu-scheduler-reset-probe-check.ps1"
+$artifact = Join-Path $releaseDir "openclaw-zig-baremetal-pvh-scheduler-probe.elf"
 $gdbScript = Join-Path $releaseDir "qemu-scheduler-reset-mixed-state-probe.gdb"
 $gdbStdout = Join-Path $releaseDir "qemu-scheduler-reset-mixed-state-probe.gdb.stdout.log"
 $gdbStderr = Join-Path $releaseDir "qemu-scheduler-reset-mixed-state-probe.gdb.stderr.log"
@@ -275,7 +275,7 @@ if $stage == 6
   continue
 end
 if $stage == 7
-  if *(unsigned int*)(0x__STATUS__+__STATUS_ACK_OFFSET__) == 7 && *(unsigned int*)(0x__WAKE_QUEUE_COUNT__) == 1 && *(unsigned char*)(0x__TIMER_STATE__+__TIMER_ENTRY_COUNT_OFFSET__) == 1 && *(unsigned short*)(0x__TIMER_STATE__+__TIMER_PENDING_WAKE_COUNT_OFFSET__) == 1 && *(unsigned int*)(0x__TIMER_STATE__+__TIMER_NEXT_ID_OFFSET__) == 2 && *(unsigned int*)(0x__TIMER_STATE__+__TIMER_QUANTUM_OFFSET__) == __TIMER_QUANTUM__ && *(unsigned char*)(0x__TASKS__+__TASK_STATE_OFFSET__) == __TASK_STATE_READY__ && *(unsigned char*)(0x__TASKS__+__TASK_STRIDE__+__TASK_STATE_OFFSET__) == __TASK_STATE_WAITING__ && *(unsigned char*)(0x__WAIT_KIND__) == __WAIT_KIND_NONE__ && *(unsigned char*)(0x__WAIT_KIND__+1) == __WAIT_KIND_INTERRUPT_ANY__ && *(unsigned long long*)(0x__WAIT_TIMEOUT__+8) > 0
+  if *(unsigned int*)(0x__STATUS__+__STATUS_ACK_OFFSET__) == 7 && *(unsigned int*)(0x__WAKE_QUEUE_COUNT__) == 1 && *(unsigned char*)(0x__TIMER_STATE__+__TIMER_ENTRY_COUNT_OFFSET__) == 0 && *(unsigned short*)(0x__TIMER_STATE__+__TIMER_PENDING_WAKE_COUNT_OFFSET__) == 1 && *(unsigned int*)(0x__TIMER_STATE__+__TIMER_NEXT_ID_OFFSET__) == 2 && *(unsigned int*)(0x__TIMER_STATE__+__TIMER_QUANTUM_OFFSET__) == __TIMER_QUANTUM__ && *(unsigned char*)(0x__TASKS__+__TASK_STATE_OFFSET__) == __TASK_STATE_READY__ && *(unsigned char*)(0x__TASKS__+__TASK_STRIDE__+__TASK_STATE_OFFSET__) == __TASK_STATE_WAITING__ && *(unsigned char*)(0x__WAIT_KIND__) == __WAIT_KIND_NONE__ && *(unsigned char*)(0x__WAIT_KIND__+1) == __WAIT_KIND_INTERRUPT_ANY__ && *(unsigned long long*)(0x__WAIT_TIMEOUT__+8) > 0
     printf "PRE_TASK0_ID=%u\n", $task0_id
     printf "PRE_TASK1_ID=%u\n", $task1_id
     printf "PRE_WAKE_COUNT=%u\n", *(unsigned int*)(0x__WAKE_QUEUE_COUNT__)
@@ -516,7 +516,7 @@ $checks = @(
     ($preTask0Id -eq 1),
     ($preTask1Id -eq 2),
     ($preWakeCount -eq 1),
-    ($preTimerCount -eq 1),
+    ($preTimerCount -eq 0),
     ($prePendingWakeCount -eq 1),
     ($preNextTimerId -eq 2),
     ($preQuantum -eq $timerQuantum),
@@ -559,9 +559,16 @@ Write-Output "LAST_OPCODE=$lastOpcode"
 Write-Output "LAST_RESULT=$lastResult"
 Write-Output "PRE_WAKE_COUNT=$preWakeCount"
 Write-Output "PRE_TIMER_COUNT=$preTimerCount"
+Write-Output "PRE_PENDING_WAKE_COUNT=$prePendingWakeCount"
+Write-Output "PRE_NEXT_TIMER_ID=$preNextTimerId"
+Write-Output "PRE_QUANTUM=$preQuantum"
 Write-Output "POST_WAKE_COUNT=$postWakeCount"
 Write-Output "POST_TIMER_COUNT=$postTimerCount"
+Write-Output "POST_PENDING_WAKE_COUNT=$postPendingWakeCount"
 Write-Output "POST_NEXT_TIMER_ID=$postNextTimerId"
 Write-Output "POST_QUANTUM=$postQuantum"
+Write-Output "AFTER_IDLE_WAKE_COUNT=$afterIdleWakeCount"
+Write-Output "AFTER_IDLE_TIMER_COUNT=$afterIdleTimerCount"
 Write-Output "REARM_TIMER_ID=$rearmTimerId"
+Write-Output "REARM_TIMER_COUNT=$rearmTimerCount"
 Write-Output "REARM_NEXT_TIMER_ID=$rearmNextTimerId"

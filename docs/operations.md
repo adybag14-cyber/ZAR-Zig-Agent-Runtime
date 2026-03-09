@@ -150,6 +150,11 @@ Recommended sequence:
 - optional bare-metal QEMU interrupt-timeout disable-interrupt probe (`command_task_wait_interrupt_for` survives `command_timer_disable`, wakes immediately on a real interrupt while timers stay disabled, clears the timeout arm, and does not leak a stale timer wake after `command_timer_enable` against the freestanding PVH artifact)
 - optional bare-metal QEMU interrupt-timeout disable-interrupt recovery probe (wrapper over the broad interrupt-timeout disable-interrupt path that fails specifically when the direct interrupt wake stops winning with `reason=interrupt`, matching vector telemetry, and zero timer dispatch after re-enable)
 - optional bare-metal QEMU timer-reset wait-kind isolation probe (wrapper over the broad timer-reset recovery path that fails specifically when `command_timer_reset` stops collapsing pure timer waits to manual while preserving interrupt-wait mode and clearing only the timeout arm)
+- optional bare-metal QEMU timer-reset pure-wait recovery probe (wrapper over the broad timer-reset recovery path that fails specifically when the recovered pure timer waiter stops waking via the first manual wake with `reason=manual`, `vector=0`, and `timer_id=0`)
+- optional bare-metal QEMU timer-reset timeout-interrupt recovery probe (wrapper over the broad timer-reset recovery path that fails specifically when the timeout-backed interrupt waiter stops preserving interrupt wait-kind, clearing only the timeout arm, and waking via the later real interrupt)
+- optional bare-metal QEMU scheduler reset wake-clear probe (wrapper over the broad scheduler-reset mixed-state path that fails specifically when stale queued wakes survive `command_scheduler_reset` or leak back after idle ticks)
+- optional bare-metal QEMU scheduler reset timer-clear probe (wrapper over the broad scheduler-reset mixed-state path that fails specifically when stale pending timer bookkeeping survives `command_scheduler_reset` or a fresh post-reset timer no longer rearms cleanly)
+- optional bare-metal QEMU scheduler reset config-preservation probe (wrapper over the broad scheduler-reset mixed-state path that fails specifically when timer quantum or `next_timer_id` drift across `command_scheduler_reset`, or the first fresh re-arm stops reusing the preserved `next_timer_id`)
 - optional bare-metal QEMU interrupt filter probe (`task_wait_interrupt(any)` wakes on vector `200`, vector-scoped `task_wait_interrupt(13)` ignores non-matching `200`, then wakes on matching `13`, and invalid vector `65536` is rejected with `-22` against the freestanding PVH artifact)
 - optional bare-metal QEMU task-terminate interrupt-timeout probe (`command_task_terminate` on a `task_wait_interrupt_for` waiter clears the timeout arm and wait state, leaves no wake-queue residue, prevents later ghost interrupt/timeout wake delivery for the terminated task, and keeps `timer_dispatch_count=0` against the freestanding PVH artifact)
 - optional bare-metal QEMU task-terminate mixed-state probe (live mixed `command_task_wait_for`, `command_scheduler_wake_task`, survivor wake, and `command_task_terminate` proof, validating current timer-cancel-on-manual-wake semantics plus targeted wake-queue cleanup for the terminated task against the freestanding PVH artifact)
@@ -217,6 +222,9 @@ Recommended sequence:
 - bare-metal optional QEMU scheduler disable-enable probe in validate stage
 - bare-metal optional QEMU scheduler reset probe in validate stage
 - bare-metal optional QEMU scheduler reset mixed-state probe in validate stage
+- bare-metal optional QEMU scheduler reset wake-clear probe in validate stage
+- bare-metal optional QEMU scheduler reset timer-clear probe in validate stage
+- bare-metal optional QEMU scheduler reset config-preservation probe in validate stage
 - bare-metal optional QEMU scheduler policy-switch probe in validate stage
 - bare-metal optional QEMU scheduler saturation probe in validate stage
 - bare-metal optional QEMU timer wake probe in validate stage
@@ -363,3 +371,4 @@ Policy:
 - Use Codeberg `master` as the canonical freshness target.
 - Use `adybag14-cyber/zig` `latest-master` when the goal is a fast Windows toolchain refresh.
 - Use `adybag14-cyber/zig` `upstream-<sha>` when the goal is reproducible CI, bisects, or release recreation.
+
