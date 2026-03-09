@@ -17,12 +17,12 @@ $probeOutput = if ($SkipBuild) { & $probe -SkipBuild 2>&1 } else { & $probe 2>&1
 $probeExitCode = $LASTEXITCODE
 $probeText = ($probeOutput | Out-String)
 $probeOutput | Write-Output
-if ($probeExitCode -ne 0) {
-    throw "Underlying command-result probe failed with exit code $probeExitCode"
-}
 if ($probeText -match 'BAREMETAL_QEMU_COMMAND_RESULT_COUNTERS_PROBE=skipped') {
     Write-Output "BAREMETAL_QEMU_RESET_COMMAND_RESULT_PRESERVE_RUNTIME_PROBE=skipped"
     exit 0
+}
+if ($probeExitCode -ne 0) {
+    throw "Underlying command-result probe failed with exit code $probeExitCode"
 }
 
 $postMode = Extract-IntValue -Text $probeText -Name "POST_MODE"

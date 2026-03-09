@@ -17,12 +17,12 @@ $probeOutput = if ($SkipBuild) { & $probe -SkipBuild 2>&1 } else { & $probe 2>&1
 $probeExitCode = $LASTEXITCODE
 $probeText = ($probeOutput | Out-String)
 $probeOutput | Write-Output
-if ($probeExitCode -ne 0) {
-    throw "Underlying bootdiag/history-clear probe failed with exit code $probeExitCode"
-}
 if ($probeText -match 'BAREMETAL_QEMU_BOOTDIAG_HISTORY_CLEAR_PROBE=skipped') {
     Write-Output "BAREMETAL_QEMU_RESET_BOOTDIAG_PRESERVE_STATE_PROBE=skipped"
     exit 0
+}
+if ($probeExitCode -ne 0) {
+    throw "Underlying bootdiag/history-clear probe failed with exit code $probeExitCode"
 }
 
 $preResetStack = Extract-IntValue -Text $probeText -Name "PRE_RESET_STACK"
