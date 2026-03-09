@@ -4908,22 +4908,38 @@ test "baremetal timer disable suppresses timer wake but not interrupt wake" {
     try std.testing.expectEqual(@as(u8, abi.task_state_ready), oc_scheduler_task(0).state);
     try std.testing.expectEqual(@as(u8, abi.task_state_waiting), oc_scheduler_task(1).state);
     try std.testing.expectEqual(@as(u32, 1), oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u16, 1), oc_timer_state_ptr().pending_wake_count);
     try std.testing.expectEqual(@as(u64, 0), oc_timer_state_ptr().dispatch_count);
+    try std.testing.expectEqual(@as(u64, 1), x86_bootstrap.oc_interrupt_count());
+    try std.testing.expectEqual(@as(u16, 200), x86_bootstrap.oc_last_interrupt_vector());
 
     oc_tick_n(4);
     try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
     try std.testing.expectEqual(@as(u8, abi.task_state_waiting), oc_scheduler_task(1).state);
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u16, 1), oc_timer_state_ptr().pending_wake_count);
     try std.testing.expectEqual(@as(u64, 0), oc_timer_state_ptr().dispatch_count);
+    try std.testing.expect(status.ticks > oc_timer_entry(0).next_fire_tick);
+    try std.testing.expectEqual(@as(u64, 1), x86_bootstrap.oc_interrupt_count());
+    try std.testing.expectEqual(@as(u16, 200), x86_bootstrap.oc_last_interrupt_vector());
 
     _ = oc_submit_command(abi.command_timer_enable, 0, 0);
     oc_tick();
     try std.testing.expect(oc_timer_enabled());
     try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u32, 0), oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u16, 2), oc_timer_state_ptr().pending_wake_count);
     const timer_evt = oc_wake_queue_event(1);
+    const timer_entry = oc_timer_entry(0);
     try std.testing.expectEqual(timer_task_id, timer_evt.task_id);
+    try std.testing.expectEqual(timer_entry.timer_id, timer_evt.timer_id);
     try std.testing.expectEqual(@as(u8, abi.wake_reason_timer), timer_evt.reason);
+    try std.testing.expectEqual(@as(u8, 0), timer_evt.vector);
     try std.testing.expectEqual(@as(u8, abi.task_state_ready), oc_scheduler_task(1).state);
     try std.testing.expect(oc_timer_state_ptr().dispatch_count >= 1);
+    try std.testing.expectEqual(interrupt_evt.interrupt_count, timer_evt.interrupt_count);
+    try std.testing.expectEqual(@as(u64, 1), x86_bootstrap.oc_interrupt_count());
+    try std.testing.expectEqual(@as(u16, 200), x86_bootstrap.oc_last_interrupt_vector());
 }
 
 test "baremetal timer disable and re-enable resumes overdue one-shot wake" {

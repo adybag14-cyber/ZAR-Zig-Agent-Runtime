@@ -278,7 +278,7 @@ function Extract-IntValue {
         [string] $Name
     )
 
-    $pattern = [regex]::Escape($Name) + '=(-?\d+)'
+    $pattern = '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$'
     $match = [regex]::Match($Text, $pattern)
     if (-not $match.Success) {
         return $null
@@ -409,8 +409,16 @@ set `$pause_target_tick = 0
 set `$after_interrupt_tick = 0
 set `$after_interrupt_timer_count = 0
 set `$after_interrupt_pending_wake_count = 0
+set `$after_interrupt_wake_queue_count = 0
+set `$after_interrupt_interrupt_task_state = 0
+set `$after_interrupt_timer_task_state = 0
 set `$paused_tick = 0
 set `$paused_pending_wake_count = 0
+set `$paused_wake_queue_count = 0
+set `$paused_timer_entry_count = 0
+set `$paused_timer_dispatch_count = 0
+set `$paused_interrupt_task_state = 0
+set `$paused_timer_task_state = 0
 set `$final_tick = 0
 file $artifactForGdb
 handle SIGQUIT nostop noprint pass
@@ -536,6 +544,9 @@ if `$stage == 11
     set `$after_interrupt_tick = *(unsigned long long*)(0x$statusAddress+$statusTicksOffset)
     set `$after_interrupt_timer_count = *(unsigned char*)(0x$timerStateAddress+$timerEntryCountOffset)
     set `$after_interrupt_pending_wake_count = *(unsigned short*)(0x$timerStateAddress+$timerPendingWakeCountOffset)
+    set `$after_interrupt_wake_queue_count = *(unsigned int*)(0x$wakeQueueCountAddress)
+    set `$after_interrupt_interrupt_task_state = *(unsigned char*)(0x$schedulerTasksAddress+$taskStateOffset)
+    set `$after_interrupt_timer_task_state = *(unsigned char*)(0x$schedulerTasksAddress+$taskStride+$taskStateOffset)
     set `$pause_target_tick = `$after_interrupt_tick + $pauseTicks
     set `$stage = 12
   end
@@ -545,6 +556,11 @@ if `$stage == 12
   if *(unsigned long long*)(0x$statusAddress+$statusTicksOffset) >= `$pause_target_tick && *(unsigned int*)(0x$wakeQueueCountAddress) == 1 && *(unsigned char*)(0x$schedulerTasksAddress+$taskStride+$taskStateOffset) == $taskStateWaiting && *(unsigned long long*)(0x$timerStateAddress+$timerDispatchCountOffset) == 0 && *(unsigned char*)(0x$timerStateAddress+$timerEnabledOffset) == 0
     set `$paused_tick = *(unsigned long long*)(0x$statusAddress+$statusTicksOffset)
     set `$paused_pending_wake_count = *(unsigned short*)(0x$timerStateAddress+$timerPendingWakeCountOffset)
+    set `$paused_wake_queue_count = *(unsigned int*)(0x$wakeQueueCountAddress)
+    set `$paused_timer_entry_count = *(unsigned char*)(0x$timerStateAddress+$timerEntryCountOffset)
+    set `$paused_timer_dispatch_count = *(unsigned long long*)(0x$timerStateAddress+$timerDispatchCountOffset)
+    set `$paused_interrupt_task_state = *(unsigned char*)(0x$schedulerTasksAddress+$taskStateOffset)
+    set `$paused_timer_task_state = *(unsigned char*)(0x$schedulerTasksAddress+$taskStride+$taskStateOffset)
     set *(unsigned short*)(0x$commandMailboxAddress+$commandOpcodeOffset) = $timerEnableOpcode
     set *(unsigned int*)(0x$commandMailboxAddress+$commandSeqOffset) = 12
     set *(unsigned long long*)(0x$commandMailboxAddress+$commandArg0Offset) = 0
@@ -554,7 +570,7 @@ if `$stage == 12
   continue
 end
 if `$stage == 13
-  if *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset) == 12 && *(unsigned int*)(0x$wakeQueueCountAddress) == 2 && *(unsigned char*)(0x$schedulerTasksAddress+$taskStride+$taskStateOffset) == $taskStateReady && *(unsigned long long*)(0x$timerStateAddress+$timerDispatchCountOffset) >= 1 && *(unsigned char*)(0x$timerStateAddress+$timerEnabledOffset) == 1
+  if *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset) == 12 && *(unsigned int*)(0x$wakeQueueCountAddress) == 2 && *(unsigned char*)(0x$schedulerTasksAddress+$taskStride+$taskStateOffset) == $taskStateReady && *(unsigned long long*)(0x$timerStateAddress+$timerDispatchCountOffset) >= 1 && *(unsigned char*)(0x$timerStateAddress+$timerEnabledOffset) == 1 && *(unsigned char*)(0x$timerStateAddress+$timerEntryCountOffset) == 0
     set `$final_tick = *(unsigned long long*)(0x$statusAddress+$statusTicksOffset)
     set `$stage = 14
   end
@@ -581,8 +597,16 @@ printf "TIMER_TASK_BUDGET_REMAINING=%u\n", *(unsigned int*)(0x$schedulerTasksAdd
 printf "AFTER_INTERRUPT_TICK=%llu\n", `$after_interrupt_tick
 printf "AFTER_INTERRUPT_TIMER_COUNT=%u\n", `$after_interrupt_timer_count
 printf "AFTER_INTERRUPT_PENDING_WAKE_COUNT=%u\n", `$after_interrupt_pending_wake_count
+printf "AFTER_INTERRUPT_WAKE_QUEUE_COUNT=%u\n", `$after_interrupt_wake_queue_count
+printf "AFTER_INTERRUPT_INTERRUPT_TASK_STATE=%u\n", `$after_interrupt_interrupt_task_state
+printf "AFTER_INTERRUPT_TIMER_TASK_STATE=%u\n", `$after_interrupt_timer_task_state
 printf "PAUSED_TICK=%llu\n", `$paused_tick
 printf "PAUSED_PENDING_WAKE_COUNT=%u\n", `$paused_pending_wake_count
+printf "PAUSED_WAKE_QUEUE_COUNT=%u\n", `$paused_wake_queue_count
+printf "PAUSED_TIMER_ENTRY_COUNT=%u\n", `$paused_timer_entry_count
+printf "PAUSED_TIMER_DISPATCH_COUNT=%llu\n", `$paused_timer_dispatch_count
+printf "PAUSED_INTERRUPT_TASK_STATE=%u\n", `$paused_interrupt_task_state
+printf "PAUSED_TIMER_TASK_STATE=%u\n", `$paused_timer_task_state
 printf "TIMER_ENABLED=%u\n", *(unsigned char*)(0x$timerStateAddress+$timerEnabledOffset)
 printf "TIMER_ENTRY_COUNT=%u\n", *(unsigned char*)(0x$timerStateAddress+$timerEntryCountOffset)
 printf "TIMER_PENDING_WAKE_COUNT=%u\n", *(unsigned short*)(0x$timerStateAddress+$timerPendingWakeCountOffset)
@@ -632,6 +656,12 @@ $qemuArgs = @(
     "-S",
     "-gdb", "tcp::$GdbPort"
 )
+
+foreach ($path in @($gdbStdout, $gdbStderr, $qemuStdout, $qemuStderr)) {
+    if (Test-Path $path) {
+        Remove-Item -Path $path -Force -ErrorAction SilentlyContinue
+    }
+}
 
 $qemuProc = Start-Process -FilePath $qemu -ArgumentList $qemuArgs -PassThru -NoNewWindow -RedirectStandardOutput $qemuStdout -RedirectStandardError $qemuStderr
 Start-Sleep -Milliseconds 700
@@ -702,8 +732,16 @@ $timerTaskBudgetRemaining = Extract-IntValue -Text $gdbOutput -Name "TIMER_TASK_
 $afterInterruptTick = Extract-IntValue -Text $gdbOutput -Name "AFTER_INTERRUPT_TICK"
 $afterInterruptTimerCount = Extract-IntValue -Text $gdbOutput -Name "AFTER_INTERRUPT_TIMER_COUNT"
 $afterInterruptPendingWakeCount = Extract-IntValue -Text $gdbOutput -Name "AFTER_INTERRUPT_PENDING_WAKE_COUNT"
+$afterInterruptWakeQueueCount = Extract-IntValue -Text $gdbOutput -Name "AFTER_INTERRUPT_WAKE_QUEUE_COUNT"
+$afterInterruptInterruptTaskState = Extract-IntValue -Text $gdbOutput -Name "AFTER_INTERRUPT_INTERRUPT_TASK_STATE"
+$afterInterruptTimerTaskState = Extract-IntValue -Text $gdbOutput -Name "AFTER_INTERRUPT_TIMER_TASK_STATE"
 $pausedTick = Extract-IntValue -Text $gdbOutput -Name "PAUSED_TICK"
 $pausedPendingWakeCount = Extract-IntValue -Text $gdbOutput -Name "PAUSED_PENDING_WAKE_COUNT"
+$pausedWakeQueueCount = Extract-IntValue -Text $gdbOutput -Name "PAUSED_WAKE_QUEUE_COUNT"
+$pausedTimerEntryCount = Extract-IntValue -Text $gdbOutput -Name "PAUSED_TIMER_ENTRY_COUNT"
+$pausedTimerDispatchCount = Extract-IntValue -Text $gdbOutput -Name "PAUSED_TIMER_DISPATCH_COUNT"
+$pausedInterruptTaskState = Extract-IntValue -Text $gdbOutput -Name "PAUSED_INTERRUPT_TASK_STATE"
+$pausedTimerTaskState = Extract-IntValue -Text $gdbOutput -Name "PAUSED_TIMER_TASK_STATE"
 $timerEnabled = Extract-IntValue -Text $gdbOutput -Name "TIMER_ENABLED"
 $timerEntryCount = Extract-IntValue -Text $gdbOutput -Name "TIMER_ENTRY_COUNT"
 $timerPendingWakeCount = Extract-IntValue -Text $gdbOutput -Name "TIMER_PENDING_WAKE_COUNT"
@@ -759,8 +797,16 @@ if ($timerTaskBudgetRemaining -ne $timerTaskBudget) { throw "Expected TIMER_TASK
 if ($afterInterruptTick -le 0) { throw "Expected AFTER_INTERRUPT_TICK > 0, got $afterInterruptTick" }
 if ($afterInterruptTimerCount -ne 1) { throw "Expected AFTER_INTERRUPT_TIMER_COUNT=1, got $afterInterruptTimerCount" }
 if ($afterInterruptPendingWakeCount -ne 1) { throw "Expected AFTER_INTERRUPT_PENDING_WAKE_COUNT=1, got $afterInterruptPendingWakeCount" }
+if ($afterInterruptWakeQueueCount -ne 1) { throw "Expected AFTER_INTERRUPT_WAKE_QUEUE_COUNT=1, got $afterInterruptWakeQueueCount" }
+if ($afterInterruptInterruptTaskState -ne $taskStateReady) { throw "Expected AFTER_INTERRUPT_INTERRUPT_TASK_STATE=$taskStateReady, got $afterInterruptInterruptTaskState" }
+if ($afterInterruptTimerTaskState -ne $taskStateWaiting) { throw "Expected AFTER_INTERRUPT_TIMER_TASK_STATE=$taskStateWaiting, got $afterInterruptTimerTaskState" }
 if ($pausedTick -lt ($afterInterruptTick + $pauseTicks)) { throw "Expected PAUSED_TICK >= AFTER_INTERRUPT_TICK + $pauseTicks, got AFTER_INTERRUPT_TICK=$afterInterruptTick PAUSED_TICK=$pausedTick" }
 if ($pausedPendingWakeCount -ne 1) { throw "Expected PAUSED_PENDING_WAKE_COUNT=1, got $pausedPendingWakeCount" }
+if ($pausedWakeQueueCount -ne 1) { throw "Expected PAUSED_WAKE_QUEUE_COUNT=1, got $pausedWakeQueueCount" }
+if ($pausedTimerEntryCount -ne 1) { throw "Expected PAUSED_TIMER_ENTRY_COUNT=1, got $pausedTimerEntryCount" }
+if ($pausedTimerDispatchCount -ne 0) { throw "Expected PAUSED_TIMER_DISPATCH_COUNT=0, got $pausedTimerDispatchCount" }
+if ($pausedInterruptTaskState -ne $taskStateReady) { throw "Expected PAUSED_INTERRUPT_TASK_STATE=$taskStateReady, got $pausedInterruptTaskState" }
+if ($pausedTimerTaskState -ne $taskStateWaiting) { throw "Expected PAUSED_TIMER_TASK_STATE=$taskStateWaiting, got $pausedTimerTaskState" }
 if ($timerEnabled -ne 1) { throw "Expected TIMER_ENABLED=1, got $timerEnabled" }
 if ($timerEntryCount -ne 0) { throw "Expected TIMER_ENTRY_COUNT=0 after one-shot fire, got $timerEntryCount" }
 if ($timerPendingWakeCount -ne 2) { throw "Expected TIMER_PENDING_WAKE_COUNT=2, got $timerPendingWakeCount" }
@@ -808,10 +854,56 @@ Write-Output "BAREMETAL_QEMU_TIMER_DISABLE_INTERRUPT_LAST_RESULT=$lastResult"
 Write-Output "BAREMETAL_QEMU_TIMER_DISABLE_INTERRUPT_TICKS=$ticks"
 Write-Output "BAREMETAL_QEMU_TIMER_DISABLE_INTERRUPT_TASK_COUNT=$taskCount"
 Write-Output "BAREMETAL_QEMU_TIMER_DISABLE_INTERRUPT_AFTER_INTERRUPT_TICK=$afterInterruptTick"
+Write-Output "BAREMETAL_QEMU_TIMER_DISABLE_INTERRUPT_AFTER_INTERRUPT_WAKE_QUEUE_COUNT=$afterInterruptWakeQueueCount"
+Write-Output "BAREMETAL_QEMU_TIMER_DISABLE_INTERRUPT_AFTER_INTERRUPT_INTERRUPT_TASK_STATE=$afterInterruptInterruptTaskState"
+Write-Output "BAREMETAL_QEMU_TIMER_DISABLE_INTERRUPT_AFTER_INTERRUPT_TIMER_TASK_STATE=$afterInterruptTimerTaskState"
 Write-Output "BAREMETAL_QEMU_TIMER_DISABLE_INTERRUPT_PAUSED_TICK=$pausedTick"
+Write-Output "BAREMETAL_QEMU_TIMER_DISABLE_INTERRUPT_PAUSED_WAKE_QUEUE_COUNT=$pausedWakeQueueCount"
+Write-Output "BAREMETAL_QEMU_TIMER_DISABLE_INTERRUPT_PAUSED_TIMER_ENTRY_COUNT=$pausedTimerEntryCount"
+Write-Output "BAREMETAL_QEMU_TIMER_DISABLE_INTERRUPT_PAUSED_TIMER_DISPATCH_COUNT=$pausedTimerDispatchCount"
+Write-Output "BAREMETAL_QEMU_TIMER_DISABLE_INTERRUPT_PAUSED_INTERRUPT_TASK_STATE=$pausedInterruptTaskState"
+Write-Output "BAREMETAL_QEMU_TIMER_DISABLE_INTERRUPT_PAUSED_TIMER_TASK_STATE=$pausedTimerTaskState"
 Write-Output "BAREMETAL_QEMU_TIMER_DISABLE_INTERRUPT_TIMER_LAST_FIRE_TICK=$timer0LastFireTick"
 Write-Output "BAREMETAL_QEMU_TIMER_DISABLE_INTERRUPT_WAKE0_REASON=$wake0Reason"
 Write-Output "BAREMETAL_QEMU_TIMER_DISABLE_INTERRUPT_WAKE0_VECTOR=$wake0Vector"
 Write-Output "BAREMETAL_QEMU_TIMER_DISABLE_INTERRUPT_WAKE1_REASON=$wake1Reason"
 Write-Output "BAREMETAL_QEMU_TIMER_DISABLE_INTERRUPT_TIMER_DISPATCH_COUNT=$timerDispatchCount"
 Write-Output "BAREMETAL_QEMU_TIMER_DISABLE_INTERRUPT_INTERRUPT_COUNT=$interruptCount"
+Write-Output "INTERRUPT_TASK_ID=$interruptTaskId"
+Write-Output "TIMER_TASK_ID=$timerTaskId"
+Write-Output "AFTER_INTERRUPT_TICK=$afterInterruptTick"
+Write-Output "AFTER_INTERRUPT_TIMER_COUNT=$afterInterruptTimerCount"
+Write-Output "AFTER_INTERRUPT_PENDING_WAKE_COUNT=$afterInterruptPendingWakeCount"
+Write-Output "AFTER_INTERRUPT_WAKE_QUEUE_COUNT=$afterInterruptWakeQueueCount"
+Write-Output "AFTER_INTERRUPT_INTERRUPT_TASK_STATE=$afterInterruptInterruptTaskState"
+Write-Output "AFTER_INTERRUPT_TIMER_TASK_STATE=$afterInterruptTimerTaskState"
+Write-Output "PAUSED_TICK=$pausedTick"
+Write-Output "PAUSED_PENDING_WAKE_COUNT=$pausedPendingWakeCount"
+Write-Output "PAUSED_WAKE_QUEUE_COUNT=$pausedWakeQueueCount"
+Write-Output "PAUSED_TIMER_ENTRY_COUNT=$pausedTimerEntryCount"
+Write-Output "PAUSED_TIMER_DISPATCH_COUNT=$pausedTimerDispatchCount"
+Write-Output "PAUSED_INTERRUPT_TASK_STATE=$pausedInterruptTaskState"
+Write-Output "PAUSED_TIMER_TASK_STATE=$pausedTimerTaskState"
+Write-Output "TIMER_ENABLED=$timerEnabled"
+Write-Output "TIMER_ENTRY_COUNT=$timerEntryCount"
+Write-Output "TIMER_PENDING_WAKE_COUNT=$timerPendingWakeCount"
+Write-Output "TIMER_DISPATCH_COUNT=$timerDispatchCount"
+Write-Output "TIMER_LAST_INTERRUPT_COUNT=$timerLastInterruptCount"
+Write-Output "TIMER0_ID=$timer0Id"
+Write-Output "TIMER0_TASK_ID=$timer0TaskId"
+Write-Output "TIMER0_LAST_FIRE_TICK=$timer0LastFireTick"
+Write-Output "WAKE_QUEUE_COUNT=$wakeQueueCount"
+Write-Output "WAKE0_TASK_ID=$wake0TaskId"
+Write-Output "WAKE0_TIMER_ID=$wake0TimerId"
+Write-Output "WAKE0_REASON=$wake0Reason"
+Write-Output "WAKE0_VECTOR=$wake0Vector"
+Write-Output "WAKE0_TICK=$wake0Tick"
+Write-Output "WAKE0_INTERRUPT_COUNT=$wake0InterruptCount"
+Write-Output "WAKE1_TASK_ID=$wake1TaskId"
+Write-Output "WAKE1_TIMER_ID=$wake1TimerId"
+Write-Output "WAKE1_REASON=$wake1Reason"
+Write-Output "WAKE1_VECTOR=$wake1Vector"
+Write-Output "WAKE1_TICK=$wake1Tick"
+Write-Output "WAKE1_INTERRUPT_COUNT=$wake1InterruptCount"
+Write-Output "INTERRUPT_COUNT=$interruptCount"
+Write-Output "LAST_INTERRUPT_VECTOR=$lastInterruptVector"
