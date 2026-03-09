@@ -161,6 +161,7 @@ Recommended sequence:
 - optional bare-metal QEMU interrupt manual-wake probe (`command_scheduler_wake_task` on a pure `task_wait_interrupt` waiter clears the interrupt wait back to `none`, queues exactly one manual wake, and a later interrupt only advances telemetry without adding a second wake against the freestanding PVH artifact)
 - optional bare-metal QEMU interrupt timeout timer probe (`task_wait_interrupt_for` remains blocked with no wake queue entry at the deadline-preceding boundary, then wakes on the timer path with `reason=timer`, `vector=0`, and zero interrupt telemetry against the freestanding PVH artifact)
 - optional bare-metal QEMU masked interrupt timeout probe (`command_interrupt_mask_apply_profile(external_all)` suppresses vector `200`, preserves the waiting task with no wake queue entry and zero interrupt telemetry, and then allows the timeout path to wake with `reason=timer`, `vector=0` against the freestanding PVH artifact)
+- optional bare-metal QEMU masked interrupt timeout wrapper probes (narrow wrappers over the broad masked probe that fail directly on preserved `external_all` mask profile, zero-wake masked interrupt behavior, preserved armed wait/deadline, timer-only fallback wake semantics, and preserved zero-interrupt plus masked-vector telemetry)
 - optional bare-metal QEMU interrupt timeout clamp probe (near-`u64::max` `task_wait_interrupt_for` deadline saturates to `18446744073709551615`, the queued wake records that saturated tick, and the live wake boundary wraps cleanly to `0` under the freestanding PVH artifact)
 - optional bare-metal QEMU timer-disable reenable probe (a pure one-shot timer waiter survives `command_timer_disable`, remains blocked after idling past the original deadline, then wakes exactly once after `command_timer_enable` with a single queued `reason=timer` wake against the freestanding PVH artifact)
 - optional bare-metal QEMU timer-disable paused-state probe (wrapper over the broad timer-disable reenable path that fails specifically when the disabled pause window stops preserving the armed entry, waiting task state, or zero wake/dispatch counts)
@@ -295,6 +296,7 @@ Recommended sequence:
 - bare-metal optional QEMU interrupt manual-wake probe in validate stage
 - bare-metal optional QEMU interrupt timeout timer probe in validate stage
 - bare-metal optional QEMU masked interrupt timeout probe in validate stage
+- bare-metal optional QEMU masked interrupt timeout wrapper probes in validate stage
 - bare-metal optional QEMU interrupt timeout clamp probe in validate stage
 - bare-metal optional QEMU timer-disable reenable probe in validate stage
 - bare-metal optional QEMU timer-disable paused-state probe in validate stage

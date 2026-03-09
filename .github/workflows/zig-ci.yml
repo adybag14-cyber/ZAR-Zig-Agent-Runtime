@@ -485,6 +485,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-masked-interrupt-timeout-probe-check.ps1
 
+      - name: Bare-metal QEMU masked interrupt-timeout mask-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-masked-interrupt-timeout-mask-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU masked interrupt-timeout no-wake probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-masked-interrupt-timeout-no-wake-probe-check.ps1
+
+      - name: Bare-metal QEMU masked interrupt-timeout wait-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-masked-interrupt-timeout-wait-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU masked interrupt-timeout timer-fallback probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-masked-interrupt-timeout-timer-fallback-probe-check.ps1
+
+      - name: Bare-metal QEMU masked interrupt-timeout telemetry-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-masked-interrupt-timeout-telemetry-preserve-probe-check.ps1
+
       - name: Bare-metal QEMU interrupt timeout clamp probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-interrupt-timeout-clamp-probe-check.ps1

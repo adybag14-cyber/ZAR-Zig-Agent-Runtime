@@ -6961,6 +6961,7 @@ test "baremetal masked interrupt wait with timeout falls back to timer wake" {
     _ = oc_submit_command(abi.command_interrupt_mask_apply_profile, abi.interrupt_mask_profile_external_all, 0);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(abi.interrupt_mask_profile_external_all, x86_bootstrap.oc_interrupt_mask_profile());
 
     _ = oc_submit_command(abi.command_task_create, 5, 0);
     oc_tick();
@@ -6981,6 +6982,10 @@ test "baremetal masked interrupt wait with timeout falls back to timer wake" {
     try std.testing.expectEqual(@as(u32, 1), oc_scheduler_wait_timeout_count());
     try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
     try std.testing.expectEqual(@as(u64, 0), x86_bootstrap.oc_interrupt_count());
+    try std.testing.expectEqual(@as(u64, 1), x86_bootstrap.oc_interrupt_mask_ignored_count());
+    try std.testing.expectEqual(@as(u8, 200), x86_bootstrap.oc_interrupt_last_masked_vector());
+    try std.testing.expectEqual(abi.interrupt_mask_profile_external_all, x86_bootstrap.oc_interrupt_mask_profile());
+    try std.testing.expectEqual(@as(u16, 0), x86_bootstrap.oc_last_interrupt_vector());
 
     var wake_spin: u8 = 0;
     while (oc_wake_queue_len() == 0 and wake_spin < 4) : (wake_spin += 1) {
@@ -6994,6 +6999,10 @@ test "baremetal masked interrupt wait with timeout falls back to timer wake" {
     try std.testing.expectEqual(task_id, evt.task_id);
     try std.testing.expectEqual(@as(u8, abi.wake_reason_timer), evt.reason);
     try std.testing.expectEqual(@as(u8, 0), evt.vector);
+    try std.testing.expectEqual(@as(u64, 1), x86_bootstrap.oc_interrupt_mask_ignored_count());
+    try std.testing.expectEqual(@as(u8, 200), x86_bootstrap.oc_interrupt_last_masked_vector());
+    try std.testing.expectEqual(abi.interrupt_mask_profile_external_all, x86_bootstrap.oc_interrupt_mask_profile());
+    try std.testing.expectEqual(@as(u16, 0), x86_bootstrap.oc_last_interrupt_vector());
 }
 
 test "baremetal interrupt wait with timeout wakes on interrupt before deadline" {
