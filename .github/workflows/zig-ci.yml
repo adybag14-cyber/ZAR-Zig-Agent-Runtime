@@ -349,6 +349,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-probe-check.ps1
 
+      - name: Bare-metal QEMU timer cancel task interrupt-timeout interrupt-recovery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-interrupt-recovery-probe-check.ps1
+
       - name: Bare-metal QEMU timer cancel probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-timer-cancel-probe-check.ps1
@@ -369,6 +373,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-scheduler-wake-timer-clear-probe-check.ps1
 
+      - name: Bare-metal QEMU scheduler wake timer-clear manual-wake probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-wake-timer-clear-manual-wake-probe-check.ps1
+
       - name: Bare-metal QEMU task resume interrupt probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-task-resume-interrupt-probe-check.ps1
@@ -376,6 +384,14 @@ jobs:
       - name: Bare-metal QEMU task resume interrupt-timeout probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-task-resume-interrupt-timeout-probe-check.ps1
+
+      - name: Bare-metal QEMU task resume interrupt-timeout wait-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-interrupt-timeout-wait-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU task resume interrupt-timeout manual-wake probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-interrupt-timeout-manual-wake-probe-check.ps1
 
       - name: Bare-metal QEMU periodic timer probe (optional)
         shell: pwsh
@@ -536,6 +552,10 @@ jobs:
       - name: Bare-metal QEMU task terminate mixed-state probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-task-terminate-mixed-state-probe-check.ps1
+
+      - name: Bare-metal QEMU task terminate mixed-state survivor probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-terminate-mixed-state-survivor-probe-check.ps1
 
       - name: Bare-metal QEMU wake queue selective probe (optional)
         shell: pwsh

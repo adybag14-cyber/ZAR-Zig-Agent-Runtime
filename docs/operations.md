@@ -38,7 +38,12 @@ Recommended sequence:
 ./scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-probe-check.ps1
 ./scripts/baremetal-qemu-task-resume-timer-clear-probe-check.ps1
 ./scripts/baremetal-qemu-task-resume-interrupt-timeout-probe-check.ps1
+./scripts/baremetal-qemu-task-resume-interrupt-timeout-wait-clear-probe-check.ps1
+./scripts/baremetal-qemu-task-resume-interrupt-timeout-manual-wake-probe-check.ps1
 ./scripts/baremetal-qemu-scheduler-wake-timer-clear-probe-check.ps1
+./scripts/baremetal-qemu-scheduler-wake-timer-clear-manual-wake-probe-check.ps1
+./scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-interrupt-recovery-probe-check.ps1
+./scripts/baremetal-qemu-task-terminate-mixed-state-survivor-probe-check.ps1
 ./scripts/baremetal-qemu-periodic-timer-probe-check.ps1
 ./scripts/baremetal-qemu-interrupt-timeout-probe-check.ps1
 ./scripts/baremetal-qemu-timer-disable-reenable-probe-check.ps1
