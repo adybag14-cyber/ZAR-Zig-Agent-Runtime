@@ -270,7 +270,7 @@ function Extract-IntValue {
         [string] $Name
     )
 
-    $pattern = [regex]::Escape($Name) + '=(-?\d+)'
+    $pattern = '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$'
     $match = [regex]::Match($Text, $pattern)
     if (-not $match.Success) {
         return $null
@@ -399,6 +399,12 @@ set pagination off
 set confirm off
 set `$stage = 0
 set `$post_wake_tick = 0
+set `$before_interrupt_tick = 0
+set `$before_interrupt_task0_state = 0
+set `$before_interrupt_wait_kind0 = 0
+set `$before_interrupt_wait_vector0 = 0
+set `$before_interrupt_wait_timeout0 = 0
+set `$before_interrupt_wake_queue_count = 0
 file $artifactForGdb
 handle SIGQUIT nostop noprint pass
 target remote :$GdbPort
@@ -468,6 +474,12 @@ if `$stage == 5
 end
 if `$stage == 6
   if *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset) == 6 && *(unsigned char*)(0x$schedulerTasksAddress+$taskStateOffset) == $taskStateWaiting && *(unsigned char*)(0x$schedulerWaitKindAddress) == $waitConditionInterruptAny && *(unsigned long long*)(0x$schedulerWaitTimeoutTickAddress) > *(unsigned long long*)(0x$statusAddress+$statusTicksOffset) && *(unsigned int*)(0x$wakeQueueCountAddress) == 0
+    set `$before_interrupt_tick = *(unsigned long long*)(0x$statusAddress+$statusTicksOffset)
+    set `$before_interrupt_task0_state = *(unsigned char*)(0x$schedulerTasksAddress+$taskStateOffset)
+    set `$before_interrupt_wait_kind0 = *(unsigned char*)(0x$schedulerWaitKindAddress)
+    set `$before_interrupt_wait_vector0 = *(unsigned char*)(0x$schedulerWaitInterruptVectorAddress)
+    set `$before_interrupt_wait_timeout0 = *(unsigned long long*)(0x$schedulerWaitTimeoutTickAddress)
+    set `$before_interrupt_wake_queue_count = *(unsigned int*)(0x$wakeQueueCountAddress)
     set *(unsigned short*)(0x$commandMailboxAddress+$commandOpcodeOffset) = $triggerInterruptOpcode
     set *(unsigned int*)(0x$commandMailboxAddress+$commandSeqOffset) = 7
     set *(unsigned long long*)(0x$commandMailboxAddress+$commandArg0Offset) = $interruptVector
@@ -503,6 +515,12 @@ printf "TASK0_PRIORITY=%u\n", *(unsigned char*)(0x$schedulerTasksAddress+$taskPr
 printf "TASK0_RUN_COUNT=%u\n", *(unsigned int*)(0x$schedulerTasksAddress+$taskRunCountOffset)
 printf "TASK0_BUDGET=%u\n", *(unsigned int*)(0x$schedulerTasksAddress+$taskBudgetOffset)
 printf "TASK0_BUDGET_REMAINING=%u\n", *(unsigned int*)(0x$schedulerTasksAddress+$taskBudgetRemainingOffset)
+printf "BEFORE_INTERRUPT_TICK=%llu\n", `$before_interrupt_tick
+printf "BEFORE_INTERRUPT_TASK0_STATE=%u\n", `$before_interrupt_task0_state
+printf "BEFORE_INTERRUPT_WAIT_KIND0=%u\n", `$before_interrupt_wait_kind0
+printf "BEFORE_INTERRUPT_WAIT_VECTOR0=%u\n", `$before_interrupt_wait_vector0
+printf "BEFORE_INTERRUPT_WAIT_TIMEOUT0=%llu\n", `$before_interrupt_wait_timeout0
+printf "BEFORE_INTERRUPT_WAKE_QUEUE_COUNT=%u\n", `$before_interrupt_wake_queue_count
 printf "WAIT_KIND0=%u\n", *(unsigned char*)(0x$schedulerWaitKindAddress)
 printf "WAIT_VECTOR0=%u\n", *(unsigned char*)(0x$schedulerWaitInterruptVectorAddress)
 printf "WAIT_TIMEOUT0=%llu\n", *(unsigned long long*)(0x$schedulerWaitTimeoutTickAddress)
@@ -576,6 +594,12 @@ $task0Priority = $null
 $task0RunCount = $null
 $task0Budget = $null
 $task0BudgetRemaining = $null
+$beforeInterruptTick = $null
+$beforeInterruptTask0State = $null
+$beforeInterruptWaitKind0 = $null
+$beforeInterruptWaitVector0 = $null
+$beforeInterruptWaitTimeout0 = $null
+$beforeInterruptWakeQueueCount = $null
 $waitKind0 = $null
 $waitVector0 = $null
 $waitTimeout0 = $null
@@ -612,6 +636,12 @@ if (Test-Path $gdbStdout) {
     $task0RunCount = Extract-IntValue -Text $gdbOutput -Name "TASK0_RUN_COUNT"
     $task0Budget = Extract-IntValue -Text $gdbOutput -Name "TASK0_BUDGET"
     $task0BudgetRemaining = Extract-IntValue -Text $gdbOutput -Name "TASK0_BUDGET_REMAINING"
+    $beforeInterruptTick = Extract-IntValue -Text $gdbOutput -Name "BEFORE_INTERRUPT_TICK"
+    $beforeInterruptTask0State = Extract-IntValue -Text $gdbOutput -Name "BEFORE_INTERRUPT_TASK0_STATE"
+    $beforeInterruptWaitKind0 = Extract-IntValue -Text $gdbOutput -Name "BEFORE_INTERRUPT_WAIT_KIND0"
+    $beforeInterruptWaitVector0 = Extract-IntValue -Text $gdbOutput -Name "BEFORE_INTERRUPT_WAIT_VECTOR0"
+    $beforeInterruptWaitTimeout0 = Extract-IntValue -Text $gdbOutput -Name "BEFORE_INTERRUPT_WAIT_TIMEOUT0"
+    $beforeInterruptWakeQueueCount = Extract-IntValue -Text $gdbOutput -Name "BEFORE_INTERRUPT_WAKE_QUEUE_COUNT"
     $waitKind0 = Extract-IntValue -Text $gdbOutput -Name "WAIT_KIND0"
     $waitVector0 = Extract-IntValue -Text $gdbOutput -Name "WAIT_VECTOR0"
     $waitTimeout0 = Extract-IntValue -Text $gdbOutput -Name "WAIT_TIMEOUT0"
@@ -669,6 +699,12 @@ Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_PROBE_TASK0_PRIORITY=$task0Priori
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_PROBE_TASK0_RUN_COUNT=$task0RunCount"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_PROBE_TASK0_BUDGET=$task0Budget"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_PROBE_TASK0_BUDGET_REMAINING=$task0BudgetRemaining"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_PROBE_BEFORE_INTERRUPT_TICK=$beforeInterruptTick"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_PROBE_BEFORE_INTERRUPT_TASK0_STATE=$beforeInterruptTask0State"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_PROBE_BEFORE_INTERRUPT_WAIT_KIND0=$beforeInterruptWaitKind0"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_PROBE_BEFORE_INTERRUPT_WAIT_VECTOR0=$beforeInterruptWaitVector0"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_PROBE_BEFORE_INTERRUPT_WAIT_TIMEOUT0=$beforeInterruptWaitTimeout0"
+Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_PROBE_BEFORE_INTERRUPT_WAKE_QUEUE_COUNT=$beforeInterruptWakeQueueCount"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_PROBE_WAIT_KIND0=$waitKind0"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_PROBE_WAIT_VECTOR0=$waitVector0"
 Write-Output "BAREMETAL_QEMU_INTERRUPT_TIMEOUT_PROBE_WAIT_TIMEOUT0=$waitTimeout0"
@@ -708,6 +744,12 @@ $probePassed = $hitStart -and
     ($task0RunCount -eq 0) -and
     ($task0Budget -eq $taskBudget) -and
     ($task0BudgetRemaining -eq $taskBudget) -and
+    ($beforeInterruptTick -ge 0) -and
+    ($beforeInterruptTask0State -eq $taskStateWaiting) -and
+    ($beforeInterruptWaitKind0 -eq $waitConditionInterruptAny) -and
+    ($beforeInterruptWaitVector0 -eq 0) -and
+    ($beforeInterruptWaitTimeout0 -gt $beforeInterruptTick) -and
+    ($beforeInterruptWakeQueueCount -eq 0) -and
     ($waitKind0 -eq $waitConditionNone) -and
     ($waitVector0 -eq 0) -and
     ($waitTimeout0 -eq 0) -and

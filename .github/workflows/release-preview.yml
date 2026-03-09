@@ -495,6 +495,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-interrupt-timeout-probe-check.ps1
 
+      - name: Bare-metal QEMU interrupt timeout arm-preservation probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-arm-preservation-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout interrupt-wake-payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-interrupt-wake-payload-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout wait-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-wait-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout no-stale-timer probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-no-stale-timer-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout telemetry-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-telemetry-preserve-probe-check.ps1
+
       - name: Bare-metal QEMU interrupt manual wake probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-interrupt-manual-wake-probe-check.ps1

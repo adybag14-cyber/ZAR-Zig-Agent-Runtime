@@ -191,6 +191,11 @@ Recommended sequence:
 - optional bare-metal QEMU interrupt filter probe (`task_wait_interrupt(any)` wakes on vector `200`, vector-scoped `task_wait_interrupt(13)` ignores non-matching `200`, then wakes on matching `13`, and invalid vector `65536` is rejected with `-22` against the freestanding PVH artifact)
 - optional bare-metal QEMU task-terminate interrupt-timeout probe (`command_task_terminate` on a `task_wait_interrupt_for` waiter clears the timeout arm and wait state, leaves no wake-queue residue, prevents later ghost interrupt/timeout wake delivery for the terminated task, and keeps `timer_dispatch_count=0` against the freestanding PVH artifact)
 - optional bare-metal QEMU task-terminate mixed-state probe (live mixed `command_task_wait_for`, `command_scheduler_wake_task`, survivor wake, and `command_task_terminate` proof, validating current timer-cancel-on-manual-wake semantics plus targeted wake-queue cleanup for the terminated task against the freestanding PVH artifact)
+- optional bare-metal QEMU interrupt-timeout arm-preservation probe (wrapper over the broad interrupt-timeout interrupt-wins path that fails specifically when the waiter stops preserving its armed timeout identity, interrupt wait-kind, and zero wake-queue state immediately before the interrupt lands)
+- optional bare-metal QEMU interrupt-timeout interrupt-wake-payload probe (wrapper over the broad interrupt-timeout interrupt-wins path that fails specifically when the first wake stops being the exact `interrupt@31` payload for the waiting task with `timer_id=0`)
+- optional bare-metal QEMU interrupt-timeout wait-clear probe (wrapper over the broad interrupt-timeout interrupt-wins path that fails specifically when the interrupt wake stops clearing wait-kind/vector/timeout state and the timer table back to idle)
+- optional bare-metal QEMU interrupt-timeout no-stale-timer probe (wrapper over the broad interrupt-timeout interrupt-wins path that fails specifically when extra slack ticks after the interrupt start leaking a second wake or timer dispatch activity)
+- optional bare-metal QEMU interrupt-timeout telemetry-preserve probe (wrapper over the broad interrupt-timeout interrupt-wins path that fails specifically when the interrupt-first recovery stops preserving interrupt count/vector telemetry and the shared last-wake tick)
 - optional bare-metal QEMU timer-disable interrupt probe (`command_timer_disable` suppresses timer dispatch while `command_trigger_interrupt` still wakes an interrupt waiter immediately, and the deferred one-shot timer wake is only delivered after `command_timer_enable` against the freestanding PVH artifact)
 - optional bare-metal QEMU timer-disable interrupt immediate-wake probe (wrapper over the broad timer-disable interrupt path that fails specifically when the interrupt waiter stops waking first with `reason=interrupt`, `vector=200`, `timer_id=0`, and zero timer-first misclassification)
 - optional bare-metal QEMU timer-disable interrupt arm-preservation probe (wrapper over the broad timer-disable interrupt path that fails specifically when the pure one-shot waiter stops preserving its armed timer entry immediately after the interrupt while timers remain disabled)
@@ -322,6 +327,11 @@ Recommended sequence:
 - bare-metal optional QEMU timer-disable interrupt paused-window probe in validate stage
 - bare-metal optional QEMU timer-disable interrupt deferred-timer-wake probe in validate stage
 - bare-metal optional QEMU timer-disable interrupt telemetry-preserve probe in validate stage
+- bare-metal optional QEMU interrupt-timeout arm-preservation probe in validate stage
+- bare-metal optional QEMU interrupt-timeout interrupt-wake-payload probe in validate stage
+- bare-metal optional QEMU interrupt-timeout wait-clear probe in validate stage
+- bare-metal optional QEMU interrupt-timeout no-stale-timer probe in validate stage
+- bare-metal optional QEMU interrupt-timeout telemetry-preserve probe in validate stage
 - bare-metal optional QEMU interrupt filter probe in validate stage
 - bare-metal optional QEMU task-terminate interrupt-timeout probe in validate stage
 - bare-metal optional QEMU task-terminate mixed-state probe in validate stage
