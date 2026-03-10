@@ -5497,6 +5497,8 @@ test "baremetal wake queue ring keeps newest manual wakes after overflow" {
 
     try std.testing.expectEqual(cap, oc_wake_queue_len());
     try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_overflow_count());
+    try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_head_index());
+    try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_tail_index());
 
     const summary = oc_wake_queue_summary();
     try std.testing.expectEqual(cap, summary.len);

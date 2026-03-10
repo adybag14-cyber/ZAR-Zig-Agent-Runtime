@@ -1209,6 +1209,21 @@ jobs:
       - name: Bare-metal QEMU wake queue overflow probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-wake-queue-overflow-probe-check.ps1
+      - name: Bare-metal QEMU wake queue overflow baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-overflow-baseline-probe-check.ps1 -SkipBuild
+      - name: Bare-metal QEMU wake queue overflow shape probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-overflow-shape-probe-check.ps1 -SkipBuild
+      - name: Bare-metal QEMU wake queue overflow oldest-entry probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-overflow-oldest-entry-probe-check.ps1 -SkipBuild
+      - name: Bare-metal QEMU wake queue overflow newest-entry probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-overflow-newest-entry-probe-check.ps1 -SkipBuild
+      - name: Bare-metal QEMU wake queue overflow mailbox-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-overflow-mailbox-state-probe-check.ps1 -SkipBuild
 
       - name: Bare-metal QEMU wake queue clear probe (optional)
         shell: pwsh
