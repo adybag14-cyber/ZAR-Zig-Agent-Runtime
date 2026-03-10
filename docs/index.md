@@ -12,7 +12,7 @@ Full documentation for the OpenClaw Zig runtime port.
   - Union baseline: `138/138` (`MISSING_IN_ZIG=0`)
   - Gateway events union baseline: `19/19` (`UNION_EVENTS_MISSING_IN_ZIG=0`)
 - Latest local validation: `203/203` main tests + `106/106` bare-metal host tests passing
-- Latest published edge release tag: `v0.2.0-zig-edge.27`
+- Latest published edge release tag: `v0.2.0-zig-edge.28`
 - Toolchain lane: Codeberg `master` is canonical; `adybag14-cyber/zig` provides rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
 - Recent FS1 progress (2026-03-06):
   - runtime recovery posture surfaced in `status`, `doctor`, `doctor.memory.status`, `agent.identity.get`, and maintenance RPCs
