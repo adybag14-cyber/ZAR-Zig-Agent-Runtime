@@ -309,6 +309,10 @@ set pagination off
 set confirm off
 set `$_created = 0
 set `$_full_count = 0
+set `$_overflow_result = 0
+set `$_overflow_task_count = 0
+set `$_terminate_last_result = 0
+set `$_terminate_task_count = 0
 set `$_last_task_id = 0
 set `$_reused_slot_previous_id = 0
 set `$_reused_slot_new_id = 0
@@ -374,6 +378,8 @@ if `$_stage == 2
 end
 if `$_stage == 3
   if *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset) == 18 && *(short*)(0x$statusAddress+$statusLastCommandResultOffset) == $resultNoSpace && *(unsigned char*)(0x$schedulerStateAddress+$schedulerTaskCountOffset) == $taskCapacity
+    set `$_overflow_result = *(short*)(0x$statusAddress+$statusLastCommandResultOffset)
+    set `$_overflow_task_count = *(unsigned char*)(0x$schedulerStateAddress+$schedulerTaskCountOffset)
     set *(unsigned short*)(0x$commandMailboxAddress+$commandOpcodeOffset) = $taskTerminateOpcode
     set *(unsigned int*)(0x$commandMailboxAddress+$commandSeqOffset) = 19
     set *(unsigned long long*)(0x$commandMailboxAddress+$commandArg0Offset) = `$_reused_slot_previous_id
@@ -384,6 +390,8 @@ if `$_stage == 3
 end
 if `$_stage == 4
   if *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset) == 19 && *(unsigned char*)(0x$schedulerStateAddress+$schedulerTaskCountOffset) == ($taskCapacity - 1) && *(unsigned char*)($reuseSlotAddressExpr+$taskStateOffset) == $taskStateTerminated
+    set `$_terminate_last_result = *(short*)(0x$statusAddress+$statusLastCommandResultOffset)
+    set `$_terminate_task_count = *(unsigned char*)(0x$schedulerStateAddress+$schedulerTaskCountOffset)
     set `$_terminated_state = *(unsigned char*)($reuseSlotAddressExpr+$taskStateOffset)
     set *(unsigned short*)(0x$commandMailboxAddress+$commandOpcodeOffset) = $taskCreateOpcode
     set *(unsigned int*)(0x$commandMailboxAddress+$commandSeqOffset) = 20
@@ -408,6 +416,10 @@ printf "TICKS=%llu\n", *(unsigned long long*)(0x$statusAddress+$statusTicksOffse
 printf "TASK_CAPACITY=%u\n", $taskCapacity
 printf "TASK_COUNT=%u\n", *(unsigned char*)(0x$schedulerStateAddress+$schedulerTaskCountOffset)
 printf "FULL_COUNT=%u\n", `$_full_count
+printf "OVERFLOW_RESULT=%d\n", `$_overflow_result
+printf "OVERFLOW_TASK_COUNT=%u\n", `$_overflow_task_count
+printf "TERMINATE_LAST_RESULT=%d\n", `$_terminate_last_result
+printf "TERMINATE_TASK_COUNT=%u\n", `$_terminate_task_count
 printf "LAST_TASK_ID=%u\n", `$_last_task_id
 printf "REUSED_SLOT_PREVIOUS_ID=%u\n", `$_reused_slot_previous_id
 printf "REUSED_SLOT_NEW_ID=%u\n", `$_reused_slot_new_id
@@ -492,6 +504,10 @@ $ticks = Extract-IntValue -Text $gdbOutput -Name "TICKS"
 $taskCapacityValue = Extract-IntValue -Text $gdbOutput -Name "TASK_CAPACITY"
 $taskCount = Extract-IntValue -Text $gdbOutput -Name "TASK_COUNT"
 $fullCount = Extract-IntValue -Text $gdbOutput -Name "FULL_COUNT"
+$overflowResult = Extract-IntValue -Text $gdbOutput -Name "OVERFLOW_RESULT"
+$overflowTaskCount = Extract-IntValue -Text $gdbOutput -Name "OVERFLOW_TASK_COUNT"
+$terminateLastResult = Extract-IntValue -Text $gdbOutput -Name "TERMINATE_LAST_RESULT"
+$terminateTaskCount = Extract-IntValue -Text $gdbOutput -Name "TERMINATE_TASK_COUNT"
 $lastTaskId = Extract-IntValue -Text $gdbOutput -Name "LAST_TASK_ID"
 $reusedSlotPreviousId = Extract-IntValue -Text $gdbOutput -Name "REUSED_SLOT_PREVIOUS_ID"
 $reusedSlotNewId = Extract-IntValue -Text $gdbOutput -Name "REUSED_SLOT_NEW_ID"
@@ -537,6 +553,10 @@ Write-Output "BAREMETAL_QEMU_SCHEDULER_SATURATION_TICKS=$ticks"
 Write-Output "BAREMETAL_QEMU_SCHEDULER_SATURATION_TASK_CAPACITY=$taskCapacityValue"
 Write-Output "BAREMETAL_QEMU_SCHEDULER_SATURATION_TASK_COUNT=$taskCount"
 Write-Output "BAREMETAL_QEMU_SCHEDULER_SATURATION_FULL_COUNT=$fullCount"
+Write-Output "BAREMETAL_QEMU_SCHEDULER_SATURATION_OVERFLOW_RESULT=$overflowResult"
+Write-Output "BAREMETAL_QEMU_SCHEDULER_SATURATION_OVERFLOW_TASK_COUNT=$overflowTaskCount"
+Write-Output "BAREMETAL_QEMU_SCHEDULER_SATURATION_TERMINATE_LAST_RESULT=$terminateLastResult"
+Write-Output "BAREMETAL_QEMU_SCHEDULER_SATURATION_TERMINATE_TASK_COUNT=$terminateTaskCount"
 Write-Output "BAREMETAL_QEMU_SCHEDULER_SATURATION_LAST_TASK_ID=$lastTaskId"
 Write-Output "BAREMETAL_QEMU_SCHEDULER_SATURATION_REUSED_SLOT_PREVIOUS_ID=$reusedSlotPreviousId"
 Write-Output "BAREMETAL_QEMU_SCHEDULER_SATURATION_REUSED_SLOT_NEW_ID=$reusedSlotNewId"

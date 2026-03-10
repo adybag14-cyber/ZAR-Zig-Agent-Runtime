@@ -498,6 +498,21 @@ jobs:
       - name: Bare-metal QEMU scheduler saturation probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-scheduler-saturation-probe-check.ps1
+      - name: Bare-metal QEMU scheduler saturation baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-saturation-baseline-probe-check.ps1 -SkipBuild
+      - name: Bare-metal QEMU scheduler saturation overflow-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-saturation-overflow-preserve-probe-check.ps1 -SkipBuild
+      - name: Bare-metal QEMU scheduler saturation terminate-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-saturation-terminate-state-probe-check.ps1 -SkipBuild
+      - name: Bare-metal QEMU scheduler saturation reuse-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-saturation-reuse-state-probe-check.ps1 -SkipBuild
+      - name: Bare-metal QEMU scheduler saturation final-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-saturation-final-state-probe-check.ps1 -SkipBuild
 
       - name: Bare-metal QEMU timer wake probe (optional)
         shell: pwsh

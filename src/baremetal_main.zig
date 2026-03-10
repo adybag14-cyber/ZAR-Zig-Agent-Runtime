@@ -3637,11 +3637,15 @@ test "baremetal scheduler task table saturates and reuses terminated slots" {
     _ = oc_submit_command(abi.command_task_create, 3, 99);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_no_space), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_task_create), status.last_command_opcode);
+    try std.testing.expectEqual(capacity + 1, status.command_seq_ack);
     try std.testing.expectEqual(capacity, oc_scheduler_task_count());
 
     _ = oc_submit_command(abi.command_task_terminate, reused_slot_previous_id, 0);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_task_terminate), status.last_command_opcode);
+    try std.testing.expectEqual(capacity + 2, status.command_seq_ack);
     try std.testing.expectEqual(capacity - 1, oc_scheduler_task_count());
     const terminated = oc_scheduler_task(reuse_slot);
     try std.testing.expectEqual(reused_slot_previous_id, terminated.task_id);
@@ -3650,6 +3654,8 @@ test "baremetal scheduler task table saturates and reuses terminated slots" {
     _ = oc_submit_command(abi.command_task_create, 7, 99);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_task_create), status.last_command_opcode);
+    try std.testing.expectEqual(capacity + 3, status.command_seq_ack);
     try std.testing.expectEqual(capacity, oc_scheduler_task_count());
     const reused = oc_scheduler_task(reuse_slot);
     try std.testing.expect(reused.task_id > last_task_id);

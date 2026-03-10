@@ -966,6 +966,13 @@ Full-stack replacement execution reference:
     - host regression `baremetal scheduler task table saturates and reuses terminated slots`
     - live optional QEMU probe `scripts/baremetal-qemu-scheduler-saturation-probe-check.ps1`
     - validates the 16-slot scheduler-task ceiling, `command_task_create -> result_no_space` on the 17th create, and slot reuse after `command_task_terminate` with a fresh task ID and replacement priority/budget over the PVH freestanding artifact.
+  - added bare-metal scheduler saturation wrapper validation:
+    - `scripts/baremetal-qemu-scheduler-saturation-baseline-probe-check.ps1`
+    - `scripts/baremetal-qemu-scheduler-saturation-overflow-preserve-probe-check.ps1`
+    - `scripts/baremetal-qemu-scheduler-saturation-terminate-state-probe-check.ps1`
+    - `scripts/baremetal-qemu-scheduler-saturation-reuse-state-probe-check.ps1`
+    - `scripts/baremetal-qemu-scheduler-saturation-final-state-probe-check.ps1`
+    - broad probe now emits dedicated overflow/terminate stage receipts so wrapper validation fails directly on the 16-slot fill, overflow no-space result, terminated-slot capture, reuse replacement semantics, and final scheduler state.
   - compat persistence depth corrected for appliance state:
     - `compat-state.json` now persists boot policy, boot verification telemetry, boot slot state, and rollback plan/run fields instead of only generic compat metadata.
     - added restart acceptance script (`scripts/appliance-restart-recovery-smoke-check.ps1`) and made it a required gate in both `zig-ci` and `release-preview` validate jobs.
