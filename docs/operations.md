@@ -3,13 +3,14 @@
 ## Current Snapshot
 
 - Latest published edge release: `v0.2.0-zig-edge.28`
-- Latest local test gate: `zig build test --summary all` -> main `203/203` + bare-metal host `106/106` passing
+- Latest local test gate: `zig build test --summary all` -> main `203/203` + bare-metal host `109/109` passing
 - Latest parity gate: `scripts/check-go-method-parity.ps1` -> `GO_MISSING_IN_ZIG=0`, `ORIGINAL_MISSING_IN_ZIG=0`, `ORIGINAL_BETA_MISSING_IN_ZIG=0`, `UNION_MISSING_IN_ZIG=0`, `UNION_EVENTS_MISSING_IN_ZIG=0`, `ZIG_COUNT=172`, `ZIG_EVENTS_COUNT=19`
-- Current head: `0483cf7 docs(rpc): regenerate reference for node pending methods`
+- Current head: local source-of-truth on `main` (exact pushed head is tracked in issue `#1` and the latest GitHub Actions runs)
 - Toolchain lane: Codeberg `master` is canonical; `adybag14-cyber/zig` is the Windows release mirror with rolling `latest-master` plus immutable `upstream-<sha>` releases.
+- `scripts/package-registry-status.ps1` now performs default npmjs/PyPI visibility checks even when invoked with only `-ReleaseTag`, so local package diagnostics no longer silently skip unresolved public-registry state.
 - Latest CI:
-  - `zig-ci` `22896213409` -> success
-  - `docs-pages` `22896213437` -> success
+  - latest pushed `main` head is tracked in issue `#1`
+  - `zig-ci` + `docs-pages` must both be green before a slice is considered complete
 
 ## Local Validation Matrix
 
@@ -58,6 +59,12 @@ Recommended sequence:
 ./scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-interrupt-recovery-probe-check.ps1
 ./scripts/baremetal-qemu-task-terminate-mixed-state-survivor-probe-check.ps1
 ./scripts/baremetal-qemu-periodic-timer-probe-check.ps1
+./scripts/baremetal-qemu-periodic-timer-clamp-probe-check.ps1
+./scripts/baremetal-qemu-periodic-timer-clamp-baseline-probe-check.ps1
+./scripts/baremetal-qemu-periodic-timer-clamp-first-fire-probe-check.ps1
+./scripts/baremetal-qemu-periodic-timer-clamp-saturated-rearm-probe-check.ps1
+./scripts/baremetal-qemu-periodic-timer-clamp-post-wrap-hold-probe-check.ps1
+./scripts/baremetal-qemu-periodic-timer-clamp-telemetry-preserve-probe-check.ps1
 ./scripts/baremetal-qemu-interrupt-timeout-probe-check.ps1
 ./scripts/baremetal-qemu-timer-disable-reenable-probe-check.ps1
 ./scripts/baremetal-qemu-timer-disable-paused-state-probe-check.ps1
@@ -161,6 +168,7 @@ Recommended sequence:
 - optional bare-metal QEMU task-resume interrupt probe (`command_task_resume` on a pure `task_wait_interrupt` waiter clears the interrupt wait back to `none`, queues exactly one manual wake, prevents a later interrupt from creating a second wake, and leaves the timer subsystem idle at `next_timer_id=1` against the freestanding PVH artifact)
 - optional bare-metal QEMU periodic timer probe (periodic schedule + timer disable/enable pause-resume, capturing the first resumed periodic fire and queued wake telemetry against the freestanding PVH artifact)
 - optional bare-metal QEMU periodic timer clamp probe (periodic timer armed at `u64::max-1`, proving the first fire lands at `18446744073709551615`, the periodic deadline re-arms to the same saturated tick instead of wrapping, and the runtime holds stable after the tick counter wraps to `0`)
+- optional bare-metal QEMU periodic timer clamp wrapper probes (`baremetal-qemu-periodic-timer-clamp-baseline-probe-check.ps1`, `baremetal-qemu-periodic-timer-clamp-first-fire-probe-check.ps1`, `baremetal-qemu-periodic-timer-clamp-saturated-rearm-probe-check.ps1`, `baremetal-qemu-periodic-timer-clamp-post-wrap-hold-probe-check.ps1`, and `baremetal-qemu-periodic-timer-clamp-telemetry-preserve-probe-check.ps1`) reuse the broad clamp lane and fail directly on near-`u64::max` arm state, first-fire wrap semantics, saturated re-arm invariants, post-wrap hold stability, and final wake telemetry
 - optional bare-metal QEMU periodic interrupt probe (mixed periodic timer + interrupt wake ordering, proving the interrupt arrives before deadline while the periodic source keeps cadence and timer cancellation prevents a later timeout leak against the freestanding PVH artifact)
 - optional bare-metal QEMU interrupt timeout probe (`task_wait_interrupt_for` wakes on interrupt before deadline, clears the timeout arm, and does not later leak a second timer wake against the freestanding PVH artifact)
 - optional bare-metal QEMU interrupt timeout manual-wake probe (`command_scheduler_wake_task` clears a pending `task_wait_interrupt_for` timeout, queues exactly one manual wake, and no delayed timer wake appears after additional slack ticks against the freestanding PVH artifact)

@@ -11,7 +11,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - Original OpenClaw beta baseline (`v2026.3.8-beta.1`): `97/97` covered
   - Union baseline: `138/138` covered (`MISSING_IN_ZIG=0`)
   - Gateway events: stable `19/19`, beta `19/19`, union `19/19` (`UNION_EVENTS_MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> main `203/203` + bare-metal host `106/106` passing
+- Latest local validation: `zig build test --summary all` -> main `203/203` + bare-metal host `109/109` passing
 - Latest published edge release tag: `v0.2.0-zig-edge.28`
 - Toolchain policy: Codeberg `master` is canonical; `adybag14-cyber/zig` publishes rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
 - Recent FS1 progress (2026-03-06):
@@ -47,6 +47,8 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - bare-metal panic freeze and recovery behavior is now enforced by a live QEMU+GDB probe (`command_trigger_panic_flag`, `command_set_mode(mode_running)`, `command_set_boot_phase(runtime)`) proving panic freezes dispatch cleanly, mode recovery resumes the same task immediately, and boot diagnostics stay panicked until explicitly restored
   - bare-metal periodic timer pause/resume behavior is now enforced by a live QEMU+GDB probe (`command_timer_schedule_periodic`, `command_timer_disable`, `command_timer_enable`) that snapshots the first resumed periodic fire against the freestanding PVH artifact
   - bare-metal periodic timer saturation behavior is now enforced by a live QEMU+GDB probe that arms a periodic timer at `u64::max-1`, proves the first fire lands at `18446744073709551615`, re-arms to the same saturated deadline instead of wrapping, and then holds stable after the runtime tick counter wraps to `0`
+  - bare-metal periodic timer saturation now also has a dedicated QEMU wrapper family that fails directly on the baseline near-`u64::max` arm state, first-fire wrap semantics, saturated re-arm invariants, post-wrap hold stability, and final timer-wake telemetry instead of relying only on the broad clamp probe
+  - `scripts/package-registry-status.ps1` now treats the resolved default npm/PyPI package names as the executable source of truth when called with only `-ReleaseTag`, so local release diagnostics correctly show public-registry `404` state instead of silently skipping checks
   - bare-metal wake-queue summary/age telemetry is now enforced by a live QEMU+GDB probe (`oc_wake_queue_summary_ptr`, `oc_wake_queue_age_buckets_ptr_quantum_2`) before and after selective queue drains over mixed timer/interrupt/manual wake queues
   - bare-metal selective wake-queue telemetry is now enforced by a live QEMU+GDB probe through a generic count-query snapshot helper (`oc_wake_queue_count_query_ptr`, `oc_wake_queue_count_snapshot_ptr`), proving live vector counts (`13`, `31`), exact reason+vector counts (`interrupt@31`), before-tick counts, and invalid `reason+vector=0` rejection in the same selective-drain run
   - bare-metal wake-queue reason-selective overflow behavior is now enforced by a live QEMU+GDB probe that drives `66` alternating manual / interrupt wake cycles through one task and proves `command_wake_queue_pop_reason` preserves FIFO survivor ordering across the wrapped ring (`seq 3 -> 66`, then `seq 4 -> 66`, then interrupt-only `seq 4 -> 66`)

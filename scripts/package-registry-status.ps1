@@ -166,10 +166,10 @@ try {
         }
     }
 
-    if ($NpmPackageName) {
+    if ($resolvedNpmName) {
         $report.npm.checked = $true
         $report.npm.versionRequested = $NpmVersion
-        $npmUri = "https://registry.npmjs.org/$([Uri]::EscapeDataString($NpmPackageName))"
+        $npmUri = "https://registry.npmjs.org/$([Uri]::EscapeDataString($resolvedNpmName))"
         $npmResponse = Invoke-JsonRequest -Uri $npmUri
         $report.npm.statusCode = $npmResponse.statusCode
         $report.npm.error = $npmResponse.error
@@ -198,10 +198,10 @@ try {
         }
     }
 
-    if ($PythonPackageName) {
+    if ($resolvedPythonName) {
         $report.pypi.checked = $true
         $report.pypi.versionRequested = $PythonVersion
-        $pypiUri = "https://pypi.org/pypi/$PythonPackageName/json"
+        $pypiUri = "https://pypi.org/pypi/$resolvedPythonName/json"
         $pypiResponse = Invoke-JsonRequest -Uri $pypiUri
         $report.pypi.statusCode = $pypiResponse.statusCode
         $report.pypi.error = $pypiResponse.error
@@ -243,11 +243,11 @@ try {
     $report | ConvertTo-Json -Depth 8 | Set-Content -Path $OutputJsonPath -Encoding utf8
 
     Write-Host ("Package registry status generated: {0}" -f (Resolve-Path $OutputJsonPath))
-    if ($NpmPackageName) {
-        Write-Host ("npmjs {0}: packageExists={1} versionRequested={2} versionExists={3}" -f $NpmPackageName, $report.npm.packageExists, $report.npm.versionRequested, $report.npm.versionExists)
+    if ($resolvedNpmName) {
+        Write-Host ("npmjs {0}: packageExists={1} versionRequested={2} versionExists={3}" -f $resolvedNpmName, $report.npm.packageExists, $report.npm.versionRequested, $report.npm.versionExists)
     }
-    if ($PythonPackageName) {
-        Write-Host ("PyPI {0}: packageExists={1} versionRequested={2} versionExists={3}" -f $PythonPackageName, $report.pypi.packageExists, $report.pypi.versionRequested, $report.pypi.versionExists)
+    if ($resolvedPythonName) {
+        Write-Host ("PyPI {0}: packageExists={1} versionRequested={2} versionExists={3}" -f $resolvedPythonName, $report.pypi.packageExists, $report.pypi.versionRequested, $report.pypi.versionExists)
     }
     if ($ReleaseTag) {
         Write-Host ("Release {0}: exists={1} assets={2}" -f $ReleaseTag, $report.release.exists, $report.release.assetCount)

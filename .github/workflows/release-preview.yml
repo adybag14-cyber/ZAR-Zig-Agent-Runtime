@@ -607,6 +607,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-periodic-timer-clamp-probe-check.ps1
 
+      - name: Bare-metal QEMU periodic timer clamp baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-timer-clamp-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic timer clamp first-fire probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-timer-clamp-first-fire-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic timer clamp saturated-rearm probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-timer-clamp-saturated-rearm-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic timer clamp post-wrap hold probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-timer-clamp-post-wrap-hold-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic timer clamp telemetry-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-timer-clamp-telemetry-preserve-probe-check.ps1
+
       - name: Bare-metal QEMU periodic interrupt probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-periodic-interrupt-probe-check.ps1

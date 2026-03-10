@@ -4535,6 +4535,67 @@ test "baremetal timer periodic flow rearms and honors enable disable controls" {
     try std.testing.expect(entry.fire_count >= 2);
 }
 
+test "baremetal periodic timer clamps near max tick without wraparound" {
+    resetBaremetalRuntimeForTest();
+
+    const near_max_tick = std.math.maxInt(u64) - 1;
+    const max_tick = std.math.maxInt(u64);
+
+    _ = oc_submit_command(abi.command_scheduler_disable, 0, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_task_create, 8, 1);
+    oc_tick();
+    const task_id = oc_scheduler_task(0).task_id;
+    try std.testing.expect(task_id != 0);
+
+    _ = oc_submit_command(abi.command_task_wait, task_id, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(u32, 1), oc_scheduler_waiting_count());
+
+    status.ticks = near_max_tick;
+    _ = oc_submit_command(abi.command_timer_schedule_periodic, task_id, 10);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(max_tick, status.ticks);
+
+    var entry = oc_timer_entry(0);
+    try std.testing.expectEqual(task_id, entry.task_id);
+    try std.testing.expectEqual(@as(u32, 1), entry.timer_id);
+    try std.testing.expectEqual(@as(u8, abi.timer_entry_state_armed), entry.state);
+    try std.testing.expectEqual(@as(u16, abi.timer_entry_flag_periodic), entry.flags & abi.timer_entry_flag_periodic);
+    try std.testing.expectEqual(@as(u32, 10), entry.period_ticks);
+    try std.testing.expectEqual(max_tick, entry.next_fire_tick);
+    try std.testing.expectEqual(@as(u64, 0), entry.fire_count);
+    try std.testing.expectEqual(@as(u32, 1), oc_scheduler_waiting_count());
+    try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
+
+    oc_tick();
+    try std.testing.expectEqual(@as(u64, 0), status.ticks);
+    entry = oc_timer_entry(0);
+    try std.testing.expectEqual(@as(u64, 1), entry.fire_count);
+    try std.testing.expectEqual(max_tick, entry.last_fire_tick);
+    try std.testing.expectEqual(max_tick, entry.next_fire_tick);
+    try std.testing.expectEqual(@as(u8, abi.timer_entry_state_armed), entry.state);
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u32, 0), oc_scheduler_waiting_count());
+
+    const wake0 = oc_wake_queue_event(0);
+    try std.testing.expectEqual(@as(u32, 1), wake0.seq);
+    try std.testing.expectEqual(task_id, wake0.task_id);
+    try std.testing.expectEqual(@as(u32, 1), wake0.timer_id);
+    try std.testing.expectEqual(@as(u8, abi.wake_reason_timer), wake0.reason);
+    try std.testing.expectEqual(@as(u8, 0), wake0.vector);
+    try std.testing.expectEqual(max_tick, wake0.tick);
+
+    oc_tick();
+    try std.testing.expectEqual(@as(u64, 1), status.ticks);
+    entry = oc_timer_entry(0);
+    try std.testing.expectEqual(@as(u64, 1), entry.fire_count);
+    try std.testing.expectEqual(max_tick, entry.next_fire_tick);
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u8, abi.task_state_ready), oc_scheduler_task(0).state);
+}
+
 test "baremetal periodic interrupt flow preserves cadence and cancels cleanly" {
     resetBaremetalRuntimeForTest();
 
