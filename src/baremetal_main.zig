@@ -5748,10 +5748,17 @@ test "baremetal wake queue reason pop command removes only matching reasons" {
     _ = oc_submit_command(abi.command_wake_queue_pop_reason, 9, 1);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_invalid_argument), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_reason_count(abi.wake_reason_interrupt));
+    try std.testing.expectEqual(@as(u32, 1001), oc_wake_queue_event(0).task_id);
+    try std.testing.expectEqual(@as(u32, 1004), oc_wake_queue_event(1).task_id);
 
     _ = oc_submit_command(abi.command_wake_queue_pop_reason, abi.wake_reason_interrupt, 1);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u32, 1001), oc_wake_queue_event(0).task_id);
+    try std.testing.expectEqual(@as(u32, 1004), oc_wake_queue_event(1).task_id);
 }
 
 test "baremetal wake queue vector pop command removes only matching vectors" {

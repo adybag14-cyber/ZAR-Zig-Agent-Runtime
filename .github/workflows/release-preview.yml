@@ -887,6 +887,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-wake-queue-reason-pop-probe-check.ps1
 
+      - name: Bare-metal QEMU wake queue reason-pop baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-pop-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-pop first-match probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-pop-first-match-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-pop survivor-order probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-pop-survivor-order-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-pop invalid-reason probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-pop-invalid-reason-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-pop invalid-preserve-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-pop-invalid-preserve-state-probe-check.ps1
+
       - name: Bare-metal QEMU wake queue FIFO probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-wake-queue-fifo-probe-check.ps1

@@ -730,6 +730,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU wake-queue batch-pop validation
 - optional bare-metal QEMU wake-queue batch-pop wrapper validation
 - optional bare-metal QEMU wake-queue vector-pop validation
+- optional bare-metal QEMU wake-queue reason-pop wrapper validation
 - optional bare-metal QEMU wake-queue reason-vector-pop validation
 - optional bare-metal QEMU allocator syscall validation
 - optional bare-metal QEMU allocator syscall reset wrapper validation

@@ -218,6 +218,7 @@ Recommended sequence:
 - optional bare-metal QEMU manual-wait interrupt probe (`task_wait` remains blocked with `wake_queue_len=0` and manual wait-kind intact after interrupt `44`, then recovers via explicit `scheduler_wake_task` against the freestanding PVH artifact)
 - optional bare-metal QEMU wake-queue selective probe (timer, interrupt, and manual wake generation plus `pop_reason`, `pop_vector`, `pop_reason_vector`, and `pop_before_tick` queue drains, with live vector/reason+vector/before-tick telemetry snapshot checks against the freestanding PVH artifact)
 - optional bare-metal QEMU wake-queue reason-pop probe (dedicated `command_wake_queue_pop_reason` lane on a small mixed queue, proving FIFO removal of only the matching `interrupt` wakes and invalid-reason rejection without vector/overflow setup noise)
+- optional bare-metal QEMU wake-queue reason-pop wrapper validation (baseline queue composition, first matching-pop survivor ordering, final manual-only survivor ordering, invalid-reason rejection, and invalid-reason nonmutation on the dedicated four-entry mixed queue lane)
 - optional bare-metal QEMU wake-queue before-tick probe (dedicated `command_wake_queue_pop_before_tick` lane on a small mixed queue, proving single oldest stale removal, bounded deadline-window drain, and final `result_not_found` without overflow setup noise)
 - optional bare-metal QEMU wake-queue selective-overflow probe (wrapped 64-entry interrupt wake ring selective drain proof, preserving FIFO survivor ordering after `pop_vector(13,31)` and final `pop_reason_vector(interrupt@13)` against the freestanding PVH artifact)
 - optional bare-metal QEMU wake-queue before-tick-overflow probe (wrapped 64-entry interrupt wake ring deadline-drain proof, preserving FIFO survivor ordering through two `pop_before_tick` threshold drains and a final empty-queue `result_not_found` against the freestanding PVH artifact)
@@ -385,6 +386,7 @@ Recommended sequence:
 - bare-metal optional QEMU scheduler round-robin wrapper probes in validate stage
 - bare-metal optional QEMU wake-queue selective probe in validate stage
 - bare-metal optional QEMU wake-queue reason-pop probe in validate stage
+- bare-metal optional QEMU wake-queue reason-pop wrapper probes in validate stage
 - bare-metal optional QEMU wake-queue before-tick probe in validate stage
 - bare-metal optional QEMU wake-queue selective-overflow probe in validate stage
 - bare-metal optional QEMU wake-queue before-tick-overflow probe in validate stage
