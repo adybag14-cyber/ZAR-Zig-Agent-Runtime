@@ -5791,8 +5791,13 @@ test "baremetal wake queue vector pop command removes only matching vectors" {
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
     try std.testing.expectEqual(@as(u32, 3), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u32, 2001), oc_wake_queue_event(0).task_id);
     try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_vector_count(13));
+    try std.testing.expectEqual(@as(u8, 0), oc_wake_queue_event(0).vector);
     try std.testing.expectEqual(@as(u32, 2003), oc_wake_queue_event(1).task_id);
+    try std.testing.expectEqual(@as(u8, 13), oc_wake_queue_event(1).vector);
+    try std.testing.expectEqual(@as(u32, 2004), oc_wake_queue_event(2).task_id);
+    try std.testing.expectEqual(@as(u8, 31), oc_wake_queue_event(2).vector);
 
     _ = oc_submit_command(abi.command_wake_queue_pop_vector, 13, 9);
     oc_tick();
@@ -5805,6 +5810,11 @@ test "baremetal wake queue vector pop command removes only matching vectors" {
     _ = oc_submit_command(abi.command_wake_queue_pop_vector, 255, 1);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u32, 2001), oc_wake_queue_event(0).task_id);
+    try std.testing.expectEqual(@as(u8, 0), oc_wake_queue_event(0).vector);
+    try std.testing.expectEqual(@as(u32, 2004), oc_wake_queue_event(1).task_id);
+    try std.testing.expectEqual(@as(u8, 31), oc_wake_queue_event(1).vector);
 }
 
 test "baremetal wake queue before-tick pop command removes stale entries" {

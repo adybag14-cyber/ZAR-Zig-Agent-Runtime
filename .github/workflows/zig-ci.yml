@@ -961,6 +961,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-wake-queue-vector-pop-probe-check.ps1
 
+      - name: Bare-metal QEMU wake queue vector-pop baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-vector-pop-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue vector-pop first-match probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-vector-pop-first-match-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue vector-pop survivor-order probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-vector-pop-survivor-order-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue vector-pop invalid-vector probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-vector-pop-invalid-vector-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue vector-pop invalid-preserve-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-vector-pop-invalid-preserve-state-probe-check.ps1
+
       - name: Bare-metal QEMU wake queue reason-vector pop probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-wake-queue-reason-vector-pop-probe-check.ps1
