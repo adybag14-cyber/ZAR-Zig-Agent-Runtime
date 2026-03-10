@@ -1075,6 +1075,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-wake-queue-summary-age-probe-check.ps1
 
+      - name: Bare-metal QEMU wake queue summary/age baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-summary-age-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue summary/age pre-summary probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-summary-age-pre-summary-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue summary/age pre-age probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-summary-age-pre-age-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue summary/age post-summary probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-summary-age-post-summary-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue summary/age post-age probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-summary-age-post-age-probe-check.ps1
+
       - name: Bare-metal QEMU wake queue count snapshot probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-wake-queue-count-snapshot-probe-check.ps1

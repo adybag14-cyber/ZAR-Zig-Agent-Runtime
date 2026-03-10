@@ -5997,8 +5997,23 @@ test "baremetal wake queue reason-vector pop command removes only exact pairs" {
     try std.testing.expectEqual(@as(u32, 2), summary_after.len);
     try std.testing.expectEqual(@as(u32, 1), summary_after.reason_interrupt_count);
     try std.testing.expectEqual(@as(u32, 1), summary_after.reason_timer_count);
+    try std.testing.expectEqual(@as(u32, 0), summary_after.reason_manual_count);
+    try std.testing.expectEqual(@as(u32, 2), summary_after.nonzero_vector_count);
+    try std.testing.expectEqual(@as(u32, 2), summary_after.stale_count);
+    try std.testing.expectEqual(@as(u64, 12), summary_after.oldest_tick);
+    try std.testing.expectEqual(@as(u64, 13), summary_after.newest_tick);
     const summary_snapshot_after = oc_wake_queue_summary_ptr().*;
     try std.testing.expectEqual(summary_after, summary_snapshot_after);
+    const buckets_after = oc_wake_queue_age_buckets(2);
+    try std.testing.expectEqual(@as(u64, 14), buckets_after.current_tick);
+    try std.testing.expectEqual(@as(u64, 2), buckets_after.quantum_ticks);
+    try std.testing.expectEqual(@as(u32, 2), buckets_after.stale_count);
+    try std.testing.expectEqual(@as(u32, 1), buckets_after.stale_older_than_quantum_count);
+    try std.testing.expectEqual(@as(u32, 0), buckets_after.future_count);
+    const age_bucket_snapshot_after = oc_wake_queue_age_buckets_ptr(2).*;
+    try std.testing.expectEqual(buckets_after, age_bucket_snapshot_after);
+    const age_bucket_snapshot_after_quantum_2 = oc_wake_queue_age_buckets_ptr_quantum_2().*;
+    try std.testing.expectEqual(buckets_after, age_bucket_snapshot_after_quantum_2);
 
     _ = oc_submit_command(abi.command_wake_queue_pop_reason_vector, 0, 1);
     oc_tick();
@@ -6013,6 +6028,13 @@ test "baremetal wake queue reason-vector pop command removes only exact pairs" {
     try std.testing.expectEqual(@as(u32, 4004), oc_wake_queue_event(1).task_id);
     try std.testing.expectEqual(@as(u8, abi.wake_reason_timer), oc_wake_queue_event(1).reason);
     try std.testing.expectEqual(@as(u8, 13), oc_wake_queue_event(1).vector);
+    try std.testing.expectEqual(summary_after, oc_wake_queue_summary());
+    const buckets_after_invalid = oc_wake_queue_age_buckets(2);
+    try std.testing.expectEqual(@as(u64, 15), buckets_after_invalid.current_tick);
+    try std.testing.expectEqual(@as(u64, 2), buckets_after_invalid.quantum_ticks);
+    try std.testing.expectEqual(@as(u32, 2), buckets_after_invalid.stale_count);
+    try std.testing.expectEqual(@as(u32, 2), buckets_after_invalid.stale_older_than_quantum_count);
+    try std.testing.expectEqual(@as(u32, 0), buckets_after_invalid.future_count);
 }
 
 test "baremetal wake queue count snapshot ptr reflects live query" {
