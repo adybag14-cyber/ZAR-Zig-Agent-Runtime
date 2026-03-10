@@ -345,6 +345,10 @@ set `$_post_task1 = 0
 set `$_post_vector0 = 0
 set `$_post_vector1 = 0
 set `$_post_tick0 = 0
+set `$_final_count = 0
+set `$_final_task0 = 0
+set `$_final_vector0 = 0
+set `$_final_tick0 = 0
 file $artifactForGdb
 handle SIGQUIT nostop noprint pass
 target remote :$GdbPort
@@ -601,6 +605,10 @@ if `$_stage == 18
 end
 if `$_stage == 19
   if *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset) == `$_expected_seq && *(short*)(0x$statusAddress+$statusLastCommandResultOffset) == $resultNotFound && *(unsigned int*)0x$wakeQueueCountAddress == 1
+    set `$_final_count = *(unsigned int*)0x$wakeQueueCountAddress
+    set `$_final_task0 = *(unsigned int*)(0x$wakeQueueAddress + (0 * $wakeEventStride) + $wakeEventTaskIdOffset)
+    set `$_final_vector0 = *(unsigned char*)(0x$wakeQueueAddress + (0 * $wakeEventStride) + $wakeEventVectorOffset)
+    set `$_final_tick0 = *(unsigned long long*)(0x$wakeQueueAddress + (0 * $wakeEventStride) + $wakeEventTickOffset)
     printf "AFTER_WAKE_QUEUE_BEFORE_TICK\n"
     printf "ACK=%u\n", *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset)
     printf "LAST_OPCODE=%u\n", *(unsigned short*)(0x$statusAddress+$statusLastCommandOpcodeOffset)
@@ -633,6 +641,10 @@ if `$_stage == 19
     printf "POST_VECTOR0=%u\n", `$_post_vector0
     printf "POST_VECTOR1=%u\n", `$_post_vector1
     printf "POST_TICK0=%llu\n", `$_post_tick0
+    printf "FINAL_COUNT=%u\n", `$_final_count
+    printf "FINAL_TASK0=%u\n", `$_final_task0
+    printf "FINAL_VECTOR0=%u\n", `$_final_vector0
+    printf "FINAL_TICK0=%llu\n", `$_final_tick0
     quit
   end
   continue
@@ -738,6 +750,10 @@ $postTask1 = Extract-IntValue -Text $gdbOutput -Name "POST_TASK1"
 $postVector0 = Extract-IntValue -Text $gdbOutput -Name "POST_VECTOR0"
 $postVector1 = Extract-IntValue -Text $gdbOutput -Name "POST_VECTOR1"
 $postTick0 = Extract-IntValue -Text $gdbOutput -Name "POST_TICK0"
+$finalCount = Extract-IntValue -Text $gdbOutput -Name "FINAL_COUNT"
+$finalTask0 = Extract-IntValue -Text $gdbOutput -Name "FINAL_TASK0"
+$finalVector0 = Extract-IntValue -Text $gdbOutput -Name "FINAL_VECTOR0"
+$finalTick0 = Extract-IntValue -Text $gdbOutput -Name "FINAL_TICK0"
 
 $expectedAck = 19
 if ($ack -ne $expectedAck) { throw "Expected ACK=$expectedAck, got $ack" }
@@ -765,6 +781,10 @@ if ($postTask1 -ne 0) { throw "Expected POST_TASK1=0, got $postTask1" }
 if ($postVector0 -ne $interruptVectorB) { throw "Expected POST_VECTOR0=$interruptVectorB, got $postVector0" }
 if ($postVector1 -ne 0) { throw "Expected POST_VECTOR1=0, got $postVector1" }
 if ($postTick0 -ne $preTick3) { throw "Expected POST_TICK0=$preTick3, got $postTick0" }
+if ($finalCount -ne 1) { throw "Expected FINAL_COUNT=1, got $finalCount" }
+if ($finalTask0 -ne $task4Id) { throw "Expected FINAL_TASK0=$task4Id, got $finalTask0" }
+if ($finalVector0 -ne $interruptVectorB) { throw "Expected FINAL_VECTOR0=$interruptVectorB, got $finalVector0" }
+if ($finalTick0 -ne $preTick3) { throw "Expected FINAL_TICK0=$preTick3, got $finalTick0" }
 
 Write-Output "BAREMETAL_QEMU_AVAILABLE=True"
 Write-Output "BAREMETAL_QEMU_BINARY=$qemu"
@@ -812,5 +832,9 @@ Write-Output "BAREMETAL_QEMU_WAKE_QUEUE_BEFORE_TICK_POST_TASK1=$postTask1"
 Write-Output "BAREMETAL_QEMU_WAKE_QUEUE_BEFORE_TICK_POST_VECTOR0=$postVector0"
 Write-Output "BAREMETAL_QEMU_WAKE_QUEUE_BEFORE_TICK_POST_VECTOR1=$postVector1"
 Write-Output "BAREMETAL_QEMU_WAKE_QUEUE_BEFORE_TICK_POST_TICK0=$postTick0"
+Write-Output "BAREMETAL_QEMU_WAKE_QUEUE_BEFORE_TICK_FINAL_COUNT=$finalCount"
+Write-Output "BAREMETAL_QEMU_WAKE_QUEUE_BEFORE_TICK_FINAL_TASK0=$finalTask0"
+Write-Output "BAREMETAL_QEMU_WAKE_QUEUE_BEFORE_TICK_FINAL_VECTOR0=$finalVector0"
+Write-Output "BAREMETAL_QEMU_WAKE_QUEUE_BEFORE_TICK_FINAL_TICK0=$finalTick0"
 Write-Output "BAREMETAL_QEMU_WAKE_QUEUE_BEFORE_TICK_PROBE=pass"
 

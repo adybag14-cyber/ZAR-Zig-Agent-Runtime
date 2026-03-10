@@ -5847,6 +5847,11 @@ test "baremetal wake queue before-tick pop command removes stale entries" {
     _ = oc_submit_command(abi.command_wake_queue_pop_before_tick, 30, 1);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u32, 3004), oc_wake_queue_event(0).task_id);
+    try std.testing.expectEqual(@as(u8, abi.wake_reason_manual), oc_wake_queue_event(0).reason);
+    try std.testing.expectEqual(@as(u8, 0), oc_wake_queue_event(0).vector);
+    try std.testing.expectEqual(@as(u64, 40), oc_wake_queue_event(0).tick);
 }
 
 test "baremetal wake queue reason-vector pop command removes only exact pairs" {

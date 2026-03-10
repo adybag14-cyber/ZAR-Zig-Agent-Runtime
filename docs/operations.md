@@ -225,6 +225,7 @@ Recommended sequence:
 - optional bare-metal QEMU wake-queue before-tick probe (dedicated `command_wake_queue_pop_before_tick` lane on a small mixed queue, proving single oldest stale removal, bounded deadline-window drain, and final `result_not_found` without overflow setup noise)
 - optional bare-metal QEMU wake-queue selective-overflow probe (wrapped 64-entry interrupt wake ring selective drain proof, preserving FIFO survivor ordering after `pop_vector(13,31)` and final `pop_reason_vector(interrupt@13)` against the freestanding PVH artifact)
 - optional bare-metal QEMU wake-queue before-tick-overflow probe (wrapped 64-entry interrupt wake ring deadline-drain proof, preserving FIFO survivor ordering through two `pop_before_tick` threshold drains and a final empty-queue `result_not_found` against the freestanding PVH artifact)
+- optional bare-metal QEMU wake-queue before-tick wrapper probes (`baremetal-qemu-wake-queue-before-tick-baseline-probe-check.ps1`, `baremetal-qemu-wake-queue-before-tick-first-cutoff-probe-check.ps1`, `baremetal-qemu-wake-queue-before-tick-bounded-drain-probe-check.ps1`, `baremetal-qemu-wake-queue-before-tick-notfound-probe-check.ps1`, and `baremetal-qemu-wake-queue-before-tick-notfound-preserve-state-probe-check.ps1`) reuse the broad stale-entry lane and fail directly on baseline queue composition, first stale cutoff, bounded second drain to the final survivor, final `result_not_found`, and preserved final survivor state after the rejected drain
 - optional bare-metal QEMU wake-queue reason-overflow probe (wrapped 64-entry mixed `manual`/`interrupt` wake ring drain proof, preserving FIFO survivor ordering through `pop_reason(manual,31)` and final `pop_reason(manual,99)` against the freestanding PVH artifact)
 - optional bare-metal QEMU wake-queue FIFO probe (`command_wake_queue_pop` removes the logical oldest wake first, preserves the second queued manual wake as the new head, and returns `result_not_found` once the queue is empty)
 - optional bare-metal QEMU wake-queue summary/age probe (exported `oc_wake_queue_summary_ptr` and `oc_wake_queue_age_buckets_ptr_quantum_2` snapshots before and after selective queue drains against the freestanding PVH artifact)
@@ -397,6 +398,7 @@ Recommended sequence:
 - bare-metal optional QEMU wake-queue before-tick probe in validate stage
 - bare-metal optional QEMU wake-queue selective-overflow probe in validate stage
 - bare-metal optional QEMU wake-queue before-tick-overflow probe in validate stage
+- bare-metal optional QEMU wake-queue before-tick wrapper probes in validate stage
 - bare-metal optional QEMU wake-queue reason-overflow probe in validate stage
 - bare-metal optional QEMU wake-queue reason-vector-pop probe in validate stage
 - bare-metal optional QEMU wake-queue reason-vector-pop wrapper probes in validate stage

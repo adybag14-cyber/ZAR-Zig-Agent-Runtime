@@ -1423,6 +1423,7 @@ Full-stack replacement execution reference:
     - new export: `oc_wake_queue_before_tick_count(max_tick)` for deadline-specific telemetry without mutating queue state.
     - wake queue compaction preserves FIFO ordering for non-matching events during deadline-selective drains.
     - validated with `zig build test --summary all` (`118/118`) and `scripts/baremetal-smoke-check.ps1`.
+    - wrapper batch shipped: `scripts/baremetal-qemu-wake-queue-before-tick-baseline-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-before-tick-first-cutoff-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-before-tick-bounded-drain-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-before-tick-notfound-probe-check.ps1`, and `scripts/baremetal-qemu-wake-queue-before-tick-notfound-preserve-state-probe-check.ps1` now split that broad lane into isolated baseline, first-cutoff, bounded-drain, notfound, and preserved-final-state checks, while the host regression now also asserts the final survivor remains intact after the rejected drain.
   - bare-metal wake queue reason+vector selective drain slice shipped:
     - new opcode: `command_wake_queue_pop_reason_vector` for exact-pair queue draining (`arg0=reason|(vector<<8)`, `arg1=count`, `count=0` -> pop one).
     - new export: `oc_wake_queue_reason_vector_count(reason, vector)` for exact reason+vector telemetry without mutating queue state.

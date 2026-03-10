@@ -899,6 +899,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-wake-queue-before-tick-probe-check.ps1
 
+      - name: Bare-metal QEMU wake queue before tick baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-before-tick-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue before tick first-cutoff probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-before-tick-first-cutoff-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue before tick bounded-drain probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-before-tick-bounded-drain-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue before tick notfound probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-before-tick-notfound-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue before tick notfound-preserve-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-before-tick-notfound-preserve-state-probe-check.ps1
+
       - name: Bare-metal QEMU wake queue reason overflow probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-wake-queue-reason-overflow-probe-check.ps1
