@@ -977,6 +977,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-wake-queue-reason-overflow-probe-check.ps1
 
+      - name: Bare-metal QEMU wake queue reason-overflow baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-overflow-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-overflow manual-drain probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-overflow-manual-drain-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-overflow manual-survivors probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-overflow-manual-survivors-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-overflow interrupt-drain probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-overflow-interrupt-drain-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-overflow interrupt-survivors probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-overflow-interrupt-survivors-probe-check.ps1
+
       - name: Bare-metal QEMU wake queue reason pop probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-wake-queue-reason-pop-probe-check.ps1

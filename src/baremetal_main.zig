@@ -5694,6 +5694,8 @@ test "baremetal wake queue reason pop preserves order after overflow" {
     try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_overflow_count());
     try std.testing.expectEqual(@as(u32, 32), oc_wake_queue_reason_count(abi.wake_reason_manual));
     try std.testing.expectEqual(@as(u32, 32), oc_wake_queue_reason_count(abi.wake_reason_interrupt));
+    try std.testing.expectEqual(@as(u32, 32), oc_wake_queue_reason_vector_count(abi.wake_reason_manual, 0));
+    try std.testing.expectEqual(@as(u32, 32), oc_wake_queue_reason_vector_count(abi.wake_reason_interrupt, 13));
 
     _ = oc_submit_command(abi.command_wake_queue_pop_reason, abi.wake_reason_manual, 31);
     oc_tick();
@@ -5704,6 +5706,8 @@ test "baremetal wake queue reason pop preserves order after overflow" {
     try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_overflow_count());
     try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_reason_count(abi.wake_reason_manual));
     try std.testing.expectEqual(@as(u32, 32), oc_wake_queue_reason_count(abi.wake_reason_interrupt));
+    try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_reason_vector_count(abi.wake_reason_manual, 0));
+    try std.testing.expectEqual(@as(u32, 32), oc_wake_queue_reason_vector_count(abi.wake_reason_interrupt, 13));
     const first_after_reason = oc_wake_queue_event(0);
     try std.testing.expectEqual(@as(u32, 4), first_after_reason.seq);
     try std.testing.expectEqual(@as(u32, 8503), first_after_reason.task_id);
@@ -5726,6 +5730,8 @@ test "baremetal wake queue reason pop preserves order after overflow" {
     try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_overflow_count());
     try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_reason_count(abi.wake_reason_manual));
     try std.testing.expectEqual(@as(u32, 32), oc_wake_queue_reason_count(abi.wake_reason_interrupt));
+    try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_reason_vector_count(abi.wake_reason_manual, 0));
+    try std.testing.expectEqual(@as(u32, 32), oc_wake_queue_reason_vector_count(abi.wake_reason_interrupt, 13));
     const first_after_second_reason = oc_wake_queue_event(0);
     try std.testing.expectEqual(@as(u32, 4), first_after_second_reason.seq);
     try std.testing.expectEqual(@as(u32, 8503), first_after_second_reason.task_id);

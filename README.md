@@ -177,6 +177,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - optional QEMU wake-queue before-tick-overflow probe validates wrapped-ring deadline drains end to end, proving the same `66` alternating `interrupt@13` / `interrupt@31` wakes can be drained in FIFO windows via `command_wake_queue_pop_before_tick` down to empty, with the final empty-queue call returning `result_not_found`
   - optional QEMU wake-queue before-tick wrapper validation now fails directly on the baseline four-entry queue shape, first stale cutoff, bounded second drain to the final survivor, final `result_not_found`, and preserved final survivor state after the rejected drain on that dedicated mixed-queue lane
   - optional QEMU wake-queue reason-overflow probe validates wrapped-ring mixed manual/interrupt drains end to end, proving `66` alternating manual / `interrupt@13` wakes preserve FIFO survivor ordering through `command_wake_queue_pop_reason(manual,31)` and final `command_wake_queue_pop_reason(manual,99)`
+  - optional QEMU wake-queue reason-overflow wrapper validation now fails directly on the wrapped mixed-reason baseline, post-manual drain collapse, lone retained manual survivor ordering, post-final manual drain collapse, and final all-interrupt survivor ordering on that dedicated wrapped-ring lane
   - optional QEMU wake-queue summary/age probe validates exported summary and age-bucket telemetry snapshots before and after selective queue drains against the freestanding PVH artifact
   - optional QEMU wake-queue count-snapshot wrapper probes validate the live count-query lane directly, failing on baseline queue ordering, staged query-count deltas, and nonmutating mailbox-read invariants without relying only on the broad mixed-queue script output
   - optional QEMU wake-queue overflow probe validates sustained manual wake pressure end to end, proving the 64-entry ring saturates cleanly with `head/tail=2`, `overflow=2`, and retained oldest/newest manual wake payloads at `seq 3` and `seq 66`
@@ -660,6 +661,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU wake-queue before-tick-overflow probe
 - optional bare-metal QEMU wake-queue before-tick wrapper probes
 - optional bare-metal QEMU wake-queue reason-overflow probe
+- optional bare-metal QEMU wake-queue reason-overflow wrapper probes
 - optional bare-metal QEMU wake-queue summary/age probe
 - optional bare-metal QEMU wake-queue overflow probe
 - optional bare-metal QEMU wake-queue batch-pop probe
@@ -744,6 +746,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU wake-queue before-tick-overflow validation
 - optional bare-metal QEMU wake-queue before-tick wrapper validation
 - optional bare-metal QEMU wake-queue reason-overflow validation
+- optional bare-metal QEMU wake-queue reason-overflow wrapper validation
 - optional bare-metal QEMU wake-queue summary/age validation
 - optional bare-metal QEMU wake-queue overflow validation
 - optional bare-metal QEMU wake-queue batch-pop validation
