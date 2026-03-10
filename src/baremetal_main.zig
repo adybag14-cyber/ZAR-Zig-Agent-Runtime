@@ -5480,6 +5480,7 @@ test "baremetal wake queue batch pop recovers correctly after overflow" {
     _ = oc_submit_command(abi.command_wake_queue_pop, cap - 2, 0);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_wake_queue_pop), status.last_command_opcode);
     try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_len());
     try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_overflow_count());
     try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_head_index());
@@ -5492,23 +5493,35 @@ test "baremetal wake queue batch pop recovers correctly after overflow" {
     try std.testing.expectEqual(@as(u32, 66), survivor1.seq);
     try std.testing.expectEqual(@as(u32, 6065), survivor1.task_id);
     try std.testing.expectEqual(@as(u64, 265), survivor1.tick);
+    const after_batch = oc_wake_queue_summary();
+    try std.testing.expectEqual(@as(u32, 2), after_batch.len);
+    try std.testing.expectEqual(@as(u32, 2), after_batch.overflow_count);
+    try std.testing.expectEqual(@as(u32, 2), after_batch.reason_manual_count);
 
     _ = oc_submit_command(abi.command_wake_queue_pop, 0, 0);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_wake_queue_pop), status.last_command_opcode);
     try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
     try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_tail_index());
+    try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_overflow_count());
     const final_survivor = oc_wake_queue_event(0);
     try std.testing.expectEqual(@as(u32, 66), final_survivor.seq);
     try std.testing.expectEqual(@as(u32, 6065), final_survivor.task_id);
+    try std.testing.expectEqual(@as(u64, 265), final_survivor.tick);
 
     _ = oc_submit_command(abi.command_wake_queue_pop, 9, 0);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_wake_queue_pop), status.last_command_opcode);
     try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
     try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_head_index());
     try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_tail_index());
     try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_overflow_count());
+    const drained = oc_wake_queue_summary();
+    try std.testing.expectEqual(@as(u32, 0), drained.len);
+    try std.testing.expectEqual(@as(u32, 2), drained.overflow_count);
+    try std.testing.expectEqual(@as(u32, 0), drained.reason_manual_count);
 
     wakeQueuePush(7000, 0, abi.wake_reason_manual, 0, 300, 0);
     try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
@@ -5519,6 +5532,10 @@ test "baremetal wake queue batch pop recovers correctly after overflow" {
     try std.testing.expectEqual(@as(u32, 67), reused.seq);
     try std.testing.expectEqual(@as(u32, 7000), reused.task_id);
     try std.testing.expectEqual(@as(u64, 300), reused.tick);
+    const reused_summary = oc_wake_queue_summary();
+    try std.testing.expectEqual(@as(u32, 1), reused_summary.len);
+    try std.testing.expectEqual(@as(u32, 2), reused_summary.overflow_count);
+    try std.testing.expectEqual(@as(u32, 1), reused_summary.reason_manual_count);
 }
 
 test "baremetal wake queue selective pop preserves order after overflow" {
