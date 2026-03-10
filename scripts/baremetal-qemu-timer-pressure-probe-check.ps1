@@ -448,7 +448,10 @@ if `$_stage == 6
 end
 if `$_stage == 7
   if *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset) == 37 && *(unsigned char*)(0x$timerStateAddress+$timerEntryCountOffset) == ($taskCapacity - 1) && *(unsigned char*)($reuseTimerAddressExpr+$timerEntryStateOffset) == $timerEntryStateCanceled
+    set `$_cancel_timer_count = *(unsigned char*)(0x$timerStateAddress+$timerEntryCountOffset)
     set `$_reuse_canceled_state = *(unsigned char*)($reuseTimerAddressExpr+$timerEntryStateOffset)
+    set `$_cancel_next_timer_id = *(unsigned int*)(0x$timerStateAddress+$timerNextTimerIdOffset)
+    set `$_cancel_task_state = *(unsigned char*)($reuseTaskAddressExpr+$taskStateOffset)
     set *(unsigned short*)(0x$commandMailboxAddress+$commandOpcodeOffset) = $timerScheduleOpcode
     set *(unsigned int*)(0x$commandMailboxAddress+$commandSeqOffset) = 38
     set *(unsigned long long*)(0x$commandMailboxAddress+$commandArg0Offset) = `$_reuse_task_id
@@ -481,7 +484,10 @@ printf "NEXT_TIMER_ID_AFTER_FULL=%u\n", `$_next_timer_id_after_full
 printf "REUSE_SLOT_INDEX=%u\n", $reuseSlotIndex
 printf "REUSE_TASK_ID=%u\n", `$_reuse_task_id
 printf "REUSE_OLD_TIMER_ID=%u\n", `$_reuse_old_timer_id
+printf "CANCEL_TIMER_COUNT=%u\n", `$_cancel_timer_count
 printf "REUSE_CANCELED_STATE=%u\n", `$_reuse_canceled_state
+printf "CANCEL_NEXT_TIMER_ID=%u\n", `$_cancel_next_timer_id
+printf "CANCEL_TASK_STATE=%u\n", `$_cancel_task_state
 printf "REUSE_NEW_TIMER_ID=%u\n", `$_reuse_new_timer_id
 printf "NEXT_TIMER_ID_AFTER_REUSE=%u\n", `$_next_timer_id_after_reuse
 printf "REUSE_STATE=%u\n", *(unsigned char*)($reuseTimerAddressExpr+$timerEntryStateOffset)
@@ -572,7 +578,10 @@ $lastTimerId = Extract-IntValue -Text $gdbOutput -Name "LAST_TIMER_ID"
 $nextTimerIdAfterFull = Extract-IntValue -Text $gdbOutput -Name "NEXT_TIMER_ID_AFTER_FULL"
 $reuseTaskId = Extract-IntValue -Text $gdbOutput -Name "REUSE_TASK_ID"
 $reuseOldTimerId = Extract-IntValue -Text $gdbOutput -Name "REUSE_OLD_TIMER_ID"
+$cancelTimerCount = Extract-IntValue -Text $gdbOutput -Name "CANCEL_TIMER_COUNT"
 $reuseCanceledState = Extract-IntValue -Text $gdbOutput -Name "REUSE_CANCELED_STATE"
+$cancelNextTimerId = Extract-IntValue -Text $gdbOutput -Name "CANCEL_NEXT_TIMER_ID"
+$cancelTaskState = Extract-IntValue -Text $gdbOutput -Name "CANCEL_TASK_STATE"
 $reuseNewTimerId = Extract-IntValue -Text $gdbOutput -Name "REUSE_NEW_TIMER_ID"
 $nextTimerIdAfterReuse = Extract-IntValue -Text $gdbOutput -Name "NEXT_TIMER_ID_AFTER_REUSE"
 $reuseState = Extract-IntValue -Text $gdbOutput -Name "REUSE_STATE"
@@ -593,7 +602,10 @@ if ($lastTimerId -ne $taskCapacity) { throw "Expected LAST_TIMER_ID=$taskCapacit
 if ($nextTimerIdAfterFull -ne ($taskCapacity + 1)) { throw "Expected NEXT_TIMER_ID_AFTER_FULL=$($taskCapacity + 1), found $nextTimerIdAfterFull" }
 if ($reuseTaskId -le 0) { throw "Expected REUSE_TASK_ID>0, found $reuseTaskId" }
 if ($reuseOldTimerId -ne ($reuseSlotIndex + 1)) { throw "Expected REUSE_OLD_TIMER_ID=$($reuseSlotIndex + 1), found $reuseOldTimerId" }
+if ($cancelTimerCount -ne ($taskCapacity - 1)) { throw "Expected CANCEL_TIMER_COUNT=$($taskCapacity - 1), found $cancelTimerCount" }
 if ($reuseCanceledState -ne $timerEntryStateCanceled) { throw "Expected REUSE_CANCELED_STATE=$timerEntryStateCanceled, found $reuseCanceledState" }
+if ($cancelNextTimerId -ne ($taskCapacity + 1)) { throw "Expected CANCEL_NEXT_TIMER_ID=$($taskCapacity + 1), found $cancelNextTimerId" }
+if ($cancelTaskState -ne $taskStateWaiting) { throw "Expected CANCEL_TASK_STATE=$taskStateWaiting, found $cancelTaskState" }
 if ($reuseNewTimerId -ne ($taskCapacity + 1)) { throw "Expected REUSE_NEW_TIMER_ID=$($taskCapacity + 1), found $reuseNewTimerId" }
 if ($nextTimerIdAfterReuse -ne ($taskCapacity + 2)) { throw "Expected NEXT_TIMER_ID_AFTER_REUSE=$($taskCapacity + 2), found $nextTimerIdAfterReuse" }
 if ($reuseState -ne $timerEntryStateArmed) { throw "Expected REUSE_STATE=$timerEntryStateArmed, found $reuseState" }

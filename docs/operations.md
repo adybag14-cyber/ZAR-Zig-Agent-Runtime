@@ -153,6 +153,7 @@ Recommended sequence:
 - optional bare-metal QEMU timer cancel-task interrupt-timeout probe (`command_timer_cancel_task` on a `task_wait_interrupt_for` waiter clears the timeout arm back to steady state, keeps `wait_timeout=0`, and still allows the later real interrupt wake to land exactly once against the freestanding PVH artifact)
 - optional bare-metal QEMU timer cancel task probe (one-shot + periodic task timer arming followed by `command_timer_cancel_task`, proving the first cancel collapses `timer_entry_count` to `0`, preserves the canceled timer slot state, and the second cancel returns `result_not_found` against the freestanding PVH artifact)
 - optional bare-metal QEMU timer pressure probe (fills the 16 runnable task slots with live one-shot timers, proves timer IDs `1 -> 16`, cancels one task timer, then reuses that exact slot with fresh timer ID `17` and no stray wake/dispatch activity against the freestanding PVH artifact)
+- optional bare-metal QEMU timer pressure wrapper probes (baseline saturation, cancel-collapse, reuse-slot, reuse-next-fire, and quiet-telemetry isolation over the same dedicated PVH artifact)
 - optional bare-metal QEMU timer reset recovery probe (dirty live timer entries plus `task_wait_interrupt_for` timeout state, then `command_timer_reset` proving timer state collapses back to baseline, stale timeout wakes do not leak after reset, manual/interrupt wake recovery still works, and the next timer re-arms from `timer_id=1` against the freestanding PVH artifact)
 - optional bare-metal QEMU task-resume timer-clear probe (`command_task_resume` on a timer-backed wait cancels the armed timer entry, queues exactly one manual wake, prevents a later ghost timer wake after idle ticks, preserves timer quantum, and restarts fresh timer scheduling from the preserved `next_timer_id` against the freestanding PVH artifact)
 - optional bare-metal QEMU task-resume interrupt-timeout probe (`command_task_resume` on a `task_wait_interrupt_for` waiter clears the pending timeout to `none`, queues exactly one manual wake, prevents any delayed timer wake after additional slack ticks, and leaves the timer subsystem at `next_timer_id=1` against the freestanding PVH artifact)
@@ -317,6 +318,7 @@ Recommended sequence:
 - bare-metal optional QEMU timer cancel wrapper probes in validate stage
 - bare-metal optional QEMU timer cancel-task interrupt-timeout probe in validate stage
 - bare-metal optional QEMU timer cancel task probe in validate stage
+- bare-metal optional QEMU timer pressure wrapper probes in validate stage
 - bare-metal optional QEMU timer reset recovery probe in validate stage
 - bare-metal optional QEMU timer-disable reenable arm-preservation probe in validate stage
 - bare-metal optional QEMU timer-disable reenable deadline-hold probe in validate stage

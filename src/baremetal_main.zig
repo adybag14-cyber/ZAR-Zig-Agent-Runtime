@@ -5216,6 +5216,10 @@ test "baremetal timer pressure reuses canceled slot with fresh timer id" {
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
     try std.testing.expectEqual(task_capacity_u32 - 1, oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u32, scheduler_task_capacity + 1), oc_timer_state_ptr().next_timer_id);
+    try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u64, 0), oc_timer_state_ptr().dispatch_count);
+    try std.testing.expectEqual(@as(u8, abi.task_state_waiting), oc_scheduler_task(reuse_slot_index).state);
 
     const canceled_entry = oc_timer_entry(reuse_slot_index);
     try std.testing.expectEqual(reuse_task_id, canceled_entry.task_id);

@@ -122,6 +122,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - optional QEMU timer cancel wrapper probes validate that same broad lane at five narrower boundaries, failing directly on the armed baseline, cancel collapse to zero live timer entries, preserved canceled-slot metadata, second-cancel `result_not_found`, and zero wake/dispatch telemetry
   - optional QEMU timer cancel-task probe validates `command_timer_cancel_task` end to end, proving the first cancellation collapses `timer_entry_count` to `0`, preserves the canceled timer slot state, and the second cancellation returns `result_not_found` against the freestanding PVH artifact
   - optional QEMU timer pressure probe validates the full runnable timer window end to end, proving 16 live task timers arm cleanly with IDs `1 -> 16`, one canceled slot is reused in place with fresh timer ID `17`, and the timer subsystem stays free of stray wakes or dispatches while the scheduler remains disabled
+  - timer-pressure wrapper probes now enforce that same lane directly at five narrower boundaries: full saturation baseline (`16/16`, IDs `1 -> 16`), cancel collapse to `15` live timer entries, in-place slot reuse with fresh timer ID `17`, preserved waiting-state plus next-fire semantics on the reused task, and zero wake/dispatch telemetry through the full disabled-scheduler sequence
   - optional QEMU timer reset recovery probe validates `command_timer_reset` recovery end to end, proving live timer entries, timeout-backed interrupt waits, and disabled/quantized timer state collapse back to steady baseline, stale timeout wakes do not leak after reset, manual and interrupt wake recovery still work, and the next timer re-arms cleanly from `timer_id=1`
   - optional QEMU task-resume timer-clear probe validates `command_task_resume` on a timer-backed wait end to end, proving the armed timer entry is canceled in place, exactly one manual wake is queued, no later ghost timer wake appears after idle ticks, timer quantum is preserved, and fresh timer scheduling resumes from the preserved `next_timer_id`
   - optional QEMU task-resume interrupt-timeout probe validates `command_task_resume` on an interrupt-timeout waiter end to end, proving the pending timeout is cleared to `none`, exactly one manual wake is queued, no delayed timer wake appears after additional slack ticks, and the timer subsystem remains at `next_timer_id=1`
@@ -620,6 +621,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU timer cancel-task interrupt-timeout probe
 - optional bare-metal QEMU timer cancel task probe
 - optional bare-metal QEMU timer pressure probe
+- optional bare-metal QEMU timer pressure wrapper probes
 - optional bare-metal QEMU timer reset recovery probe
 - optional bare-metal QEMU periodic timer probe
 - optional bare-metal QEMU periodic interrupt probe
@@ -719,6 +721,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU timer cancel validation
 - optional bare-metal QEMU timer cancel wrapper validation
 - optional bare-metal QEMU timer pressure validation
+- optional bare-metal QEMU timer pressure wrapper validation
 - optional bare-metal QEMU periodic timer validation
 - optional bare-metal QEMU interrupt timeout validation
 - optional bare-metal QEMU interrupt timeout manual-wake validation
