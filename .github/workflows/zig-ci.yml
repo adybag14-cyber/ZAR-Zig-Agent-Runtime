@@ -1025,6 +1025,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-wake-queue-fifo-probe-check.ps1
 
+      - name: Bare-metal QEMU wake queue FIFO baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-fifo-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue FIFO first-pop probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-fifo-first-pop-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue FIFO survivor probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-fifo-survivor-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue FIFO drain-empty probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-fifo-drain-empty-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue FIFO notfound-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-fifo-notfound-preserve-probe-check.ps1
+
       - name: Bare-metal QEMU wake queue summary age probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-wake-queue-summary-age-probe-check.ps1

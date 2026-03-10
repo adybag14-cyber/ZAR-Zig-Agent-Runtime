@@ -1382,6 +1382,10 @@ Full-stack replacement execution reference:
     - new script: `scripts/baremetal-qemu-wake-queue-fifo-probe-check.ps1` resolves scheduler state, task slot, wake-queue ring state, status, and command-mailbox symbols from the freestanding ELF and drives repeated `command_task_wait`, `command_task_resume`, and `command_wake_queue_pop` under QEMU+GDB.
     - the probe validates that `command_wake_queue_pop` removes the logical oldest queued manual wake first, preserves the second queued wake as the new logical head via tail tracking, and returns `result_not_found` once the queue is empty over the PVH freestanding artifact.
     - current proof path validates `ACK=11`, `LAST_OPCODE=54`, `LAST_RESULT=-2`, queued manual wake sequence/tick pairs `1@5` and `2@7`, first post-pop head `seq=2` / `tick=7`, and final queue length `0`.
+  - bare-metal QEMU wake-queue FIFO wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-wake-queue-fifo-baseline-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-fifo-first-pop-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-fifo-survivor-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-fifo-drain-empty-probe-check.ps1`, and `scripts/baremetal-qemu-wake-queue-fifo-notfound-preserve-probe-check.ps1`.
+    - the wrappers reuse the broad FIFO lane but fail directly on the two-entry baseline, first-pop oldest-first removal, survivor payload preservation, drained-empty collapse, and final `result_not_found` plus empty-state invariants over the PVH freestanding artifact.
+    - matching host-regression tightening in `src/baremetal_main.zig` now asserts queued task/reason/tick payload preservation before and after the first pop plus the final rejected-pop opcode/empty-state contract.
   - bare-metal mailbox interrupt-control expansion shipped:
     - new command opcodes wired in runtime: `command_trigger_interrupt`, `command_reset_interrupt_counters`, `command_reinit_descriptor_tables`.
     - reset path now clears runtime interrupt counters via bootstrap export to keep command-driven diagnostics deterministic.

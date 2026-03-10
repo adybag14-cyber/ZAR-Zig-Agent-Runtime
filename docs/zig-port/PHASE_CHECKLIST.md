@@ -1047,6 +1047,10 @@ Phase 6 progress notes:
 - [x] Bare-metal wake-queue FIFO QEMU proof shipped:
   - new script: `scripts/baremetal-qemu-wake-queue-fifo-probe-check.ps1`
   - live PVH/QEMU+GDB sequence proves two queued manual wakes preserve FIFO ordering through `command_wake_queue_pop`, with the second wake becoming the new logical head after the first pop and a final empty-queue pop returning `result_not_found`.
+- [x] Bare-metal wake-queue FIFO wrapper probes shipped:
+  - new scripts: `scripts/baremetal-qemu-wake-queue-fifo-baseline-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-fifo-first-pop-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-fifo-survivor-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-fifo-drain-empty-probe-check.ps1`, and `scripts/baremetal-qemu-wake-queue-fifo-notfound-preserve-probe-check.ps1`
+  - matching host regression tightening in `src/baremetal_main.zig` now asserts queued task/reason/tick payload preservation before and after the first pop plus the final rejected-pop opcode/empty-state contract.
+  - the wrappers reuse the broad FIFO lane but fail directly on the two-entry baseline, first-pop oldest-first removal, survivor payload preservation, drained-empty collapse, and final `result_not_found` plus empty-state invariants against the PVH freestanding artifact.
 - [x] Bare-metal scheduler policy + priority-control depth added:
   - scheduler export: `oc_scheduler_policy`
   - ABI additions/opcodes: `command_scheduler_set_policy`, `command_task_set_priority`, `scheduler_policy_round_robin`, `scheduler_policy_priority`

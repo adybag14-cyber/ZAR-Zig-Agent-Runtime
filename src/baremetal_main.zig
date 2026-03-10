@@ -5451,7 +5451,12 @@ test "baremetal wake queue pop command removes oldest entries in order" {
     try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_len());
     const first_before = oc_wake_queue_event(0);
     const second_before = oc_wake_queue_event(1);
+    try std.testing.expectEqual(task_id, first_before.task_id);
+    try std.testing.expectEqual(task_id, second_before.task_id);
+    try std.testing.expectEqual(@as(u8, abi.wake_reason_manual), first_before.reason);
+    try std.testing.expectEqual(@as(u8, abi.wake_reason_manual), second_before.reason);
     try std.testing.expect(second_before.seq > first_before.seq);
+    try std.testing.expect(second_before.tick > first_before.tick);
 
     _ = oc_submit_command(abi.command_wake_queue_pop, 1, 0);
     oc_tick();
@@ -5459,6 +5464,9 @@ test "baremetal wake queue pop command removes oldest entries in order" {
     try std.testing.expectEqual(@as(u32, 1), oc_wake_queue_len());
     const first_after = oc_wake_queue_event(0);
     try std.testing.expectEqual(second_before.seq, first_after.seq);
+    try std.testing.expectEqual(second_before.task_id, first_after.task_id);
+    try std.testing.expectEqual(second_before.reason, first_after.reason);
+    try std.testing.expectEqual(second_before.tick, first_after.tick);
 
     _ = oc_submit_command(abi.command_wake_queue_pop, 0, 0);
     oc_tick();
@@ -5468,6 +5476,8 @@ test "baremetal wake queue pop command removes oldest entries in order" {
     _ = oc_submit_command(abi.command_wake_queue_pop, 1, 0);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_wake_queue_pop), status.last_command_opcode);
+    try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
 }
 
 test "baremetal wake queue ring keeps newest manual wakes after overflow" {
