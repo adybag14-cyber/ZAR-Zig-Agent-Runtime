@@ -1001,6 +1001,7 @@ Full-stack replacement execution reference:
   - bare-metal runtime now embeds Multiboot2 header and smoke gate checks ELF magic + Multiboot2 magic bytes to reduce boot-regression risk.
   - bare-metal smoke gate now parses ELF section/symbol tables to enforce `.multiboot` section presence and required runtime exports (`_start`, `oc_tick`, `oc_tick_n`, `oc_status_ptr`, `oc_command_ptr`, `oc_kernel_info_ptr`, `oc_submit_command`, `kernel_info`, `multiboot2_header`).
   - bare-metal smoke gate now enforces full Multiboot2 header invariants (field values + checksum + end-tag contract), reducing false-positive magic-only matches.
+  - optimized freestanding bare-metal builds now keep the `.multiboot` section alive because the final bare-metal executable disables section garbage collection in `build.zig`, and the generic `baremetal-smoke-check.ps1`, `baremetal-qemu-smoke-check.ps1`, and `zig-syntax-check.ps1` paths now validate the same `ReleaseFast` artifact lane used for release packaging.
   - bare-metal ABI v2 depth expansion shipped:
     - added shared ABI contracts module (`src/baremetal/abi.zig`) with explicit layout tests
     - added command mailbox + kernel info exports and runtime command-processing loop in `src/baremetal_main.zig`

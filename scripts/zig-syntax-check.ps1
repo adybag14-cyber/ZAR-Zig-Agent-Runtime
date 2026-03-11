@@ -35,7 +35,7 @@ Invoke-ZigChecked -Args @("build", "test")
 Write-Output "`n[4/5] zig build run"
 Invoke-ZigChecked -Args @("build", "run")
 
-Write-Output "`n[5/5] zig build baremetal"
-Invoke-ZigChecked -Args @("build", "baremetal")
+Write-Output "`n[5/5] zig build baremetal -Doptimize=ReleaseFast"
+Invoke-ZigChecked -Args @("build", "baremetal", "-Doptimize=ReleaseFast")
 
 Write-Output "`nZig syntax/build checks passed."

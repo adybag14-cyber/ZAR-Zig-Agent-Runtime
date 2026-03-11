@@ -61,9 +61,10 @@ if ($null -eq $qemu) {
 $expectedExitCode = 85 # isa-debug-exit returns (code << 1) | 1, where code=0x2A
 
 if (-not $SkipBuild) {
-    & $zig build baremetal -Dbaremetal-qemu-smoke=true --summary all
+    # Keep the QEMU smoke artifact on the non-crashing ReleaseFast path used for release packaging.
+    & $zig build baremetal -Doptimize=ReleaseFast -Dbaremetal-qemu-smoke=true --summary all
     if ($LASTEXITCODE -ne 0) {
-        throw "zig build baremetal -Dbaremetal-qemu-smoke=true failed with exit code $LASTEXITCODE"
+        throw "zig build baremetal -Doptimize=ReleaseFast -Dbaremetal-qemu-smoke=true failed with exit code $LASTEXITCODE"
     }
 }
 

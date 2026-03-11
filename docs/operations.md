@@ -3,7 +3,7 @@
 ## Current Snapshot
 
 - Latest published edge release: `v0.2.0-zig-edge.28`
-- Latest local test gate: `zig build test --summary all` -> main `203/203` + bare-metal host `109/109` passing
+- Latest local test gate: `zig build test --summary all` -> main `203/203` + bare-metal host `111/111` passing
 - Latest parity gate: `scripts/check-go-method-parity.ps1` -> `GO_MISSING_IN_ZIG=0`, `ORIGINAL_MISSING_IN_ZIG=0`, `ORIGINAL_BETA_MISSING_IN_ZIG=0`, `UNION_MISSING_IN_ZIG=0`, `UNION_EVENTS_MISSING_IN_ZIG=0`, `ZIG_COUNT=172`, `ZIG_EVENTS_COUNT=19`
 - Current head: local source-of-truth on `main` (exact pushed head is tracked in issue `#1` and the latest GitHub Actions runs)
 - Toolchain lane: Codeberg `master` is canonical; `adybag14-cyber/zig` is the Windows release mirror with rolling `latest-master` plus immutable `upstream-<sha>` releases.
@@ -132,6 +132,7 @@ Recommended sequence:
 - optional bare-metal QEMU scheduler probe (scheduler reset/timeslice/task-create/policy-enable against the freestanding PVH artifact)
 - optional bare-metal QEMU descriptor bootdiag probe (boot-diagnostics reset/stack capture/boot-phase transition and descriptor reinit/load telemetry against the freestanding PVH artifact)
 - optional bare-metal QEMU descriptor bootdiag wrapper probes (`baremetal-qemu-descriptor-bootdiag-baseline-probe-check.ps1`, `baremetal-qemu-descriptor-bootdiag-reset-capture-probe-check.ps1`, `baremetal-qemu-descriptor-bootdiag-set-init-probe-check.ps1`, `baremetal-qemu-descriptor-bootdiag-invalid-phase-probe-check.ps1`, and `baremetal-qemu-descriptor-bootdiag-final-state-probe-check.ps1`) reuse the broad probe and fail directly on the bootstrap baseline, reset/capture sequence, init-transition state, invalid-phase preservation, and final descriptor-load plus mailbox-state boundaries
+- bare-metal optimized smoke artifacts now preserve the `.multiboot` section because the final freestanding executable disables section garbage collection; the generic `baremetal-smoke-check.ps1` and `baremetal-qemu-smoke-check.ps1` paths validate the same optimized build mode used for packaging
 - optional bare-metal QEMU bootdiag/history-clear probe (boot-diagnostics reset plus live `command_clear_command_history` and `command_clear_health_history` control semantics against the freestanding PVH artifact)
 - optional bare-metal QEMU descriptor table content probe (live `gdtr/idtr` limits+bases, code/data `gdt` entry fields, and `idt[0]/idt[255]` selector/type/stub wiring against the freestanding PVH artifact)
 - optional bare-metal QEMU descriptor dispatch probe (descriptor reinit/load plus post-load interrupt and exception dispatch coherence, including interrupt/exception history rings, against the freestanding PVH artifact)

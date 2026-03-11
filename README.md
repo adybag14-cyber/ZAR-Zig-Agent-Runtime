@@ -11,7 +11,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - Original OpenClaw beta baseline (`v2026.3.8-beta.1`): `97/97` covered
   - Union baseline: `138/138` covered (`MISSING_IN_ZIG=0`)
   - Gateway events: stable `19/19`, beta `19/19`, union `19/19` (`UNION_EVENTS_MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> main `203/203` + bare-metal host `109/109` passing
+- Latest local validation: `zig build test --summary all` -> main `203/203` + bare-metal host `111/111` passing
 - Latest published edge release tag: `v0.2.0-zig-edge.28`
 - Toolchain policy: Codeberg `master` is canonical; `adybag14-cyber/zig` publishes rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
 - Recent FS1 progress (2026-03-06):
@@ -56,6 +56,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - bare-metal wake-queue overflow retention is now enforced by a live QEMU+GDB probe that drives `66` manual wakes through one waiting task and proves the 64-entry ring retains the newest window (`seq 3 -> 66`) with `overflow=2`
   - bare-metal wake-queue overflow retention now also has a dedicated QEMU wrapper family that fails directly on the `66`-wake baseline, wrapped ring shape (`count=64`, `head/tail=2`, `overflow=2`), oldest retained payload, newest retained payload, and final mailbox receipt instead of relying only on the broad overflow probe
   - bare-metal wake-queue clear recovery is now enforced by a live QEMU+GDB probe that clears the wrapped ring after `66` manual wakes, proves the queue resets to `count/head/tail/overflow = 0`, and then reuses the queue cleanly from `seq=1`
+  - optimized freestanding bare-metal builds now retain the Multiboot2 header again because the final bare-metal artifact disables link-time section garbage collection for `.multiboot`, and the generic bare-metal smoke scripts now validate that contract through the same optimized path used for release packaging
   - bare-metal wake-queue post-overflow recovery is now enforced by a live QEMU+GDB probe that batch-drains the wrapped ring, proves survivor ordering (`seq 65 -> 66`), drains to empty, and then reuses the queue without a clear/reset (`seq 67`)
   - bare-metal descriptor-table contents are now enforced by a live QEMU+GDB probe (`gdtr`, `idtr`, `gdt`, `idt`, `oc_interrupt_stub`) across descriptor reinit/load, including segment entry fields and interrupt-stub wiring
   - bare-metal descriptor reinit/load plus post-load dispatch coherence is now enforced by a live QEMU+GDB probe (`command_trigger_interrupt`, `command_trigger_exception`, interrupt/exception history rings) in the same run as descriptor reinit/load

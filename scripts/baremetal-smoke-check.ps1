@@ -122,9 +122,12 @@ Set-Location $repo
 $zig = Resolve-ZigExecutable
 
 if (-not $SkipBuild) {
-    & $zig build baremetal --summary all
+    # Zig master currently crashes on Linux in the freestanding Debug build path for this target.
+    # The smoke contract here is about the emitted ELF shape, so validate the bare-metal image
+    # through the same ReleaseFast path already used by release-preview.
+    & $zig build baremetal -Doptimize=ReleaseFast --summary all
     if ($LASTEXITCODE -ne 0) {
-        throw "zig build baremetal failed with exit code $LASTEXITCODE"
+        throw "zig build baremetal -Doptimize=ReleaseFast failed with exit code $LASTEXITCODE"
     }
 }
 

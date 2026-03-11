@@ -88,6 +88,10 @@ pub fn build(b: *std.Build) void {
         .name = "openclaw-zig-baremetal",
         .root_module = baremetal_module,
     });
+    // Keep the Multiboot2 header section alive in optimized freestanding builds.
+    // Zig master currently garbage-collects the custom `.multiboot` section here
+    // unless section GC is disabled at the final bare-metal artifact boundary.
+    baremetal_exe.link_gc_sections = false;
     const install_baremetal = b.addInstallArtifact(baremetal_exe, .{
         .dest_sub_path = "openclaw-zig-baremetal.elf",
     });
