@@ -2605,6 +2605,109 @@ test "baremetal descriptor mailbox commands update init and load telemetry" {
     try std.testing.expect(x86_bootstrap.oc_descriptor_tables_loaded());
 }
 
+test "baremetal descriptor dispatch commands update interrupt and exception histories" {
+    resetBaremetalRuntimeForTest();
+
+    x86_bootstrap.oc_interrupt_mask_clear_all();
+    x86_bootstrap.oc_interrupt_mask_reset_ignored_counts();
+    x86_bootstrap.oc_reset_interrupt_counters();
+    x86_bootstrap.oc_reset_exception_counters();
+    x86_bootstrap.oc_interrupt_history_clear();
+    x86_bootstrap.oc_exception_history_clear();
+
+    const init_before = x86_bootstrap.oc_descriptor_init_count();
+    const attempts_before = x86_bootstrap.oc_descriptor_load_attempt_count();
+    const success_before = x86_bootstrap.oc_descriptor_load_success_count();
+
+    _ = oc_submit_command(abi.command_reinit_descriptor_tables, 0, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_reinit_descriptor_tables), status.last_command_opcode);
+    try std.testing.expectEqual(@as(u32, 1), status.command_seq_ack);
+    try std.testing.expectEqual(init_before + 1, x86_bootstrap.oc_descriptor_init_count());
+    try std.testing.expect(x86_bootstrap.oc_descriptor_tables_ready());
+
+    _ = oc_submit_command(abi.command_load_descriptor_tables, 0, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_load_descriptor_tables), status.last_command_opcode);
+    try std.testing.expectEqual(@as(u32, 2), status.command_seq_ack);
+    try std.testing.expectEqual(attempts_before + 1, x86_bootstrap.oc_descriptor_load_attempt_count());
+    try std.testing.expectEqual(success_before + 1, x86_bootstrap.oc_descriptor_load_success_count());
+    try std.testing.expect(x86_bootstrap.oc_descriptor_tables_loaded());
+
+    _ = oc_submit_command(abi.command_reset_interrupt_counters, 0, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_reset_interrupt_counters), status.last_command_opcode);
+    try std.testing.expectEqual(@as(u32, 3), status.command_seq_ack);
+    try std.testing.expectEqual(@as(u64, 0), x86_bootstrap.oc_interrupt_count());
+
+    _ = oc_submit_command(abi.command_reset_exception_counters, 0, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_reset_exception_counters), status.last_command_opcode);
+    try std.testing.expectEqual(@as(u32, 4), status.command_seq_ack);
+    try std.testing.expectEqual(@as(u64, 0), x86_bootstrap.oc_exception_count());
+
+    _ = oc_submit_command(abi.command_clear_interrupt_history, 0, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_clear_interrupt_history), status.last_command_opcode);
+    try std.testing.expectEqual(@as(u32, 5), status.command_seq_ack);
+    try std.testing.expectEqual(@as(u32, 0), x86_bootstrap.oc_interrupt_history_len());
+
+    _ = oc_submit_command(abi.command_clear_exception_history, 0, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_clear_exception_history), status.last_command_opcode);
+    try std.testing.expectEqual(@as(u32, 6), status.command_seq_ack);
+    try std.testing.expectEqual(@as(u32, 0), x86_bootstrap.oc_exception_history_len());
+
+    _ = oc_submit_command(abi.command_trigger_interrupt, 44, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_trigger_interrupt), status.last_command_opcode);
+    try std.testing.expectEqual(@as(u32, 7), status.command_seq_ack);
+
+    _ = oc_submit_command(abi.command_trigger_exception, 13, 51966);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_trigger_exception), status.last_command_opcode);
+    try std.testing.expectEqual(@as(u32, 8), status.command_seq_ack);
+
+    try std.testing.expectEqual(@as(u64, 2), x86_bootstrap.oc_interrupt_count());
+    try std.testing.expectEqual(@as(u64, 1), x86_bootstrap.oc_exception_count());
+    try std.testing.expectEqual(@as(u8, 13), x86_bootstrap.oc_last_interrupt_vector());
+    try std.testing.expectEqual(@as(u8, 13), x86_bootstrap.oc_last_exception_vector());
+    try std.testing.expectEqual(@as(u64, 51966), x86_bootstrap.oc_last_exception_code());
+    try std.testing.expectEqual(@as(u32, 2), x86_bootstrap.oc_interrupt_history_len());
+    try std.testing.expectEqual(@as(u32, 1), x86_bootstrap.oc_exception_history_len());
+
+    const interrupt0 = x86_bootstrap.oc_interrupt_history_event(0);
+    try std.testing.expectEqual(@as(u32, 1), interrupt0.seq);
+    try std.testing.expectEqual(@as(u8, 44), interrupt0.vector);
+    try std.testing.expectEqual(@as(u8, 0), interrupt0.is_exception);
+    try std.testing.expectEqual(@as(u64, 0), interrupt0.code);
+    try std.testing.expectEqual(@as(u64, 1), interrupt0.interrupt_count);
+    try std.testing.expectEqual(@as(u64, 0), interrupt0.exception_count);
+
+    const interrupt1 = x86_bootstrap.oc_interrupt_history_event(1);
+    try std.testing.expectEqual(@as(u32, 2), interrupt1.seq);
+    try std.testing.expectEqual(@as(u8, 13), interrupt1.vector);
+    try std.testing.expectEqual(@as(u8, 1), interrupt1.is_exception);
+    try std.testing.expectEqual(@as(u64, 51966), interrupt1.code);
+    try std.testing.expectEqual(@as(u64, 2), interrupt1.interrupt_count);
+    try std.testing.expectEqual(@as(u64, 1), interrupt1.exception_count);
+
+    const exception0 = x86_bootstrap.oc_exception_history_event(0);
+    try std.testing.expectEqual(@as(u32, 1), exception0.seq);
+    try std.testing.expectEqual(@as(u8, 13), exception0.vector);
+    try std.testing.expectEqual(@as(u64, 51966), exception0.code);
+    try std.testing.expectEqual(@as(u64, 2), exception0.interrupt_count);
+    try std.testing.expectEqual(@as(u64, 1), exception0.exception_count);
+}
+
 test "baremetal reset vector counters command clears vector tables without disturbing histories" {
     resetBaremetalRuntimeForTest();
 

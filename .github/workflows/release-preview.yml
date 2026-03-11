@@ -247,6 +247,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-descriptor-dispatch-probe-check.ps1
 
+      - name: Bare-metal QEMU descriptor dispatch baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-dispatch-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor dispatch telemetry probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-dispatch-telemetry-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor dispatch aggregate-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-dispatch-aggregate-state-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor dispatch interrupt-history probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-dispatch-interrupt-history-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor dispatch exception-history-mailbox probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-dispatch-exception-history-mailbox-probe-check.ps1
+
       - name: Bare-metal QEMU vector counter reset probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-vector-counter-reset-probe-check.ps1
