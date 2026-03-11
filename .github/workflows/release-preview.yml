@@ -382,6 +382,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-vector-history-clear-probe-check.ps1
 
+      - name: Bare-metal QEMU vector history clear baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-history-clear-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU vector history clear pre-interrupt payloads probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-history-clear-pre-interrupt-payloads-probe-check.ps1
+
+      - name: Bare-metal QEMU vector history clear pre-exception payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-history-clear-pre-exception-payload-probe-check.ps1
+
+      - name: Bare-metal QEMU vector history clear interrupt-reset preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-history-clear-interrupt-reset-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU vector history clear exception-reset final-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-history-clear-exception-reset-final-state-probe-check.ps1
+
       - name: Bare-metal QEMU reset-interrupt-counters preserve-history probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-reset-interrupt-counters-preserve-history-probe-check.ps1

@@ -7785,6 +7785,8 @@ test "baremetal interrupt and exception history clear commands preserve counters
 
     try std.testing.expectEqual(@as(u64, 2), x86_bootstrap.oc_interrupt_count());
     try std.testing.expectEqual(@as(u64, 1), x86_bootstrap.oc_exception_count());
+    try std.testing.expectEqual(@as(u64, 1), x86_bootstrap.oc_interrupt_vector_count(200));
+    try std.testing.expectEqual(@as(u64, 1), x86_bootstrap.oc_exception_vector_count(13));
     try std.testing.expectEqual(@as(u32, 2), x86_bootstrap.oc_interrupt_history_len());
     try std.testing.expectEqual(@as(u32, 1), x86_bootstrap.oc_exception_history_len());
     const interrupt0 = x86_bootstrap.oc_interrupt_history_event(0);
@@ -7805,7 +7807,9 @@ test "baremetal interrupt and exception history clear commands preserve counters
     try std.testing.expectEqual(@as(u32, 0), x86_bootstrap.oc_interrupt_history_len());
     try std.testing.expectEqual(@as(u32, 0), x86_bootstrap.oc_interrupt_history_overflow_count());
     try std.testing.expectEqual(@as(u64, 2), x86_bootstrap.oc_interrupt_count());
+    try std.testing.expectEqual(@as(u64, 1), x86_bootstrap.oc_interrupt_vector_count(200));
     try std.testing.expectEqual(@as(u32, 1), x86_bootstrap.oc_exception_history_len());
+    try std.testing.expectEqual(@as(u64, 1), x86_bootstrap.oc_exception_vector_count(13));
 
     _ = oc_submit_command(abi.command_clear_exception_history, 0, 0);
     oc_tick();
@@ -7814,6 +7818,8 @@ test "baremetal interrupt and exception history clear commands preserve counters
     try std.testing.expectEqual(@as(u32, 0), x86_bootstrap.oc_exception_history_overflow_count());
     try std.testing.expectEqual(@as(u64, 2), x86_bootstrap.oc_interrupt_count());
     try std.testing.expectEqual(@as(u64, 1), x86_bootstrap.oc_exception_count());
+    try std.testing.expectEqual(@as(u64, 1), x86_bootstrap.oc_interrupt_vector_count(200));
+    try std.testing.expectEqual(@as(u64, 1), x86_bootstrap.oc_exception_vector_count(13));
 }
 
 test "baremetal interrupt and exception counter reset commands preserve histories and vector tables" {
