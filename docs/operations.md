@@ -162,6 +162,7 @@ Recommended sequence:
 - optional bare-metal QEMU timer cancel wrapper validation (armed baseline capture, cancel collapse to zero live timer entries, preserved canceled-slot metadata, second-cancel `result_not_found`, and zero wake/dispatch telemetry on the dedicated timer-cancel lane)
 - optional bare-metal QEMU timer cancel-task interrupt-timeout probe (`command_timer_cancel_task` on a `task_wait_interrupt_for` waiter clears the timeout arm back to steady state, keeps `wait_timeout=0`, and still allows the later real interrupt wake to land exactly once against the freestanding PVH artifact)
 - optional bare-metal QEMU timer cancel task probe (one-shot + periodic task timer arming followed by `command_timer_cancel_task`, proving the first cancel collapses `timer_entry_count` to `0`, preserves the canceled timer slot state, and the second cancel returns `result_not_found` against the freestanding PVH artifact)
+- optional bare-metal QEMU timer cancel task wrapper probes (`baremetal-qemu-timer-cancel-task-baseline-probe-check.ps1`, `baremetal-qemu-timer-cancel-task-cancel-collapse-probe-check.ps1`, `baremetal-qemu-timer-cancel-task-canceled-entry-preserve-probe-check.ps1`, `baremetal-qemu-timer-cancel-task-second-cancel-notfound-probe-check.ps1`, and `baremetal-qemu-timer-cancel-task-zero-wake-telemetry-probe-check.ps1`) reuse the broad task-cancel lane and fail directly on the live armed baseline, first-cancel collapse, preserved canceled-slot metadata, second-cancel `result_not_found`, and zero wake/dispatch telemetry invariants
 - optional bare-metal QEMU timer pressure probe (fills the 16 runnable task slots with live one-shot timers, proves timer IDs `1 -> 16`, cancels one task timer, then reuses that exact slot with fresh timer ID `17` and no stray wake/dispatch activity against the freestanding PVH artifact)
 - optional bare-metal QEMU timer pressure wrapper probes (baseline saturation, cancel-collapse, reuse-slot, reuse-next-fire, and quiet-telemetry isolation over the same dedicated PVH artifact)
 - optional bare-metal QEMU timer reset recovery probe (dirty live timer entries plus `task_wait_interrupt_for` timeout state, then `command_timer_reset` proving timer state collapses back to baseline, stale timeout wakes do not leak after reset, manual/interrupt wake recovery still works, and the next timer re-arms from `timer_id=1` against the freestanding PVH artifact)
@@ -170,6 +171,7 @@ Recommended sequence:
 - optional bare-metal QEMU scheduler-wake timer-clear probe (`command_scheduler_wake_task` on a pure timer waiter cancels the armed timer entry, queues exactly one manual wake, prevents a later ghost timer wake after idle ticks, and preserves fresh timer scheduling from the current `next_timer_id` against the freestanding PVH artifact)
 - optional bare-metal QEMU task-resume interrupt probe (`command_task_resume` on a pure `task_wait_interrupt` waiter clears the interrupt wait back to `none`, queues exactly one manual wake, prevents a later interrupt from creating a second wake, and leaves the timer subsystem idle at `next_timer_id=1` against the freestanding PVH artifact)
 - optional bare-metal QEMU periodic timer probe (periodic schedule + timer disable/enable pause-resume, capturing the first resumed periodic fire and queued wake telemetry against the freestanding PVH artifact)
+- optional bare-metal QEMU periodic timer wrapper probes (`baremetal-qemu-periodic-timer-baseline-probe-check.ps1`, `baremetal-qemu-periodic-timer-first-fire-probe-check.ps1`, `baremetal-qemu-periodic-timer-paused-window-probe-check.ps1`, `baremetal-qemu-periodic-timer-resumed-cadence-probe-check.ps1`, and `baremetal-qemu-periodic-timer-telemetry-preserve-probe-check.ps1`) reuse the broad periodic-timer lane and fail directly on scheduler/task/timer baseline capture, first-fire payload + counters, disabled-window counter hold, resumed periodic cadence, and final command/wake/task telemetry preservation
 - optional bare-metal QEMU periodic timer clamp probe (periodic timer armed at `u64::max-1`, proving the first fire lands at `18446744073709551615`, the periodic deadline re-arms to the same saturated tick instead of wrapping, and the runtime holds stable after the tick counter wraps to `0`)
 - optional bare-metal QEMU periodic timer clamp wrapper probes (`baremetal-qemu-periodic-timer-clamp-baseline-probe-check.ps1`, `baremetal-qemu-periodic-timer-clamp-first-fire-probe-check.ps1`, `baremetal-qemu-periodic-timer-clamp-saturated-rearm-probe-check.ps1`, `baremetal-qemu-periodic-timer-clamp-post-wrap-hold-probe-check.ps1`, and `baremetal-qemu-periodic-timer-clamp-telemetry-preserve-probe-check.ps1`) reuse the broad clamp lane and fail directly on near-`u64::max` arm state, first-fire wrap semantics, saturated re-arm invariants, post-wrap hold stability, and final wake telemetry
 - optional bare-metal QEMU periodic interrupt probe (mixed periodic timer + interrupt wake ordering, proving the interrupt arrives before deadline while the periodic source keeps cadence and timer cancellation prevents a later timeout leak against the freestanding PVH artifact)
@@ -344,6 +346,7 @@ Recommended sequence:
 - bare-metal optional QEMU timer cancel wrapper probes in validate stage
 - bare-metal optional QEMU timer cancel-task interrupt-timeout probe in validate stage
 - bare-metal optional QEMU timer cancel task probe in validate stage
+- bare-metal optional QEMU timer cancel task wrapper probes in validate stage
 - bare-metal optional QEMU timer pressure wrapper probes in validate stage
 - bare-metal optional QEMU timer reset recovery probe in validate stage
 - bare-metal optional QEMU timer-disable reenable arm-preservation probe in validate stage
@@ -357,6 +360,7 @@ Recommended sequence:
 - bare-metal optional QEMU scheduler-wake timer-clear probe in validate stage
 - bare-metal optional QEMU task-resume interrupt probe in validate stage
 - bare-metal optional QEMU periodic timer probe in validate stage
+- bare-metal optional QEMU periodic timer wrapper probes in validate stage
 - bare-metal optional QEMU periodic interrupt probe in validate stage
 - bare-metal optional QEMU interrupt timeout probe in validate stage
 - bare-metal optional QEMU interrupt timeout manual-wake probe in validate stage

@@ -4506,39 +4506,105 @@ test "baremetal timer periodic flow rearms and honors enable disable controls" {
 
     _ = oc_submit_command(abi.command_scheduler_disable, 0, 0);
     oc_tick();
+    try std.testing.expectEqual(@as(u16, abi.command_scheduler_disable), status.last_command_opcode);
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+
+    _ = oc_submit_command(abi.command_timer_set_quantum, 2, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(u16, abi.command_timer_set_quantum), status.last_command_opcode);
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u32, 2), oc_timer_quantum());
+
     _ = oc_submit_command(abi.command_task_create, 8, 1);
     oc_tick();
+    try std.testing.expectEqual(@as(u16, abi.command_task_create), status.last_command_opcode);
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u8, 1), oc_scheduler_task_count());
     const task_id = oc_scheduler_task(0).task_id;
     try std.testing.expect(task_id != 0);
+    try std.testing.expectEqual(@as(u8, abi.task_state_ready), oc_scheduler_task(0).state);
+    try std.testing.expectEqual(@as(u8, 1), oc_scheduler_task(0).priority);
+    try std.testing.expectEqual(@as(u32, 8), oc_scheduler_task(0).budget_ticks);
+    try std.testing.expectEqual(@as(u32, 8), oc_scheduler_task(0).budget_remaining);
+    try std.testing.expectEqual(@as(u32, 0), oc_scheduler_task(0).run_count);
 
     _ = oc_submit_command(abi.command_timer_schedule_periodic, task_id, 2);
     oc_tick();
+    try std.testing.expectEqual(@as(u16, abi.command_timer_schedule_periodic), status.last_command_opcode);
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
     var entry = oc_timer_entry(0);
+    try std.testing.expect(oc_timer_enabled());
+    try std.testing.expectEqual(@as(u8, 1), oc_timer_entry_count());
     try std.testing.expectEqual(@as(u16, abi.timer_entry_flag_periodic), entry.flags & abi.timer_entry_flag_periodic);
     try std.testing.expectEqual(@as(u32, 2), entry.period_ticks);
+    try std.testing.expectEqual(task_id, entry.task_id);
+    try std.testing.expectEqual(@as(u32, 1), entry.timer_id);
 
-    oc_tick(); // current_tick=3 (no fire yet)
-    oc_tick(); // current_tick=4 (first periodic fire)
+    var spin: u8 = 0;
+    while (oc_timer_entry(0).fire_count == 0 and spin < 8) : (spin += 1) {
+        oc_tick();
+    }
     entry = oc_timer_entry(0);
     try std.testing.expectEqual(@as(u8, abi.timer_entry_state_armed), entry.state);
     try std.testing.expectEqual(@as(u64, 1), entry.fire_count);
+    try std.testing.expect(entry.last_fire_tick > 0);
+    try std.testing.expect(entry.next_fire_tick > entry.last_fire_tick);
+    try std.testing.expect(entry.next_fire_tick <= entry.last_fire_tick + entry.period_ticks);
+    const first_fire_tick = entry.last_fire_tick;
     try std.testing.expect(oc_wake_queue_len() >= 1);
+    try std.testing.expectEqual(@as(u32, 1), timer_state.pending_wake_count);
+    try std.testing.expectEqual(@as(u64, 1), timer_state.dispatch_count);
+    try std.testing.expectEqual(entry.last_fire_tick, timer_state.last_wake_tick);
 
     _ = oc_submit_command(abi.command_timer_disable, 0, 0);
     oc_tick();
+    try std.testing.expectEqual(@as(u16, abi.command_timer_disable), status.last_command_opcode);
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
     const wakes_before_pause = oc_wake_queue_len();
+    const fires_before_pause = entry.fire_count;
+    const dispatch_before_pause = timer_state.dispatch_count;
+    const last_fire_before_pause = entry.last_fire_tick;
     oc_tick();
     oc_tick();
     try std.testing.expectEqual(wakes_before_pause, oc_wake_queue_len());
+    try std.testing.expectEqual(fires_before_pause, oc_timer_entry(0).fire_count);
+    try std.testing.expectEqual(dispatch_before_pause, timer_state.dispatch_count);
+    try std.testing.expectEqual(last_fire_before_pause, oc_timer_entry(0).last_fire_tick);
     try std.testing.expect(!oc_timer_enabled());
 
     _ = oc_submit_command(abi.command_timer_enable, 0, 0);
     oc_tick();
+    try std.testing.expectEqual(@as(u16, abi.command_timer_enable), status.last_command_opcode);
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
     try std.testing.expect(oc_timer_enabled());
-    oc_tick();
+    spin = 0;
+    while (oc_timer_entry(0).fire_count < 2 and spin < 8) : (spin += 1) {
+        oc_tick();
+    }
     entry = oc_timer_entry(0);
     try std.testing.expect(entry.fire_count >= 2);
+    try std.testing.expectEqual(@as(u64, 2), entry.fire_count);
+    try std.testing.expect(entry.last_fire_tick > last_fire_before_pause);
+    try std.testing.expect(entry.next_fire_tick > entry.last_fire_tick);
+    try std.testing.expect(entry.next_fire_tick <= entry.last_fire_tick + entry.period_ticks);
+    try std.testing.expectEqual(@as(u32, 2), oc_wake_queue_len());
+    try std.testing.expectEqual(@as(u32, 2), timer_state.pending_wake_count);
+    try std.testing.expectEqual(@as(u64, 2), timer_state.dispatch_count);
+    try std.testing.expectEqual(entry.last_fire_tick, timer_state.last_wake_tick);
+    const wake0 = oc_wake_queue_event(0);
+    const wake1 = oc_wake_queue_event(1);
+    try std.testing.expectEqual(@as(u32, 1), wake0.seq);
+    try std.testing.expectEqual(task_id, wake0.task_id);
+    try std.testing.expectEqual(@as(u32, 1), wake0.timer_id);
+    try std.testing.expectEqual(@as(u8, abi.wake_reason_timer), wake0.reason);
+    try std.testing.expectEqual(@as(u8, 0), wake0.vector);
+    try std.testing.expectEqual(first_fire_tick, wake0.tick);
+    try std.testing.expectEqual(@as(u32, 2), wake1.seq);
+    try std.testing.expectEqual(task_id, wake1.task_id);
+    try std.testing.expectEqual(@as(u32, 1), wake1.timer_id);
+    try std.testing.expectEqual(@as(u8, abi.wake_reason_timer), wake1.reason);
+    try std.testing.expectEqual(@as(u8, 0), wake1.vector);
+    try std.testing.expectEqual(entry.last_fire_tick, wake1.tick);
 }
 
 test "baremetal periodic timer clamps near max tick without wraparound" {
@@ -5093,18 +5159,34 @@ test "baremetal timer cancel task command cancels armed task timers" {
     oc_tick();
     _ = oc_submit_command(abi.command_task_create, 7, 0);
     oc_tick();
+    try std.testing.expectEqual(@as(u8, abi.command_task_create), status.last_command_opcode);
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u8, 1), oc_scheduler_task_count());
     const task_id = oc_scheduler_task(0).task_id;
     try std.testing.expect(task_id != 0);
+    try std.testing.expectEqual(@as(u8, abi.task_state_ready), oc_scheduler_task(0).state);
+    try std.testing.expectEqual(@as(u8, 0), oc_scheduler_task(0).priority);
+    try std.testing.expectEqual(@as(u32, 7), oc_scheduler_task(0).budget_ticks);
+    try std.testing.expectEqual(@as(u32, 7), oc_scheduler_task(0).budget_remaining);
+    try std.testing.expectEqual(@as(u32, 0), oc_scheduler_task(0).run_count);
 
     _ = oc_submit_command(abi.command_timer_schedule, task_id, 10);
     oc_tick();
     _ = oc_submit_command(abi.command_timer_schedule_periodic, task_id, 20);
     oc_tick();
+    try std.testing.expectEqual(@as(u8, abi.command_timer_schedule_periodic), status.last_command_opcode);
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
     try std.testing.expectEqual(@as(u32, 1), oc_timer_entry_count());
+    try std.testing.expectEqual(@as(u32, 1), oc_timer_entry(0).timer_id);
     try std.testing.expectEqual(@as(u8, abi.timer_entry_state_armed), oc_timer_entry(0).state);
+    try std.testing.expectEqual(task_id, oc_timer_entry(0).task_id);
+    try std.testing.expect(oc_timer_entry(0).next_fire_tick > status.ticks);
+    try std.testing.expectEqual(@as(u32, 0), oc_timer_entry(0).fire_count);
+    try std.testing.expectEqual(@as(u64, 0), oc_timer_entry(0).last_fire_tick);
 
     _ = oc_submit_command(abi.command_timer_cancel_task, task_id, 0);
     oc_tick();
+    try std.testing.expectEqual(@as(u8, abi.command_timer_cancel_task), status.last_command_opcode);
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
     try std.testing.expectEqual(@as(u32, 0), oc_timer_entry_count());
     try std.testing.expectEqual(@as(u32, 0), oc_wake_queue_len());
@@ -5116,6 +5198,7 @@ test "baremetal timer cancel task command cancels armed task timers" {
 
     _ = oc_submit_command(abi.command_timer_cancel_task, task_id, 0);
     oc_tick();
+    try std.testing.expectEqual(@as(u8, abi.command_timer_cancel_task), status.last_command_opcode);
     try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
     try std.testing.expectEqual(@as(u32, 0), oc_timer_entry_count());
     try std.testing.expectEqual(@as(u8, abi.timer_entry_state_canceled), oc_timer_entry(0).state);

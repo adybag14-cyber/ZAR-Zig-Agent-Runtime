@@ -134,12 +134,14 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - optional QEMU task-resume interrupt-timeout probe validates `command_task_resume` on an interrupt-timeout waiter end to end, proving the pending timeout is cleared to `none`, exactly one manual wake is queued, no delayed timer wake appears after additional slack ticks, and the timer subsystem remains at `next_timer_id=1`
   - optional QEMU task-resume interrupt probe validates `command_task_resume` on a pure `task_wait_interrupt` waiter end to end, proving the interrupt wait is cleared to `none`, exactly one manual wake is queued, a later interrupt still increments telemetry without creating a second wake, and the timer subsystem remains idle with `next_timer_id=1`
   - optional QEMU periodic timer probe validates periodic timer scheduling plus disable/enable pause-resume behavior end to end, capturing the first resumed periodic fire and queued wake telemetry against the freestanding PVH artifact
+  - periodic-timer wrapper probes now enforce that same lane directly at five narrower boundaries: scheduler/task/timer baseline capture, first periodic fire payload and counters, disabled-window counter hold, resumed periodic cadence with the next-fire deadline advanced by `period_ticks`, and final command/wake/task telemetry preservation
   - optional QEMU periodic interrupt probe validates mixed periodic timer plus interrupt wake ordering end to end, proving the interrupt wake lands before the deadline, the periodic source keeps its cadence, and cancellation prevents a later timeout leak against the freestanding PVH artifact
   - optional QEMU interrupt-timeout probe validates `task_wait_interrupt_for` wakeup precedence end to end, proving an interrupt wake clears the timeout arm and does not later leak a second timer wake against the freestanding PVH artifact
   - interrupt-timeout interrupt-wins wrapper probes now enforce the narrow interrupt-first boundaries directly: preserved armed timeout state before the interrupt lands, exact interrupt wake payload semantics, cleared wait-kind/vector/timeout state after the interrupt wake, no stale timer wake after additional slack ticks, and preserved interrupt plus last-wake telemetry through the full interrupt-first recovery path
   - optional QEMU interrupt-timeout manual-wake probe validates the manual-recovery path end to end, proving `command_scheduler_wake_task` clears the pending timeout, queues exactly one manual wake, and does not allow a delayed timer wake to appear against the freestanding PVH artifact
   - interrupt-timeout manual-wake wrapper probes now enforce the narrow boundaries directly: preserved armed timeout state before the manual wake, single manual wake-queue delivery, cleared wait-kind/vector/timeout state after `command_scheduler_wake_task`, no stale timer wake after additional idle ticks, and preserved zero-interrupt plus last-wake telemetry through the full recovery path
   - optional QEMU timer-cancel-task interrupt-timeout probe validates `command_timer_cancel_task` on a timeout-backed interrupt waiter end to end, proving the timeout arm is cleared without losing the later real interrupt wake path, leaving `wait_timeout=0`, `timer_entry_count=0`, and a single subsequent `interrupt` wake against the freestanding PVH artifact
+  - optional QEMU timer-cancel-task wrapper probes validate the pure task-cancel lane in five isolated checks: armed task baseline capture, first-cancel collapse to zero live timer entries, preserved canceled-slot metadata on `timer0`, second-cancel `result_not_found`, and zero wake/dispatch telemetry through the full task-targeted cancel flow
   - optional QEMU interrupt manual-wake probe validates `command_scheduler_wake_task` on a pure `task_wait_interrupt` waiter end to end, proving the interrupt wait clears to `none`, exactly one manual wake is queued, and a later interrupt only advances telemetry without adding a second wake against the freestanding PVH artifact
   - optional QEMU scheduler-wake timer-clear probe validates `command_scheduler_wake_task` on a pure timer waiter end to end, proving the armed timer entry is canceled in place, exactly one manual wake is queued, no later ghost timer wake appears after idle ticks, and fresh timer scheduling resumes from the preserved `next_timer_id`
   - optional QEMU interrupt-timeout timer probe validates the no-interrupt timeout path end to end, proving the waiter stays blocked until the deadline, then wakes with `reason=timer`, `vector=0`, and zero interrupt telemetry against the freestanding PVH artifact
@@ -640,10 +642,12 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU timer cancel probe
 - optional bare-metal QEMU timer cancel-task interrupt-timeout probe
 - optional bare-metal QEMU timer cancel task probe
+- optional bare-metal QEMU timer cancel task wrapper probes
 - optional bare-metal QEMU timer pressure probe
 - optional bare-metal QEMU timer pressure wrapper probes
 - optional bare-metal QEMU timer reset recovery probe
 - optional bare-metal QEMU periodic timer probe
+- optional bare-metal QEMU periodic timer wrapper probes
 - optional bare-metal QEMU periodic interrupt probe
 - optional bare-metal QEMU interrupt timeout probe
 - optional bare-metal QEMU interrupt timeout manual wake probe
@@ -749,6 +753,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU timer pressure validation
 - optional bare-metal QEMU timer pressure wrapper validation
 - optional bare-metal QEMU periodic timer validation
+- optional bare-metal QEMU periodic timer wrapper validation
 - optional bare-metal QEMU interrupt timeout validation
 - optional bare-metal QEMU interrupt timeout manual-wake validation
 - optional bare-metal QEMU interrupt timeout timer validation
