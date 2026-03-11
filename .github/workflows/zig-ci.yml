@@ -1825,6 +1825,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-reset-counters-preserve-config-probe-check.ps1
 
+      - name: Bare-metal QEMU reset-counters baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-counters-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU reset-counters vector-reset probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-counters-vector-reset-probe-check.ps1
+
+      - name: Bare-metal QEMU reset-counters history-reset probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-counters-history-reset-probe-check.ps1
+
+      - name: Bare-metal QEMU reset-counters subsystem-reset probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-counters-subsystem-reset-probe-check.ps1
+
+      - name: Bare-metal QEMU reset-counters command-result probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-counters-command-result-probe-check.ps1
+
       - name: Bare-metal QEMU task lifecycle probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-task-lifecycle-probe-check.ps1

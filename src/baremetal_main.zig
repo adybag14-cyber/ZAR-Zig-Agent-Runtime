@@ -3689,8 +3689,10 @@ test "baremetal reset counters clears representative runtime subsystems" {
     try std.testing.expectEqual(@as(u32, 0), x86_bootstrap.oc_exception_history_len());
     try std.testing.expectEqual(@as(u32, 1), oc_command_history_len());
     try std.testing.expectEqual(@as(u16, abi.command_reset_counters), oc_command_history_event(0).opcode);
+    try std.testing.expectEqual(@as(u32, status.command_seq_ack), oc_command_history_event(0).seq);
     try std.testing.expectEqual(@as(u32, 1), oc_health_history_len());
     try std.testing.expectEqual(@as(u16, 200), oc_health_history_event(0).health_code);
+    try std.testing.expectEqual(@as(u32, 1), oc_health_history_event(0).seq);
     try std.testing.expectEqual(@as(u32, 0), oc_mode_history_len());
     try std.testing.expectEqual(@as(u32, 0), oc_boot_phase_history_len());
     try std.testing.expectEqual(@as(u32, 1), oc_command_result_total_count());
@@ -3731,8 +3733,10 @@ test "baremetal reset counters preserves feature flags and tick batch hint confi
     try std.testing.expectEqual(@as(u64, 4), status.ticks);
     try std.testing.expectEqual(@as(u32, 1), oc_command_history_len());
     try std.testing.expectEqual(@as(u16, abi.command_reset_counters), oc_command_history_event(0).opcode);
+    try std.testing.expectEqual(@as(u32, status.command_seq_ack), oc_command_history_event(0).seq);
     try std.testing.expectEqual(@as(u32, 1), oc_health_history_len());
     try std.testing.expectEqual(@as(u16, 200), oc_health_history_event(0).health_code);
+    try std.testing.expectEqual(@as(u32, 1), oc_health_history_event(0).seq);
 }
 
 test "baremetal feature flags and tick batch hint commands update status" {

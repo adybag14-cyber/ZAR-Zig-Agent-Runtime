@@ -516,10 +516,15 @@ Recommended sequence:
 - bare-metal optional QEMU reset counters probe in validate stage
 - bare-metal optional QEMU reset-command-result preserve-runtime probe in validate stage
 - bare-metal optional QEMU reset-counters preserve-config probe in validate stage
+- bare-metal optional QEMU reset-counters baseline probe in validate stage
+- bare-metal optional QEMU reset-counters vector-reset probe in validate stage
+- bare-metal optional QEMU reset-counters history-reset probe in validate stage
+- bare-metal optional QEMU reset-counters subsystem-reset probe in validate stage
+- bare-metal optional QEMU reset-counters command-result probe in validate stage
 - bare-metal optional QEMU reset-bootdiag preserve-state probe in validate stage
 - bare-metal optional QEMU clear-command-history preserve-health probe in validate stage
 - bare-metal optional QEMU clear-health-history preserve-command probe in validate stage
-- command-result / bootdiag-history-clear / reset-counters wrapper probes now enforce isolated reset-preservation boundaries for runtime state, histories, and config as dedicated workflow gates
+- command-result / bootdiag-history-clear / reset-counters wrapper probes now enforce isolated reset-preservation and full reset-collapse boundaries for runtime state, histories, vectors, subsystems, config, and command-result receipts as dedicated workflow gates
 - bare-metal optional QEMU task lifecycle probe in validate stage
 - bare-metal optional QEMU active-task terminate probe in validate stage
 - bare-metal optional QEMU panic-recovery probe in validate stage
