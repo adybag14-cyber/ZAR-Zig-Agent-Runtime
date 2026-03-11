@@ -252,6 +252,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-descriptor-table-content-probe-check.ps1
 
+      - name: Bare-metal QEMU descriptor table content baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-table-content-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor table content pointer metadata probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-table-content-pointer-metadata-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor table content GDT entry fields probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-table-content-gdt-entry-fields-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor table content IDT entry fields probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-table-content-idt-entry-fields-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor table content interrupt stub mailbox probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-table-content-interrupt-stub-mailbox-probe-check.ps1
+
       - name: Bare-metal QEMU descriptor dispatch probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-descriptor-dispatch-probe-check.ps1

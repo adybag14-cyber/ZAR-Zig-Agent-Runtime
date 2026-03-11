@@ -2617,6 +2617,75 @@ test "baremetal descriptor mailbox commands update init and load telemetry" {
     try std.testing.expect(x86_bootstrap.oc_descriptor_tables_loaded());
 }
 
+test "baremetal descriptor table content commands preserve descriptor pointers and entry wiring" {
+    resetBaremetalRuntimeForTest();
+
+    const init_before = x86_bootstrap.oc_descriptor_init_count();
+    const attempts_before = x86_bootstrap.oc_descriptor_load_attempt_count();
+    const success_before = x86_bootstrap.oc_descriptor_load_success_count();
+
+    _ = oc_submit_command(abi.command_reinit_descriptor_tables, 0, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_reinit_descriptor_tables), status.last_command_opcode);
+    try std.testing.expectEqual(@as(u32, 1), status.command_seq_ack);
+    try std.testing.expectEqual(init_before + 1, x86_bootstrap.oc_descriptor_init_count());
+    try std.testing.expect(x86_bootstrap.oc_descriptor_tables_ready());
+    try std.testing.expect(x86_bootstrap.oc_descriptor_tables_loaded());
+
+    _ = oc_submit_command(abi.command_load_descriptor_tables, 0, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_load_descriptor_tables), status.last_command_opcode);
+    try std.testing.expectEqual(@as(u32, 2), status.command_seq_ack);
+    try std.testing.expectEqual(attempts_before + 1, x86_bootstrap.oc_descriptor_load_attempt_count());
+    try std.testing.expectEqual(success_before + 1, x86_bootstrap.oc_descriptor_load_success_count());
+    try std.testing.expect(x86_bootstrap.oc_descriptor_tables_loaded());
+
+    const gdtr = x86_bootstrap.oc_gdtr_ptr().*;
+    const idtr = x86_bootstrap.oc_idtr_ptr().*;
+    const gdt = x86_bootstrap.oc_gdt_ptr().*;
+    const idt = x86_bootstrap.oc_idt_ptr().*;
+    const interrupt_stub_addr = @intFromPtr(&x86_bootstrap.oc_interrupt_stub);
+    const idt0_handler_addr =
+        @as(u64, idt[0].offset_low) |
+        (@as(u64, idt[0].offset_mid) << 16) |
+        (@as(u64, idt[0].offset_high) << 32);
+    const idt255_handler_addr =
+        @as(u64, idt[255].offset_low) |
+        (@as(u64, idt[255].offset_mid) << 16) |
+        (@as(u64, idt[255].offset_high) << 32);
+
+    try std.testing.expectEqual(
+        @as(u16, @intCast(@sizeOf(x86_bootstrap.GdtEntry) * x86_bootstrap.gdt_entries_count - 1)),
+        gdtr.limit,
+    );
+    try std.testing.expectEqual(
+        @as(u16, @intCast(@sizeOf(x86_bootstrap.IdtEntry) * x86_bootstrap.idt_entries_count - 1)),
+        idtr.limit,
+    );
+    try std.testing.expectEqual(@as(u64, @intFromPtr(x86_bootstrap.oc_gdt_ptr())), gdtr.base);
+    try std.testing.expectEqual(@as(u64, @intFromPtr(x86_bootstrap.oc_idt_ptr())), idtr.base);
+
+    try std.testing.expectEqual(@as(u16, 0xFFFF), gdt[1].limit_low);
+    try std.testing.expectEqual(@as(u8, 0x9A), gdt[1].access);
+    try std.testing.expectEqual(@as(u8, 0xAF), gdt[1].granularity);
+    try std.testing.expectEqual(@as(u16, 0xFFFF), gdt[2].limit_low);
+    try std.testing.expectEqual(@as(u8, 0x92), gdt[2].access);
+    try std.testing.expectEqual(@as(u8, 0xAF), gdt[2].granularity);
+
+    try std.testing.expectEqual(@as(u16, 0x08), idt[0].selector);
+    try std.testing.expectEqual(@as(u8, 0), idt[0].ist);
+    try std.testing.expectEqual(@as(u8, 0x8E), idt[0].type_attr);
+    try std.testing.expectEqual(@as(u32, 0), idt[0].zero);
+    try std.testing.expectEqual(interrupt_stub_addr, idt0_handler_addr);
+    try std.testing.expectEqual(@as(u16, 0x08), idt[255].selector);
+    try std.testing.expectEqual(@as(u8, 0), idt[255].ist);
+    try std.testing.expectEqual(@as(u8, 0x8E), idt[255].type_attr);
+    try std.testing.expectEqual(@as(u32, 0), idt[255].zero);
+    try std.testing.expectEqual(interrupt_stub_addr, idt255_handler_addr);
+}
+
 test "baremetal descriptor dispatch commands update interrupt and exception histories" {
     resetBaremetalRuntimeForTest();
 
