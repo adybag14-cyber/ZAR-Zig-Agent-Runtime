@@ -222,6 +222,21 @@ jobs:
       - name: Bare-metal QEMU descriptor bootdiag probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-descriptor-bootdiag-probe-check.ps1
+      - name: Bare-metal QEMU descriptor bootdiag baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-bootdiag-baseline-probe-check.ps1
+      - name: Bare-metal QEMU descriptor bootdiag reset-capture probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-bootdiag-reset-capture-probe-check.ps1
+      - name: Bare-metal QEMU descriptor bootdiag set-init probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-bootdiag-set-init-probe-check.ps1
+      - name: Bare-metal QEMU descriptor bootdiag invalid-phase probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-bootdiag-invalid-phase-probe-check.ps1
+      - name: Bare-metal QEMU descriptor bootdiag final-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-bootdiag-final-state-probe-check.ps1
 
       - name: Bare-metal QEMU bootdiag history clear probe (optional)
         shell: pwsh

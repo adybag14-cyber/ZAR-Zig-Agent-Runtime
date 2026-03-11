@@ -2446,6 +2446,9 @@ test "baremetal diagnostics command flow updates phase and stack snapshot" {
     oc_command_result_counters_clear();
     oc_scheduler_reset();
 
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_runtime), boot_diagnostics.phase);
+    const boot_seq_before = boot_diagnostics.boot_seq;
+
     var seq = oc_submit_command(abi.command_capture_stack_pointer, 0, 0);
     oc_tick();
     try std.testing.expectEqual(seq, status.command_seq_ack);
@@ -2457,17 +2460,26 @@ test "baremetal diagnostics command flow updates phase and stack snapshot" {
     oc_tick();
     try std.testing.expectEqual(seq, status.command_seq_ack);
     try std.testing.expectEqual(@as(u8, abi.boot_phase_init), boot_diagnostics.phase);
+    try std.testing.expectEqual(@as(u32, 1), boot_diagnostics.phase_changes);
+    const captured_stack_snapshot = boot_diagnostics.stack_pointer_snapshot;
+    try std.testing.expect(captured_stack_snapshot != 0);
 
     seq = oc_submit_command(abi.command_set_boot_phase, 99, 0);
     oc_tick();
     try std.testing.expectEqual(seq, status.command_seq_ack);
     try std.testing.expectEqual(@as(i16, abi.result_invalid_argument), status.last_command_result);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_init), boot_diagnostics.phase);
+    try std.testing.expectEqual(@as(u32, 1), boot_diagnostics.phase_changes);
+    try std.testing.expectEqual(captured_stack_snapshot, boot_diagnostics.stack_pointer_snapshot);
 
     seq = oc_submit_command(abi.command_reset_boot_diagnostics, 0, 0);
     oc_tick();
     try std.testing.expectEqual(seq, status.command_seq_ack);
     try std.testing.expectEqual(@as(u64, seq), boot_diagnostics.last_command_seq);
-    try std.testing.expect(boot_diagnostics.boot_seq > 0);
+    try std.testing.expectEqual(boot_seq_before + 1, boot_diagnostics.boot_seq);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_runtime), boot_diagnostics.phase);
+    try std.testing.expectEqual(@as(u32, 0), boot_diagnostics.phase_changes);
+    try std.testing.expectEqual(@as(u64, 0), boot_diagnostics.stack_pointer_snapshot);
     try std.testing.expectEqual(@as(u32, 4), oc_command_history_len());
     const history_last = oc_command_history_event(oc_command_history_len() - 1);
     try std.testing.expectEqual(@as(u16, abi.command_reset_boot_diagnostics), history_last.opcode);
