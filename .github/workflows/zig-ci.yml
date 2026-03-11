@@ -121,13 +121,13 @@ jobs:
       - name: Build release (x86_64-linux)
         run: zig build -Dtarget=x86_64-linux -Doptimize=ReleaseFast --summary all
 
-      - name: Setup Zig (0.16.0) for bare-metal lane
+      - name: Setup Zig (0.16.0-dev.2736+3b515fbed) for bare-metal lane
         uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.16.0-dev.2736+3b515fbed
           use-cache: true
 
-      - name: Export stable Zig for bare-metal lane
+      - name: Export pinned Zig for bare-metal lane
         shell: bash
         run: |
           set -euo pipefail
@@ -1632,6 +1632,26 @@ jobs:
       - name: Bare-metal QEMU command result counters probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-command-result-counters-probe-check.ps1
+
+      - name: Bare-metal QEMU command-result counters baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-result-counters-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU command-result counters ok-bucket probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-result-counters-ok-bucket-probe-check.ps1
+
+      - name: Bare-metal QEMU command-result counters invalid-bucket probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-result-counters-invalid-bucket-probe-check.ps1
+
+      - name: Bare-metal QEMU command-result counters not-supported-bucket probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-result-counters-not-supported-bucket-probe-check.ps1
+
+      - name: Bare-metal QEMU command-result counters other-error-bucket probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-result-counters-other-error-bucket-probe-check.ps1
 
       - name: Bare-metal QEMU reset-command-result preserve-runtime probe (optional)
         shell: pwsh

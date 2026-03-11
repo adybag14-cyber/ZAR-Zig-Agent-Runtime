@@ -7,7 +7,7 @@
 - Latest parity gate: `scripts/check-go-method-parity.ps1` -> `GO_MISSING_IN_ZIG=0`, `ORIGINAL_MISSING_IN_ZIG=0`, `ORIGINAL_BETA_MISSING_IN_ZIG=0`, `UNION_MISSING_IN_ZIG=0`, `UNION_EVENTS_MISSING_IN_ZIG=0`, `ZIG_COUNT=172`, `ZIG_EVENTS_COUNT=19`
 - Current head: local source-of-truth on `main` (exact pushed head is tracked in issue `#1` and the latest GitHub Actions runs)
 - Toolchain lane: Codeberg `master` is canonical; `adybag14-cyber/zig` is the Windows release mirror with rolling `latest-master` plus immutable `upstream-<sha>` releases.
-- CI split: hosted validation stays on Zig `master`, while the freestanding bare-metal smoke/probe and bare-metal asset lanes are pinned to stable Zig `0.16.0` until the upstream Linux `master` compiler crash on `zig build baremetal -Doptimize=ReleaseFast` is no longer reproducible.
+- CI split: hosted validation stays on Zig `master`, while the freestanding bare-metal smoke/probe and bare-metal asset lanes are pinned to the known-good Linux build `0.16.0-dev.2736+3b515fbed` until the upstream Linux `master` compiler crash on `zig build baremetal -Doptimize=ReleaseFast` is no longer reproducible.
 - `scripts/package-registry-status.ps1` now performs default npmjs/PyPI visibility checks even when invoked with only `-ReleaseTag`, so local package diagnostics no longer silently skip unresolved public-registry state.
 - Latest CI:
   - latest pushed `main` head is tracked in issue `#1`
@@ -297,6 +297,7 @@ Recommended sequence:
 - optional bare-metal QEMU syscall wrapper validation batch (wrapper probes over the broad syscall lanes, isolating re-register token-update/no-growth, blocked invoke preservation, disabled invoke preservation, saturation overflow full-table retention, slot reuse semantics, and post-reset slot-zero restart)
 - optional bare-metal QEMU allocator syscall failure probe (invalid-alignment, no-space, blocked-syscall, and disabled-syscall result semantics plus command-result counters against the freestanding PVH artifact)
 - optional bare-metal QEMU command-result counters probe (live mailbox result-category accounting plus `command_reset_command_result_counters` reset semantics against the freestanding PVH artifact)
+- optional bare-metal QEMU command-result counter wrapper probes (five isolated checks over the same broad lane: baseline pre-reset envelope, `ok` bucket, `invalid_argument` bucket, `not_supported` bucket, and `other_error` bucket against the freestanding PVH artifact)
 - optional bare-metal QEMU reset counters probe (live `command_reset_counters` proof after dirtying interrupt, exception, scheduler, allocator, syscall, timer, wake-queue, mode, boot-phase, command-history, and health-history state against the freestanding PVH artifact)
 - optional bare-metal QEMU task lifecycle probe (live `task_wait -> scheduler_wake_task -> task_resume -> task_terminate` control path plus post-terminate rejected wake semantics, including queue purge for the terminated task, against the freestanding PVH artifact)
 - optional bare-metal QEMU task-lifecycle wrapper probes (five isolated checks over the same broad lane: initial wait baseline, first manual wake delivery, second wait baseline, second manual wake delivery after `command_task_resume`, and final terminate plus rejected-wake telemetry with queue purge for the terminated task against the freestanding PVH artifact)
