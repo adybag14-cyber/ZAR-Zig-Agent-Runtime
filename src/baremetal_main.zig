@@ -4606,6 +4606,7 @@ test "baremetal allocator free command rejects bad pointer size and double free 
     _ = oc_submit_command(abi.command_allocator_free, alloc.ptr + allocator_default_page_size, 0);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
+    try std.testing.expectEqual(abi.command_allocator_free, status.last_command_opcode);
     const state_after_bad_ptr = oc_allocator_state_ptr().*;
     try std.testing.expectEqual(@as(u32, 1), state_after_bad_ptr.allocation_count);
     try std.testing.expectEqual(initial_free - 2, state_after_bad_ptr.free_pages);
@@ -4616,6 +4617,7 @@ test "baremetal allocator free command rejects bad pointer size and double free 
     _ = oc_submit_command(abi.command_allocator_free, alloc.ptr, allocator_default_page_size);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_invalid_argument), status.last_command_result);
+    try std.testing.expectEqual(abi.command_allocator_free, status.last_command_opcode);
     const state_after_bad_size = oc_allocator_state_ptr().*;
     try std.testing.expectEqual(@as(u32, 1), state_after_bad_size.allocation_count);
     try std.testing.expectEqual(initial_free - 2, state_after_bad_size.free_pages);
@@ -4626,6 +4628,7 @@ test "baremetal allocator free command rejects bad pointer size and double free 
     _ = oc_submit_command(abi.command_allocator_free, alloc.ptr, alloc_size);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(abi.command_allocator_free, status.last_command_opcode);
     const state_after_free = oc_allocator_state_ptr().*;
     try std.testing.expectEqual(@as(u32, 0), state_after_free.allocation_count);
     try std.testing.expectEqual(initial_free, state_after_free.free_pages);
@@ -4636,6 +4639,7 @@ test "baremetal allocator free command rejects bad pointer size and double free 
     _ = oc_submit_command(abi.command_allocator_free, alloc.ptr, 0);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
+    try std.testing.expectEqual(abi.command_allocator_free, status.last_command_opcode);
     const state_after_double_free = oc_allocator_state_ptr().*;
     try std.testing.expectEqual(@as(u32, 0), state_after_double_free.allocation_count);
     try std.testing.expectEqual(initial_free, state_after_double_free.free_pages);
@@ -4646,6 +4650,7 @@ test "baremetal allocator free command rejects bad pointer size and double free 
     _ = oc_submit_command(abi.command_allocator_alloc, allocator_default_page_size, alloc_alignment);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(abi.command_allocator_alloc, status.last_command_opcode);
     const state_after_realloc = oc_allocator_state_ptr().*;
     const realloc = oc_allocator_allocation(0);
     try std.testing.expectEqual(@as(u32, 1), state_after_realloc.allocation_count);

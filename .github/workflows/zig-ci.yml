@@ -1617,6 +1617,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-allocator-free-failure-probe-check.ps1
 
+      - name: Bare-metal QEMU allocator free failure baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-free-failure-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator free failure bad pointer preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-free-failure-bad-pointer-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator free failure bad size preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-free-failure-bad-size-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator free failure good free metadata probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-free-failure-good-free-metadata-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator free failure double free realloc probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-free-failure-double-free-realloc-probe-check.ps1
+
       - name: Bare-metal QEMU syscall control probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-syscall-control-probe-check.ps1
