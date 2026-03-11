@@ -366,6 +366,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-command-health-history-probe-check.ps1
 
+      - name: Bare-metal QEMU command-health history baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-health-history-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU command-health history command-shape probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-health-history-command-shape-probe-check.ps1
+
+      - name: Bare-metal QEMU command-health history command-payloads probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-health-history-command-payloads-probe-check.ps1
+
+      - name: Bare-metal QEMU command-health history health-shape probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-health-history-health-shape-probe-check.ps1
+
+      - name: Bare-metal QEMU command-health history health-payloads probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-health-history-health-payloads-probe-check.ps1
+
       - name: Bare-metal QEMU command-history overflow clear probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-command-history-overflow-clear-probe-check.ps1

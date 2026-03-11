@@ -3025,6 +3025,47 @@ test "baremetal health history overflow clear resets ring and restarts from seq 
     try std.testing.expectEqual(@as(u16, 777), restarted_health.health_code);
 }
 
+test "baremetal repeated health-code commands saturate command and health histories together" {
+    resetBaremetalRuntimeForTest();
+
+    var idx: u32 = 0;
+    while (idx < 35) : (idx += 1) {
+        _ = oc_submit_command(abi.command_set_health_code, 100 + idx, 0);
+        oc_tick();
+    }
+
+    try std.testing.expectEqual(@as(u32, 35), status.command_seq_ack);
+    try std.testing.expectEqual(@as(u16, abi.command_set_health_code), status.last_command_opcode);
+    try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expect(status.ticks >= 35);
+
+    try std.testing.expectEqual(@as(u32, 32), oc_command_history_len());
+    try std.testing.expectEqual(@as(u32, 3), oc_command_history_overflow_count());
+    try std.testing.expectEqual(@as(u32, 3), oc_command_history_head_index());
+    const first_command = oc_command_history_event(0);
+    try std.testing.expectEqual(@as(u32, 4), first_command.seq);
+    try std.testing.expectEqual(@as(u16, abi.command_set_health_code), first_command.opcode);
+    try std.testing.expectEqual(@as(u64, 103), first_command.arg0);
+    const last_command = oc_command_history_event(oc_command_history_len() - 1);
+    try std.testing.expectEqual(@as(u32, 35), last_command.seq);
+    try std.testing.expectEqual(@as(u16, abi.command_set_health_code), last_command.opcode);
+    try std.testing.expectEqual(@as(u64, 134), last_command.arg0);
+
+    try std.testing.expectEqual(@as(u32, 64), oc_health_history_len());
+    try std.testing.expect(oc_health_history_overflow_count() >= 6);
+    const first_health = oc_health_history_event(0);
+    try std.testing.expect(first_health.seq > 1);
+    try std.testing.expect(first_health.health_code >= 103 and first_health.health_code <= 104);
+    const prev_last_health = oc_health_history_event(oc_health_history_len() - 2);
+    try std.testing.expect(prev_last_health.seq >= 69);
+    try std.testing.expectEqual(@as(u16, 134), prev_last_health.health_code);
+    try std.testing.expectEqual(@as(u32, 34), prev_last_health.command_seq_ack);
+    const last_health = oc_health_history_event(oc_health_history_len() - 1);
+    try std.testing.expect(last_health.seq >= prev_last_health.seq);
+    try std.testing.expectEqual(@as(u16, 200), last_health.health_code);
+    try std.testing.expectEqual(@as(u32, 35), last_health.command_seq_ack);
+}
+
 test "baremetal mode history captures command and panic transitions and clear control" {
     status.mode = abi.mode_running;
     status.ticks = 0;
