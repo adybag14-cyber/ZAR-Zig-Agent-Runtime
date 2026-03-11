@@ -3822,6 +3822,19 @@ test "baremetal timer scheduler wake flow handles timer and interrupt wakeups" {
     try std.testing.expectEqual(task1_id, wake0.task_id);
     try std.testing.expectEqual(timer_entry.timer_id, wake0.timer_id);
     try std.testing.expectEqual(@as(u8, abi.wake_reason_timer), wake0.reason);
+    const timer_state_after_wake = oc_timer_state_ptr().*;
+    const timer_entry_after_wake = oc_timer_entry(0);
+    try std.testing.expectEqual(@as(u8, 1), timer_state_after_wake.enabled);
+    try std.testing.expectEqual(@as(u32, 0), oc_timer_entry_count());
+    try std.testing.expect(timer_state_after_wake.pending_wake_count >= 1);
+    try std.testing.expect(timer_state_after_wake.dispatch_count >= 1);
+    try std.testing.expect(timer_state_after_wake.last_wake_tick > 0);
+    try std.testing.expectEqual(timer_entry.timer_id, timer_entry_after_wake.timer_id);
+    try std.testing.expectEqual(task1_id, timer_entry_after_wake.task_id);
+    try std.testing.expectEqual(@as(u8, abi.timer_entry_state_fired), timer_entry_after_wake.state);
+    try std.testing.expect(timer_entry_after_wake.fire_count >= 1);
+    try std.testing.expect(timer_entry_after_wake.last_fire_tick > 0);
+    try std.testing.expectEqual(timer_entry_after_wake.last_fire_tick, wake0.tick);
     try std.testing.expect(oc_scheduler_task(0).state == abi.task_state_ready or oc_scheduler_task(0).state == abi.task_state_running);
 
     // Create second task and wait specifically for interrupt wake path.

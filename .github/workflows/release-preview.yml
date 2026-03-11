@@ -566,6 +566,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-timer-wake-probe-check.ps1
 
+      - name: Bare-metal QEMU timer wake baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-wake-baseline-probe-check.ps1 -SkipBuild
+
+      - name: Bare-metal QEMU timer wake task-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-wake-task-state-probe-check.ps1 -SkipBuild
+
+      - name: Bare-metal QEMU timer wake timer-telemetry probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-wake-timer-telemetry-probe-check.ps1 -SkipBuild
+
+      - name: Bare-metal QEMU timer wake wake-payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-wake-wake-payload-probe-check.ps1 -SkipBuild
+
+      - name: Bare-metal QEMU timer wake mailbox-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-wake-mailbox-state-probe-check.ps1 -SkipBuild
+
       - name: Bare-metal QEMU timer quantum probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-timer-quantum-probe-check.ps1
