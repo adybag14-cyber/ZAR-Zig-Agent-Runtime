@@ -1572,6 +1572,9 @@ Full-stack replacement execution reference:
     - live PVH/QEMU+GDB sequence fills all `64` allocator records with one-page allocations, proves the next `command_allocator_alloc` returns `result_no_space`, frees allocator record slot `5`, proves that slot becomes reusable while the table returns to full occupancy, and proves first-fit page search advances to pages `64-65` because page `6` still blocks the freed region.
     - key probe evidence: `ACK=68`, `LAST_OPCODE=32`, `LAST_RESULT=0`, `PRE_FREE_REUSE_RECORD_PTR=1069056`, `POST_FREE_LAST_FREE_PTR=1069056`, `POST_REUSE_PTR=1310720`, `POST_REUSE_PAGE_START=64`, `POST_REUSE_PAGE_LEN=2`, `POST_REUSE_ALLOCATION_COUNT=64`, `POST_REUSE_FREE_PAGES=191`, `POST_REUSE_BITMAP64=1`, `POST_REUSE_BITMAP65=1`.
     - probe is wired into both `zig-ci` and `release-preview` validate stages so allocator-table reuse regressions now block CI.
+  - bare-metal allocator saturation reuse wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-allocator-saturation-reuse-baseline-probe-check.ps1`, `scripts/baremetal-qemu-allocator-saturation-reuse-full-table-shape-probe-check.ps1`, `scripts/baremetal-qemu-allocator-saturation-reuse-no-space-preserve-probe-check.ps1`, `scripts/baremetal-qemu-allocator-saturation-reuse-freed-slot-state-probe-check.ps1`, and `scripts/baremetal-qemu-allocator-saturation-reuse-fresh-restart-probe-check.ps1`.
+    - these wrappers reuse the broad allocator saturation-reuse PVH/QEMU lane and fail directly on five narrower contracts: final mailbox baseline, saturated-table shape, preserved no-space metadata, freed-slot cleanup state, and the fresh two-page restart semantics.
   - bare-metal allocator/syscall reset validation shipped:
     - new script: `scripts/baremetal-qemu-allocator-syscall-reset-probe-check.ps1`.
     - added matching host regression in `src/baremetal_main.zig`.

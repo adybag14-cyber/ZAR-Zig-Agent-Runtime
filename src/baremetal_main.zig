@@ -4533,6 +4533,7 @@ test "baremetal allocator saturation free reuses record slot and first fit pages
     _ = oc_submit_command(abi.command_allocator_alloc, alloc_size, alloc_alignment);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_no_space), status.last_command_result);
+    try std.testing.expectEqual(abi.command_allocator_alloc, status.last_command_opcode);
 
     const reused_before = oc_allocator_allocation(reuse_slot_index);
     try std.testing.expectEqual(@as(u8, abi.allocation_state_active), reused_before.state);
@@ -4541,6 +4542,7 @@ test "baremetal allocator saturation free reuses record slot and first fit pages
     _ = oc_submit_command(abi.command_allocator_free, freed_ptr, 0);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(abi.command_allocator_free, status.last_command_opcode);
     const state_after_free = oc_allocator_state_ptr().*;
     try std.testing.expectEqual(capacity - 1, state_after_free.allocation_count);
     try std.testing.expectEqual(state_after_free.total_pages - (capacity - 1), state_after_free.free_pages);
@@ -4554,6 +4556,7 @@ test "baremetal allocator saturation free reuses record slot and first fit pages
     _ = oc_submit_command(abi.command_allocator_alloc, fresh_alloc_size, alloc_alignment);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(abi.command_allocator_alloc, status.last_command_opcode);
     const state_after_reuse = oc_allocator_state_ptr().*;
     const reused_after = oc_allocator_allocation(reuse_slot_index);
     try std.testing.expectEqual(capacity, state_after_reuse.allocation_count);

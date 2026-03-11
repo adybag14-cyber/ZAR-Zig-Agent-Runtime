@@ -496,6 +496,7 @@ Recommended sequence:
 - bare-metal optional QEMU allocator saturation reset probe in validate stage
 - bare-metal optional QEMU allocator saturation reset wrapper probes in validate stage
 - bare-metal optional QEMU allocator saturation reuse probe in validate stage
+- bare-metal optional QEMU allocator saturation reuse wrapper probes in validate stage
 - bare-metal optional QEMU allocator free failure probe in validate stage
 - bare-metal optional QEMU allocator free failure wrapper probes in validate stage
 - bare-metal optional QEMU syscall control probe in validate stage

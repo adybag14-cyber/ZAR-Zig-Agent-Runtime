@@ -1659,6 +1659,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-allocator-saturation-reuse-probe-check.ps1
 
+      - name: Bare-metal QEMU allocator saturation reuse baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-saturation-reuse-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator saturation reuse full-table-shape probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-saturation-reuse-full-table-shape-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator saturation reuse no-space-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-saturation-reuse-no-space-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator saturation reuse freed-slot-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-saturation-reuse-freed-slot-state-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator saturation reuse fresh-restart probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-saturation-reuse-fresh-restart-probe-check.ps1
+
       - name: Bare-metal QEMU allocator free failure probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-allocator-free-failure-probe-check.ps1
