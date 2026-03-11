@@ -3280,6 +3280,7 @@ test "baremetal direct mode and boot phase setters are isolated, idempotent, and
 
     _ = oc_submit_command(abi.command_set_mode, abi.mode_running, 0);
     oc_tick();
+    try std.testing.expectEqual(@as(u16, abi.command_set_mode), status.last_command_opcode);
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
     try std.testing.expectEqual(@as(u8, abi.mode_running), status.mode);
     try std.testing.expectEqual(@as(u32, 0), oc_mode_history_len());
@@ -3289,6 +3290,7 @@ test "baremetal direct mode and boot phase setters are isolated, idempotent, and
 
     _ = oc_submit_command(abi.command_set_boot_phase, abi.boot_phase_runtime, 0);
     oc_tick();
+    try std.testing.expectEqual(@as(u16, abi.command_set_boot_phase), status.last_command_opcode);
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
     try std.testing.expectEqual(@as(u8, abi.boot_phase_runtime), boot_diagnostics.phase);
     try std.testing.expectEqual(@as(u32, 0), boot_diagnostics.phase_changes);
@@ -3296,6 +3298,7 @@ test "baremetal direct mode and boot phase setters are isolated, idempotent, and
 
     _ = oc_submit_command(abi.command_set_boot_phase, abi.boot_phase_init, 0);
     oc_tick();
+    try std.testing.expectEqual(@as(u16, abi.command_set_boot_phase), status.last_command_opcode);
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
     try std.testing.expectEqual(@as(u8, abi.boot_phase_init), boot_diagnostics.phase);
     try std.testing.expectEqual(@as(u32, 1), oc_boot_phase_history_len());
@@ -3306,6 +3309,7 @@ test "baremetal direct mode and boot phase setters are isolated, idempotent, and
 
     _ = oc_submit_command(abi.command_set_boot_phase, abi.boot_phase_init, 0);
     oc_tick();
+    try std.testing.expectEqual(@as(u16, abi.command_set_boot_phase), status.last_command_opcode);
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
     try std.testing.expectEqual(@as(u8, abi.boot_phase_init), boot_diagnostics.phase);
     try std.testing.expectEqual(@as(u32, 1), boot_diagnostics.phase_changes);
@@ -3313,12 +3317,14 @@ test "baremetal direct mode and boot phase setters are isolated, idempotent, and
 
     _ = oc_submit_command(abi.command_set_boot_phase, 99, 0);
     oc_tick();
+    try std.testing.expectEqual(@as(u16, abi.command_set_boot_phase), status.last_command_opcode);
     try std.testing.expectEqual(@as(i16, abi.result_invalid_argument), status.last_command_result);
     try std.testing.expectEqual(@as(u8, abi.boot_phase_init), boot_diagnostics.phase);
     try std.testing.expectEqual(@as(u32, 1), oc_boot_phase_history_len());
 
     _ = oc_submit_command(abi.command_set_mode, abi.mode_panicked, 0);
     oc_tick();
+    try std.testing.expectEqual(@as(u16, abi.command_set_mode), status.last_command_opcode);
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
     try std.testing.expectEqual(@as(u8, abi.mode_panicked), status.mode);
     try std.testing.expectEqual(@as(u32, 0), status.panic_count);
@@ -3331,6 +3337,7 @@ test "baremetal direct mode and boot phase setters are isolated, idempotent, and
 
     _ = oc_submit_command(abi.command_set_mode, abi.mode_running, 0);
     oc_tick();
+    try std.testing.expectEqual(@as(u16, abi.command_set_mode), status.last_command_opcode);
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
     try std.testing.expectEqual(@as(u8, abi.mode_running), status.mode);
     try std.testing.expectEqual(@as(u32, 0), status.panic_count);
@@ -3344,6 +3351,7 @@ test "baremetal direct mode and boot phase setters are isolated, idempotent, and
 
     _ = oc_submit_command(abi.command_set_mode, 77, 0);
     oc_tick();
+    try std.testing.expectEqual(@as(u16, abi.command_set_mode), status.last_command_opcode);
     try std.testing.expectEqual(@as(i16, abi.result_invalid_argument), status.last_command_result);
     try std.testing.expectEqual(@as(u8, abi.mode_running), status.mode);
     try std.testing.expectEqual(@as(u8, abi.boot_phase_init), boot_diagnostics.phase);
