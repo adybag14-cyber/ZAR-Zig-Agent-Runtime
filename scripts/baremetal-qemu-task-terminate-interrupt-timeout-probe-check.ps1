@@ -297,7 +297,7 @@ $zigLocalCacheDir = if ($env:ZIG_LOCAL_CACHE_DIR -and $env:ZIG_LOCAL_CACHE_DIR.T
 if ($null -eq $qemu -or $null -eq $gdb) {
     Write-Output "BAREMETAL_QEMU_AVAILABLE=$([bool]($null -ne $qemu))"
     Write-Output "BAREMETAL_GDB_AVAILABLE=$([bool]($null -ne $gdb))"
-    Write-Output "BAREMETAL_QEMU_TIMER_CANCEL_TASK_INTERRUPT_TIMEOUT_PROBE=skipped"
+    Write-Output "BAREMETAL_QEMU_TASK_TERMINATE_INTERRUPT_TIMEOUT_PROBE=skipped"
     return
 }
 
@@ -306,7 +306,7 @@ if ($null -eq $nm) {
     Write-Output "BAREMETAL_QEMU_BINARY=$qemu"
     Write-Output "BAREMETAL_GDB_BINARY=$gdb"
     Write-Output "BAREMETAL_NM_AVAILABLE=False"
-    Write-Output "BAREMETAL_QEMU_TIMER_CANCEL_TASK_INTERRUPT_TIMEOUT_PROBE=skipped"
+    Write-Output "BAREMETAL_QEMU_TASK_TERMINATE_INTERRUPT_TIMEOUT_PROBE=skipped"
     return
 }
 
@@ -319,7 +319,7 @@ if ($null -eq $clang -or $null -eq $lld -or $null -eq $compilerRt) {
     if ($null -eq $clang) { Write-Output "BAREMETAL_QEMU_PVH_MISSING=clang" }
     if ($null -eq $lld) { Write-Output "BAREMETAL_QEMU_PVH_MISSING=lld" }
     if ($null -eq $compilerRt) { Write-Output "BAREMETAL_QEMU_PVH_MISSING=libcompiler_rt.a" }
-    Write-Output "BAREMETAL_QEMU_TIMER_CANCEL_TASK_INTERRUPT_TIMEOUT_PROBE=skipped"
+    Write-Output "BAREMETAL_QEMU_TASK_TERMINATE_INTERRUPT_TIMEOUT_PROBE=skipped"
     return
 }
 
