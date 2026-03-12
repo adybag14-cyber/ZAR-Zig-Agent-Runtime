@@ -1640,6 +1640,8 @@ Full-stack replacement execution reference:
     - the wrapper batch reuses the broad live reset-counters probe and isolates five narrower contracts: final mailbox/status reset envelope, vector aggregate/history collapse, command/health/mode/boot history collapse, subsystem baseline collapse across scheduler/allocator/syscall/timer/wake state, and final command-result receipt shape after `command_reset_counters`.
   - bare-metal syscall wrapper validation shipped:
     - new scripts: `scripts/baremetal-qemu-syscall-reregister-preserve-count-probe-check.ps1`, `scripts/baremetal-qemu-syscall-blocked-invoke-preserve-state-probe-check.ps1`, `scripts/baremetal-qemu-syscall-disabled-invoke-preserve-state-probe-check.ps1`, `scripts/baremetal-qemu-syscall-saturation-overflow-preserve-full-probe-check.ps1`, `scripts/baremetal-qemu-syscall-saturation-reuse-slot-probe-check.ps1`, and `scripts/baremetal-qemu-syscall-saturation-reset-restart-probe-check.ps1`.
+    - expanded the dedicated `syscall-saturation-reset` lane into a full wrapper family with `scripts/baremetal-qemu-syscall-saturation-reset-baseline-probe-check.ps1`, `scripts/baremetal-qemu-syscall-saturation-reset-pre-reset-shape-probe-check.ps1`, `scripts/baremetal-qemu-syscall-saturation-reset-post-reset-baseline-probe-check.ps1`, `scripts/baremetal-qemu-syscall-saturation-reset-restart-probe-check.ps1`, and `scripts/baremetal-qemu-syscall-saturation-reset-fresh-invoke-probe-check.ps1`, plus stronger host assertions on the dirty invoke/reset/fresh-register/fresh-invoke opcode progression.
+    - expanded the dedicated `syscall-saturation-reset` lane into a full wrapper family with `scripts/baremetal-qemu-syscall-saturation-reset-baseline-probe-check.ps1`, `scripts/baremetal-qemu-syscall-saturation-reset-pre-reset-shape-probe-check.ps1`, `scripts/baremetal-qemu-syscall-saturation-reset-post-reset-baseline-probe-check.ps1`, `scripts/baremetal-qemu-syscall-saturation-reset-restart-probe-check.ps1`, and `scripts/baremetal-qemu-syscall-saturation-reset-fresh-invoke-probe-check.ps1`, plus stronger host assertions on the dirty invoke/reset/fresh-register/fresh-invoke opcode progression.
     - the wrapper batch reuses the broad live syscall probes and isolates six narrower contracts: re-register token update without entry-count growth, blocked invoke preservation, disabled invoke preservation, full-table retention across saturation overflow, reclaimed-slot replacement semantics, and fresh slot-zero restart after `command_syscall_reset`.
     - the new wrappers are wired into both `zig-ci` and `release-preview`, so syscall-control regressions now fail at the narrow boundary instead of only inside the larger mutation or saturation sequences.
   - bare-metal interrupt/exception reset-isolation wrapper validation shipped:
@@ -1734,5 +1736,7 @@ Full-stack replacement execution reference:
     - node-pair protocol handling consolidated across payload variants: request aliases (`node_id/deviceId`) and action aliases (`pair_id/nodePairId/id` + optional `status|decision`) now normalize into the same state transitions and response schema.
     - node-pair responses now include a consolidated `pairing` envelope for easier adapter compatibility, and `node.pair.list` now mirrors `items` into `pairs`.
     - validated with `zig build test --summary all` (`117/117`).
+
+
 
 

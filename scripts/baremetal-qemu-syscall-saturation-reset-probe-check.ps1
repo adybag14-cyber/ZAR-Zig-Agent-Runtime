@@ -560,11 +560,12 @@ try {
     if ($invokeTick -le 0) { throw "Unexpected INVOKE_TICK value. Expected > 0, got $invokeTick. stdout: $gdbOutput stderr: $gdbError" }
 
     Write-Output "BAREMETAL_QEMU_AVAILABLE=True"
-    Write-Output "BAREMETAL_QEMU_BINARY=$qemu"
-    Write-Output "BAREMETAL_GDB_BINARY=$gdb"
-    Write-Output "BAREMETAL_NM_BINARY=$nm"
-    Write-Output "BAREMETAL_QEMU_SYSCALL_SATURATION_RESET_PROBE=pass"
-    $gdbOutput.TrimEnd()
+Write-Output "BAREMETAL_QEMU_BINARY=$qemu"
+Write-Output "BAREMETAL_GDB_BINARY=$gdb"
+Write-Output "BAREMETAL_NM_BINARY=$nm"
+Write-Output "BAREMETAL_QEMU_SYSCALL_SATURATION_RESET_PROBE=pass"
+Write-Output "BAREMETAL_QEMU_SYSCALL_SATURATION_RESET_PROBE_SOURCE=baremetal-qemu-syscall-saturation-reset-probe-check.ps1"
+$gdbOutput.TrimEnd()
 } finally {
     if ($null -ne $qemuProcess -and -not $qemuProcess.HasExited) {
         try { $qemuProcess.Kill() } catch {}

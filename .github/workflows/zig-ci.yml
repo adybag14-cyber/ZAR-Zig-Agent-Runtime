@@ -1916,6 +1916,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-syscall-saturation-reset-probe-check.ps1
 
+      - name: Bare-metal QEMU syscall saturation reset baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-saturation-reset-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall saturation reset pre-reset shape probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-saturation-reset-pre-reset-shape-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall saturation reset post-reset baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-saturation-reset-post-reset-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall saturation reset restart probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-saturation-reset-restart-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall saturation reset fresh invoke probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-saturation-reset-fresh-invoke-probe-check.ps1
+
       - name: Bare-metal QEMU allocator saturation reset probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-allocator-saturation-reset-probe-check.ps1

@@ -4530,14 +4530,18 @@ test "baremetal syscall reset clears saturated table and restarts dispatch state
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
     const pre_reset_expected: i64 = @as(i64, @bitCast(@as(u64, (0x2000 + (pre_reset_invoke_id - 1)) ^ pre_reset_invoke_arg ^ pre_reset_invoke_id)));
+    try std.testing.expectEqual(@as(u16, abi.command_syscall_invoke), status.last_command_opcode);
     try std.testing.expectEqual(capacity, oc_syscall_entry_count());
     try std.testing.expectEqual(@as(u64, 1), oc_syscall_state_ptr().dispatch_count);
     try std.testing.expectEqual(pre_reset_invoke_id, oc_syscall_state_ptr().last_syscall_id);
     try std.testing.expectEqual(pre_reset_expected, oc_syscall_state_ptr().last_result);
+    try std.testing.expectEqual(@as(u8, abi.syscall_entry_state_registered), oc_syscall_entry(0).state);
+    try std.testing.expectEqual(@as(u8, abi.syscall_entry_state_registered), oc_syscall_entry(1).state);
 
     _ = oc_submit_command(abi.command_syscall_reset, 0, 0);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_syscall_reset), status.last_command_opcode);
     try std.testing.expect(oc_syscall_enabled());
     try std.testing.expectEqual(@as(u32, 0), oc_syscall_entry_count());
     const state_after_reset = oc_syscall_state_ptr().*;
@@ -4554,6 +4558,7 @@ test "baremetal syscall reset clears saturated table and restarts dispatch state
     _ = oc_submit_command(abi.command_syscall_register, fresh_id, fresh_token);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_syscall_register), status.last_command_opcode);
     try std.testing.expectEqual(@as(u32, 1), oc_syscall_entry_count());
     try std.testing.expectEqual(fresh_id, oc_syscall_entry(0).syscall_id);
     try std.testing.expectEqual(fresh_token, oc_syscall_entry(0).handler_token);
@@ -4563,6 +4568,7 @@ test "baremetal syscall reset clears saturated table and restarts dispatch state
     _ = oc_submit_command(abi.command_syscall_invoke, fresh_id, fresh_invoke_arg);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_syscall_invoke), status.last_command_opcode);
     const fresh_expected: i64 = @as(i64, @bitCast(@as(u64, fresh_token ^ fresh_invoke_arg ^ fresh_id)));
     try std.testing.expectEqual(@as(u64, 1), oc_syscall_entry(0).invoke_count);
     try std.testing.expectEqual(fresh_invoke_arg, oc_syscall_entry(0).last_arg);

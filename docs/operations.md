@@ -317,6 +317,7 @@ Recommended sequence:
 - optional bare-metal QEMU allocator syscall reset probe (dirty allocator alloc plus syscall register/invoke state, then dedicated `command_allocator_reset` + `command_syscall_reset` recovery proof showing both subsystems collapse independently back to steady baseline against the freestanding PVH artifact)
 - optional bare-metal QEMU syscall saturation probe (fill the 64-entry syscall table, reject the 65th `register`, reclaim one slot with `unregister`, reuse it with a fresh syscall ID/token, and prove the reused slot invokes cleanly against the freestanding PVH artifact)
 - optional bare-metal QEMU syscall saturation reset probe (fill the 64-entry syscall table, dirty dispatch telemetry with a real invoke, run `command_syscall_reset`, prove the fully saturated table returns to steady state, and then prove a fresh syscall restarts cleanly from slot `0` against the freestanding PVH artifact)
+- optional bare-metal QEMU syscall saturation reset wrapper probes (`baremetal-qemu-syscall-saturation-reset-baseline-probe-check.ps1`, `baremetal-qemu-syscall-saturation-reset-pre-reset-shape-probe-check.ps1`, `baremetal-qemu-syscall-saturation-reset-post-reset-baseline-probe-check.ps1`, `baremetal-qemu-syscall-saturation-reset-restart-probe-check.ps1`, and `baremetal-qemu-syscall-saturation-reset-fresh-invoke-probe-check.ps1`) reuse the broad reset lane but fail directly on final mailbox baseline, dirty saturated pre-reset state, zero-entry post-reset baseline, slot-0 restart, and first fresh invoke telemetry
 - optional bare-metal QEMU allocator saturation reset probe (fill all 64 allocator records, reject the next `command_allocator_alloc` with `no_space`, run `command_allocator_reset`, prove counters/bitmap/records collapse to steady state, and then prove a fresh 2-page allocation restarts cleanly from slot `0` against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator saturation reuse probe (fill all 64 allocator records, reject the next `command_allocator_alloc` with `no_space`, free allocator record slot `5`, prove the slot becomes reusable while the table returns to full occupancy, and prove first-fit page search lands on pages `64-65` against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator free failure probe (allocate 2 pages, prove wrong-pointer `command_allocator_free` returns `result_not_found`, wrong-size returns `result_invalid_argument`, successful free updates `last_free_*`, double-free returns `result_not_found`, and a fresh allocation restarts from page `0` against the freestanding PVH artifact)
@@ -525,6 +526,7 @@ Recommended sequence:
 - bare-metal optional QEMU allocator syscall reset probe in validate stage
 - bare-metal optional QEMU syscall saturation probe in validate stage
 - bare-metal optional QEMU syscall saturation reset probe in validate stage
+- bare-metal optional QEMU syscall saturation reset wrapper probes in validate stage
 - bare-metal optional QEMU allocator saturation reset probe in validate stage
 - bare-metal optional QEMU allocator saturation reset wrapper probes in validate stage
 - bare-metal optional QEMU allocator saturation reuse probe in validate stage
@@ -615,5 +617,7 @@ Policy:
 - Use Codeberg `master` as the canonical freshness target.
 - Use `adybag14-cyber/zig` `latest-master` when the goal is a fast Windows toolchain refresh.
 - Use `adybag14-cyber/zig` `upstream-<sha>` when the goal is reproducible CI, bisects, or release recreation.
+
+
 
 

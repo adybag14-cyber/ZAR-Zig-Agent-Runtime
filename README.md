@@ -235,6 +235,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - optional QEMU allocator/syscall reset probe validates the dedicated dirty-state recovery lane without saturation noise, proving live allocator alloc plus syscall register/invoke state is visible before reset, `command_allocator_reset` and `command_syscall_reset` independently collapse both subsystems back to steady baseline, and a final missing-entry invoke returns `result_not_found`
   - optional QEMU syscall saturation probe validates the dedicated syscall-table capacity and reuse lane without allocator noise, proving 64/64 registration, overflow rejection, reclaimed-slot reuse, and fresh invoke telemetry against the freestanding PVH artifact
   - optional QEMU syscall saturation reset probe validates the dedicated reset lane without allocator noise, proving a fully saturated syscall table plus dirty dispatch telemetry collapse back to reset steady state and that the next fresh syscall register/invoke path restarts cleanly from slot `0`
+- optional QEMU syscall saturation reset wrapper probes isolate that lane into the final mailbox baseline, dirty pre-reset saturated shape, post-reset zero-entry baseline, clean slot-0 restart, and fresh post-reset invoke telemetry checks against the freestanding PVH artifact
   - optional QEMU allocator saturation reset probe validates the dedicated allocator-table reset lane without syscall noise, proving all 64 allocator records fill cleanly, the next allocation returns `no_space`, `command_allocator_reset` collapses counters/bitmap/records to steady state, and a fresh 2-page allocation restarts cleanly from slot `0`
   - optional QEMU allocator saturation reuse probe validates the dedicated allocator-table reuse lane without syscall noise, proving the full 64-record table rejects overflow, `command_allocator_free` reclaims a middle slot, the next 2-page allocation reuses that record slot, and first-fit page search moves to pages `64-65` because page `6` still blocks the freed region
   - optional QEMU allocator free-failure probe validates the dedicated `command_allocator_free` error lane without syscall noise, proving wrong-pointer `not_found`, wrong-size `invalid_argument`, successful free metadata updates, double-free `not_found`, and post-failure reallocation from page `0`
@@ -737,6 +738,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU allocator syscall reset probe
 - optional bare-metal QEMU syscall saturation probe
 - optional bare-metal QEMU syscall saturation reset probe
+- optional bare-metal QEMU syscall saturation reset wrapper probes
 - optional bare-metal QEMU allocator saturation reset probe
 - optional bare-metal QEMU allocator saturation reuse probe
 - optional bare-metal QEMU allocator free failure probe
@@ -834,6 +836,7 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU allocator syscall reset wrapper validation
 - optional bare-metal QEMU syscall saturation validation
 - optional bare-metal QEMU syscall saturation reset validation
+- optional bare-metal QEMU syscall saturation reset wrapper validation
 - optional bare-metal QEMU allocator saturation reset validation
 - optional bare-metal QEMU allocator saturation reset wrapper validation
 - optional bare-metal QEMU allocator saturation reuse validation
@@ -895,5 +898,7 @@ Manual python release trigger:
 ```powershell
 gh workflow run python-release.yml -R adybag14-cyber/openclaw-zig-port -f version=<pep440-version> -f release_tag=<release-tag>
 ```
+
+
 
 
