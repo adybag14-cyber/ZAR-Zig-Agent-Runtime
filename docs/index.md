@@ -11,7 +11,7 @@ Full documentation for the OpenClaw Zig runtime port.
   - Original OpenClaw beta baseline (`v2026.3.8-beta.1`): `97/97`
   - Union baseline: `138/138` (`MISSING_IN_ZIG=0`)
   - Gateway events union baseline: `19/19` (`UNION_EVENTS_MISSING_IN_ZIG=0`)
-- Latest local validation: `219/219` main tests + `116/116` bare-metal host tests passing
+- Latest local validation: `223/223` main tests + `116/116` bare-metal host tests passing
 - Latest published edge release tag: `v0.2.0-zig-edge.28`
 - Toolchain lane: Codeberg `master` is canonical; `adybag14-cyber/zig` provides rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
 - Recent FS1 progress (2026-03-06):
@@ -27,6 +27,7 @@ Full documentation for the OpenClaw Zig runtime port.
 - Package publishing, registry configuration, and install fallbacks
 - Full feature coverage by domain
 - Strict FS2 provider/channel matrix
+- Strict FS3 memory/knowledge matrix
 - RPC method family reference
 - Security, diagnostics, and remediation model
 - Browser/auth integration model (Lightpanda-only)
@@ -41,5 +42,6 @@ Full documentation for the OpenClaw Zig runtime port.
 - Tracking issue: <https://github.com/adybag14-cyber/openclaw-zig-port/issues/1>
 - Package publishing guide: [package-publishing.md](package-publishing.md)
 - Strict FS2 matrix: [zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md](zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md)
+- Strict FS3 matrix: [zig-port/FS3_MEMORY_KNOWLEDGE_MATRIX.md](zig-port/FS3_MEMORY_KNOWLEDGE_MATRIX.md)
 - Method registry source: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/openclaw-zig-port/blob/main/src/gateway/registry.zig)
 

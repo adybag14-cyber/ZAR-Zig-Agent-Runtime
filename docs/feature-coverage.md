@@ -103,6 +103,11 @@ This page summarizes functional coverage across all major OpenClaw Zig runtime d
 - persistent store with append/history/stats
 - memory-backed doctor status and session/chat history retrieval
 - efficient trim and session removal with linear compaction
+- strict FS3 gate source:
+  - [`docs/zig-port/FS3_MEMORY_KNOWLEDGE_MATRIX.md`](zig-port/FS3_MEMORY_KNOWLEDGE_MATRIX.md)
+- strict FS3 consumer proofs:
+  - `scripts/browser-request-memory-context-smoke-check.ps1`
+  - `scripts/telegram-reply-memory-context-smoke-check.ps1`
 
 ## Edge and Advanced Surfaces
 

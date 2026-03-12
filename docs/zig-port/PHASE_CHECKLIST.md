@@ -409,7 +409,18 @@ Registry status:
     - `models.list` now supports provider-scoped dynamic catalog refresh metadata for `qwen`, `openrouter`, and `opencode`, with TTL control via `OPENCLAW_ZIG_RUNTIME_MODEL_CATALOG_REFRESH_TTL_SECONDS`.
     - dynamic catalog ownership now stays inside the compat allocator, preventing cross-allocator leaks/crashes during long-lived dispatcher state.
     - regression coverage added for invalid params, provider alias normalization (`copaw -> qwen`), and JSON-parsed browser-context assertions to avoid brittle exact-count failures in stateful suites.
-- [ ] FS3 - Memory/knowledge depth
+- [x] FS3 - Memory/knowledge depth
+  - Strict FS3 closure reached locally on 2026-03-12:
+    - hard matrix published: `docs/zig-port/FS3_MEMORY_KNOWLEDGE_MATRIX.md`
+    - repo-native tests explicitly cover:
+      - persistence + restart recovery
+      - semantic recall ranking
+      - graph recall + synthesis
+      - retention-cap and unlimited-retention modes
+    - strict consumer proofs are now enforced with:
+      - `scripts/browser-request-memory-context-smoke-check.ps1`
+      - `scripts/telegram-reply-memory-context-smoke-check.ps1`
+    - both FS3 consumer smokes now run in `zig-ci` and `release-preview`
 - [x] FS4 - Security + trust hardening
   - Strict FS4 closure reached locally on 2026-03-12:
     - `security.audit`, `doctor`, and `secrets.store.*` are documented in:

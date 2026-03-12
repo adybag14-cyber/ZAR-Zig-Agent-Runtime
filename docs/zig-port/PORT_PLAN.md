@@ -526,6 +526,11 @@ Full-stack replacement execution reference:
     - memory stats now report vector and graph telemetry (`vectors`, `graphNodes`, `graphEdges`) plus unlimited-retention posture (`unlimited`, `maxEntries=0`).
     - runtime memory retention is now config-driven through `runtime.memory_max_entries` (`OPENCLAW_ZIG_RUNTIME_MEMORY_MAX_ENTRIES`), including unlimited mode for `<=0`.
     - browser completion context injection now includes memory recap + semantic/graph recall hints to reduce false \"no tools/no memory\" model responses.
+  - FS3 strict closure reached locally:
+    - hard matrix published: `docs/zig-port/FS3_MEMORY_KNOWLEDGE_MATRIX.md`
+    - `scripts/browser-request-memory-context-smoke-check.ps1` now proves persisted session memory injection on the hosted `browser.request` completion lane
+    - `scripts/telegram-reply-memory-context-smoke-check.ps1` now proves persisted session memory injection on the hosted Telegram reply lane
+    - both FS3 consumer smokes are now wired into `zig-ci` and `release-preview`
   - Phase 5 Telegram bridge context depth expanded:
     - dispatcher now wires Telegram runtime to the shared memory store (`getTelegramRuntime -> setMemoryStore(getMemoryStore())`) so runtime bridge completions can consume persisted session memory context.
     - Telegram `tryGenerateBridgeReply` now injects a runtime tool-capability system prompt plus memory recall context (semantic + graph synthesis) and recent session history into Lightpanda completion messages.

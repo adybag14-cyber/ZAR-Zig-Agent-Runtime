@@ -24,13 +24,13 @@ This report has been refreshed after the first strict FS1 slice landed.
 
 - `node.pending.enqueue` and `node.pending.drain` are now implemented in the local source of truth.
 - current local validation is green:
-  - `zig build test --summary all` -> hosted `205/205`
+  - `zig build test --summary all` -> hosted `223/223`
   - bare-metal host tests -> `116/116`
 - current local parity gate is green:
   - Go baseline `v2.14.0-go`
   - stable baseline `v2026.3.11`
   - beta baseline `v2026.3.11-beta.1`
-- the strict execution order now advances from FS4 to FS2.
+- the strict execution order now advances from FS3 to FS5.
 
 This report is based on the current local repo and directly inspected upstream contracts. Stale streamed summaries, guessed percentages, and unverified reviewer claims are not accepted as evidence.
 
@@ -244,18 +244,6 @@ Current strict status after this slice:
   - `runtime.memory_max_entries`
 - browser and Telegram memory-context injection surfaces already exist
 
-#### Confirmed work still needed for strict completion
-
-1. There is real memory depth, but no strict FS3 closure matrix tying storage, recovery, recall, and consumer injection together as one completion gate.
-2. The repo does not yet define phase-complete evidence for:
-   - persistence across restart
-   - semantic recall ranking
-   - graph-neighbor recall
-   - synthesis payload quality
-   - browser completion memory injection
-   - Telegram reply memory injection
-3. Memory-fed downstream features in FS5 should not be called complete until the consumer side is proven against the persisted store, not only unit tests.
-
 #### Strict FS3 success gates
 
 FS3 is not complete until all of the following are true:
@@ -266,6 +254,25 @@ FS3 is not complete until all of the following are true:
 4. At least one browser completion and one Telegram reply path prove memory-context consumption from persisted state.
 5. Retention-cap and unlimited-retention modes are both tested and documented.
 6. `zig-ci` and `docs-pages` are green on the pushed head.
+
+#### Current strict status
+
+Strict FS3 closure is now reached locally.
+
+Reasons:
+
+1. The hard matrix now exists at `docs/zig-port/FS3_MEMORY_KNOWLEDGE_MATRIX.md`.
+2. Repo-native memory tests now explicitly cover:
+   - persistence/recovery
+   - semantic recall ranking
+   - graph recall
+   - synthesis
+   - restart-safe vector/graph stats
+   - retention-cap and unlimited-retention modes
+3. `scripts/browser-request-memory-context-smoke-check.ps1` proves persisted session memory is injected into a real `browser.request` completion path.
+4. `scripts/telegram-reply-memory-context-smoke-check.ps1` proves persisted session memory is injected into a real Telegram reply completion path.
+5. Both FS3 consumer smokes are now part of the strict hosted CI/release lane.
+6. FS5 is no longer blocked on missing FS3 consumer proof; downstream work can now treat the memory substrate as strictly closed.
 
 ### FS4 - Security + trust hardening
 
@@ -339,7 +346,7 @@ FS4 is not complete until all of the following are true:
    - manual blocker reporting
 5. `zig-ci` and `docs-pages` are green on the pushed head.
 
-Current local source-of-truth status: all FS4 gates are satisfied locally; the next strict hosted phase is FS2.
+Current local source-of-truth status: FS1, FS4, FS2, and FS3 gates are satisfied locally; the next strict hosted phase is FS5.
 
 ### FS5 - Edge/WASM/marketplace depth
 
@@ -463,4 +470,4 @@ gh run list -L 6 --json databaseId,headSha,status,conclusion,name,workflowName,d
 
 ## Decision
 
-FS1 and FS4 are now the hosted phases with local strict closure. The next strict execution target is FS2, and additional FS6 work is no longer the priority path until FS2 evidence is defined and burned down.
+FS1, FS4, FS2, and FS3 are now the hosted phases with local strict closure. The next strict execution target is FS5, and additional FS6 work is no longer the priority path until FS5 evidence is defined and burned down.

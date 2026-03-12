@@ -11,7 +11,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - Original OpenClaw beta baseline (`v2026.3.8-beta.1`): `97/97` covered
   - Union baseline: `138/138` covered (`MISSING_IN_ZIG=0`)
   - Gateway events: stable `19/19`, beta `19/19`, union `19/19` (`UNION_EVENTS_MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> main `219/219` + bare-metal host `116/116` passing
+- Latest local validation: `zig build test --summary all` -> main `223/223` + bare-metal host `116/116` passing
 - Latest published edge release tag: `v0.2.0-zig-edge.28`
 - Toolchain policy: Codeberg `master` is canonical; `adybag14-cyber/zig` publishes rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
 - CI policy: keep hosted build/test/parity/docs on Zig `master`, but pin the freestanding bare-metal compile/probe lane to the known-good Linux build `0.16.0-dev.2736+3b515fbed` until the upstream Linux `master` compiler crash on `zig build baremetal -Doptimize=ReleaseFast` is resolved.
@@ -26,7 +26,9 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - support levels are now explicit for `env`, `encrypted-file`, native fallback requests, and unsupported backend requests
 - Current strict hosted-phase focus:
   - `FS2` provider/channel completion is locally closed against the hard matrix at [`docs/zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md`](docs/zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md)
-  - `web-login-smoke-check.ps1`, `browser-request-success-smoke-check.ps1`, `browser-request-direct-provider-success-smoke-check.ps1`, `browser-request-openrouter-direct-provider-success-smoke-check.ps1`, `browser-request-opencode-direct-provider-success-smoke-check.ps1`, `telegram-reply-loop-smoke-check.ps1`, `telegram-webhook-receive-smoke-check.ps1`, and `telegram-bot-send-delivery-smoke-check.ps1` are now part of the strict FS2 CI lane
+  - `FS3` memory/knowledge depth is now locally closed against the hard matrix at [`docs/zig-port/FS3_MEMORY_KNOWLEDGE_MATRIX.md`](docs/zig-port/FS3_MEMORY_KNOWLEDGE_MATRIX.md)
+  - `browser-request-memory-context-smoke-check.ps1` and `telegram-reply-memory-context-smoke-check.ps1` are now part of the strict FS3 CI lane
+  - the next strict hosted-phase hard gate is `FS5`
 - Recent FS6 progress (2026-03-06):
   - `update.*` now has a real `canary` rollout lane instead of collapsing `canary` into `edge`
   - appliance rollout boundary is now enforced by live smoke validation (`canary` selection, secure-boot block, canary apply, stable promotion)
