@@ -444,6 +444,14 @@ Registry status:
 - [x] Add integration tests for request lifecycle
 
 FS1 runtime/core consolidation slice (active):
+- [x] Strict FS1-FS5 analysis report added: `docs/zig-port/FS1_FS5_STRICT_ANALYSIS_REPORT.md`
+  - locks the current source-of-truth baseline to local head `c50ba7e` and upstream `v2026.3.11` / `v2026.3.11-beta.1`.
+  - defines dependency-aware execution order: `FS1 -> FS4 -> FS2 -> FS3 -> FS5`.
+  - freezes the first required FS1 slice: `node.pending.enqueue` + `node.pending.drain` with upstream no-guesswork semantics.
+- [x] First FS1 hard method gap implemented in the Zig gateway:
+  - `src/gateway/registry.zig` now advertises `node.pending.enqueue` and `node.pending.drain`.
+  - `src/gateway/dispatcher.zig` now implements pending-work enqueue/drain state, ack integration, guard exemptions, direct compat-state regressions, and dispatcher contract tests.
+  - `docs/rpc-reference.md` regenerated so the RPC surface matches the live registry.
 - [x] Runtime state persistence + restart replay path added (`src/runtime/state.zig`):
   - persists session snapshots and pending job queue to `runtime-state.json` under configured `state_path`.
   - restores persisted sessions/queue on runtime bootstrap.

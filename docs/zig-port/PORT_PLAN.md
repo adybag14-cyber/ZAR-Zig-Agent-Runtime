@@ -57,7 +57,15 @@ Full-stack replacement execution reference:
 ## Current Progress Snapshot
 
 - Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `203/203`.
-- Release/package lane status (2026-03-06):
+- Strict execution report added:
+  - `docs/zig-port/FS1_FS5_STRICT_ANALYSIS_REPORT.md`
+  - this freezes the no-guesswork dependency order: `FS1 -> FS4 -> FS2 -> FS3 -> FS5`
+  - additional FS6 work is not allowed to substitute for unresolved FS1-FS5 hard gaps
+- Current hard hosted/runtime parity gap burn-down is explicitly locked to the first FS1 slice:
+  - `node.pending.enqueue`
+  - `node.pending.drain`
+  - registry coverage, dispatcher handlers, compat-state semantics, tests, and RPC reference are now implemented locally
+  - Release/package lane status (2026-03-06):
   - GitHub prerelease `v0.2.0-zig-edge.28` is live with desktop/android/bare-metal artifacts, parity reports, manifest, SBOM, provenance, npm tarball, wheel, and sdist.
   - release evidence now also includes `release-status.json` + `release-status.md` so every edge cut carries a frozen workflow-status + registry-status snapshot in addition to package preflight evidence.
   - Zig toolchain evidence is now mirror-aware:

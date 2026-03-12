@@ -439,6 +439,54 @@ const CompatPendingNodeAction = struct {
     }
 };
 
+const CompatPendingNodeWorkItem = struct {
+    item_id: []u8,
+    node_id: []u8,
+    work_type: []u8,
+    priority: []u8,
+    created_at_ms: i64,
+    expires_at_ms: ?i64,
+    payload_json: ?[]u8,
+
+    fn deinit(self: *CompatPendingNodeWorkItem, allocator: std.mem.Allocator) void {
+        allocator.free(self.item_id);
+        allocator.free(self.node_id);
+        allocator.free(self.work_type);
+        allocator.free(self.priority);
+        if (self.payload_json) |value| allocator.free(value);
+    }
+};
+
+const CompatPendingNodeWorkState = struct {
+    node_id: []u8,
+    revision: u64,
+    items: std.ArrayList(CompatPendingNodeWorkItem),
+
+    fn deinit(self: *CompatPendingNodeWorkState, allocator: std.mem.Allocator) void {
+        allocator.free(self.node_id);
+        for (self.items.items) |*entry| entry.deinit(allocator);
+        self.items.deinit(allocator);
+    }
+};
+
+const CompatPendingNodeWorkEncodeItem = struct {
+    id: []const u8,
+    type: []const u8,
+    priority: []const u8,
+    createdAtMs: i64,
+    expiresAtMs: ?i64 = null,
+};
+
+const CompatPendingNodeWorkDrainResult = struct {
+    revision: u64,
+    items: []CompatPendingNodeWorkEncodeItem,
+    hasMore: bool,
+
+    fn deinit(self: *CompatPendingNodeWorkDrainResult, allocator: std.mem.Allocator) void {
+        allocator.free(self.items);
+    }
+};
+
 const CompatNodeApproval = struct {
     node_id: []u8,
     mode: []u8,
@@ -502,6 +550,11 @@ const PersistedSessionChannel = struct {
 
 const compat_pending_node_action_ttl_ms: i64 = 10 * 60 * 1000;
 const compat_pending_node_action_max_per_node: usize = 64;
+const compat_pending_node_work_default_status_id = "baseline-status";
+const compat_pending_node_work_default_priority = "default";
+const compat_pending_node_work_default_max_items: usize = 4;
+const compat_pending_node_work_max_items: usize = 10;
+const compat_pending_node_work_min_expiry_ms: i64 = 1_000;
 
 const PersistedCompatState = struct {
     heartbeatEnabled: bool = true,
@@ -635,6 +688,8 @@ const CompatState = struct {
     node_events: std.ArrayList(CompatNodeEvent),
     next_pending_node_action_id: u64,
     pending_node_actions: std.ArrayList(CompatPendingNodeAction),
+    next_pending_node_work_id: u64,
+    pending_node_work_states: std.ArrayList(CompatPendingNodeWorkState),
     next_approval_id: u64,
     global_approval_mode: []u8,
     global_approval_updated_at_ms: i64,
@@ -738,6 +793,8 @@ const CompatState = struct {
             .node_events = .empty,
             .next_pending_node_action_id = 1,
             .pending_node_actions = .empty,
+            .next_pending_node_work_id = 1,
+            .pending_node_work_states = .empty,
             .next_approval_id = 1,
             .global_approval_mode = try allocator.dupe(u8, "prompt"),
             .global_approval_updated_at_ms = now,
@@ -823,6 +880,8 @@ const CompatState = struct {
         self.node_events.deinit(self.allocator);
         for (self.pending_node_actions.items) |*entry| entry.deinit(self.allocator);
         self.pending_node_actions.deinit(self.allocator);
+        for (self.pending_node_work_states.items) |*entry| entry.deinit(self.allocator);
+        self.pending_node_work_states.deinit(self.allocator);
         self.allocator.free(self.global_approval_mode);
         for (self.node_approvals.items) |*entry| entry.deinit(self.allocator);
         self.node_approvals.deinit(self.allocator);
@@ -2230,6 +2289,221 @@ const CompatState = struct {
             if (std.ascii.eqlIgnoreCase(entry.node_id, normalized_node_id)) count += 1;
         }
         return count;
+    }
+
+    fn findPendingNodeWorkStateIndex(self: *const CompatState, node_id: []const u8) ?usize {
+        const normalized_node_id = std.mem.trim(u8, node_id, " \t\r\n");
+        if (normalized_node_id.len == 0) return null;
+        for (self.pending_node_work_states.items, 0..) |entry, idx| {
+            if (std.ascii.eqlIgnoreCase(entry.node_id, normalized_node_id)) return idx;
+        }
+        return null;
+    }
+
+    fn getOrCreatePendingNodeWorkState(self: *CompatState, node_id: []const u8) !*CompatPendingNodeWorkState {
+        const normalized_node_id = std.mem.trim(u8, node_id, " \t\r\n");
+        if (normalized_node_id.len == 0) return error.InvalidPendingNodeWork;
+        if (self.findPendingNodeWorkStateIndex(normalized_node_id)) |idx| {
+            return &self.pending_node_work_states.items[idx];
+        }
+        try self.pending_node_work_states.append(self.allocator, .{
+            .node_id = try self.allocator.dupe(u8, normalized_node_id),
+            .revision = 0,
+            .items = .empty,
+        });
+        return &self.pending_node_work_states.items[self.pending_node_work_states.items.len - 1];
+    }
+
+    fn prunePendingNodeWorkState(self: *CompatState, state: *CompatPendingNodeWorkState, now_ms: i64) void {
+        var changed = false;
+        var write_idx: usize = 0;
+        for (state.items.items, 0..) |entry, read_idx| {
+            const keep = entry.expires_at_ms == null or entry.expires_at_ms.? > now_ms;
+            if (!keep) {
+                var doomed = state.items.items[read_idx];
+                doomed.deinit(self.allocator);
+                changed = true;
+                continue;
+            }
+            if (write_idx != read_idx) {
+                state.items.items[write_idx] = state.items.items[read_idx];
+            }
+            write_idx += 1;
+        }
+        state.items.items.len = write_idx;
+        if (changed) state.revision += 1;
+    }
+
+    fn prunePendingNodeWork(self: *CompatState, node_id: []const u8) void {
+        if (self.findPendingNodeWorkStateIndex(node_id)) |idx| {
+            self.prunePendingNodeWorkState(&self.pending_node_work_states.items[idx], time_util.nowMs());
+        }
+    }
+
+    fn enqueuePendingNodeWork(
+        self: *CompatState,
+        node_id: []const u8,
+        work_type: []const u8,
+        priority: []const u8,
+        expires_in_ms: ?i64,
+        payload_json: ?[]const u8,
+    ) !struct {
+        revision: u64,
+        item: CompatPendingNodeWorkItem,
+        deduped: bool,
+    } {
+        try self.ensureLocalNode();
+        const normalized_node_id = std.mem.trim(u8, node_id, " \t\r\n");
+        const normalized_type = normalizePendingNodeWorkType(work_type) orelse return error.InvalidPendingNodeWork;
+        const normalized_priority = normalizePendingNodeWorkPriority(priority) orelse return error.InvalidPendingNodeWork;
+        if (normalized_node_id.len == 0) return error.InvalidPendingNodeWork;
+        const now_ms = time_util.nowMs();
+        const state = try self.getOrCreatePendingNodeWorkState(normalized_node_id);
+        self.prunePendingNodeWorkState(state, now_ms);
+        for (state.items.items) |entry| {
+            if (std.ascii.eqlIgnoreCase(entry.work_type, normalized_type)) {
+                return .{
+                    .revision = state.revision,
+                    .item = entry,
+                    .deduped = true,
+                };
+            }
+        }
+        const item_id = try std.fmt.allocPrint(self.allocator, "pending-node-work-{d:0>6}", .{self.next_pending_node_work_id});
+        self.next_pending_node_work_id += 1;
+        const expires_at_ms = if (expires_in_ms) |value|
+            now_ms + @max(compat_pending_node_work_min_expiry_ms, value)
+        else
+            null;
+        try state.items.append(self.allocator, .{
+            .item_id = item_id,
+            .node_id = try self.allocator.dupe(u8, normalized_node_id),
+            .work_type = try self.allocator.dupe(u8, normalized_type),
+            .priority = try self.allocator.dupe(u8, normalized_priority),
+            .created_at_ms = now_ms,
+            .expires_at_ms = expires_at_ms,
+            .payload_json = if (payload_json) |value| try self.allocator.dupe(u8, value) else null,
+        });
+        state.revision += 1;
+        return .{
+            .revision = state.revision,
+            .item = state.items.items[state.items.items.len - 1],
+            .deduped = false,
+        };
+    }
+
+    fn ackPendingNodeWork(self: *CompatState, node_id: []const u8, ids: []const []const u8) usize {
+        const normalized_node_id = std.mem.trim(u8, node_id, " \t\r\n");
+        const idx = self.findPendingNodeWorkStateIndex(normalized_node_id) orelse return 0;
+        var state = &self.pending_node_work_states.items[idx];
+        self.prunePendingNodeWorkState(state, time_util.nowMs());
+        var removed_count: usize = 0;
+        var write_idx: usize = 0;
+        for (state.items.items, 0..) |entry, read_idx| {
+            var should_remove = false;
+            for (ids) |id| {
+                if (std.ascii.eqlIgnoreCase(id, compat_pending_node_work_default_status_id)) continue;
+                if (std.ascii.eqlIgnoreCase(entry.item_id, id)) {
+                    should_remove = true;
+                    break;
+                }
+            }
+            if (should_remove) {
+                removed_count += 1;
+                var doomed = state.items.items[read_idx];
+                doomed.deinit(self.allocator);
+                continue;
+            }
+            if (write_idx != read_idx) {
+                state.items.items[write_idx] = state.items.items[read_idx];
+            }
+            write_idx += 1;
+        }
+        state.items.items.len = write_idx;
+        if (removed_count > 0) state.revision += 1;
+        return removed_count;
+    }
+
+    fn countPendingNodeWorkItems(self: *CompatState, node_id: []const u8) usize {
+        const normalized_node_id = std.mem.trim(u8, node_id, " \t\r\n");
+        const idx = self.findPendingNodeWorkStateIndex(normalized_node_id) orelse return 0;
+        var state = &self.pending_node_work_states.items[idx];
+        self.prunePendingNodeWorkState(state, time_util.nowMs());
+        return state.items.items.len;
+    }
+
+    fn drainPendingNodeWork(
+        self: *CompatState,
+        allocator: std.mem.Allocator,
+        node_id: []const u8,
+        max_items_raw: ?i64,
+        include_default_status: bool,
+    ) !CompatPendingNodeWorkDrainResult {
+        const normalized_node_id = std.mem.trim(u8, node_id, " \t\r\n");
+        const now_ms = time_util.nowMs();
+        const max_items_i64 = std.math.clamp(
+            max_items_raw orelse compat_pending_node_work_default_max_items,
+            1,
+            compat_pending_node_work_max_items,
+        );
+        const max_items: usize = @intCast(max_items_i64);
+
+        var revision: u64 = 0;
+        var explicit_items: std.ArrayList(CompatPendingNodeWorkItem) = .empty;
+        defer explicit_items.deinit(allocator);
+
+        if (self.findPendingNodeWorkStateIndex(normalized_node_id)) |idx| {
+            var state = &self.pending_node_work_states.items[idx];
+            revision = state.revision;
+            self.prunePendingNodeWorkState(state, now_ms);
+            for (state.items.items) |entry| {
+                try explicit_items.append(allocator, entry);
+            }
+        }
+
+        std.mem.sort(CompatPendingNodeWorkItem, explicit_items.items, {}, pendingNodeWorkLessThan);
+
+        var items: std.ArrayList(CompatPendingNodeWorkEncodeItem) = .empty;
+        errdefer items.deinit(allocator);
+
+        const explicit_count = @min(explicit_items.items.len, max_items);
+        for (explicit_items.items[0..explicit_count]) |entry| {
+            try items.append(allocator, .{
+                .id = entry.item_id,
+                .type = entry.work_type,
+                .priority = entry.priority,
+                .createdAtMs = entry.created_at_ms,
+                .expiresAtMs = entry.expires_at_ms,
+            });
+        }
+
+        var has_explicit_status = false;
+        for (explicit_items.items) |entry| {
+            if (std.ascii.eqlIgnoreCase(entry.work_type, "status.request")) {
+                has_explicit_status = true;
+                break;
+            }
+        }
+
+        const include_baseline = include_default_status and !has_explicit_status;
+        if (include_baseline and items.items.len < max_items) {
+            try items.append(allocator, .{
+                .id = compat_pending_node_work_default_status_id,
+                .type = "status.request",
+                .priority = compat_pending_node_work_default_priority,
+                .createdAtMs = now_ms,
+                .expiresAtMs = null,
+            });
+        }
+
+        const explicit_returned_count = items.items.len - @as(usize, if (include_baseline and items.items.len > 0 and std.mem.eql(u8, items.items[items.items.len - 1].id, compat_pending_node_work_default_status_id)) 1 else 0);
+        const baseline_included = include_baseline and items.items.len > explicit_returned_count;
+
+        return .{
+            .revision = revision,
+            .items = try items.toOwnedSlice(allocator),
+            .hasMore = explicit_items.items.len > explicit_returned_count or (include_baseline and !baseline_included),
+        };
     }
 
     fn findNodeApprovalIndex(self: *const CompatState, node_id: []const u8) ?usize {
@@ -3961,6 +4235,103 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         });
     }
 
+    if (std.ascii.eqlIgnoreCase(req.method, "node.pending.drain")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const node_id = firstParamString(params, "nodeId", "");
+        if (std.mem.trim(u8, node_id, " \t\r\n").len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing nodeId",
+            });
+        }
+        const compat = try getCompatState();
+        var drained = try compat.drainPendingNodeWork(
+            allocator,
+            node_id,
+            firstParamInt(params, "maxItems", compat_pending_node_work_default_max_items),
+            true,
+        );
+        defer drained.deinit(allocator);
+        return protocol.encodeResult(allocator, req.id, .{
+            .nodeId = node_id,
+            .revision = drained.revision,
+            .items = drained.items,
+            .hasMore = drained.hasMore,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "node.pending.enqueue")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const node_id = firstParamString(params, "nodeId", "");
+        if (std.mem.trim(u8, node_id, " \t\r\n").len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "missing nodeId",
+            });
+        }
+        const work_type = normalizePendingNodeWorkType(firstParamString(params, "type", "")) orelse {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "invalid type",
+            });
+        };
+        const priority = normalizePendingNodeWorkPriority(firstParamString(params, "priority", compat_pending_node_work_default_priority)) orelse {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "invalid priority",
+            });
+        };
+        var expires_in_ms: ?i64 = null;
+        if (params) |obj| {
+            if (obj.get("expiresInMs")) |value| {
+                expires_in_ms = switch (value) {
+                    .integer => |raw| raw,
+                    .float => |raw| @as(i64, @intFromFloat(raw)),
+                    .string => |raw| blk: {
+                        const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+                        if (trimmed.len == 0) break :blk null;
+                        break :blk std.fmt.parseInt(i64, trimmed, 10) catch {
+                            return protocol.encodeError(allocator, req.id, .{
+                                .code = -32602,
+                                .message = "invalid expiresInMs",
+                            });
+                        };
+                    },
+                    .null => null,
+                    else => {
+                        return protocol.encodeError(allocator, req.id, .{
+                            .code = -32602,
+                            .message = "invalid expiresInMs",
+                        });
+                    },
+                };
+            }
+        }
+        const compat = try getCompatState();
+        const queued = compat.enqueuePendingNodeWork(node_id, work_type, priority, expires_in_ms, null) catch {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "invalid pending work",
+            });
+        };
+        return protocol.encodeResult(allocator, req.id, .{
+            .nodeId = node_id,
+            .revision = queued.revision,
+            .queued = .{
+                .id = queued.item.item_id,
+                .type = queued.item.work_type,
+                .priority = queued.item.priority,
+                .createdAtMs = queued.item.created_at_ms,
+                .expiresAtMs = queued.item.expires_at_ms,
+            },
+            .wakeTriggered = false,
+        });
+    }
+
     if (std.ascii.eqlIgnoreCase(req.method, "node.pending.ack")) {
         var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
         defer parsed.deinit();
@@ -4006,10 +4377,11 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         }
         const compat = try getCompatState();
         _ = compat.ackPendingNodeActions(node_id, acked_ids.items);
+        _ = compat.ackPendingNodeWork(node_id, acked_ids.items);
         return protocol.encodeResult(allocator, req.id, .{
             .nodeId = node_id,
             .ackedIds = acked_ids.items,
-            .remainingCount = compat.countPendingNodeActions(node_id),
+            .remainingCount = compat.countPendingNodeActions(node_id) + compat.countPendingNodeWorkItems(node_id),
         });
     }
 
@@ -8965,6 +9337,8 @@ fn shouldEnforceGuard(method: []const u8) bool {
     if (std.ascii.eqlIgnoreCase(method, "node.list")) return false;
     if (std.ascii.eqlIgnoreCase(method, "node.describe")) return false;
     if (std.ascii.eqlIgnoreCase(method, "node.pending.pull")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "node.pending.drain")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "node.pending.enqueue")) return false;
     if (std.ascii.eqlIgnoreCase(method, "node.pending.ack")) return false;
     if (std.ascii.eqlIgnoreCase(method, "node.invoke")) return false;
     if (std.ascii.eqlIgnoreCase(method, "node.invoke.result")) return false;
@@ -10256,6 +10630,37 @@ fn firstParamBool(params: ?std.json.ObjectMap, key: []const u8, fallback: bool) 
         }
     }
     return fallback;
+}
+
+fn normalizePendingNodeWorkType(raw: []const u8) ?[]const u8 {
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    if (trimmed.len == 0) return null;
+    if (std.ascii.eqlIgnoreCase(trimmed, "status.request")) return "status.request";
+    if (std.ascii.eqlIgnoreCase(trimmed, "location.request")) return "location.request";
+    return null;
+}
+
+fn normalizePendingNodeWorkPriority(raw: []const u8) ?[]const u8 {
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    if (trimmed.len == 0) return "normal";
+    if (std.ascii.eqlIgnoreCase(trimmed, "default")) return "default";
+    if (std.ascii.eqlIgnoreCase(trimmed, "normal")) return "normal";
+    if (std.ascii.eqlIgnoreCase(trimmed, "high")) return "high";
+    return null;
+}
+
+fn pendingNodeWorkPriorityRank(priority: []const u8) u8 {
+    if (std.ascii.eqlIgnoreCase(priority, "high")) return 3;
+    if (std.ascii.eqlIgnoreCase(priority, "normal")) return 2;
+    return 1;
+}
+
+fn pendingNodeWorkLessThan(_: void, lhs: CompatPendingNodeWorkItem, rhs: CompatPendingNodeWorkItem) bool {
+    const lhs_rank = pendingNodeWorkPriorityRank(lhs.priority);
+    const rhs_rank = pendingNodeWorkPriorityRank(rhs.priority);
+    if (lhs_rank != rhs_rank) return lhs_rank > rhs_rank;
+    if (lhs.created_at_ms != rhs.created_at_ms) return lhs.created_at_ms < rhs.created_at_ms;
+    return std.mem.order(u8, lhs.item_id, rhs.item_id) == .lt;
 }
 
 fn normalizeBootPolicy(raw: []const u8, fallback: []const u8) []const u8 {
@@ -15525,6 +15930,8 @@ test "dispatch compat device methods return contracts" {
 
 test "dispatch compat node methods return contracts" {
     const allocator = std.testing.allocator;
+    setConfig(config.defaults());
+    defer setConfig(config.defaults());
 
     const node_list_initial = try dispatch(allocator, "{\"id\":\"compat-node-list0\",\"method\":\"node.list\",\"params\":{}}");
     defer allocator.free(node_list_initial);
@@ -15616,6 +16023,85 @@ test "dispatch compat node methods return contracts" {
     defer allocator.free(pending_ack_invalid);
     try std.testing.expect(std.mem.indexOf(u8, pending_ack_invalid, "\"error\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, pending_ack_invalid, "missing ids") != null);
+
+    const empty_node_id = "node-pending-empty";
+    const pending_drain_empty_frame = try encodeFrame(allocator, "compat-node-pending-drain-empty", "node.pending.drain", .{
+        .nodeId = empty_node_id,
+    });
+    defer allocator.free(pending_drain_empty_frame);
+    const pending_drain_empty = try dispatch(allocator, pending_drain_empty_frame);
+    defer allocator.free(pending_drain_empty);
+    var pending_drain_empty_parsed = try std.json.parseFromSlice(std.json.Value, allocator, pending_drain_empty, .{});
+    defer pending_drain_empty_parsed.deinit();
+    const pending_drain_empty_result = pending_drain_empty_parsed.value.object.get("result").?;
+    const pending_drain_empty_items = pending_drain_empty_result.object.get("items").?;
+    try std.testing.expectEqual(@as(i64, 0), pending_drain_empty_result.object.get("revision").?.integer);
+    try std.testing.expectEqual(@as(usize, 1), pending_drain_empty_items.array.items.len);
+    try std.testing.expect(std.mem.eql(u8, pending_drain_empty_items.array.items[0].object.get("id").?.string, compat_pending_node_work_default_status_id));
+    try std.testing.expect(std.mem.eql(u8, pending_drain_empty_items.array.items[0].object.get("type").?.string, "status.request"));
+    try std.testing.expect(std.mem.eql(u8, pending_drain_empty_items.array.items[0].object.get("priority").?.string, compat_pending_node_work_default_priority));
+    try std.testing.expect(!pending_drain_empty_result.object.get("hasMore").?.bool);
+
+    const pending_work_node_id = "node-pending-work";
+    const pending_enqueue_frame = try encodeFrame(allocator, "compat-node-pending-enqueue", "node.pending.enqueue", .{
+        .nodeId = pending_work_node_id,
+        .type = "location.request",
+        .priority = "high",
+    });
+    defer allocator.free(pending_enqueue_frame);
+    const pending_enqueue = try dispatch(allocator, pending_enqueue_frame);
+    defer allocator.free(pending_enqueue);
+    const pending_work_id = try extractResultObjectStringField(allocator, pending_enqueue, "queued", "id");
+    defer allocator.free(pending_work_id);
+    var pending_enqueue_parsed = try std.json.parseFromSlice(std.json.Value, allocator, pending_enqueue, .{});
+    defer pending_enqueue_parsed.deinit();
+    const pending_enqueue_result = pending_enqueue_parsed.value.object.get("result").?;
+    try std.testing.expect(std.mem.eql(u8, pending_enqueue_result.object.get("nodeId").?.string, pending_work_node_id));
+    try std.testing.expectEqual(@as(i64, 1), pending_enqueue_result.object.get("revision").?.integer);
+    try std.testing.expect(!pending_enqueue_result.object.get("wakeTriggered").?.bool);
+    try std.testing.expect(std.mem.eql(u8, pending_enqueue_result.object.get("queued").?.object.get("type").?.string, "location.request"));
+    try std.testing.expect(std.mem.eql(u8, pending_enqueue_result.object.get("queued").?.object.get("priority").?.string, "high"));
+
+    const pending_drain_limited_frame = try encodeFrame(allocator, "compat-node-pending-drain-limited", "node.pending.drain", .{
+        .nodeId = pending_work_node_id,
+        .maxItems = 1,
+    });
+    defer allocator.free(pending_drain_limited_frame);
+    const pending_drain_limited = try dispatch(allocator, pending_drain_limited_frame);
+    defer allocator.free(pending_drain_limited);
+    var pending_drain_limited_parsed = try std.json.parseFromSlice(std.json.Value, allocator, pending_drain_limited, .{});
+    defer pending_drain_limited_parsed.deinit();
+    const pending_drain_limited_result = pending_drain_limited_parsed.value.object.get("result").?;
+    const pending_drain_limited_items = pending_drain_limited_result.object.get("items").?;
+    try std.testing.expectEqual(@as(i64, 1), pending_drain_limited_result.object.get("revision").?.integer);
+    try std.testing.expectEqual(@as(usize, 1), pending_drain_limited_items.array.items.len);
+    try std.testing.expect(std.mem.eql(u8, pending_drain_limited_items.array.items[0].object.get("id").?.string, pending_work_id));
+    try std.testing.expect(std.mem.eql(u8, pending_drain_limited_items.array.items[0].object.get("type").?.string, "location.request"));
+    try std.testing.expect(pending_drain_limited_result.object.get("hasMore").?.bool);
+
+    const pending_ack_work_frame = try encodeFrame(allocator, "compat-node-pending-ack-work", "node.pending.ack", .{
+        .nodeId = pending_work_node_id,
+        .ids = .{ pending_work_id, compat_pending_node_work_default_status_id },
+    });
+    defer allocator.free(pending_ack_work_frame);
+    const pending_ack_work = try dispatch(allocator, pending_ack_work_frame);
+    defer allocator.free(pending_ack_work);
+    try std.testing.expect(std.mem.indexOf(u8, pending_ack_work, "\"remainingCount\":0") != null);
+
+    const pending_drain_after_ack_frame = try encodeFrame(allocator, "compat-node-pending-drain-after-ack", "node.pending.drain", .{
+        .nodeId = pending_work_node_id,
+    });
+    defer allocator.free(pending_drain_after_ack_frame);
+    const pending_drain_after_ack = try dispatch(allocator, pending_drain_after_ack_frame);
+    defer allocator.free(pending_drain_after_ack);
+    var pending_drain_after_ack_parsed = try std.json.parseFromSlice(std.json.Value, allocator, pending_drain_after_ack, .{});
+    defer pending_drain_after_ack_parsed.deinit();
+    const pending_drain_after_ack_result = pending_drain_after_ack_parsed.value.object.get("result").?;
+    const pending_drain_after_ack_items = pending_drain_after_ack_result.object.get("items").?;
+    try std.testing.expectEqual(@as(i64, 2), pending_drain_after_ack_result.object.get("revision").?.integer);
+    try std.testing.expectEqual(@as(usize, 1), pending_drain_after_ack_items.array.items.len);
+    try std.testing.expect(std.mem.eql(u8, pending_drain_after_ack_items.array.items[0].object.get("id").?.string, compat_pending_node_work_default_status_id));
+    try std.testing.expect(!pending_drain_after_ack_result.object.get("hasMore").?.bool);
 
     const invoke_frame = try encodeFrame(allocator, "compat-node-invoke", "node.invoke", .{
         .nodeId = node_id,
@@ -15969,6 +16455,46 @@ test "compat state bounded history keeps newest events" {
     try std.testing.expectEqual(@as(usize, 256), compat.events.items.len);
     try std.testing.expectEqual(@as(u64, 45), compat.events.items[0].id);
     try std.testing.expectEqual(@as(u64, 300), compat.events.items[compat.events.items.len - 1].id);
+}
+
+test "compat pending node work drain returns baseline without allocating state" {
+    const allocator = std.testing.allocator;
+    var compat = try CompatState.init(allocator);
+    defer compat.deinit();
+
+    try std.testing.expectEqual(@as(?usize, null), compat.findPendingNodeWorkStateIndex("node-empty"));
+
+    var drained = try compat.drainPendingNodeWork(allocator, "node-empty", null, true);
+    defer drained.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u64, 0), drained.revision);
+    try std.testing.expectEqual(@as(usize, 1), drained.items.len);
+    try std.testing.expect(std.mem.eql(u8, drained.items[0].id, compat_pending_node_work_default_status_id));
+    try std.testing.expect(std.mem.eql(u8, drained.items[0].type, "status.request"));
+    try std.testing.expect(std.mem.eql(u8, drained.items[0].priority, compat_pending_node_work_default_priority));
+    try std.testing.expect(!drained.hasMore);
+    try std.testing.expectEqual(@as(?usize, null), compat.findPendingNodeWorkStateIndex("node-empty"));
+}
+
+test "compat pending node work enqueue dedupes and baseline ack is ignored" {
+    const allocator = std.testing.allocator;
+    var compat = try CompatState.init(allocator);
+    defer compat.deinit();
+
+    const first = try compat.enqueuePendingNodeWork("node-a", "location.request", "high", 500, null);
+    const second = try compat.enqueuePendingNodeWork("node-a", "location.request", "normal", 500, null);
+
+    try std.testing.expect(!first.deduped);
+    try std.testing.expect(second.deduped);
+    try std.testing.expectEqual(first.revision, second.revision);
+    try std.testing.expect(std.mem.eql(u8, first.item.item_id, second.item.item_id));
+    try std.testing.expectEqual(@as(usize, 1), compat.countPendingNodeWorkItems("node-a"));
+
+    try std.testing.expectEqual(@as(usize, 0), compat.ackPendingNodeWork("node-a", &[_][]const u8{compat_pending_node_work_default_status_id}));
+    try std.testing.expectEqual(@as(usize, 1), compat.countPendingNodeWorkItems("node-a"));
+
+    try std.testing.expectEqual(@as(usize, 1), compat.ackPendingNodeWork("node-a", &[_][]const u8{first.item.item_id}));
+    try std.testing.expectEqual(@as(usize, 0), compat.countPendingNodeWorkItems("node-a"));
 }
 
 test "edge state bounded finetune history keeps newest jobs" {

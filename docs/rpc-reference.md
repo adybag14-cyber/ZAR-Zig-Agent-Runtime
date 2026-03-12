@@ -21,7 +21,7 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 
 ## Summary
 
-- Total methods: **172**
+- Total methods: **174**
 - Prefix groups: **33**
 
 ## Prefix Overview
@@ -45,7 +45,7 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 | file | 2 |
 | logs | 1 |
 | models | 1 |
-| node | 14 |
+| node | 16 |
 | push | 1 |
 | secrets | 7 |
 | security | 1 |
@@ -225,6 +225,8 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 - node.pair.request
 - node.pair.verify
 - node.pending.ack
+- node.pending.drain
+- node.pending.enqueue
 - node.pending.pull
 - node.rename
 
