@@ -97,7 +97,14 @@ Supported input aliases include:
 ./scripts/web-login-smoke-check.ps1
 ./scripts/browser-request-success-smoke-check.ps1
 ./scripts/browser-request-direct-provider-success-smoke-check.ps1
+./scripts/browser-request-openrouter-direct-provider-success-smoke-check.ps1
+./scripts/browser-request-opencode-direct-provider-success-smoke-check.ps1
 ```
+
+Full strict FS2 closure also requires the Telegram ingress and outbound delivery proofs:
+
+- `./scripts/telegram-webhook-receive-smoke-check.ps1`
+- `./scripts/telegram-bot-send-delivery-smoke-check.ps1`
 
 Strict FS2 gate source:
 

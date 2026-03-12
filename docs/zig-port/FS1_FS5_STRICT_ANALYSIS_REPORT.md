@@ -192,10 +192,10 @@ FS1 is not complete until all of the following are true:
 
 1. The strict provider/channel completion matrix must be treated as the hard gate source of truth:
    - `docs/zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md`
-2. The repo still does not have a complete phase-close evidence set for:
+2. The repo now has a complete strict evidence set for:
    - browser session auth success
-   - OpenRouter direct-provider completion success
-   - OpenCode direct-provider completion success
+   - browser completion success
+   - direct-provider completion success across OpenAI-compatible, OpenRouter, and OpenCode paths
    - Telegram webhook ingress success
    - Telegram bot-send delivery success
 3. FS2 depends on FS1 and FS4 for trustworthy auth, secret resolution, and runtime state handling. That dependency is now satisfied locally.
@@ -222,9 +222,9 @@ FS2 is not complete until all of the following are true:
 Current strict status after this slice:
 
 - the hard matrix now exists in docs
-- `web-login-smoke-check.ps1`, `browser-request-success-smoke-check.ps1`, `browser-request-direct-provider-success-smoke-check.ps1`, and `telegram-reply-loop-smoke-check.ps1` are now part of the strict CI lane
-- browser-session auth, browser completion success, direct-provider completion success, and Telegram command/reply proofs are green locally
-- FS2 remains open because OpenRouter/OpenCode direct-provider success and dedicated Telegram webhook/bot-send success proofs are still missing
+- `web-login-smoke-check.ps1`, `browser-request-success-smoke-check.ps1`, `browser-request-direct-provider-success-smoke-check.ps1`, `browser-request-openrouter-direct-provider-success-smoke-check.ps1`, `browser-request-opencode-direct-provider-success-smoke-check.ps1`, `telegram-reply-loop-smoke-check.ps1`, `telegram-webhook-receive-smoke-check.ps1`, and `telegram-bot-send-delivery-smoke-check.ps1` are now part of the strict CI lane
+- browser-session auth, browser completion success, OpenAI-compatible direct-provider success, OpenRouter direct-provider success, OpenCode direct-provider success, Telegram command/reply success, Telegram webhook ingress success, and Telegram bot-send delivery success are green locally
+- FS2 strict completion is now reached locally
 
 ### FS3 - Memory/knowledge depth
 

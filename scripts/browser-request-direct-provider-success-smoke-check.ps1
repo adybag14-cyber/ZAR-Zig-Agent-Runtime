@@ -1,8 +1,34 @@
 param(
+  [string]$Provider = "chatgpt",
+  [string]$ApiKey = "",
+  [string]$ExpectedModel = "",
   [switch]$SkipBuild
 )
 
 $ErrorActionPreference = "Stop"
+
+function Get-DefaultDirectProviderModel {
+  param([string]$ProviderName)
+
+  switch ($ProviderName.Trim().ToLowerInvariant()) {
+    "openrouter" { return "openrouter/auto" }
+    "opencode" { return "opencode/default" }
+    default { return "gpt-5.2" }
+  }
+}
+
+$normalizedProvider = $Provider.Trim().ToLowerInvariant()
+if ([string]::IsNullOrWhiteSpace($normalizedProvider)) {
+  throw "Provider is required."
+}
+if ([string]::IsNullOrWhiteSpace($ApiKey)) {
+  $ApiKey = "testkey-$normalizedProvider"
+}
+if ([string]::IsNullOrWhiteSpace($ExpectedModel)) {
+  $ExpectedModel = Get-DefaultDirectProviderModel -ProviderName $normalizedProvider
+}
+$sessionId = "fs2-direct-provider-success-$normalizedProvider"
+$promptText = "hello from direct provider smoke for $normalizedProvider"
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $defaultZig = "C:\Users\Ady\Documents\toolchains\zig-master\current\zig.exe"
@@ -50,6 +76,16 @@ function Resolve-FreeTcpPort {
   finally {
     $listener.Stop()
   }
+}
+
+function Get-LogTail {
+  param(
+    [string]$Path,
+    [int]$Lines = 120
+  )
+
+  if (-not (Test-Path $Path)) { return "" }
+  return (Get-Content $Path -Tail $Lines -ErrorAction SilentlyContinue) -join "`n"
 }
 
 $port = 8095
@@ -244,17 +280,25 @@ try {
     id = "browser-direct-provider-success"
     method = "browser.request"
     params = @{
-      provider = "chatgpt"
+      provider = $normalizedProvider
       directProvider = $true
       endpoint = "http://127.0.0.1:$mockPort"
-      apiKey = "testkey-chatgpt"
-      prompt = "hello from direct provider smoke"
-      sessionId = "fs2-direct-provider-success"
+      apiKey = $ApiKey
+      prompt = $promptText
+      sessionId = $sessionId
       includeMemoryContext = $false
     }
   } | ConvertTo-Json -Depth 8 -Compress
 
-  $result = Invoke-WebRequest -Uri "http://127.0.0.1:$port/rpc" -Method Post -ContentType "application/json" -Body $payload -UseBasicParsing
+  try {
+    $result = Invoke-WebRequest -Uri "http://127.0.0.1:$port/rpc" -Method Post -ContentType "application/json" -Body $payload -UseBasicParsing
+  } catch {
+    $serverStdout = Get-LogTail -Path $stdoutLog -Lines 120
+    $serverStderr = Get-LogTail -Path $stderrLog -Lines 160
+    $mockStdout = Get-LogTail -Path $mockStdoutLog -Lines 120
+    $mockStderr = Get-LogTail -Path $mockStderrLog -Lines 160
+    throw "browser.request RPC failed for direct provider '$normalizedProvider'`nSERVER STDOUT:`n$serverStdout`nSERVER STDERR:`n$serverStderr`nMOCK STDOUT:`n$mockStdout`nMOCK STDERR:`n$mockStderr`nINNER:`n$($_.Exception.Message)"
+  }
   $resultJson = $result.Content | ConvertFrom-Json
   if ($result.StatusCode -ne 200) { throw "browser.request did not return HTTP 200" }
   if (-not $resultJson.result) { throw "browser.request result payload missing" }
@@ -291,18 +335,30 @@ try {
   if (-not $rawCapture -or $rawCapture.Trim().Length -eq 0) {
     throw "mock direct-provider capture payload missing"
   }
-  $capture = $rawCapture | ConvertFrom-Json
+  $captureLines = $rawCapture -split "`r?`n" | Where-Object { $_.Trim().Length -gt 0 }
+  $capture = $null
+  foreach ($captureLine in $captureLines) {
+    $candidate = $captureLine | ConvertFrom-Json
+    if ($candidate.method -eq "POST" -and $candidate.path -eq "/v1/chat/completions") {
+      $capture = $candidate
+      break
+    }
+  }
+  if ($null -eq $capture) {
+    throw "mock direct-provider completion capture record missing"
+  }
   if ($capture.method -ne "POST") { throw "mock request method mismatch" }
   if ($capture.path -ne "/v1/chat/completions") { throw "mock request path mismatch" }
-  if ($capture.authorization -ne "Bearer testkey-chatgpt") { throw "mock authorization header mismatch" }
+  if ($capture.authorization -ne "Bearer $ApiKey") { throw "mock authorization header mismatch" }
 
   $completionBody = $capture.body | ConvertFrom-Json
-  if ($completionBody.model -ne "gpt-5.2") { throw "mock completion payload model mismatch" }
+  if ($completionBody.model -ne $ExpectedModel) { throw "mock completion payload model mismatch" }
   if ($completionBody.messages.Count -lt 1) { throw "mock completion payload messages missing" }
   if ($completionBody.messages[0].role -ne "user") { throw "mock completion payload first role mismatch" }
-  if ($completionBody.messages[0].content -notmatch "hello from direct provider smoke") { throw "mock completion payload prompt mismatch" }
+  if ($completionBody.messages[0].content -notmatch [regex]::Escape($promptText)) { throw "mock completion payload prompt mismatch" }
 
   Write-Output "BROWSER_DIRECT_PROVIDER_SUCCESS_HTTP=$($result.StatusCode)"
+  Write-Output "BROWSER_DIRECT_PROVIDER_SUCCESS_PROVIDER=$normalizedProvider"
   Write-Output "BROWSER_DIRECT_PROVIDER_SUCCESS_STATUS=$($rpcResult.status)"
   Write-Output "BROWSER_DIRECT_PROVIDER_SUCCESS_EXECUTION_PATH=$($rpcResult.executionPath)"
   Write-Output "BROWSER_DIRECT_PROVIDER_SUCCESS_COMPLETION_OK=$($rpcResult.bridgeCompletion.ok)"
@@ -313,10 +369,14 @@ try {
 }
 finally {
   if ($null -ne $proc -and -not $proc.HasExited) {
-    Stop-Process -Id $proc.Id -Force
+    try {
+      Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    } catch {}
   }
   if ($null -ne $mockProc -and -not $mockProc.HasExited) {
-    Stop-Process -Id $mockProc.Id -Force
+    try {
+      Stop-Process -Id $mockProc.Id -Force -ErrorAction SilentlyContinue
+    } catch {}
   }
   Remove-Item $stdoutLog,$stderrLog,$mockStdoutLog,$mockStderrLog,$mockCapture,$mockReady,$mockScript -ErrorAction SilentlyContinue
   Remove-Item Env:OPENCLAW_ZIG_HTTP_PORT -ErrorAction SilentlyContinue

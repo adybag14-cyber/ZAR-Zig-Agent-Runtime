@@ -89,7 +89,7 @@ Full-stack replacement execution reference:
     - `scripts/web-login-smoke-check.ps1` and `scripts/telegram-reply-loop-smoke-check.ps1` now accept explicit `-SkipBuild`
     - all current FS2 smokes are now enforced in `zig-ci` and `release-preview`
     - browser-session auth, browser completion success, and Telegram command/reply proofs are green locally
-    - remaining FS2 blockers are now explicit: OpenRouter/OpenCode direct-provider success and dedicated Telegram webhook/bot-send success proofs
+    - FS2 strict closure is now reached locally: provider/session auth, browser completion, direct-provider completion, Telegram reply-loop, Telegram webhook ingress, and Telegram bot-send delivery all have dedicated proofs
   - Release/package lane status (2026-03-06):
   - GitHub prerelease `v0.2.0-zig-edge.28` is live with desktop/android/bare-metal artifacts, parity reports, manifest, SBOM, provenance, npm tarball, wheel, and sdist.
   - release evidence now also includes `release-status.json` + `release-status.md` so every edge cut carries a frozen workflow-status + registry-status snapshot in addition to package preflight evidence.
@@ -1790,3 +1790,9 @@ Full-stack replacement execution reference:
 
 
 
+- Strict FS2 direct-provider success proof now covers the provider matrix beyond the OpenAI-compatible lane:
+  - `scripts/browser-request-openrouter-direct-provider-success-smoke-check.ps1` proves HTTP `200`, `executionPath="direct-provider"`, assistant text, explicit API-key auth telemetry, and the expected OpenRouter default model payload (`openrouter/auto`).
+  - `scripts/browser-request-opencode-direct-provider-success-smoke-check.ps1` proves the same for OpenCode with the expected default model payload (`opencode/default`).
+  - `scripts/telegram-webhook-receive-smoke-check.ps1` proves strict ingress success and outbound reply delivery against the configurable Telegram Bot API endpoint path.
+  - `scripts/telegram-bot-send-delivery-smoke-check.ps1` proves strict outbound delivery, typing pulses, chunk/message accounting, and payload capture against the configurable Telegram Bot API endpoint path.
+  - all FS2 strict proofs are now enforced in `zig-ci` and `release-preview`, so the hosted phase can advance beyond FS2 from the local source-of-truth baseline.

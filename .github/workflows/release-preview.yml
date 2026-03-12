@@ -686,9 +686,25 @@ jobs:
         shell: pwsh
         run: ./scripts/browser-request-direct-provider-success-smoke-check.ps1 -SkipBuild
 
+      - name: OpenRouter direct-provider completion success smoke check (strict FS2 direct-provider lane)
+        shell: pwsh
+        run: ./scripts/browser-request-openrouter-direct-provider-success-smoke-check.ps1 -SkipBuild
+
+      - name: OpenCode direct-provider completion success smoke check (strict FS2 direct-provider lane)
+        shell: pwsh
+        run: ./scripts/browser-request-opencode-direct-provider-success-smoke-check.ps1 -SkipBuild
+
       - name: Telegram reply-loop smoke check (strict FS2 command/reply lane)
         shell: pwsh
         run: ./scripts/telegram-reply-loop-smoke-check.ps1 -SkipBuild
+
+      - name: Telegram webhook receive success smoke check (strict FS2 ingress lane)
+        shell: pwsh
+        run: ./scripts/telegram-webhook-receive-smoke-check.ps1 -SkipBuild
+
+      - name: Telegram bot-send delivery success smoke check (strict FS2 delivery lane)
+        shell: pwsh
+        run: ./scripts/telegram-bot-send-delivery-smoke-check.ps1 -SkipBuild
 
       - name: Update lifecycle smoke check (plan/run/status)
         shell: pwsh

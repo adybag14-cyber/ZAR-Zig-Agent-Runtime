@@ -89,26 +89,21 @@ Registry status:
       - `dispatch security.audit fix exposes manual runtime persistence blockers`
       - `dispatch maintenance run reports partial security remediation when runtime persistence stays memory-backed`
       - `security audit fix reports manual runtime and policy config blockers`
-- [ ] FS2 - Provider + channel completion
+- [x] FS2 - Provider + channel completion
   - Strict FS2 matrix/gate progress:
     - [x] Define the hard provider/channel matrix in `docs/zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md`
     - [x] Enforce `scripts/web-login-smoke-check.ps1` in `zig-ci` and `release-preview`
     - [x] Enforce `scripts/telegram-reply-loop-smoke-check.ps1` in `zig-ci` and `release-preview`
     - [x] Record at least one successful browser completion proof
-    - [ ] Record at least one successful direct-provider completion proof
-    - [ ] Record dedicated Telegram webhook receive and bot-send success proofs
+    - [x] Record at least one successful direct-provider completion proof
+    - [x] Record dedicated Telegram webhook receive and bot-send success proofs
   - Latest delivered slice:
-    - Strict FS2 provider/channel closure is now defined in `docs/zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md` instead of being implied across scattered docs and tests.
-    - `scripts/web-login-smoke-check.ps1`, `scripts/browser-request-success-smoke-check.ps1`, and `scripts/telegram-reply-loop-smoke-check.ps1` now support explicit `-SkipBuild` CI usage and are enforced in both `zig-ci` and `release-preview`.
-    - `scripts/browser-request-success-smoke-check.ps1` now records a deterministic Lightpanda-compatible bridge success path with:
-      - `GET /json/version` probe success
-      - `POST /v1/chat/completions` completion success
-      - `executionPath="lightpanda-bridge"`
-      - non-empty `bridgeCompletion.assistantText`
-    - Browser/auth and Telegram docs now link to the strict FS2 matrix directly, so pass/fail status and remaining gaps are visible from the public documentation surface.
-    - Telegram auth fallback metadata now matches Go more closely on the remaining `/auth url`, `/auth complete`, and `auth.invalid` fallback paths:
-      - no-session `/auth url` metadata no longer emits Zig-only `provider` or `account`.
-      - missing-session `/auth complete` metadata no longer emits Zig-only `provider` or `account`.
+    - Strict FS2 provider/channel closure is now defined and closed in `docs/zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md`.
+    - `scripts/web-login-smoke-check.ps1`, `scripts/browser-request-success-smoke-check.ps1`, `scripts/browser-request-direct-provider-success-smoke-check.ps1`, `scripts/browser-request-openrouter-direct-provider-success-smoke-check.ps1`, `scripts/browser-request-opencode-direct-provider-success-smoke-check.ps1`, `scripts/telegram-reply-loop-smoke-check.ps1`, `scripts/telegram-webhook-receive-smoke-check.ps1`, and `scripts/telegram-bot-send-delivery-smoke-check.ps1` are enforced in both `zig-ci` and `release-preview`.
+    - `scripts/browser-request-success-smoke-check.ps1` records a deterministic Lightpanda-compatible bridge success path with non-empty assistant text.
+    - `scripts/browser-request-openrouter-direct-provider-success-smoke-check.ps1` and `scripts/browser-request-opencode-direct-provider-success-smoke-check.ps1` prove provider-specific direct-provider completion success.
+    - `scripts/telegram-webhook-receive-smoke-check.ps1` proves inbound update ingress plus outbound reply delivery against a local mock Telegram Bot API.
+    - `scripts/telegram-bot-send-delivery-smoke-check.ps1` proves outbound bot-send delivery, typing pulses, chunking, and Bot API payload capture against a local mock Telegram Bot API.
       - default `auth.invalid` metadata no longer emits Zig-only `provider`, `status`, or `error`.
       - runtime and dispatcher regressions now assert those extra fields stay absent on the corresponding fallback receipts.
     - Telegram auth edge metadata now matches Go more closely on the remaining no-session wait and missing-code complete paths:

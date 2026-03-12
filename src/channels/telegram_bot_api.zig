@@ -33,6 +33,7 @@ pub const BotDeliveryResult = struct {
 };
 
 pub const maxTelegramMessageRunes: usize = 4096;
+const defaultTelegramApiEndpoint = "https://api.telegram.org";
 
 pub fn parseIncomingUpdateFromValue(
     allocator: std.mem.Allocator,
@@ -183,8 +184,29 @@ pub fn sendMessage(
     reply_to_message_id: ?i64,
     request_timeout_ms: u32,
 ) !BotDeliveryResult {
+    return sendMessageWithEndpoint(
+        allocator,
+        defaultTelegramApiEndpoint,
+        bot_token_raw,
+        chat_id,
+        text_raw,
+        reply_to_message_id,
+        request_timeout_ms,
+    );
+}
+
+pub fn sendMessageWithEndpoint(
+    allocator: std.mem.Allocator,
+    api_endpoint_raw: []const u8,
+    bot_token_raw: []const u8,
+    chat_id: i64,
+    text_raw: []const u8,
+    reply_to_message_id: ?i64,
+    request_timeout_ms: u32,
+) !BotDeliveryResult {
     const bot_token = std.mem.trim(u8, bot_token_raw, " \t\r\n");
     const text = std.mem.trim(u8, text_raw, " \t\r\n");
+    const api_endpoint = normalizeApiEndpoint(api_endpoint_raw);
 
     if (bot_token.len == 0) {
         return .{
@@ -213,7 +235,7 @@ pub fn sendMessage(
         };
     }
 
-    const request_url = try std.fmt.allocPrint(allocator, "https://api.telegram.org/bot{s}/sendMessage", .{bot_token});
+    const request_url = try buildTelegramBotApiUrlAlloc(allocator, api_endpoint, bot_token, "sendMessage");
     errdefer allocator.free(request_url);
 
     const Payload = struct {
@@ -322,8 +344,27 @@ pub fn sendChatAction(
     action_raw: []const u8,
     request_timeout_ms: u32,
 ) !BotDeliveryResult {
+    return sendChatActionWithEndpoint(
+        allocator,
+        defaultTelegramApiEndpoint,
+        bot_token_raw,
+        chat_id,
+        action_raw,
+        request_timeout_ms,
+    );
+}
+
+pub fn sendChatActionWithEndpoint(
+    allocator: std.mem.Allocator,
+    api_endpoint_raw: []const u8,
+    bot_token_raw: []const u8,
+    chat_id: i64,
+    action_raw: []const u8,
+    request_timeout_ms: u32,
+) !BotDeliveryResult {
     const bot_token = std.mem.trim(u8, bot_token_raw, " \t\r\n");
     const action = std.mem.trim(u8, action_raw, " \t\r\n");
+    const api_endpoint = normalizeApiEndpoint(api_endpoint_raw);
 
     if (bot_token.len == 0) {
         return .{
@@ -352,7 +393,7 @@ pub fn sendChatAction(
         };
     }
 
-    const request_url = try std.fmt.allocPrint(allocator, "https://api.telegram.org/bot{s}/sendChatAction", .{bot_token});
+    const request_url = try buildTelegramBotApiUrlAlloc(allocator, api_endpoint, bot_token, "sendChatAction");
     errdefer allocator.free(request_url);
 
     const Payload = struct {
@@ -568,6 +609,22 @@ fn allocErrorSnippet(
     return std.fmt.allocPrint(allocator, "telegram {s} status {d}: {s}", .{ operation, status_code, prefix });
 }
 
+fn normalizeApiEndpoint(api_endpoint_raw: []const u8) []const u8 {
+    const trimmed = std.mem.trim(u8, api_endpoint_raw, " \t\r\n/");
+    if (trimmed.len == 0) return defaultTelegramApiEndpoint;
+    return trimmed;
+}
+
+fn buildTelegramBotApiUrlAlloc(
+    allocator: std.mem.Allocator,
+    api_endpoint_raw: []const u8,
+    bot_token: []const u8,
+    method: []const u8,
+) ![]u8 {
+    const api_endpoint = normalizeApiEndpoint(api_endpoint_raw);
+    return std.fmt.allocPrint(allocator, "{s}/bot{s}/{s}", .{ api_endpoint, bot_token, method });
+}
+
 test "parse incoming update handles message payload" {
     const allocator = std.testing.allocator;
     const payload =
@@ -626,6 +683,18 @@ test "sendChatAction returns deterministic error when bot token missing" {
     try std.testing.expect(!result.attempted);
     try std.testing.expect(!result.ok);
     try std.testing.expect(std.mem.indexOf(u8, result.errorText, "missing bot token") != null);
+}
+
+test "buildTelegramBotApiUrlAlloc uses explicit endpoint and method" {
+    const allocator = std.testing.allocator;
+    const url = try buildTelegramBotApiUrlAlloc(allocator, "http://127.0.0.1:18081/", "test-token", "sendMessage");
+    defer allocator.free(url);
+    try std.testing.expect(std.mem.eql(u8, url, "http://127.0.0.1:18081/bottest-token/sendMessage"));
+}
+
+test "normalizeApiEndpoint trims whitespace and trailing slash" {
+    try std.testing.expect(std.mem.eql(u8, normalizeApiEndpoint(" http://127.0.0.1:18081/ "), "http://127.0.0.1:18081"));
+    try std.testing.expect(std.mem.eql(u8, normalizeApiEndpoint(""), defaultTelegramApiEndpoint));
 }
 
 test "splitMessageAlloc chunks long messages under rune cap" {

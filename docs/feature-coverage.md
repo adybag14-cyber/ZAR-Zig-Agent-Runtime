@@ -71,7 +71,13 @@ This page summarizes functional coverage across all major OpenClaw Zig runtime d
   - response includes structured `bridgeCompletion` telemetry (`requested`, `ok`, `requestUrl`, `statusCode`, `assistantText`, `latencyMs`, `error`)
   - top-level `ok/status` follows completion execution outcome (`completed` or `failed`)
   - strict bridge smoke proof exists via `scripts/browser-request-success-smoke-check.ps1`
-  - strict direct-provider smoke proof exists via `scripts/browser-request-direct-provider-success-smoke-check.ps1`
+- strict direct-provider smoke proof exists via `scripts/browser-request-direct-provider-success-smoke-check.ps1`
+- provider-specific direct-provider success proofs also exist via:
+  - `scripts/browser-request-openrouter-direct-provider-success-smoke-check.ps1`
+  - `scripts/browser-request-opencode-direct-provider-success-smoke-check.ps1`
+- strict Telegram ingress and outbound delivery proofs also exist via:
+  - `scripts/telegram-webhook-receive-smoke-check.ps1`
+  - `scripts/telegram-bot-send-delivery-smoke-check.ps1`
 - provider breadth includes chatgpt/codex/claude/gemini/openrouter/opencode and guest-capable qwen/zai/inception flows
 - strict FS2 gate source:
   - [`docs/zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md`](zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md)

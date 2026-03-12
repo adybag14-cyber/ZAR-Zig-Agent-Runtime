@@ -6920,6 +6920,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         };
         const chunking = parseTelegramChunkingOptions(params);
         const typing = parseTelegramTypingOptions(params);
+        const api_endpoint = resolveTelegramBotApiEndpoint(params);
 
         const compat = try getCompatState();
         const maybe_token = try resolveTelegramBotTokenForParamsAlloc(allocator, compat, params);
@@ -6927,6 +6928,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
 
         var delivery_batch = try deliverTelegramMessageBatch(
             allocator,
+            api_endpoint,
             maybe_token orelse "",
             incoming.chat_id,
             send_result.reply,
@@ -7013,6 +7015,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         };
         const chunking = parseTelegramChunkingOptions(params);
         const typing = parseTelegramTypingOptions(params);
+        const api_endpoint = resolveTelegramBotApiEndpoint(params);
 
         const compat = try getCompatState();
         const maybe_token = try resolveTelegramBotTokenForParamsAlloc(allocator, compat, params);
@@ -7020,6 +7023,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
 
         var delivery_batch = try deliverTelegramMessageBatch(
             allocator,
+            api_endpoint,
             maybe_token orelse "",
             chat_id,
             message,
@@ -9920,6 +9924,7 @@ fn sleepTelegramChunkDelay(delay_ms: u32) void {
 
 fn deliverTelegramMessageBatch(
     allocator: std.mem.Allocator,
+    api_endpoint: []const u8,
     token: []const u8,
     chat_id: i64,
     message: []const u8,
@@ -9953,8 +9958,9 @@ fn deliverTelegramMessageBatch(
     var next_typing_due_ms: i64 = 0;
     if (deliver and typing.action.len > 0 and chunks.len > 0) {
         typing_delivery.deinit(allocator);
-        typing_delivery = try telegram_bot_api.sendChatAction(
+        typing_delivery = try telegram_bot_api.sendChatActionWithEndpoint(
             allocator,
+            api_endpoint,
             token,
             chat_id,
             typing.action,
@@ -9981,8 +9987,9 @@ fn deliverTelegramMessageBatch(
             if (idx > 0 and options.chunk_delay_ms > 0) sleepTelegramChunkDelay(options.chunk_delay_ms);
             if (idx > 0 and deliver and typing.action.len > 0 and chunks.len > 1) {
                 if (time_util.nowMs() >= next_typing_due_ms) {
-                    const typing_tick = try telegram_bot_api.sendChatAction(
+                    const typing_tick = try telegram_bot_api.sendChatActionWithEndpoint(
                         allocator,
+                        api_endpoint,
                         token,
                         chat_id,
                         typing.action,
@@ -9995,8 +10002,9 @@ fn deliverTelegramMessageBatch(
                 }
             }
             const reply_to = if (idx == 0) reply_to_message_id else null;
-            var chunk_delivery = try telegram_bot_api.sendMessage(
+            var chunk_delivery = try telegram_bot_api.sendMessageWithEndpoint(
                 allocator,
+                api_endpoint,
                 token,
                 chat_id,
                 chunks[idx],
@@ -11201,6 +11209,20 @@ fn resolveTelegramBotTokenForParamsAlloc(
             "OPENCLAW_ZIG_CHANNELS_TELEGRAM_BOT_TOKEN",
         },
     );
+}
+
+fn resolveTelegramBotApiEndpoint(params: ?std.json.ObjectMap) []const u8 {
+    const explicit_endpoint = firstParamString(
+        params,
+        "botApiEndpoint",
+        firstParamString(
+            params,
+            "bot_api_endpoint",
+            firstParamString(params, "telegramApiEndpoint", firstParamString(params, "telegram_api_endpoint", "")),
+        ),
+    );
+    if (explicit_endpoint.len > 0) return explicit_endpoint;
+    return currentConfig().runtime.telegram_api_endpoint;
 }
 
 fn resolveSecretTargetValue(

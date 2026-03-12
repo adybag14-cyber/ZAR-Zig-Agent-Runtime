@@ -27,6 +27,7 @@ pub const RuntimeConfig = struct {
     exec_allowlist: []const u8,
     memory_max_entries: i32 = 0,
     model_catalog_refresh_ttl_seconds: u32 = 300,
+    telegram_api_endpoint: []const u8,
     telegram_live_streaming: bool,
     telegram_stream_chunk_chars: u32,
     telegram_stream_chunk_delay_ms: u32,
@@ -65,6 +66,7 @@ pub fn fingerprint(cfg: Config) [32]u8 {
     hashStringField(&hasher, "runtime.exec_allowlist", cfg.runtime.exec_allowlist);
     hashIntField(&hasher, "runtime.memory_max_entries", cfg.runtime.memory_max_entries);
     hashIntField(&hasher, "runtime.model_catalog_refresh_ttl_seconds", cfg.runtime.model_catalog_refresh_ttl_seconds);
+    hashStringField(&hasher, "runtime.telegram_api_endpoint", cfg.runtime.telegram_api_endpoint);
     hashBoolField(&hasher, "runtime.telegram_live_streaming", cfg.runtime.telegram_live_streaming);
     hashIntField(&hasher, "runtime.telegram_stream_chunk_chars", cfg.runtime.telegram_stream_chunk_chars);
     hashIntField(&hasher, "runtime.telegram_stream_chunk_delay_ms", cfg.runtime.telegram_stream_chunk_delay_ms);
@@ -110,6 +112,7 @@ pub fn defaults() Config {
             .exec_allowlist = "",
             .memory_max_entries = 0,
             .model_catalog_refresh_ttl_seconds = 300,
+            .telegram_api_endpoint = "https://api.telegram.org",
             .telegram_live_streaming = true,
             .telegram_stream_chunk_chars = 700,
             .telegram_stream_chunk_delay_ms = 250,
@@ -149,6 +152,7 @@ pub fn loadFromEnviron(allocator: std.mem.Allocator, environ: std.process.Enviro
     cfg.runtime.exec_allowlist = try getEnvOrDefault(allocator, environ, "OPENCLAW_ZIG_RUNTIME_EXEC_ALLOWLIST", cfg.runtime.exec_allowlist);
     cfg.runtime.memory_max_entries = try parseI32EnvOrDefault(allocator, environ, "OPENCLAW_ZIG_RUNTIME_MEMORY_MAX_ENTRIES", cfg.runtime.memory_max_entries);
     cfg.runtime.model_catalog_refresh_ttl_seconds = try parseU32EnvOrDefault(allocator, environ, "OPENCLAW_ZIG_RUNTIME_MODEL_CATALOG_REFRESH_TTL_SECONDS", cfg.runtime.model_catalog_refresh_ttl_seconds);
+    cfg.runtime.telegram_api_endpoint = try getEnvOrDefault(allocator, environ, "OPENCLAW_ZIG_RUNTIME_TELEGRAM_API_ENDPOINT", cfg.runtime.telegram_api_endpoint);
     cfg.runtime.telegram_live_streaming = try parseBoolEnvOrDefault(allocator, environ, "OPENCLAW_ZIG_RUNTIME_TELEGRAM_LIVE_STREAMING", cfg.runtime.telegram_live_streaming);
     cfg.runtime.telegram_stream_chunk_chars = try parseU32EnvOrDefault(allocator, environ, "OPENCLAW_ZIG_RUNTIME_TELEGRAM_STREAM_CHUNK_CHARS", cfg.runtime.telegram_stream_chunk_chars);
     cfg.runtime.telegram_stream_chunk_delay_ms = try parseU32EnvOrDefault(allocator, environ, "OPENCLAW_ZIG_RUNTIME_TELEGRAM_STREAM_CHUNK_DELAY_MS", cfg.runtime.telegram_stream_chunk_delay_ms);
@@ -293,6 +297,7 @@ test "defaults are stable" {
     try std.testing.expect(std.mem.eql(u8, cfg.runtime.exec_allowlist, ""));
     try std.testing.expectEqual(@as(i32, 0), cfg.runtime.memory_max_entries);
     try std.testing.expectEqual(@as(u32, 300), cfg.runtime.model_catalog_refresh_ttl_seconds);
+    try std.testing.expect(std.mem.eql(u8, cfg.runtime.telegram_api_endpoint, "https://api.telegram.org"));
     try std.testing.expect(cfg.runtime.telegram_live_streaming);
     try std.testing.expectEqual(@as(u32, 700), cfg.runtime.telegram_stream_chunk_chars);
     try std.testing.expectEqual(@as(u32, 250), cfg.runtime.telegram_stream_chunk_delay_ms);
