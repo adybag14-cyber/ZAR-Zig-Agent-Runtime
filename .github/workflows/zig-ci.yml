@@ -2012,6 +2012,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-syscall-control-probe-check.ps1
 
+      - name: Bare-metal QEMU syscall control baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-control-baseline-probe-check.ps1
+
       - name: Bare-metal QEMU syscall reregister preserve-count probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-syscall-reregister-preserve-count-probe-check.ps1
@@ -2023,6 +2027,10 @@ jobs:
       - name: Bare-metal QEMU syscall disabled-invoke preserve-state probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-syscall-disabled-invoke-preserve-state-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall control final-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-control-final-state-probe-check.ps1
 
       - name: Bare-metal QEMU syscall saturation overflow preserve-full probe (optional)
         shell: pwsh

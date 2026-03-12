@@ -4365,8 +4365,12 @@ test "baremetal syscall control commands isolate mutation and invoke paths" {
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_conflict), status.last_command_result);
     try std.testing.expectEqual(@as(u64, 0), oc_syscall_entry(0).invoke_count);
+    try std.testing.expectEqual(@as(u64, 0), oc_syscall_entry(0).last_arg);
+    try std.testing.expectEqual(@as(i64, 0), oc_syscall_entry(0).last_result);
     try std.testing.expectEqual(@as(u64, 0), oc_syscall_state_ptr().dispatch_count);
     try std.testing.expectEqual(@as(u32, 0), oc_syscall_state_ptr().last_syscall_id);
+    try std.testing.expectEqual(@as(u64, 0), oc_syscall_state_ptr().last_invoke_tick);
+    try std.testing.expectEqual(@as(i64, 0), oc_syscall_state_ptr().last_result);
 
     _ = oc_submit_command(abi.command_syscall_disable, 0, 0);
     oc_tick();
@@ -4381,7 +4385,12 @@ test "baremetal syscall control commands isolate mutation and invoke paths" {
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_not_supported), status.last_command_result);
     try std.testing.expectEqual(@as(u64, 0), oc_syscall_entry(0).invoke_count);
+    try std.testing.expectEqual(@as(u64, 0), oc_syscall_entry(0).last_arg);
+    try std.testing.expectEqual(@as(i64, 0), oc_syscall_entry(0).last_result);
     try std.testing.expectEqual(@as(u64, 0), oc_syscall_state_ptr().dispatch_count);
+    try std.testing.expectEqual(@as(u32, 0), oc_syscall_state_ptr().last_syscall_id);
+    try std.testing.expectEqual(@as(u64, 0), oc_syscall_state_ptr().last_invoke_tick);
+    try std.testing.expectEqual(@as(i64, 0), oc_syscall_state_ptr().last_result);
 
     _ = oc_submit_command(abi.command_syscall_enable, 0, 0);
     oc_tick();
@@ -4414,9 +4423,16 @@ test "baremetal syscall control commands isolate mutation and invoke paths" {
     _ = oc_submit_command(abi.command_syscall_unregister, 11, 0);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_not_found), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_syscall_unregister), status.last_command_opcode);
     try std.testing.expectEqual(@as(u32, 0), oc_syscall_entry_count());
     try std.testing.expect(oc_syscall_enabled());
     try std.testing.expectEqual(@as(u64, 1), oc_syscall_state_ptr().dispatch_count);
+    try std.testing.expectEqual(@as(u32, 11), oc_syscall_state_ptr().last_syscall_id);
+    try std.testing.expectEqual(invoke_expected, oc_syscall_state_ptr().last_result);
+    try std.testing.expect(oc_syscall_state_ptr().last_invoke_tick > 0);
+    try std.testing.expectEqual(@as(u8, abi.syscall_entry_state_unused), oc_syscall_entry(0).state);
+    try std.testing.expectEqual(@as(u8, 0), oc_syscall_entry(0).flags);
+    try std.testing.expectEqual(@as(u64, 0), oc_syscall_entry(0).invoke_count);
 }
 
 test "baremetal syscall table saturates and reuses cleared slots" {
