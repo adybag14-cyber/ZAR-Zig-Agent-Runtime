@@ -1,3 +1,6 @@
+param(
+  [switch]$SkipBuild
+)
 $ErrorActionPreference = "Stop"
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $defaultZig = "C:\Users\Ady\Documents\toolchains\zig-master\current\zig.exe"
@@ -5,7 +8,9 @@ $zig = if ($env:OPENCLAW_ZIG_BIN -and $env:OPENCLAW_ZIG_BIN.Trim().Length -gt 0)
 if (-not (Test-Path $zig)) {
   throw "Zig binary not found at '$zig'. Set OPENCLAW_ZIG_BIN to a valid zig executable path."
 }
-$null = & $zig build --summary all
+if (-not $SkipBuild) {
+  $null = & $zig build --summary all
+}
 $exe = Join-Path $repo "zig-out\bin\openclaw-zig.exe"
 if (-not (Test-Path $exe)) {
   throw "openclaw-zig executable not found at '$exe' after build."

@@ -26,6 +26,7 @@ Full documentation for the OpenClaw Zig runtime port.
 - Architecture and runtime composition
 - Package publishing, registry configuration, and install fallbacks
 - Full feature coverage by domain
+- Strict FS2 provider/channel matrix
 - RPC method family reference
 - Security, diagnostics, and remediation model
 - Browser/auth integration model (Lightpanda-only)
@@ -39,5 +40,6 @@ Full documentation for the OpenClaw Zig runtime port.
 - Repository: <https://github.com/adybag14-cyber/openclaw-zig-port>
 - Tracking issue: <https://github.com/adybag14-cyber/openclaw-zig-port/issues/1>
 - Package publishing guide: [package-publishing.md](package-publishing.md)
+- Strict FS2 matrix: [zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md](zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md)
 - Method registry source: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/openclaw-zig-port/blob/main/src/gateway/registry.zig)
 

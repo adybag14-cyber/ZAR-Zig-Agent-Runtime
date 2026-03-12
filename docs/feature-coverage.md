@@ -71,6 +71,8 @@ This page summarizes functional coverage across all major OpenClaw Zig runtime d
   - response includes structured `bridgeCompletion` telemetry (`requested`, `ok`, `requestUrl`, `statusCode`, `assistantText`, `latencyMs`, `error`)
   - top-level `ok/status` follows completion execution outcome (`completed` or `failed`)
 - provider breadth includes chatgpt/codex/claude/gemini/openrouter/opencode and guest-capable qwen/zai/inception flows
+- strict FS2 gate source:
+  - [`docs/zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md`](zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md)
 
 ## Channels and Telegram
 
@@ -85,6 +87,8 @@ This page summarizes functional coverage across all major OpenClaw Zig runtime d
 - queue behavior:
   - bounded retention
   - FIFO-preserving single-pass compaction
+- strict FS2 gate source:
+  - [`docs/zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md`](zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md)
 
 ## Memory
 

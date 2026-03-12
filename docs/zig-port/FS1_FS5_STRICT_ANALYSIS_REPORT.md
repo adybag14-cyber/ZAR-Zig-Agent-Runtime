@@ -188,8 +188,9 @@ FS1 is not complete until all of the following are true:
 
 #### Confirmed work still needed for strict completion
 
-1. The phase has many shipped slices, but it does not yet have a single strict provider/channel completion matrix recorded as a hard gate.
-2. The repo does not yet define a phase-complete evidence set for:
+1. The strict provider/channel completion matrix must be treated as the hard gate source of truth:
+   - `docs/zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md`
+2. The repo still does not have a complete phase-close evidence set for:
    - browser session auth success
    - browser completion success
    - direct-provider completion success
@@ -197,7 +198,7 @@ FS1 is not complete until all of the following are true:
    - Telegram non-command reply success
    - typing/chunking success
    - failure telemetry correctness
-3. FS2 depends on FS1 and FS4 for trustworthy auth, secret resolution, and runtime state handling. Without those locked, provider/channel closure is not defensible.
+3. FS2 depends on FS1 and FS4 for trustworthy auth, secret resolution, and runtime state handling. That dependency is now satisfied locally.
 
 #### Strict FS2 success gates
 
@@ -217,6 +218,13 @@ FS2 is not complete until all of the following are true:
    - unsupported/unauthorized cases produce deterministic telemetry
 5. End-to-end proofs are recorded for at least one real completion path and one real Telegram reply path.
 6. `zig-ci` and `docs-pages` are green on the pushed head.
+
+Current strict status after this slice:
+
+- the hard matrix now exists in docs
+- `web-login-smoke-check.ps1` and `telegram-reply-loop-smoke-check.ps1` are now part of the strict CI lane
+- browser-session auth and Telegram command/reply proofs are green locally
+- FS2 remains open because direct-provider/browser-completion success and dedicated Telegram webhook/bot-send success proofs are still missing
 
 ### FS3 - Memory/knowledge depth
 

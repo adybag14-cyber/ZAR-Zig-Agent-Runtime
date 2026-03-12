@@ -1,3 +1,6 @@
+param(
+  [switch]$SkipBuild
+)
 $ErrorActionPreference = "Stop"
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $defaultZig = "C:\Users\Ady\Documents\toolchains\zig-master\current\zig.exe"
@@ -5,7 +8,9 @@ $zig = if ($env:OPENCLAW_ZIG_BIN -and $env:OPENCLAW_ZIG_BIN.Trim().Length -gt 0)
 if (-not (Test-Path $zig)) {
   throw "Zig binary not found at '$zig'. Set OPENCLAW_ZIG_BIN to a valid zig executable path."
 }
-$null = & $zig build --summary all
+if (-not $SkipBuild) {
+  $null = & $zig build --summary all
+}
 $exe = Join-Path $repo "zig-out\bin\openclaw-zig.exe"
 if (-not (Test-Path $exe)) {
   throw "openclaw-zig executable not found at '$exe' after build."
@@ -75,14 +80,17 @@ try {
   if ([string]::IsNullOrWhiteSpace($linkReply)) {
     throw "/auth link response is empty"
   }
+  if ($linkReply -notmatch "Auth URL: ") {
+    throw "/auth link reply does not include auth URL"
+  }
   if ($linkReply -notmatch [regex]::Escape($loginCode)) {
     throw "/auth link reply does not include login code"
   }
-  if ($linkReply -notmatch [regex]::Escape($loginSessionId)) {
-    throw "/auth link reply does not include login session id"
+  if ($linkReply -match "Session:") {
+    throw "/auth link reply still exposes legacy session text"
   }
-  if ($linkReply -notmatch "/auth complete chatgpt") {
-    throw "/auth link reply does not include expected completion guidance"
+  if ($linkReply -match "Status:") {
+    throw "/auth link reply still exposes legacy status text"
   }
 
   $completePayload = @{
@@ -131,8 +139,9 @@ try {
   Write-Output "TELEGRAM_SEND_AUTH_COMPLETE_HTTP=$($complete.StatusCode)"
   Write-Output "TELEGRAM_SEND_CHAT_HTTP=$($chat.StatusCode)"
   Write-Output "TELEGRAM_POLL_HTTP=$($poll.StatusCode)"
+  Write-Output "TELEGRAM_AUTH_LINK_HAS_URL=$([bool]($linkReply -match 'Auth URL: '))"
   Write-Output "TELEGRAM_AUTH_LINK_HAS_CODE=$([bool]($linkReply -match [regex]::Escape($loginCode)))"
-  Write-Output "TELEGRAM_AUTH_LINK_HAS_SESSION=$([bool]($linkReply -match [regex]::Escape($loginSessionId)))"
+  Write-Output "TELEGRAM_AUTH_LINK_HAS_SESSION_TEXT=$([bool]($linkReply -match 'Session:'))"
   Write-Output "TELEGRAM_AUTH_COMPLETE_STATUS=$($completeJson.result.authStatus)"
   Write-Output "TELEGRAM_CHAT_REPLY_HAS_OPENCLAW=$([bool]($chatJson.result.reply -match 'OpenClaw Zig'))"
   Write-Output "TELEGRAM_POLL_COUNT=$($pollJson.result.count)"

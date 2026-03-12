@@ -24,6 +24,9 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
 - Recent FS4 progress (2026-03-12):
   - `secrets.store.status` now reports backend truth explicitly instead of implying native-provider support
   - support levels are now explicit for `env`, `encrypted-file`, native fallback requests, and unsupported backend requests
+- Current strict hosted-phase focus:
+  - `FS2` provider/channel completion now has a hard matrix at [`docs/zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md`](docs/zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md)
+  - `web-login-smoke-check.ps1` and `telegram-reply-loop-smoke-check.ps1` are now part of the strict FS2 CI lane
 - Recent FS6 progress (2026-03-06):
   - `update.*` now has a real `canary` rollout lane instead of collapsing `canary` into `edge`
   - appliance rollout boundary is now enforced by live smoke validation (`canary` selection, secure-boot block, canary apply, stable promotion)

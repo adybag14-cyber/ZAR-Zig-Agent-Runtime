@@ -96,3 +96,7 @@ Supported input aliases include:
 ```powershell
 ./scripts/web-login-smoke-check.ps1
 ```
+
+Strict FS2 gate source:
+
+- [`docs/zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md`](zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md)

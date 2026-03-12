@@ -648,6 +648,14 @@ jobs:
         shell: pwsh
         run: ./scripts/websocket-smoke-check.ps1 -SkipBuild
 
+      - name: Web login smoke check (strict FS2 browser-session auth lane)
+        shell: pwsh
+        run: ./scripts/web-login-smoke-check.ps1 -SkipBuild
+
+      - name: Telegram reply-loop smoke check (strict FS2 command/reply lane)
+        shell: pwsh
+        run: ./scripts/telegram-reply-loop-smoke-check.ps1 -SkipBuild
+
       - name: Update lifecycle smoke check (plan/run/status)
         shell: pwsh
         run: ./scripts/update-lifecycle-smoke-check.ps1 -SkipBuild
