@@ -559,4 +559,5 @@ Write-Output "BAREMETAL_QEMU_BINARY=$qemu"
 Write-Output "BAREMETAL_GDB_BINARY=$gdb"
 Write-Output "BAREMETAL_NM_BINARY=$nm"
 Write-Output "BAREMETAL_QEMU_BOOTDIAG_HISTORY_CLEAR_PROBE=pass"
+Write-Output "BAREMETAL_QEMU_BOOTDIAG_HISTORY_CLEAR_PROBE_SOURCE=baremetal-qemu-bootdiag-history-clear-probe-check.ps1"
 $gdbOutput.TrimEnd()

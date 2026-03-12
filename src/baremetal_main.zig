@@ -3913,10 +3913,29 @@ test "baremetal reset boot diagnostics preserves histories and runtime mode" {
     try std.testing.expectEqual(pre_health_len + 1, oc_health_history_len());
     try std.testing.expectEqual(pre_boot_history_len, oc_boot_phase_history_len());
 
+    const reset_event = oc_command_history_event(oc_command_history_len() - 1);
+    try std.testing.expectEqual(@as(u32, 4), reset_event.seq);
+    try std.testing.expectEqual(@as(u16, abi.command_reset_boot_diagnostics), reset_event.opcode);
+    try std.testing.expectEqual(@as(i16, abi.result_ok), reset_event.result);
+    try std.testing.expectEqual(@as(u64, 0), reset_event.arg0);
+    try std.testing.expectEqual(@as(u64, 0), reset_event.arg1);
+
+    const reset_health_event = oc_health_history_event(oc_health_history_len() - 1);
+    try std.testing.expectEqual(@as(u32, 5), reset_health_event.seq);
+    try std.testing.expectEqual(@as(u16, 200), reset_health_event.health_code);
+    try std.testing.expectEqual(@as(u8, abi.mode_running), reset_health_event.mode);
+    try std.testing.expectEqual(@as(u32, 4), reset_health_event.command_seq_ack);
+
     _ = oc_submit_command(abi.command_set_boot_phase, abi.boot_phase_init, 0);
     oc_tick();
 
     try std.testing.expectEqual(pre_boot_history_len + 1, oc_boot_phase_history_len());
+
+    const boot_restart_event = oc_boot_phase_history_event(oc_boot_phase_history_len() - 1);
+    try std.testing.expectEqual(@as(u32, 2), boot_restart_event.seq);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_runtime), boot_restart_event.previous_phase);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_init), boot_restart_event.new_phase);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_change_reason_command), boot_restart_event.reason);
 }
 
 test "baremetal scheduler command flow creates dispatches and completes tasks" {

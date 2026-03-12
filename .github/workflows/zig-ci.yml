@@ -276,6 +276,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-bootdiag-history-clear-probe-check.ps1
 
+      - name: Bare-metal QEMU bootdiag history clear baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-bootdiag-history-clear-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU bootdiag history clear pre-reset payloads probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-bootdiag-history-clear-pre-reset-payloads-probe-check.ps1
+
+      - name: Bare-metal QEMU bootdiag history clear post-reset state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-bootdiag-history-clear-post-reset-state-probe-check.ps1
+
+      - name: Bare-metal QEMU bootdiag history clear command-event probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-bootdiag-history-clear-command-event-probe-check.ps1
+
+      - name: Bare-metal QEMU bootdiag history clear health-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-bootdiag-history-clear-health-preserve-probe-check.ps1
+
       - name: Bare-metal QEMU reset-bootdiag preserve-state probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-reset-bootdiag-preserve-state-probe-check.ps1
