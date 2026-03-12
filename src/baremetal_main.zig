@@ -2559,6 +2559,10 @@ test "baremetal mailbox replay no-op and sequence wraparound remain deterministi
     try std.testing.expectEqual(seq, status.command_seq_ack);
     try std.testing.expectEqual(@as(u32, 4), status.tick_batch_hint);
     try std.testing.expectEqual(@as(u32, 1), oc_command_history_len());
+    try std.testing.expectEqual(@as(u32, 1), oc_command_history_event(0).seq);
+    try std.testing.expectEqual(@as(u16, abi.command_set_tick_batch_hint), oc_command_history_event(0).opcode);
+    try std.testing.expectEqual(@as(u64, 4), oc_command_history_event(0).arg0);
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_command_history_event(0).result);
 
     const history_len_before_replay = oc_command_history_len();
     const last_opcode_before_replay = status.last_command_opcode;
@@ -2572,6 +2576,10 @@ test "baremetal mailbox replay no-op and sequence wraparound remain deterministi
     try std.testing.expectEqual(last_opcode_before_replay, status.last_command_opcode);
     try std.testing.expectEqual(last_result_before_replay, status.last_command_result);
     try std.testing.expectEqual(history_len_before_replay, oc_command_history_len());
+    try std.testing.expectEqual(@as(u32, 1), oc_command_history_event(0).seq);
+    try std.testing.expectEqual(@as(u16, abi.command_set_tick_batch_hint), oc_command_history_event(0).opcode);
+    try std.testing.expectEqual(@as(u64, 4), oc_command_history_event(0).arg0);
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_command_history_event(0).result);
     try std.testing.expectEqual(@as(u32, 1), command_mailbox.seq);
 
     command_mailbox.seq = std.math.maxInt(u32) - 1;

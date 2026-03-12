@@ -185,6 +185,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-mailbox-stale-seq-preserve-state-probe-check.ps1
 
+      - name: Bare-metal QEMU mailbox stale-seq baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-stale-seq-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox stale-seq first-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-stale-seq-first-state-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox stale-seq stale-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-stale-seq-stale-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox stale-seq fresh-recovery state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-stale-seq-fresh-recovery-state-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox stale-seq final mailbox state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-stale-seq-final-mailbox-state-probe-check.ps1
+
       - name: Bare-metal QEMU mailbox seq-wraparound recovery probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-mailbox-seq-wraparound-recovery-probe-check.ps1
