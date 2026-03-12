@@ -3025,6 +3025,11 @@ test "baremetal command history overflow clear resets ring and restarts from the
     try std.testing.expectEqual(@as(u32, 3), oc_command_history_overflow_count());
     try std.testing.expectEqual(@as(u32, 4), oc_command_history_event(0).seq);
     try std.testing.expectEqual(@as(u64, 603), oc_command_history_event(0).arg0);
+    const overflow_last = oc_command_history_event(cap - 1);
+    try std.testing.expectEqual(@as(u32, 35), overflow_last.seq);
+    try std.testing.expectEqual(@as(u16, abi.command_set_health_code), overflow_last.opcode);
+    try std.testing.expectEqual(@as(i16, abi.result_ok), overflow_last.result);
+    try std.testing.expectEqual(@as(u64, 634), overflow_last.arg0);
 
     const pre_health_len = oc_health_history_len();
     const pre_health_overflow = oc_health_history_overflow_count();
@@ -3046,9 +3051,11 @@ test "baremetal command history overflow clear resets ring and restarts from the
     oc_tick();
 
     try std.testing.expectEqual(@as(u32, 2), oc_command_history_len());
+    try std.testing.expectEqual(@as(u32, 2), oc_command_history_head_index());
     const restarted_event = oc_command_history_event(1);
     try std.testing.expectEqual(status.command_seq_ack, restarted_event.seq);
     try std.testing.expectEqual(@as(u16, abi.command_set_health_code), restarted_event.opcode);
+    try std.testing.expectEqual(@as(i16, abi.result_ok), restarted_event.result);
     try std.testing.expectEqual(@as(u64, 999), restarted_event.arg0);
 }
 

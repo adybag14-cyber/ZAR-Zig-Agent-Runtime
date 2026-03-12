@@ -348,10 +348,10 @@ $bootDiagnosticsAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Patt
 $interruptStateAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal\.x86_bootstrap\.interrupt_state$' -SymbolName "baremetal.x86_bootstrap.interrupt_state"
 $artifactForGdb = $artifact.Replace('\', '/')
 
-if (Test-Path $gdbStdout) { Remove-Item -Force $gdbStdout }
-if (Test-Path $gdbStderr) { Remove-Item -Force $gdbStderr }
-if (Test-Path $qemuStdout) { Remove-Item -Force $qemuStdout }
-if (Test-Path $qemuStderr) { Remove-Item -Force $qemuStderr }
+if (Test-Path $gdbStdout) { Remove-Item -Force $gdbStdout -ErrorAction SilentlyContinue }
+if (Test-Path $gdbStderr) { Remove-Item -Force $gdbStderr -ErrorAction SilentlyContinue }
+if (Test-Path $qemuStdout) { Remove-Item -Force $qemuStdout -ErrorAction SilentlyContinue }
+if (Test-Path $qemuStderr) { Remove-Item -Force $qemuStderr -ErrorAction SilentlyContinue }
 
 @"
 set pagination off

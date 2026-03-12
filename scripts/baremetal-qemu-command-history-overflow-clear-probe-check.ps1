@@ -61,20 +61,54 @@ if ($clear.Status -eq 'skipped') {
 
 $overflowCount = Extract-IntValue -Text $overflow.Text -Name 'COMMAND_HISTORY_OVERFLOW'
 $firstSeq = Extract-IntValue -Text $overflow.Text -Name 'COMMAND_HISTORY_FIRST_SEQ'
+$firstArg0 = Extract-IntValue -Text $overflow.Text -Name 'COMMAND_HISTORY_FIRST_ARG0'
 $lastSeq = Extract-IntValue -Text $overflow.Text -Name 'COMMAND_HISTORY_LAST_SEQ'
+$lastArg0 = Extract-IntValue -Text $overflow.Text -Name 'COMMAND_HISTORY_LAST_ARG0'
 $clearLen = Extract-IntValue -Text $clear.Text -Name 'CMD_HISTORY_LEN2'
 $clearFirstSeq = Extract-IntValue -Text $clear.Text -Name 'CMD_HISTORY_FIRST_SEQ'
+$clearFirstOpcode = Extract-IntValue -Text $clear.Text -Name 'CMD_HISTORY_FIRST_OPCODE'
+$clearFirstResult = Extract-IntValue -Text $clear.Text -Name 'CMD_HISTORY_FIRST_RESULT'
+$healthPreserveLen = Extract-IntValue -Text $clear.Text -Name 'HEALTH_HISTORY_LEN2'
 $restartLen = Extract-IntValue -Text $clear.Text -Name 'CMD_HISTORY_LEN3'
+$restartSeq = Extract-IntValue -Text $clear.Text -Name 'CMD_HISTORY_SECOND_SEQ'
+$restartOpcode = Extract-IntValue -Text $clear.Text -Name 'CMD_HISTORY_SECOND_OPCODE'
+$restartResult = Extract-IntValue -Text $clear.Text -Name 'CMD_HISTORY_SECOND_RESULT'
+$restartArg0 = Extract-IntValue -Text $clear.Text -Name 'CMD_HISTORY_SECOND_ARG0'
 
-if ($overflowCount -ne 3 -or $firstSeq -ne 4 -or $lastSeq -ne 35 -or $clearLen -ne 1 -or $clearFirstSeq -ne 5 -or $restartLen -ne 2) {
-    throw "Unexpected command-history overflow/clear values: overflow=$overflowCount first=$firstSeq last=$lastSeq clearLen=$clearLen clearFirst=$clearFirstSeq restartLen=$restartLen"
+if (
+    $overflowCount -ne 3 -or
+    $firstSeq -ne 4 -or
+    $firstArg0 -ne 103 -or
+    $lastSeq -ne 35 -or
+    $lastArg0 -ne 134 -or
+    $clearLen -ne 1 -or
+    $clearFirstSeq -ne 5 -or
+    $clearFirstOpcode -ne 19 -or
+    $clearFirstResult -ne 0 -or
+    $healthPreserveLen -ne 6 -or
+    $restartLen -ne 2 -or
+    $restartSeq -ne 6 -or
+    $restartOpcode -ne 20 -or
+    $restartResult -ne 0 -or
+    $restartArg0 -ne 0
+) {
+    throw "Unexpected command-history overflow/clear values: overflow=$overflowCount first=$firstSeq firstArg0=$firstArg0 last=$lastSeq lastArg0=$lastArg0 clearLen=$clearLen clearFirst=$clearFirstSeq clearOpcode=$clearFirstOpcode clearResult=$clearFirstResult healthPreserve=$healthPreserveLen restartLen=$restartLen restartSeq=$restartSeq restartOpcode=$restartOpcode restartResult=$restartResult restartArg0=$restartArg0"
 }
 
 Write-Output 'BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_PROBE=pass'
 Write-Output 'BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_PROBE_SOURCE=baremetal-qemu-command-health-history-probe-check.ps1,baremetal-qemu-bootdiag-history-clear-probe-check.ps1'
 Write-Output "BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_PROBE_OVERFLOW_COUNT=$overflowCount"
 Write-Output "BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_PROBE_FIRST_SEQ=$firstSeq"
+Write-Output "BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_PROBE_FIRST_ARG0=$firstArg0"
 Write-Output "BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_PROBE_LAST_SEQ=$lastSeq"
+Write-Output "BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_PROBE_LAST_ARG0=$lastArg0"
 Write-Output "BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_PROBE_CLEAR_LEN=$clearLen"
 Write-Output "BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_PROBE_CLEAR_FIRST_SEQ=$clearFirstSeq"
+Write-Output "BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_PROBE_CLEAR_FIRST_OPCODE=$clearFirstOpcode"
+Write-Output "BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_PROBE_CLEAR_FIRST_RESULT=$clearFirstResult"
+Write-Output "BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_PROBE_HEALTH_PRESERVE_LEN=$healthPreserveLen"
 Write-Output "BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_PROBE_RESTART_LEN=$restartLen"
+Write-Output "BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_PROBE_RESTART_SEQ=$restartSeq"
+Write-Output "BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_PROBE_RESTART_OPCODE=$restartOpcode"
+Write-Output "BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_PROBE_RESTART_RESULT=$restartResult"
+Write-Output "BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_PROBE_RESTART_ARG0=$restartArg0"

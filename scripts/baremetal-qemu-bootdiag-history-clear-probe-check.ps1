@@ -366,6 +366,10 @@ if $stage == 7
     printf "HEALTH_HISTORY_FIRST_TICK=%llu\n", *(unsigned long long*)(0x__HEALTH_HISTORY__ + __HEALTH_EVENT_TICK_OFFSET__)
     printf "HEALTH_HISTORY_FIRST_ACK=%u\n", *(unsigned int*)(0x__HEALTH_HISTORY__ + __HEALTH_EVENT_ACK_OFFSET__)
     printf "CMD_HISTORY_LEN3=%u\n", *(unsigned int*)0x__CMD_HISTORY_COUNT__
+    printf "CMD_HISTORY_SECOND_SEQ=%u\n", *(unsigned int*)(0x__CMD_HISTORY__ + __COMMAND_EVENT_STRIDE__ + __COMMAND_EVENT_SEQ_OFFSET__)
+    printf "CMD_HISTORY_SECOND_OPCODE=%u\n", *(unsigned short*)(0x__CMD_HISTORY__ + __COMMAND_EVENT_STRIDE__ + __COMMAND_EVENT_OPCODE_OFFSET__)
+    printf "CMD_HISTORY_SECOND_RESULT=%d\n", *(short*)(0x__CMD_HISTORY__ + __COMMAND_EVENT_STRIDE__ + __COMMAND_EVENT_RESULT_OFFSET__)
+    printf "CMD_HISTORY_SECOND_ARG0=%llu\n", *(unsigned long long*)(0x__CMD_HISTORY__ + __COMMAND_EVENT_STRIDE__ + __COMMAND_EVENT_ARG0_OFFSET__)
     quit
   end
   continue
@@ -515,6 +519,10 @@ $expectations = @{
     HEALTH_HISTORY_FIRST_TICK = 6
     HEALTH_HISTORY_FIRST_ACK = 6
     CMD_HISTORY_LEN3 = 2
+    CMD_HISTORY_SECOND_SEQ = 6
+    CMD_HISTORY_SECOND_OPCODE = $clearHealthHistoryOpcode
+    CMD_HISTORY_SECOND_RESULT = 0
+    CMD_HISTORY_SECOND_ARG0 = 0
 }
 
 foreach ($name in $expectations.Keys) {
