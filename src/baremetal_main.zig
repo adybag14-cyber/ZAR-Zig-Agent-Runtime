@@ -4433,6 +4433,7 @@ test "baremetal syscall control commands isolate mutation and invoke paths" {
     _ = oc_submit_command(abi.command_syscall_register, 11, 0xBEEF);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_syscall_register), status.last_command_opcode);
     try std.testing.expectEqual(@as(u32, 1), oc_syscall_entry_count());
     try std.testing.expectEqual(@as(u64, 0xBEEF), oc_syscall_entry(0).handler_token);
     try std.testing.expectEqual(@as(u8, 0), oc_syscall_entry(0).flags);
@@ -4440,6 +4441,7 @@ test "baremetal syscall control commands isolate mutation and invoke paths" {
     _ = oc_submit_command(abi.command_syscall_register, 11, 0xCAFE);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_syscall_register), status.last_command_opcode);
     try std.testing.expectEqual(@as(u32, 1), oc_syscall_entry_count());
     try std.testing.expectEqual(@as(u64, 0xCAFE), oc_syscall_entry(0).handler_token);
     try std.testing.expectEqual(@as(u64, 0), oc_syscall_entry(0).invoke_count);
@@ -4447,11 +4449,13 @@ test "baremetal syscall control commands isolate mutation and invoke paths" {
     _ = oc_submit_command(abi.command_syscall_set_flags, 11, abi.syscall_entry_flag_blocked);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_syscall_set_flags), status.last_command_opcode);
     try std.testing.expectEqual(abi.syscall_entry_flag_blocked, oc_syscall_entry(0).flags);
 
     _ = oc_submit_command(abi.command_syscall_invoke, 11, 0x1234);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_conflict), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_syscall_invoke), status.last_command_opcode);
     try std.testing.expectEqual(@as(u64, 0), oc_syscall_entry(0).invoke_count);
     try std.testing.expectEqual(@as(u64, 0), oc_syscall_entry(0).last_arg);
     try std.testing.expectEqual(@as(i64, 0), oc_syscall_entry(0).last_result);
@@ -4483,10 +4487,12 @@ test "baremetal syscall control commands isolate mutation and invoke paths" {
     _ = oc_submit_command(abi.command_syscall_enable, 0, 0);
     oc_tick();
     try std.testing.expect(oc_syscall_enabled());
+    try std.testing.expectEqual(@as(u16, abi.command_syscall_enable), status.last_command_opcode);
 
     _ = oc_submit_command(abi.command_syscall_invoke, 11, 0x1234);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_syscall_invoke), status.last_command_opcode);
     const invoke_expected: i64 = @as(i64, @bitCast(@as(u64, 0xCAFE ^ 0x1234 ^ 11)));
     try std.testing.expectEqual(@as(u64, 1), oc_syscall_entry(0).invoke_count);
     try std.testing.expectEqual(@as(u64, 0x1234), oc_syscall_entry(0).last_arg);
@@ -4500,6 +4506,7 @@ test "baremetal syscall control commands isolate mutation and invoke paths" {
     _ = oc_submit_command(abi.command_syscall_unregister, 11, 0);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_ok), status.last_command_result);
+    try std.testing.expectEqual(@as(u16, abi.command_syscall_unregister), status.last_command_opcode);
     try std.testing.expectEqual(@as(u32, 0), oc_syscall_entry_count());
     try std.testing.expectEqual(@as(u8, abi.syscall_entry_state_unused), oc_syscall_entry(0).state);
 

@@ -2191,17 +2191,25 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-syscall-control-baseline-probe-check.ps1
 
-      - name: Bare-metal QEMU syscall reregister preserve-count probe (optional)
+      - name: Bare-metal QEMU syscall control register-stage probe (optional)
         shell: pwsh
-        run: ./scripts/baremetal-qemu-syscall-reregister-preserve-count-probe-check.ps1
+        run: ./scripts/baremetal-qemu-syscall-control-register-stage-probe-check.ps1
 
-      - name: Bare-metal QEMU syscall blocked-invoke preserve-state probe (optional)
+      - name: Bare-metal QEMU syscall control reregister-stage probe (optional)
         shell: pwsh
-        run: ./scripts/baremetal-qemu-syscall-blocked-invoke-preserve-state-probe-check.ps1
+        run: ./scripts/baremetal-qemu-syscall-control-reregister-stage-probe-check.ps1
 
-      - name: Bare-metal QEMU syscall disabled-invoke preserve-state probe (optional)
+      - name: Bare-metal QEMU syscall control blocked-state probe (optional)
         shell: pwsh
-        run: ./scripts/baremetal-qemu-syscall-disabled-invoke-preserve-state-probe-check.ps1
+        run: ./scripts/baremetal-qemu-syscall-control-blocked-state-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall control enabled-invoke-stage probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-control-enabled-invoke-stage-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall control unregister-cleanup-stage probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-control-unregister-cleanup-stage-probe-check.ps1
 
       - name: Bare-metal QEMU syscall control final-state probe (optional)
         shell: pwsh

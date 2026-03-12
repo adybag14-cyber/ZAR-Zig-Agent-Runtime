@@ -218,12 +218,29 @@ $gdbTemplate = @'
 set pagination off
 set confirm off
 set $stage = 0
+set $register_entry_count = 0
+set $register_entry_state = 0
+set $register_entry_flags = 0
+set $register_token = 0
+set $reregister_entry_count = 0
+set $reregister_invoke_count = 0
 set $updated_token = 0
 set $blocked_result = 0
+set $blocked_flags = 0
+set $blocked_entry_count = 0
+set $blocked_dispatch_count = 0
 set $disabled_result = 0
 set $invoke_result = 0
 set $invoke_tick = 0
+set $invoke_entry_count = 0
+set $invoke_entry_invoke_count = 0
+set $invoke_entry_last_arg = 0
+set $invoke_entry_last_result = 0
+set $unregister_result = 0
+set $unregister_entry_count = 0
+set $unregister_entry_state = 0
 set $missing_flags_result = 0
+set $missing_unregister_result = 0
 file __ARTIFACT__
 handle SIGQUIT nostop noprint pass
 target remote :__GDBPORT__
@@ -265,6 +282,10 @@ if $stage == 1
 end
 if $stage == 2
   if *(unsigned int*)(0x__STATUS__+__STATUS_ACK_OFFSET__) == 2 && *(short*)(0x__STATUS__+__STATUS_LAST_RESULT_OFFSET__) == 0 && *(unsigned char*)(0x__SYSCALL_STATE__+__SYSCALL_ENTRY_COUNT_OFFSET__) == 1 && *(unsigned int*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_ID_OFFSET__) == __SYSCALL_ID__ && *(unsigned char*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_STATE_OFFSET__) == 1 && *(unsigned char*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_FLAGS_OFFSET__) == 0 && *(unsigned long long*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_TOKEN_OFFSET__) == __INITIAL_TOKEN__
+    set $register_entry_count = *(unsigned char*)(0x__SYSCALL_STATE__+__SYSCALL_ENTRY_COUNT_OFFSET__)
+    set $register_entry_state = *(unsigned char*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_STATE_OFFSET__)
+    set $register_entry_flags = *(unsigned char*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_FLAGS_OFFSET__)
+    set $register_token = *(unsigned long long*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_TOKEN_OFFSET__)
     set *(unsigned short*)(0x__COMMAND_MAILBOX__+__COMMAND_OPCODE_OFFSET__) = __SYSCALL_REGISTER_OPCODE__
     set *(unsigned int*)(0x__COMMAND_MAILBOX__+__COMMAND_SEQ_OFFSET__) = 3
     set *(unsigned long long*)(0x__COMMAND_MAILBOX__+__COMMAND_ARG0_OFFSET__) = __SYSCALL_ID__
@@ -276,6 +297,8 @@ end
 if $stage == 3
   if *(unsigned int*)(0x__STATUS__+__STATUS_ACK_OFFSET__) == 3 && *(short*)(0x__STATUS__+__STATUS_LAST_RESULT_OFFSET__) == 0 && *(unsigned char*)(0x__SYSCALL_STATE__+__SYSCALL_ENTRY_COUNT_OFFSET__) == 1 && *(unsigned long long*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_TOKEN_OFFSET__) == __UPDATED_TOKEN__ && *(unsigned long long*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_INVOKE_COUNT_OFFSET__) == 0
     set $updated_token = *(unsigned long long*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_TOKEN_OFFSET__)
+    set $reregister_entry_count = *(unsigned char*)(0x__SYSCALL_STATE__+__SYSCALL_ENTRY_COUNT_OFFSET__)
+    set $reregister_invoke_count = *(unsigned long long*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_INVOKE_COUNT_OFFSET__)
     set *(unsigned short*)(0x__COMMAND_MAILBOX__+__COMMAND_OPCODE_OFFSET__) = __SYSCALL_SET_FLAGS_OPCODE__
     set *(unsigned int*)(0x__COMMAND_MAILBOX__+__COMMAND_SEQ_OFFSET__) = 4
     set *(unsigned long long*)(0x__COMMAND_MAILBOX__+__COMMAND_ARG0_OFFSET__) = __SYSCALL_ID__
@@ -297,6 +320,9 @@ end
 if $stage == 5
   if *(unsigned int*)(0x__STATUS__+__STATUS_ACK_OFFSET__) == 5 && *(short*)(0x__STATUS__+__STATUS_LAST_RESULT_OFFSET__) == -17 && *(unsigned long long*)(0x__SYSCALL_STATE__+__SYSCALL_DISPATCH_COUNT_OFFSET__) == 0 && *(unsigned int*)(0x__SYSCALL_STATE__+__SYSCALL_LAST_ID_OFFSET__) == 0 && *(unsigned long long*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_INVOKE_COUNT_OFFSET__) == 0
     set $blocked_result = *(short*)(0x__STATUS__+__STATUS_LAST_RESULT_OFFSET__)
+    set $blocked_flags = *(unsigned char*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_FLAGS_OFFSET__)
+    set $blocked_entry_count = *(unsigned char*)(0x__SYSCALL_STATE__+__SYSCALL_ENTRY_COUNT_OFFSET__)
+    set $blocked_dispatch_count = *(unsigned long long*)(0x__SYSCALL_STATE__+__SYSCALL_DISPATCH_COUNT_OFFSET__)
     set *(unsigned short*)(0x__COMMAND_MAILBOX__+__COMMAND_OPCODE_OFFSET__) = __SYSCALL_DISABLE_OPCODE__
     set *(unsigned int*)(0x__COMMAND_MAILBOX__+__COMMAND_SEQ_OFFSET__) = 6
     set *(unsigned long long*)(0x__COMMAND_MAILBOX__+__COMMAND_ARG0_OFFSET__) = 0
@@ -350,6 +376,10 @@ if $stage == 10
   if *(unsigned int*)(0x__STATUS__+__STATUS_ACK_OFFSET__) == 10 && *(short*)(0x__STATUS__+__STATUS_LAST_RESULT_OFFSET__) == 0 && *(unsigned long long*)(0x__SYSCALL_STATE__+__SYSCALL_DISPATCH_COUNT_OFFSET__) == 1 && *(unsigned int*)(0x__SYSCALL_STATE__+__SYSCALL_LAST_ID_OFFSET__) == __SYSCALL_ID__ && *(long long*)(0x__SYSCALL_STATE__+__SYSCALL_LAST_RESULT_OFFSET__) == __EXPECTED_INVOKE_RESULT__ && *(unsigned long long*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_INVOKE_COUNT_OFFSET__) == 1 && *(unsigned long long*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_LAST_ARG_OFFSET__) == __INVOKE_ARG__ && *(long long*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_LAST_RESULT_OFFSET__) == __EXPECTED_INVOKE_RESULT__
     set $invoke_result = *(long long*)(0x__SYSCALL_STATE__+__SYSCALL_LAST_RESULT_OFFSET__)
     set $invoke_tick = *(unsigned long long*)(0x__SYSCALL_STATE__+__SYSCALL_LAST_INVOKE_TICK_OFFSET__)
+    set $invoke_entry_count = *(unsigned char*)(0x__SYSCALL_STATE__+__SYSCALL_ENTRY_COUNT_OFFSET__)
+    set $invoke_entry_invoke_count = *(unsigned long long*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_INVOKE_COUNT_OFFSET__)
+    set $invoke_entry_last_arg = *(unsigned long long*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_LAST_ARG_OFFSET__)
+    set $invoke_entry_last_result = *(long long*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_LAST_RESULT_OFFSET__)
     set *(unsigned short*)(0x__COMMAND_MAILBOX__+__COMMAND_OPCODE_OFFSET__) = __SYSCALL_UNREGISTER_OPCODE__
     set *(unsigned int*)(0x__COMMAND_MAILBOX__+__COMMAND_SEQ_OFFSET__) = 11
     set *(unsigned long long*)(0x__COMMAND_MAILBOX__+__COMMAND_ARG0_OFFSET__) = __SYSCALL_ID__
@@ -360,6 +390,9 @@ if $stage == 10
 end
 if $stage == 11
   if *(unsigned int*)(0x__STATUS__+__STATUS_ACK_OFFSET__) == 11 && *(short*)(0x__STATUS__+__STATUS_LAST_RESULT_OFFSET__) == 0 && *(unsigned char*)(0x__SYSCALL_STATE__+__SYSCALL_ENTRY_COUNT_OFFSET__) == 0 && *(unsigned char*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_STATE_OFFSET__) == 0
+    set $unregister_result = *(short*)(0x__STATUS__+__STATUS_LAST_RESULT_OFFSET__)
+    set $unregister_entry_count = *(unsigned char*)(0x__SYSCALL_STATE__+__SYSCALL_ENTRY_COUNT_OFFSET__)
+    set $unregister_entry_state = *(unsigned char*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_STATE_OFFSET__)
     set *(unsigned short*)(0x__COMMAND_MAILBOX__+__COMMAND_OPCODE_OFFSET__) = __SYSCALL_SET_FLAGS_OPCODE__
     set *(unsigned int*)(0x__COMMAND_MAILBOX__+__COMMAND_SEQ_OFFSET__) = 12
     set *(unsigned long long*)(0x__COMMAND_MAILBOX__+__COMMAND_ARG0_OFFSET__) = __SYSCALL_ID__
@@ -381,18 +414,36 @@ if $stage == 12
 end
 if $stage == 13
   if *(unsigned int*)(0x__STATUS__+__STATUS_ACK_OFFSET__) == 13 && *(unsigned short*)(0x__STATUS__+__STATUS_LAST_OPCODE_OFFSET__) == __SYSCALL_UNREGISTER_OPCODE__ && *(short*)(0x__STATUS__+__STATUS_LAST_RESULT_OFFSET__) == -2 && *(unsigned char*)(0x__STATUS__+__STATUS_MODE_OFFSET__) == 1 && *(unsigned char*)(0x__SYSCALL_STATE__+__SYSCALL_ENABLED_OFFSET__) == 1 && *(unsigned char*)(0x__SYSCALL_STATE__+__SYSCALL_ENTRY_COUNT_OFFSET__) == 0 && *(unsigned long long*)(0x__SYSCALL_STATE__+__SYSCALL_DISPATCH_COUNT_OFFSET__) == 1 && *(unsigned int*)(0x__SYSCALL_STATE__+__SYSCALL_LAST_ID_OFFSET__) == __SYSCALL_ID__ && *(long long*)(0x__SYSCALL_STATE__+__SYSCALL_LAST_RESULT_OFFSET__) == __EXPECTED_INVOKE_RESULT__ && *(unsigned char*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_STATE_OFFSET__) == 0 && *(unsigned char*)(0x__SYSCALL_ENTRIES__+__SYSCALL_ENTRY_FLAGS_OFFSET__) == 0
+    set $missing_unregister_result = *(short*)(0x__STATUS__+__STATUS_LAST_RESULT_OFFSET__)
     printf "HIT_AFTER_SYSCALL_CONTROL_PROBE\n"
     printf "ACK=%u\n", *(unsigned int*)(0x__STATUS__+__STATUS_ACK_OFFSET__)
     printf "LAST_OPCODE=%u\n", *(unsigned short*)(0x__STATUS__+__STATUS_LAST_OPCODE_OFFSET__)
     printf "LAST_RESULT=%d\n", *(short*)(0x__STATUS__+__STATUS_LAST_RESULT_OFFSET__)
     printf "TICKS=%llu\n", *(unsigned long long*)(0x__STATUS__+__STATUS_TICKS_OFFSET__)
     printf "STATUS_MODE=%u\n", *(unsigned char*)(0x__STATUS__+__STATUS_MODE_OFFSET__)
+    printf "REGISTER_ENTRY_COUNT=%u\n", $register_entry_count
+    printf "REGISTER_ENTRY_STATE=%u\n", $register_entry_state
+    printf "REGISTER_ENTRY_FLAGS=%u\n", $register_entry_flags
+    printf "REGISTER_TOKEN=%llu\n", $register_token
+    printf "REREGISTER_ENTRY_COUNT=%u\n", $reregister_entry_count
+    printf "REREGISTER_INVOKE_COUNT=%llu\n", $reregister_invoke_count
     printf "UPDATED_TOKEN=%llu\n", $updated_token
     printf "BLOCKED_RESULT=%d\n", $blocked_result
+    printf "BLOCKED_FLAGS=%u\n", $blocked_flags
+    printf "BLOCKED_ENTRY_COUNT=%u\n", $blocked_entry_count
+    printf "BLOCKED_DISPATCH_COUNT=%llu\n", $blocked_dispatch_count
     printf "DISABLED_RESULT=%d\n", $disabled_result
     printf "INVOKE_RESULT=%lld\n", $invoke_result
     printf "INVOKE_TICK=%llu\n", $invoke_tick
+    printf "INVOKE_ENTRY_COUNT=%u\n", $invoke_entry_count
+    printf "INVOKE_ENTRY_INVOKE_COUNT=%llu\n", $invoke_entry_invoke_count
+    printf "INVOKE_ENTRY_LAST_ARG=%llu\n", $invoke_entry_last_arg
+    printf "INVOKE_ENTRY_LAST_RESULT=%lld\n", $invoke_entry_last_result
+    printf "UNREGISTER_RESULT=%d\n", $unregister_result
+    printf "UNREGISTER_ENTRY_COUNT=%u\n", $unregister_entry_count
+    printf "UNREGISTER_ENTRY_STATE=%u\n", $unregister_entry_state
     printf "MISSING_FLAGS_RESULT=%d\n", $missing_flags_result
+    printf "MISSING_UNREGISTER_RESULT=%d\n", $missing_unregister_result
     printf "ENABLED=%u\n", *(unsigned char*)(0x__SYSCALL_STATE__+__SYSCALL_ENABLED_OFFSET__)
     printf "ENTRY_COUNT=%u\n", *(unsigned char*)(0x__SYSCALL_STATE__+__SYSCALL_ENTRY_COUNT_OFFSET__)
     printf "DISPATCH_COUNT=%llu\n", *(unsigned long long*)(0x__SYSCALL_STATE__+__SYSCALL_DISPATCH_COUNT_OFFSET__)

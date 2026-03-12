@@ -342,7 +342,7 @@ Recommended sequence:
 - optional bare-metal QEMU allocator free failure probe (allocate 2 pages, prove wrong-pointer `command_allocator_free` returns `result_not_found`, wrong-size returns `result_invalid_argument`, successful free updates `last_free_*`, double-free returns `result_not_found`, and a fresh allocation restarts from page `0` against the freestanding PVH artifact)
 - optional bare-metal QEMU allocator free failure wrapper validation batch (wrapper probes over the broad allocator-free lane, isolating initial allocation baseline, wrong-pointer `not_found` preservation, wrong-size `invalid_argument` preservation, successful free metadata update, and double-free plus clean realloc restart)
 - optional bare-metal QEMU syscall control probe (isolated live `command_syscall_register` re-register, `command_syscall_set_flags`, blocked invoke, disable/enable, successful invoke, unregister, and missing-entry mutation proof against the freestanding PVH artifact)
-- optional bare-metal QEMU syscall control wrapper probes (`baremetal-qemu-syscall-control-baseline-probe-check.ps1`, `baremetal-qemu-syscall-reregister-preserve-count-probe-check.ps1`, `baremetal-qemu-syscall-blocked-invoke-preserve-state-probe-check.ps1`, `baremetal-qemu-syscall-disabled-invoke-preserve-state-probe-check.ps1`, and `baremetal-qemu-syscall-control-final-state-probe-check.ps1`) reuse the broad mutation lane and fail directly on the final mailbox baseline, re-register token-update/no-growth, blocked invoke preservation, disabled invoke preservation, and final unregister/missing-entry cleanup invariants
+- optional bare-metal QEMU syscall control wrapper probes (`baremetal-qemu-syscall-control-baseline-probe-check.ps1`, `baremetal-qemu-syscall-control-register-stage-probe-check.ps1`, `baremetal-qemu-syscall-control-reregister-stage-probe-check.ps1`, `baremetal-qemu-syscall-control-blocked-state-probe-check.ps1`, `baremetal-qemu-syscall-control-enabled-invoke-stage-probe-check.ps1`, `baremetal-qemu-syscall-control-unregister-cleanup-stage-probe-check.ps1`, and `baremetal-qemu-syscall-control-final-state-probe-check.ps1`) reuse the broad mutation lane and fail directly on the register baseline, re-register token update without growth, blocked invoke state, enabled invoke telemetry, unregister cleanup, and final steady-state invariants
 - optional bare-metal QEMU syscall wrapper validation batch (wrapper probes over the broad syscall lanes, isolating re-register token-update/no-growth, blocked invoke preservation, disabled invoke preservation, saturation overflow full-table retention, slot reuse semantics, post-reset slot-zero restart, and final unregister/missing-entry cleanup)
 - optional bare-metal QEMU allocator syscall failure probe (invalid-alignment, no-space, blocked-syscall, and disabled-syscall result semantics plus command-result counters against the freestanding PVH artifact)
 - optional bare-metal QEMU command-result counters probe (live mailbox result-category accounting plus `command_reset_command_result_counters` reset semantics against the freestanding PVH artifact)
@@ -561,9 +561,11 @@ Recommended sequence:
 - bare-metal optional QEMU allocator free failure probe in validate stage
 - bare-metal optional QEMU allocator free failure wrapper probes in validate stage
 - bare-metal optional QEMU syscall control probe in validate stage
-- bare-metal optional QEMU syscall reregister preserve-count probe in validate stage
-- bare-metal optional QEMU syscall blocked-invoke preserve-state probe in validate stage
-- bare-metal optional QEMU syscall disabled-invoke preserve-state probe in validate stage
+- bare-metal optional QEMU syscall control register-stage probe in validate stage
+- bare-metal optional QEMU syscall control reregister-stage probe in validate stage
+- bare-metal optional QEMU syscall control blocked-state probe in validate stage
+- bare-metal optional QEMU syscall control enabled-invoke-stage probe in validate stage
+- bare-metal optional QEMU syscall control unregister-cleanup-stage probe in validate stage
 - bare-metal optional QEMU syscall saturation overflow preserve-full probe in validate stage
 - bare-metal optional QEMU syscall saturation reuse-slot probe in validate stage
 - bare-metal optional QEMU syscall saturation-reset restart probe in validate stage
