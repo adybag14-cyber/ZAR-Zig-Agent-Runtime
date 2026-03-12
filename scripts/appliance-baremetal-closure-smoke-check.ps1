@@ -27,6 +27,25 @@ function Resolve-ZigExecutable {
     throw "Zig executable not found. Set OPENCLAW_ZIG_BIN or ensure `zig` is on PATH."
 }
 
+function Resolve-PowerShellExecutable {
+    $pwshCmd = Get-Command pwsh -ErrorAction SilentlyContinue
+    if ($null -ne $pwshCmd -and $pwshCmd.Path) {
+        return $pwshCmd.Path
+    }
+
+    $powershellCmd = Get-Command powershell.exe -ErrorAction SilentlyContinue
+    if ($null -ne $powershellCmd -and $powershellCmd.Path) {
+        return $powershellCmd.Path
+    }
+
+    $powershellCmd = Get-Command powershell -ErrorAction SilentlyContinue
+    if ($null -ne $powershellCmd -and $powershellCmd.Path) {
+        return $powershellCmd.Path
+    }
+
+    throw "PowerShell executable not found. Ensure `pwsh` or `powershell` is available on PATH."
+}
+
 function Invoke-ChildScript {
     param(
         [string] $Name,
@@ -51,7 +70,8 @@ function Invoke-ChildScript {
     $stderrPath = Join-Path $repo ("tmp_{0}_stderr.log" -f $Name.Replace('-', '_'))
     Remove-Item $stdoutPath, $stderrPath -ErrorAction SilentlyContinue
 
-    $proc = Start-Process -FilePath "powershell.exe" -ArgumentList $args -WorkingDirectory $repo -PassThru -Wait -NoNewWindow -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+    $pwsh = Resolve-PowerShellExecutable
+    $proc = Start-Process -FilePath $pwsh -ArgumentList $args -WorkingDirectory $repo -PassThru -Wait -NoNewWindow -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
     $output = @()
     if (Test-Path $stdoutPath) {
         $output += Get-Content $stdoutPath -ErrorAction SilentlyContinue
