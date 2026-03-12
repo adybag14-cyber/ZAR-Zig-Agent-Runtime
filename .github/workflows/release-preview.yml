@@ -478,6 +478,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-mode-boot-phase-history-probe-check.ps1
 
+      - name: Bare-metal QEMU mode/boot-phase history baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-history-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase history mode-semantics probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-history-mode-semantics-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase history boot-semantics probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-history-boot-semantics-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase history mode-overflow-window probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-history-mode-overflow-window-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase history boot-overflow-window probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-history-boot-overflow-window-probe-check.ps1
+
       - name: Bare-metal QEMU mode/boot-phase setter probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-mode-boot-phase-setter-probe-check.ps1
