@@ -38,9 +38,9 @@ Recommended sequence:
 ./scripts/baremetal-qemu-mailbox-seq-wraparound-probe-check.ps1
 ./scripts/baremetal-qemu-mailbox-seq-wraparound-recovery-probe-check.ps1
 ./scripts/baremetal-qemu-feature-flags-tick-batch-probe-check.ps1
-./scripts/baremetal-qemu-feature-flags-set-success-probe-check.ps1
-./scripts/baremetal-qemu-tick-batch-valid-update-probe-check.ps1
-./scripts/baremetal-qemu-tick-batch-invalid-preserve-probe-check.ps1
+./scripts/baremetal-qemu-feature-flags-tick-batch-baseline-probe-check.ps1
+./scripts/baremetal-qemu-feature-flags-tick-batch-valid-update-probe-check.ps1
+./scripts/baremetal-qemu-feature-flags-tick-batch-invalid-preserve-probe-check.ps1
 ./scripts/baremetal-qemu-feature-flags-tick-batch-mailbox-state-probe-check.ps1
 ./scripts/baremetal-qemu-feature-flags-tick-batch-state-preserve-probe-check.ps1
 ./scripts/baremetal-qemu-descriptor-bootdiag-probe-check.ps1
@@ -155,7 +155,7 @@ Recommended sequence:
 - optional bare-metal QEMU descriptor dispatch probe (descriptor reinit/load plus post-load interrupt and exception dispatch coherence, including interrupt/exception history rings, against the freestanding PVH artifact)
 - optional bare-metal QEMU descriptor-dispatch wrapper probes (`baremetal-qemu-descriptor-dispatch-baseline-probe-check.ps1`, `baremetal-qemu-descriptor-dispatch-telemetry-probe-check.ps1`, `baremetal-qemu-descriptor-dispatch-aggregate-state-probe-check.ps1`, `baremetal-qemu-descriptor-dispatch-interrupt-history-probe-check.ps1`, and `baremetal-qemu-descriptor-dispatch-exception-history-mailbox-probe-check.ps1`) reuse the broad probe and fail directly on the bootstrap baseline, descriptor telemetry deltas, aggregate interrupt/exception state, exact interrupt-history payloads, and final exception-history plus mailbox receipt boundaries
 - optional bare-metal QEMU feature-flags/tick-batch probe (`command_set_feature_flags` updates the live flag mask, `command_set_tick_batch_hint` raises runtime tick progression from `1` to `4`, and an invalid zero hint is rejected without changing the active batch size against the freestanding PVH artifact)
-- optional bare-metal QEMU feature-flags/tick-batch wrapper probes (`baremetal-qemu-feature-flags-set-success-probe-check.ps1`, `baremetal-qemu-tick-batch-valid-update-probe-check.ps1`, `baremetal-qemu-tick-batch-invalid-preserve-probe-check.ps1`, `baremetal-qemu-feature-flags-tick-batch-mailbox-state-probe-check.ps1`, and `baremetal-qemu-feature-flags-tick-batch-state-preserve-probe-check.ps1`) reuse the broad probe and fail directly on the narrow stage-success, valid update, invalid preserve, mailbox-state, and final preserved-state boundaries
+- optional bare-metal QEMU feature-flags/tick-batch wrapper probes (`baremetal-qemu-feature-flags-tick-batch-baseline-probe-check.ps1`, `baremetal-qemu-feature-flags-tick-batch-valid-update-probe-check.ps1`, `baremetal-qemu-feature-flags-tick-batch-invalid-preserve-probe-check.ps1`, `baremetal-qemu-feature-flags-tick-batch-mailbox-state-probe-check.ps1`, and `baremetal-qemu-feature-flags-tick-batch-state-preserve-probe-check.ps1`) reuse the broad probe and fail directly on the narrow baseline, valid update, invalid preserve, mailbox-state, and final preserved-state boundaries
 - optional bare-metal QEMU vector counter reset probe (`command_reset_vector_counters` after live interrupt+exception dispatch, proving vectors `10/200/14` and exception vectors `10/14` zero while aggregate counts stay at `4/3` against the freestanding PVH artifact)
 - optional bare-metal QEMU vector history overflow probe (interrupt/exception counter resets plus repeated dispatch saturation, proving history-ring overflow and per-vector telemetry against the freestanding PVH artifact)
 - optional bare-metal QEMU vector history overflow wrapper probes (`baremetal-qemu-vector-history-overflow-baseline-probe-check.ps1`, `baremetal-qemu-vector-history-overflow-interrupt-overflow-probe-check.ps1`, `baremetal-qemu-vector-history-overflow-exception-overflow-probe-check.ps1`, `baremetal-qemu-vector-history-overflow-vector-telemetry-probe-check.ps1`, and `baremetal-qemu-vector-history-overflow-mailbox-state-probe-check.ps1`) reuse the broad saturation lane and fail directly on the final mailbox baseline, phase-A interrupt overflow, phase-B exception overflow, phase-B vector telemetry, and final mailbox-state invariants
