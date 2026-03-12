@@ -8180,10 +8180,16 @@ test "baremetal interrupt mask commands gate non-exception interrupt wakeups" {
     _ = oc_submit_command(abi.command_interrupt_mask_set, 300, 1);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_invalid_argument), status.last_command_result);
+    try std.testing.expectEqual(abi.interrupt_mask_profile_custom, x86_bootstrap.oc_interrupt_mask_profile());
+    try std.testing.expectEqual(@as(u32, 223), x86_bootstrap.oc_interrupt_masked_count());
+    try std.testing.expect(!x86_bootstrap.oc_interrupt_mask_is_set(200));
 
     _ = oc_submit_command(abi.command_interrupt_mask_set, 200, 2);
     oc_tick();
     try std.testing.expectEqual(@as(i16, abi.result_invalid_argument), status.last_command_result);
+    try std.testing.expectEqual(abi.interrupt_mask_profile_custom, x86_bootstrap.oc_interrupt_mask_profile());
+    try std.testing.expectEqual(@as(u32, 223), x86_bootstrap.oc_interrupt_masked_count());
+    try std.testing.expect(!x86_bootstrap.oc_interrupt_mask_is_set(200));
 
     _ = oc_submit_command(abi.command_interrupt_mask_set, 201, 1);
     oc_tick();
@@ -8243,6 +8249,8 @@ test "baremetal interrupt mask commands gate non-exception interrupt wakeups" {
     try std.testing.expect(!x86_bootstrap.oc_interrupt_mask_is_set(63));
     try std.testing.expect(!x86_bootstrap.oc_interrupt_mask_is_set(64));
     try std.testing.expectEqual(abi.interrupt_mask_profile_none, x86_bootstrap.oc_interrupt_mask_profile());
+    try std.testing.expectEqual(@as(u64, 0), x86_bootstrap.oc_interrupt_mask_ignored_count());
+    try std.testing.expectEqual(@as(u8, 0), x86_bootstrap.oc_interrupt_last_masked_vector());
 }
 
 test "baremetal interrupt mask clear all restores wake delivery for an active waiter" {

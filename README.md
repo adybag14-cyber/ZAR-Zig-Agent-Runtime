@@ -755,6 +755,11 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU interrupt mask exception probe
 - optional bare-metal QEMU interrupt mask profile probe
 - optional bare-metal QEMU interrupt mask control probe
+- optional bare-metal QEMU interrupt mask control baseline probe
+- optional bare-metal QEMU interrupt mask control unmask-delivery probe
+- optional bare-metal QEMU interrupt mask control invalid-preserve probe
+- optional bare-metal QEMU interrupt mask control reset-ignored probe
+- optional bare-metal QEMU interrupt mask control final-state probe
 - optional bare-metal QEMU interrupt mask clear-all recovery probe
 - optional bare-metal QEMU interrupt mask custom-profile preserve probe
 - optional bare-metal QEMU interrupt mask invalid-input preserve-state probe
@@ -852,6 +857,12 @@ Run local preview packaging with CI-aligned validate gates:
 - optional bare-metal QEMU reset counters validation
 - optional bare-metal QEMU interrupt mask profile validation
 - optional bare-metal QEMU interrupt mask control validation
+- optional bare-metal QEMU interrupt mask control wrapper validation:
+  - direct-mask baseline
+  - unmask wake delivery
+  - invalid vector/state preserve custom profile state
+  - ignored-count reset after secondary direct mask
+  - final clear-all steady-state recovery
 - optional bare-metal QEMU interrupt mask wrapper validation
 - appliance control-plane smoke validation
 - appliance restart recovery validation

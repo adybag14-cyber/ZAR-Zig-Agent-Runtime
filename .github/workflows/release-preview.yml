@@ -1509,6 +1509,26 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-interrupt-mask-control-probe-check.ps1
 
+      - name: Bare-metal QEMU interrupt mask control baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-control-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask control unmask-delivery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-control-unmask-delivery-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask control invalid-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-control-invalid-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask control reset-ignored probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-control-reset-ignored-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask control final-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-control-final-state-probe-check.ps1
+
       - name: Bare-metal QEMU interrupt mask clear-all recovery probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-probe-check.ps1
