@@ -3431,9 +3431,16 @@ test "baremetal boot phase history overflow clear resets ring and restarts from 
     try std.testing.expectEqual(cap, oc_boot_phase_history_len());
     try std.testing.expectEqual(@as(u32, 2), oc_boot_phase_history_head_index());
     try std.testing.expectEqual(@as(u32, 2), oc_boot_phase_history_overflow_count());
-    try std.testing.expectEqual(@as(u32, 3), oc_boot_phase_history_event(0).seq);
-    try std.testing.expectEqual(@as(u8, abi.boot_phase_runtime), oc_boot_phase_history_event(0).previous_phase);
-    try std.testing.expectEqual(@as(u8, abi.boot_phase_init), oc_boot_phase_history_event(0).new_phase);
+    const oldest_phase = oc_boot_phase_history_event(0);
+    try std.testing.expectEqual(@as(u32, 3), oldest_phase.seq);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_runtime), oldest_phase.previous_phase);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_init), oldest_phase.new_phase);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_change_reason_command), oldest_phase.reason);
+    const newest_phase = oc_boot_phase_history_event(cap - 1);
+    try std.testing.expectEqual(@as(u32, 66), newest_phase.seq);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_init), newest_phase.previous_phase);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_runtime), newest_phase.new_phase);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_change_reason_runtime_tick), newest_phase.reason);
 
     _ = oc_submit_command(abi.command_clear_boot_phase_history, 0, 0);
     oc_tick();
@@ -3442,6 +3449,7 @@ test "baremetal boot phase history overflow clear resets ring and restarts from 
     try std.testing.expectEqual(@as(u32, 0), oc_boot_phase_history_head_index());
     try std.testing.expectEqual(@as(u32, 0), oc_boot_phase_history_overflow_count());
     try std.testing.expectEqual(@as(u32, 0), boot_phase_history_seq);
+    try std.testing.expectEqual(oc_mode_history_capacity(), oc_mode_history_len());
 
     status.mode = abi.mode_running;
     status.panic_count = 0;
@@ -3457,6 +3465,19 @@ test "baremetal boot phase history overflow clear resets ring and restarts from 
     try std.testing.expectEqual(@as(u8, abi.boot_phase_runtime), restarted_phase.previous_phase);
     try std.testing.expectEqual(@as(u8, abi.boot_phase_init), restarted_phase.new_phase);
     try std.testing.expectEqual(@as(u8, abi.boot_phase_change_reason_command), restarted_phase.reason);
+
+    _ = oc_submit_command(abi.command_set_mode, abi.mode_booting, 0);
+    oc_tick();
+
+    try std.testing.expectEqual(@as(u32, 2), oc_boot_phase_history_len());
+    try std.testing.expectEqual(@as(u32, 2), oc_boot_phase_history_head_index());
+    try std.testing.expectEqual(@as(u32, 0), oc_boot_phase_history_overflow_count());
+    try std.testing.expectEqual(@as(u32, 2), boot_phase_history_seq);
+    const restarted_second_phase = oc_boot_phase_history_event(1);
+    try std.testing.expectEqual(@as(u32, 2), restarted_second_phase.seq);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_init), restarted_second_phase.previous_phase);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_runtime), restarted_second_phase.new_phase);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_change_reason_runtime_tick), restarted_second_phase.reason);
 }
 
 test "baremetal direct mode and boot phase setters are isolated, idempotent, and reject invalid values" {
