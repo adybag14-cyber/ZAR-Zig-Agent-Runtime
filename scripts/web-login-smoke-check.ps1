@@ -11,9 +11,31 @@ if (-not (Test-Path $zig)) {
 if (-not $SkipBuild) {
   $null = & $zig build --summary all
 }
-$exe = Join-Path $repo "zig-out\bin\openclaw-zig.exe"
-if (-not (Test-Path $exe)) {
-  throw "openclaw-zig executable not found at '$exe' after build."
+$isWindowsHost = $env:OS -eq "Windows_NT"
+$exeCandidates = if ($isWindowsHost) {
+  @(
+    (Join-Path $repo "zig-out\bin\openclaw-zig.exe"),
+    (Join-Path $repo "zig-out/bin/openclaw-zig.exe"),
+    (Join-Path $repo "zig-out\bin\openclaw-zig"),
+    (Join-Path $repo "zig-out/bin/openclaw-zig")
+  )
+} else {
+  @(
+    (Join-Path $repo "zig-out\bin\openclaw-zig"),
+    (Join-Path $repo "zig-out/bin/openclaw-zig"),
+    (Join-Path $repo "zig-out\bin\openclaw-zig.exe"),
+    (Join-Path $repo "zig-out/bin/openclaw-zig.exe")
+  )
+}
+$exe = $null
+foreach ($candidate in $exeCandidates) {
+  if (Test-Path $candidate) {
+    $exe = $candidate
+    break
+  }
+}
+if (-not $exe) {
+  throw "openclaw-zig executable not found under zig-out/bin after build."
 }
 
 $port = 8092
