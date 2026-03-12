@@ -203,6 +203,14 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-mailbox-invalid-api-version-preserve-state-probe-check.ps1
 
+      - name: Bare-metal QEMU mailbox header ack-sequence probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-header-ack-sequence-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox header tick-batch recovery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-header-tick-batch-recovery-probe-check.ps1
+
       - name: Bare-metal QEMU mailbox valid recovery probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-mailbox-valid-recovery-probe-check.ps1
