@@ -18,6 +18,9 @@
   - embeds audit-derived status
   - includes docker availability check
 - `doctor.memory.status`
+- gateway posture checks:
+  - `gateway.auth_token`
+  - `gateway.rate_limit`
 - `secrets.store.status`
   - explicit secret-backend support classification
   - requested backend vs active backend
@@ -44,6 +47,21 @@ The `secrets.store.status` receipt now makes these states machine-readable throu
 - `fallbackApplied`
 - `fallbackReason`
 
+## Gateway Auth and Rate-Limit Posture
+
+The hosted security gate now locks gateway posture under three explicit configurations:
+
+| Posture | Expected audit/doctor outcome |
+| --- | --- |
+| public bind + configured token + valid rate limit | pass |
+| public bind + missing token + disabled rate limit | fail/warn |
+| enabled rate limit with zero thresholds | fail |
+
+The local source of truth for this lane is now covered directly in:
+
+- `src/security/audit.zig`
+- `src/gateway/dispatcher.zig`
+
 ## CLI Entry Points
 
 ```powershell
@@ -59,6 +77,8 @@ The fix path can:
 - create required security directories/files
 - write default policy bundle where missing
 - return structured action results and failures
+- report `fix.complete=false` with `fix.unresolved[]` when an operator must still change runtime-state or policy-bundle config
+- keep `system.maintenance.run` honest with `completed_with_manual_action` / `counts.partial` when only manual blockers remain
 
 ## Performance Notes
 

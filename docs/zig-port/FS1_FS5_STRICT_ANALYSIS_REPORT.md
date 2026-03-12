@@ -30,7 +30,7 @@ This report has been refreshed after the first strict FS1 slice landed.
   - Go baseline `v2.14.0-go`
   - stable baseline `v2026.3.11`
   - beta baseline `v2026.3.11-beta.1`
-- the strict execution order now advances from FS1 to FS4.
+- the strict execution order now advances from FS4 to FS2.
 
 This report is based on the current local repo and directly inspected upstream contracts. Stale streamed summaries, guessed percentages, and unverified reviewer claims are not accepted as evidence.
 
@@ -288,16 +288,31 @@ FS3 is not complete until all of the following are true:
   - `auto` -> `fallback-only`
   - unknown backend -> `unsupported`
 - direct secret-store tests and dispatcher coverage now lock those semantics.
+- gateway auth and rate-limit posture is now validated under both safe and unsafe configs in the hosted audit/doctor/dispatcher surfaces:
+  - safe public bind + token + valid rate limit
+  - unsafe public bind + missing token + disabled rate limit
+  - invalid enabled rate-limit thresholds
+- local hosted tests now lock those semantics in:
+  - `src/security/audit.zig`
+  - `src/gateway/dispatcher.zig`
 
-#### Confirmed work still needed for strict completion
+#### Current strict status
 
-1. The local code clearly implements encrypted-file-backed secret storage, but native OS secret backend completion is not established by the current audited evidence.
-2. The repo does not currently define a strict backend proof matrix for:
-   - env
-   - encrypted-file
-   - native provider path, if supported
-3. Security phase closure also requires explicit proof that its findings/remediation outputs are stable under the active config matrix, not just unit-tested in one posture.
-4. FS4 must be explicitly signed off before FS2 live-provider or FS5 WASM trust claims are treated as complete.
+Strict FS4 closure is now reached locally.
+
+Reasons:
+
+1. Secret-store backend posture is explicit and machine-readable.
+2. Native OS secret providers are not falsely claimed as complete; they are documented as `fallback-only` while the current Zig implementation uses encrypted-file fallback.
+3. `security.audit --fix` already has explicit proof coverage for:
+   - auto-remediation
+   - partial remediation
+   - manual blocker reporting
+4. Gateway auth and rate-limit posture is now validated under:
+   - safe config
+   - unsafe config
+   - invalid threshold config
+5. Once the current pushed head is green, FS4 no longer blocks the hosted-phase order.
 
 #### Strict FS4 success gates
 
@@ -315,6 +330,8 @@ FS4 is not complete until all of the following are true:
    - partial remediation
    - manual blocker reporting
 5. `zig-ci` and `docs-pages` are green on the pushed head.
+
+Current local source-of-truth status: all FS4 gates are satisfied locally; the next strict hosted phase is FS2.
 
 ### FS5 - Edge/WASM/marketplace depth
 
@@ -436,4 +453,4 @@ gh run list -L 6 --json databaseId,headSha,status,conclusion,name,workflowName,d
 
 ## Decision
 
-No blind FS6 continuation is justified until the missing FS1 parity slice is implemented and the FS1-FS5 execution order above is reflected in tracking artifacts.
+FS1 and FS4 are now the hosted phases with local strict closure. The next strict execution target is FS2, and additional FS6 work is no longer the priority path until FS2 evidence is defined and burned down.

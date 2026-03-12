@@ -67,7 +67,7 @@ Full-stack replacement execution reference:
   - registry coverage, dispatcher handlers, compat-state semantics, tests, and RPC reference are implemented
   - parity gate is at zero missing methods against Go + stable + beta
   - strict phase order now advances to FS4
-- Active FS4 hardening slice:
+- FS4 strict closure is now reached locally:
   - `secrets.store.status` now reports backend truth explicitly instead of implying native-provider support
   - explicit support levels are now emitted for:
     - `env` -> `implemented`
@@ -81,6 +81,9 @@ Full-stack replacement execution reference:
     - `fallbackApplied`
     - `fallbackReason`
   - direct secret-store tests and dispatcher coverage now lock those semantics
+  - gateway auth and rate-limit posture is now validated under safe, unsafe, and invalid configs in both dispatcher and audit/doctor test coverage
+  - prior `security.audit --fix` signoff for auto-remediation vs partial/manual blockers remains part of the phase closure
+  - strict hosted-phase order now advances to FS2
   - Release/package lane status (2026-03-06):
   - GitHub prerelease `v0.2.0-zig-edge.28` is live with desktop/android/bare-metal artifacts, parity reports, manifest, SBOM, provenance, npm tarball, wheel, and sdist.
   - release evidence now also includes `release-status.json` + `release-status.md` so every edge cut carries a frozen workflow-status + registry-status snapshot in addition to package preflight evidence.

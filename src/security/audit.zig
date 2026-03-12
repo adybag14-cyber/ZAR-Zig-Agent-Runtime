@@ -869,3 +869,145 @@ test "doctor fails gateway auth check when non-loopback bind has no token" {
     }
     try std.testing.expect(found);
 }
+
+test "security audit treats hardened public gateway auth and rate limit posture as compliant" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.http_bind = "0.0.0.0";
+    cfg.gateway.require_token = true;
+    cfg.gateway.auth_token = "edge-token";
+    cfg.gateway.rate_limit_enabled = true;
+    cfg.gateway.rate_limit_window_ms = 60_000;
+    cfg.gateway.rate_limit_max_requests = 300;
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try run(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    for (report.findings) |finding| {
+        try std.testing.expect(!std.mem.eql(u8, finding.checkId, "gateway.auth.token.disabled"));
+        try std.testing.expect(!std.mem.eql(u8, finding.checkId, "gateway.auth.token.missing"));
+        try std.testing.expect(!std.mem.eql(u8, finding.checkId, "gateway.auth.token.policy_override"));
+        try std.testing.expect(!std.mem.eql(u8, finding.checkId, "gateway.rate_limit.disabled"));
+        try std.testing.expect(!std.mem.eql(u8, finding.checkId, "gateway.rate_limit.invalid"));
+    }
+}
+
+test "security audit reports gateway rate limit warning when disabled" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.gateway.rate_limit_enabled = false;
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try run(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found = false;
+    for (report.findings) |finding| {
+        if (std.mem.eql(u8, finding.checkId, "gateway.rate_limit.disabled")) {
+            found = true;
+            try std.testing.expect(std.mem.eql(u8, finding.severity, "warn"));
+        }
+    }
+    try std.testing.expect(found);
+}
+
+test "security audit reports gateway rate limit warning when thresholds are invalid" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.gateway.rate_limit_enabled = true;
+    cfg.gateway.rate_limit_window_ms = 0;
+    cfg.gateway.rate_limit_max_requests = 0;
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try run(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found = false;
+    for (report.findings) |finding| {
+        if (std.mem.eql(u8, finding.checkId, "gateway.rate_limit.invalid")) {
+            found = true;
+            try std.testing.expect(std.mem.eql(u8, finding.severity, "warn"));
+        }
+    }
+    try std.testing.expect(found);
+}
+
+test "doctor passes hardened public gateway auth and rate limit checks" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.http_bind = "0.0.0.0";
+    cfg.gateway.require_token = true;
+    cfg.gateway.auth_token = "edge-token";
+    cfg.gateway.rate_limit_enabled = true;
+    cfg.gateway.rate_limit_window_ms = 60_000;
+    cfg.gateway.rate_limit_max_requests = 300;
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try doctor(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found_auth = false;
+    var found_rate = false;
+    for (report.checks) |check| {
+        if (std.mem.eql(u8, check.id, "gateway.auth_token")) {
+            found_auth = true;
+            try std.testing.expect(std.mem.eql(u8, check.status, "pass"));
+            try std.testing.expect(std.mem.eql(u8, check.message, "configured"));
+        } else if (std.mem.eql(u8, check.id, "gateway.rate_limit")) {
+            found_rate = true;
+            try std.testing.expect(std.mem.eql(u8, check.status, "pass"));
+            try std.testing.expect(std.mem.eql(u8, check.message, "enabled"));
+        }
+    }
+    try std.testing.expect(found_auth);
+    try std.testing.expect(found_rate);
+}
+
+test "doctor warns when gateway rate limit is disabled" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.gateway.rate_limit_enabled = false;
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try doctor(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found = false;
+    for (report.checks) |check| {
+        if (std.mem.eql(u8, check.id, "gateway.rate_limit")) {
+            found = true;
+            try std.testing.expect(std.mem.eql(u8, check.status, "warn"));
+            try std.testing.expect(std.mem.eql(u8, check.message, "disabled"));
+        }
+    }
+    try std.testing.expect(found);
+}
+
+test "doctor fails when gateway rate limit thresholds are invalid" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.gateway.rate_limit_enabled = true;
+    cfg.gateway.rate_limit_window_ms = 0;
+    cfg.gateway.rate_limit_max_requests = 0;
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try doctor(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found = false;
+    for (report.checks) |check| {
+        if (std.mem.eql(u8, check.id, "gateway.rate_limit")) {
+            found = true;
+            try std.testing.expect(std.mem.eql(u8, check.status, "fail"));
+            try std.testing.expect(std.mem.eql(u8, check.message, "invalid"));
+        }
+    }
+    try std.testing.expect(found);
+}

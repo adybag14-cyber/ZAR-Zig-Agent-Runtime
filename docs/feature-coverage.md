@@ -44,6 +44,10 @@ This page summarizes functional coverage across all major OpenClaw Zig runtime d
   - `secrets.store.status`
   - `secrets.store.set|get|delete|list`
   - explicit backend support classification for `env`, `encrypted-file`, native fallback requests, and unsupported backend requests
+- gateway auth/rate-limit posture:
+  - safe public-bind posture
+  - unsafe public-bind posture
+  - invalid enabled-threshold posture
 - remediation:
   - audit `--fix` path
 

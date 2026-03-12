@@ -13845,6 +13845,70 @@ test "dispatch config.get authMode reflects non-loopback bind token policy" {
     try std.testing.expect(std.mem.indexOf(u8, config_out, "\"authMode\":\"token\"") != null);
 }
 
+test "dispatch doctor reflects hardened gateway auth and rate limit posture" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.http_bind = "0.0.0.0";
+    cfg.gateway.require_token = true;
+    cfg.gateway.auth_token = "edge-token";
+    cfg.gateway.rate_limit_enabled = true;
+    cfg.gateway.rate_limit_window_ms = 60_000;
+    cfg.gateway.rate_limit_max_requests = 300;
+    setConfig(cfg);
+    defer setConfig(config.defaults());
+
+    const doctor = try dispatch(allocator, "{\"id\":\"doctor-safe\",\"method\":\"doctor\",\"params\":{}}");
+    defer allocator.free(doctor);
+    try std.testing.expect(std.mem.indexOf(u8, doctor, "\"id\":\"gateway.auth_token\",\"status\":\"pass\",\"message\":\"configured\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doctor, "\"id\":\"gateway.rate_limit\",\"status\":\"pass\",\"message\":\"enabled\"") != null);
+}
+
+test "dispatch doctor reflects unsafe missing-token and disabled-rate-limit posture" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.http_bind = "0.0.0.0";
+    cfg.gateway.require_token = false;
+    cfg.gateway.auth_token = "";
+    cfg.gateway.rate_limit_enabled = false;
+    setConfig(cfg);
+    defer setConfig(config.defaults());
+
+    const doctor = try dispatch(allocator, "{\"id\":\"doctor-unsafe\",\"method\":\"doctor\",\"params\":{}}");
+    defer allocator.free(doctor);
+    try std.testing.expect(std.mem.indexOf(u8, doctor, "\"id\":\"gateway.auth_token\",\"status\":\"fail\",\"message\":\"missing\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doctor, "\"id\":\"gateway.rate_limit\",\"status\":\"warn\",\"message\":\"disabled\"") != null);
+}
+
+test "dispatch doctor reflects invalid gateway rate limit thresholds" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.gateway.rate_limit_enabled = true;
+    cfg.gateway.rate_limit_window_ms = 0;
+    cfg.gateway.rate_limit_max_requests = 0;
+    setConfig(cfg);
+    defer setConfig(config.defaults());
+
+    const doctor = try dispatch(allocator, "{\"id\":\"doctor-rate-invalid\",\"method\":\"doctor\",\"params\":{}}");
+    defer allocator.free(doctor);
+    try std.testing.expect(std.mem.indexOf(u8, doctor, "\"id\":\"gateway.rate_limit\",\"status\":\"fail\",\"message\":\"invalid\"") != null);
+}
+
+test "dispatch security.audit surfaces unsafe gateway auth and rate limit findings" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.http_bind = "0.0.0.0";
+    cfg.gateway.require_token = false;
+    cfg.gateway.auth_token = "";
+    cfg.gateway.rate_limit_enabled = false;
+    setConfig(cfg);
+    defer setConfig(config.defaults());
+
+    const audit = try dispatch(allocator, "{\"id\":\"audit-unsafe-gateway\",\"method\":\"security.audit\",\"params\":{}}");
+    defer allocator.free(audit);
+    try std.testing.expect(std.mem.indexOf(u8, audit, "\"checkId\":\"gateway.auth.token.missing\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, audit, "\"checkId\":\"gateway.rate_limit.disabled\"") != null);
+}
+
 test "dispatch auth oauth alias lifecycle providers start wait complete logout import" {
     const allocator = std.testing.allocator;
 

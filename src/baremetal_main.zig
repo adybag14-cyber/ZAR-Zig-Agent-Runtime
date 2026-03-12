@@ -3989,6 +3989,11 @@ test "baremetal reset boot diagnostics preserves histories and runtime mode" {
     try std.testing.expectEqual(pre_command_len + 1, oc_command_history_len());
     try std.testing.expectEqual(pre_health_len + 1, oc_health_history_len());
     try std.testing.expectEqual(pre_boot_history_len, oc_boot_phase_history_len());
+    const preserved_boot_event = oc_boot_phase_history_event(pre_boot_history_len - 1);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_runtime), preserved_boot_event.previous_phase);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_init), preserved_boot_event.new_phase);
+    try std.testing.expectEqual(@as(u8, abi.boot_phase_change_reason_command), preserved_boot_event.reason);
+    try std.testing.expectEqual(@as(u32, 1), preserved_boot_event.command_seq_ack);
 
     const reset_event = oc_command_history_event(oc_command_history_len() - 1);
     try std.testing.expectEqual(@as(u32, 4), reset_event.seq);

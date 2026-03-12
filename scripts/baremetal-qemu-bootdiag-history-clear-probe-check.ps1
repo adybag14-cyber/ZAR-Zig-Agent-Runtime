@@ -71,6 +71,14 @@ $healthEventTickOffset = 8
 $healthEventAckOffset = 16
 $healthEventStride = 24
 
+$bootEventSeqOffset = 0
+$bootEventPreviousPhaseOffset = 4
+$bootEventNewPhaseOffset = 5
+$bootEventReasonOffset = 6
+$bootEventTickOffset = 8
+$bootEventAckOffset = 16
+$bootEventStride = 24
+
 function Resolve-QemuExecutable {
     foreach ($name in @("qemu-system-x86_64", "qemu-system-x86_64.exe", "C:\Program Files\qemu\qemu-system-x86_64.exe")) {
         $cmd = Get-Command $name -ErrorAction SilentlyContinue
@@ -190,7 +198,10 @@ $healthHistoryCountAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -P
 $healthHistoryHeadAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal_main\.health_history_head$' -SymbolName "baremetal_main.health_history_head"
 $healthHistoryOverflowAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal_main\.health_history_overflow$' -SymbolName "baremetal_main.health_history_overflow"
 $healthHistorySeqAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal_main\.health_history_seq$' -SymbolName "baremetal_main.health_history_seq"
+$bootHistoryAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal_main\.boot_phase_history$' -SymbolName "baremetal_main.boot_phase_history"
 $bootHistoryCountAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal_main\.boot_phase_history_count$' -SymbolName "baremetal_main.boot_phase_history_count"
+$bootHistoryHeadAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal_main\.boot_phase_history_head$' -SymbolName "baremetal_main.boot_phase_history_head"
+$bootHistoryOverflowAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal_main\.boot_phase_history_overflow$' -SymbolName "baremetal_main.boot_phase_history_overflow"
 
 $artifactForGdb = $artifact.Replace('\', '/')
 if (Test-Path $gdbStdout) { Remove-Item -Force $gdbStdout }
@@ -310,6 +321,14 @@ if $stage == 5
     printf "BOOTDIAG_PHASE_CHANGES=%u\n", *(unsigned int*)(0x__BOOTDIAG__+__BOOTDIAG_PHASECHANGES_OFFSET__)
     printf "STATUS_MODE_RESET=%u\n", *(unsigned char*)(0x__STATUS__+__STATUS_MODE_OFFSET__)
     printf "BOOT_HISTORY_LEN=%u\n", *(unsigned int*)0x__BOOT_HISTORY_COUNT__
+    printf "BOOT_HISTORY_HEAD=%u\n", *(unsigned int*)0x__BOOT_HISTORY_HEAD__
+    printf "BOOT_HISTORY_OVERFLOW=%u\n", *(unsigned int*)0x__BOOT_HISTORY_OVERFLOW__
+    printf "BOOT_HISTORY_LAST_SEQ=%u\n", *(unsigned int*)(0x__BOOT_HISTORY__ + (__BOOT_EVENT_STRIDE__ * 2) + __BOOT_EVENT_SEQ_OFFSET__)
+    printf "BOOT_HISTORY_LAST_PREVIOUS=%u\n", *(unsigned char*)(0x__BOOT_HISTORY__ + (__BOOT_EVENT_STRIDE__ * 2) + __BOOT_EVENT_PREVIOUS_OFFSET__)
+    printf "BOOT_HISTORY_LAST_NEW=%u\n", *(unsigned char*)(0x__BOOT_HISTORY__ + (__BOOT_EVENT_STRIDE__ * 2) + __BOOT_EVENT_NEW_OFFSET__)
+    printf "BOOT_HISTORY_LAST_REASON=%u\n", *(unsigned char*)(0x__BOOT_HISTORY__ + (__BOOT_EVENT_STRIDE__ * 2) + __BOOT_EVENT_REASON_OFFSET__)
+    printf "BOOT_HISTORY_LAST_TICK=%llu\n", *(unsigned long long*)(0x__BOOT_HISTORY__ + (__BOOT_EVENT_STRIDE__ * 2) + __BOOT_EVENT_TICK_OFFSET__)
+    printf "BOOT_HISTORY_LAST_ACK=%u\n", *(unsigned int*)(0x__BOOT_HISTORY__ + (__BOOT_EVENT_STRIDE__ * 2) + __BOOT_EVENT_ACK_OFFSET__)
     printf "CMD_HISTORY_LEN=%u\n", *(unsigned int*)0x__CMD_HISTORY_COUNT__
     printf "CMD_HISTORY_HEAD=%u\n", *(unsigned int*)0x__CMD_HISTORY_HEAD__
     printf "CMD_HISTORY_OVERFLOW=%u\n", *(unsigned int*)0x__CMD_HISTORY_OVERFLOW__
@@ -396,7 +415,10 @@ $gdbContent = $gdbTemplate `
     -replace '__HEALTH_HISTORY_HEAD__', $healthHistoryHeadAddress `
     -replace '__HEALTH_HISTORY_OVERFLOW__', $healthHistoryOverflowAddress `
     -replace '__HEALTH_HISTORY_SEQ__', $healthHistorySeqAddress `
+    -replace '__BOOT_HISTORY__', $bootHistoryAddress `
     -replace '__BOOT_HISTORY_COUNT__', $bootHistoryCountAddress `
+    -replace '__BOOT_HISTORY_HEAD__', $bootHistoryHeadAddress `
+    -replace '__BOOT_HISTORY_OVERFLOW__', $bootHistoryOverflowAddress `
     -replace '__STATUS_MODE_OFFSET__', [string]$statusModeOffset `
     -replace '__STATUS_TICKS_OFFSET__', [string]$statusTicksOffset `
     -replace '__STATUS_HEALTH_OFFSET__', [string]$statusLastHealthCodeOffset `
@@ -426,6 +448,13 @@ $gdbContent = $gdbTemplate `
     -replace '__HEALTH_EVENT_MODE_OFFSET__', [string]$healthEventModeOffset `
     -replace '__HEALTH_EVENT_TICK_OFFSET__', [string]$healthEventTickOffset `
     -replace '__HEALTH_EVENT_ACK_OFFSET__', [string]$healthEventAckOffset `
+    -replace '__BOOT_EVENT_SEQ_OFFSET__', [string]$bootEventSeqOffset `
+    -replace '__BOOT_EVENT_PREVIOUS_OFFSET__', [string]$bootEventPreviousPhaseOffset `
+    -replace '__BOOT_EVENT_NEW_OFFSET__', [string]$bootEventNewPhaseOffset `
+    -replace '__BOOT_EVENT_REASON_OFFSET__', [string]$bootEventReasonOffset `
+    -replace '__BOOT_EVENT_TICK_OFFSET__', [string]$bootEventTickOffset `
+    -replace '__BOOT_EVENT_ACK_OFFSET__', [string]$bootEventAckOffset `
+    -replace '__BOOT_EVENT_STRIDE__', [string]$bootEventStride `
     -replace '__SET_HEALTH_OPCODE__', [string]$setHealthCodeOpcode `
     -replace '__SET_BOOT_PHASE_OPCODE__', [string]$setBootPhaseOpcode `
     -replace '__RESET_BOOTDIAG_OPCODE__', [string]$resetBootDiagnosticsOpcode `
@@ -487,6 +516,14 @@ $expectations = @{
     BOOTDIAG_PHASE_CHANGES = 0
     STATUS_MODE_RESET = $modeRunning
     BOOT_HISTORY_LEN = 3
+    BOOT_HISTORY_HEAD = 3
+    BOOT_HISTORY_OVERFLOW = 0
+    BOOT_HISTORY_LAST_SEQ = 3
+    BOOT_HISTORY_LAST_PREVIOUS = $bootPhaseRuntime
+    BOOT_HISTORY_LAST_NEW = $bootPhaseInit
+    BOOT_HISTORY_LAST_REASON = 1
+    BOOT_HISTORY_LAST_TICK = 1
+    BOOT_HISTORY_LAST_ACK = 1
     CMD_HISTORY_LEN = 4
     CMD_HISTORY_HEAD = 4
     CMD_HISTORY_OVERFLOW = 0

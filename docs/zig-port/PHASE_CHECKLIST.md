@@ -1,7 +1,7 @@
 # Phase Checklist
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
-Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is `203/203`.
+Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is refreshed after each strict hosted-phase signoff.
 Latest edge release: `v0.2.0-zig-edge.28` is published with binaries, parity evidence, SBOM/provenance, npm tarball, wheel, and sdist attached.
 Registry status:
 - npm public publish still requires npm-side scope/package permission or `NPM_TOKEN`; GitHub release asset + GitHub Packages fallback are available now.
@@ -23,7 +23,7 @@ Registry status:
     - local validation is green:
       - `zig build test --summary all` -> `205/205`
       - bare-metal host -> `116/116`
-    - the strict execution order now advances from FS1 to FS4.
+    - the strict execution order advanced from FS1 to FS4.
   - Latest delivered slice:
     - `status` now includes the Go-visible summary keys Zig can expose without widening the handler surface:
       - `status`
@@ -400,26 +400,40 @@ Registry status:
     - dynamic catalog ownership now stays inside the compat allocator, preventing cross-allocator leaks/crashes during long-lived dispatcher state.
     - regression coverage added for invalid params, provider alias normalization (`copaw -> qwen`), and JSON-parsed browser-context assertions to avoid brittle exact-count failures in stateful suites.
 - [ ] FS3 - Memory/knowledge depth
-- [ ] FS4 - Security + trust hardening
-  - Latest delivered slice:
+- [x] FS4 - Security + trust hardening
+  - Strict FS4 closure reached locally on 2026-03-12:
+    - `security.audit`, `doctor`, and `secrets.store.*` are documented in:
+      - `docs/security-and-diagnostics.md`
+      - `docs/feature-coverage.md`
+      - `README.md`
     - `secrets.store.status` now reports secret-backend truth explicitly instead of leaving native-vs-fallback behavior implicit.
-    - added machine-readable backend posture fields:
-      - `requestedRecognized`
-      - `requestedSupport`
-      - `fallbackApplied`
-      - `fallbackReason`
     - backend posture is now locked for:
       - `env` -> `implemented`
       - `file|encrypted-file` -> `implemented`
       - `dpapi|keychain|keystore` -> `fallback-only`
       - `auto` -> `fallback-only`
       - unknown backend -> `unsupported`
-    - regression coverage added:
-      - `secret store status reports implemented env backend`
-      - `secret store status reports encrypted file backend as implemented`
-      - `secret store status reports native backend requests as fallback only`
-      - `secret store status reports unknown backend as unsupported fallback`
-      - dispatcher compat regression now asserts the new `secrets.store.status` posture fields
+    - machine-readable backend posture fields are enforced:
+      - `requestedRecognized`
+      - `requestedSupport`
+      - `fallbackApplied`
+      - `fallbackReason`
+    - gateway auth and rate-limit posture is now validated under safe, unsafe, and invalid configs in both dispatcher and audit/doctor paths:
+      - `dispatch doctor reflects hardened gateway auth and rate limit posture`
+      - `dispatch doctor reflects unsafe missing-token and disabled-rate-limit posture`
+      - `dispatch doctor reflects invalid gateway rate limit thresholds`
+      - `dispatch security.audit surfaces unsafe gateway auth and rate limit findings`
+      - `security audit treats hardened public gateway auth and rate limit posture as compliant`
+      - `security audit reports gateway rate limit warning when disabled`
+      - `security audit reports gateway rate limit warning when thresholds are invalid`
+      - `doctor passes hardened public gateway auth and rate limit checks`
+      - `doctor warns when gateway rate limit is disabled`
+      - `doctor fails when gateway rate limit thresholds are invalid`
+    - prior `security.audit --fix` signoff remains part of FS4 closure:
+      - auto-remediation
+      - partial remediation
+      - manual blocker reporting
+    - strict hosted-phase execution now advances from FS4 to FS2.
 - [ ] FS5 - Edge/WASM/marketplace depth
 - [ ] FS6 - Appliance/bare-metal maturity track
   - mirror-aware toolchain bootstrap/reproducibility is now required operator evidence for Windows-hosted FS6 work.
@@ -472,7 +486,7 @@ Registry status:
 
 FS1 runtime/core consolidation slice (active):
 - [x] Strict FS1-FS5 analysis report added: `docs/zig-port/FS1_FS5_STRICT_ANALYSIS_REPORT.md`
-  - locks the current source-of-truth baseline to local head `c50ba7e` and upstream `v2026.3.11` / `v2026.3.11-beta.1`.
+  - locks the current source-of-truth baseline to the current local repo head and upstream `v2026.3.11` / `v2026.3.11-beta.1`.
   - defines dependency-aware execution order: `FS1 -> FS4 -> FS2 -> FS3 -> FS5`.
   - freezes the first required FS1 slice: `node.pending.enqueue` + `node.pending.drain` with upstream no-guesswork semantics.
 - [x] First FS1 hard method gap implemented in the Zig gateway:
