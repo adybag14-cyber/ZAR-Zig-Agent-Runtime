@@ -148,11 +148,39 @@ Status: `Not started`
 
 ### In-RAM Disk Persistence
 
-Status: `Not started`
+Status: `Complete`
+
+Current local source-of-truth evidence:
+
+- stable block-device abstraction shipped in `src/baremetal/ram_disk.zig`
+- fixed-capacity RAM disk implemented with:
+  - `2048` blocks
+  - `512` byte block size
+  - read/write/flush semantics
+  - dirty-state tracking
+  - read/write byte and block telemetry
+- PAL storage surface shipped in `src/pal/storage.zig`
+- bare-metal export surface shipped in `src/baremetal_main.zig`
+- tool-slot persistence layer shipped in `src/baremetal/tool_layout.zig`
+- host regressions prove:
+  - raw block mutation + readback
+  - flush clears dirty state
+  - tool-slot payload persistence across runtime operations inside the same boot session
+  - clear/rewrite behavior on the same RAM-disk-backed layout
 
 ### Disk Driver / Block I/O
 
-Status: `Not started`
+Status: `In progress`
+
+Current local source-of-truth evidence:
+
+- a real block read/write contract now exists via the RAM-disk backend
+- tool-layout metadata and payload writes already exercise that block path end to end
+
+Remaining gap before this subsystem is fully closed:
+
+- no real hardware-facing disk controller path exists yet
+- no ATA/AHCI/NVMe-style device bring-up, request queue, or hardware readback proof exists yet
 
 ### Ethernet Driver
 
@@ -164,7 +192,18 @@ Status: `Not started`
 
 ### Filesystem Usage
 
-Status: `Not started`
+Status: `In progress`
+
+Current local source-of-truth evidence:
+
+- tool-layout persistence is now backed by real RAM-disk blocks
+- runtime can store and clear deterministic tool payloads through that path
+
+Remaining gap before this subsystem is fully closed:
+
+- no directory/file abstraction exists yet
+- no `create/read/write/stat` filesystem surface is implemented on the bare-metal storage backend
+- no path-based persistence proof exists yet
 
 ### Bare-Metal Tool Execution
 

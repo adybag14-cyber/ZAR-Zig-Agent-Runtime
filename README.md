@@ -7,9 +7,9 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
 - RPC method surface in Zig: `174`
 - Pinned parity gate (tri-baseline, CI/docs):
   - Go baseline (`v2.14.0-go`): `134/134` covered
-- Original OpenClaw baseline (`v2026.3.11`): `99/99` covered
-- Original OpenClaw beta baseline (`v2026.3.11-beta.1`): `99/99` covered
-- Union baseline: `140/140` covered (`MISSING_IN_ZIG=0`)
+- Original OpenClaw baseline (`v2026.3.8`): `97/97` covered
+- Original OpenClaw beta baseline (`v2026.3.8-beta.1`): `97/97` covered
+- Union baseline: `138/138` covered (`MISSING_IN_ZIG=0`)
   - Gateway events: stable `19/19`, beta `19/19`, union `19/19` (`UNION_EVENTS_MISSING_IN_ZIG=0`)
 - Latest local validation: `zig build test --summary all` -> main `223/223` + bare-metal host `116/116` passing
 - Latest published edge release tag: `v0.2.0-zig-edge.28`
@@ -24,12 +24,14 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
 - Recent FS4 progress (2026-03-12):
   - `secrets.store.status` now reports backend truth explicitly instead of implying native-provider support
   - support levels are now explicit for `env`, `encrypted-file`, native fallback requests, and unsupported backend requests
+  - strict FS4 secret-store lifecycle is now smoke-gated via `scripts/security-secret-store-smoke-check.ps1`
 - Current strict hosted-phase focus:
   - `FS2` provider/channel completion is locally closed against the hard matrix at [`docs/zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md`](docs/zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md)
   - `FS3` memory/knowledge depth is now locally closed against the hard matrix at [`docs/zig-port/FS3_MEMORY_KNOWLEDGE_MATRIX.md`](docs/zig-port/FS3_MEMORY_KNOWLEDGE_MATRIX.md)
   - `browser-request-memory-context-smoke-check.ps1` and `telegram-reply-memory-context-smoke-check.ps1` are now part of the strict FS3 CI lane
   - `FS5` is now locally strict-closed through the hard matrix at [`docs/zig-port/FS5_EDGE_WASM_FINETUNE_MATRIX.md`](docs/zig-port/FS5_EDGE_WASM_FINETUNE_MATRIX.md)
   - `edge-wasm-lifecycle-smoke-check.ps1` and `edge-finetune-lifecycle-smoke-check.ps1` are now part of the strict FS5 CI lane
+  - strict FS4 matrix source is [`docs/zig-port/FS4_SECURITY_TRUST_MATRIX.md`](docs/zig-port/FS4_SECURITY_TRUST_MATRIX.md)
 - Recent FS6 progress (2026-03-06):
   - `update.*` now has a real `canary` rollout lane instead of collapsing `canary` into `edge`
   - appliance rollout boundary is now enforced by live smoke validation (`canary` selection, secure-boot block, canary apply, stable promotion)

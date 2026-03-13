@@ -4,3 +4,4 @@ pub const net = @import("net.zig");
 pub const proc = @import("proc.zig");
 pub const sandbox = @import("sandbox.zig");
 pub const secrets = @import("secrets.zig");
+pub const storage = @import("storage.zig");

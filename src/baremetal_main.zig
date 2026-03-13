@@ -3,11 +3,16 @@ const builtin = @import("builtin");
 const abi = @import("baremetal/abi.zig");
 const x86_bootstrap = @import("baremetal/x86_bootstrap.zig");
 const vga_text_console = @import("baremetal/vga_text_console.zig");
+const ram_disk = @import("baremetal/ram_disk.zig");
+const tool_layout = @import("baremetal/tool_layout.zig");
 const BaremetalStatus = abi.BaremetalStatus;
 const BaremetalCommand = abi.BaremetalCommand;
 const BaremetalKernelInfo = abi.BaremetalKernelInfo;
 const BaremetalBootDiagnostics = abi.BaremetalBootDiagnostics;
 const BaremetalConsoleState = abi.BaremetalConsoleState;
+const BaremetalStorageState = abi.BaremetalStorageState;
+const BaremetalToolLayoutState = abi.BaremetalToolLayoutState;
+const BaremetalToolSlot = abi.BaremetalToolSlot;
 const BaremetalCommandEvent = abi.BaremetalCommandEvent;
 const BaremetalHealthEvent = abi.BaremetalHealthEvent;
 const BaremetalModeEvent = abi.BaremetalModeEvent;
@@ -300,6 +305,71 @@ pub export fn oc_console_putc(byte: u8) void {
 
 pub export fn oc_console_cell(index: u32) u16 {
     return vga_text_console.cell(index);
+}
+
+pub export fn oc_storage_state_ptr() *const BaremetalStorageState {
+    return ram_disk.statePtr();
+}
+
+pub export fn oc_storage_init() void {
+    ram_disk.init();
+}
+
+pub export fn oc_storage_reset() void {
+    ram_disk.resetForTest();
+    ram_disk.init();
+}
+
+pub export fn oc_storage_read_byte(lba: u32, offset: u32) u8 {
+    return ram_disk.readByte(lba, offset);
+}
+
+pub export fn oc_storage_flush() i16 {
+    ram_disk.flush() catch |err| return mapStorageError(err);
+    return abi.result_ok;
+}
+
+pub export fn oc_storage_write_pattern(lba: u32, block_count: u32, seed: u8) i16 {
+    ram_disk.init();
+    var scratch = [_]u8{0} ** ram_disk.block_size;
+    var block_idx: u32 = 0;
+    while (block_idx < block_count) : (block_idx += 1) {
+        for (&scratch, 0..) |*byte, offset| {
+            const global_offset = (@as(usize, block_idx) * ram_disk.block_size) + offset;
+            byte.* = seed +% @as(u8, @truncate(global_offset));
+        }
+        ram_disk.writeBlocks(lba + block_idx, scratch[0..]) catch |err| return mapStorageError(err);
+    }
+    return abi.result_ok;
+}
+
+pub export fn oc_tool_layout_state_ptr() *const BaremetalToolLayoutState {
+    return tool_layout.statePtr();
+}
+
+pub export fn oc_tool_layout_init() i16 {
+    tool_layout.init() catch |err| return mapStorageError(err);
+    return abi.result_ok;
+}
+
+pub export fn oc_tool_layout_slot(slot_id: u32) BaremetalToolSlot {
+    return tool_layout.slot(slot_id);
+}
+
+pub export fn oc_tool_slot_write_pattern(slot_id: u32, byte_len: u32, seed: u8) i16 {
+    tool_layout.init() catch |err| return mapStorageError(err);
+    tool_layout.writePattern(slot_id, byte_len, seed, status.ticks) catch |err| return mapStorageError(err);
+    return abi.result_ok;
+}
+
+pub export fn oc_tool_slot_clear(slot_id: u32) i16 {
+    tool_layout.init() catch |err| return mapStorageError(err);
+    tool_layout.clearSlot(slot_id, status.ticks) catch |err| return mapStorageError(err);
+    return abi.result_ok;
+}
+
+pub export fn oc_tool_slot_byte(slot_id: u32, offset: u32) u8 {
+    return tool_layout.readToolByte(slot_id, offset);
 }
 
 pub export fn oc_command_history_capacity() u32 {
@@ -955,6 +1025,8 @@ fn baremetalStart() callconv(.c) noreturn {
         qemuExit(qemu_boot_ok_code);
     }
     vga_text_console.init();
+    ram_disk.init();
+    tool_layout.init() catch unreachable;
     if (console_probe_banner_enabled) {
         vga_text_console.clear();
         vga_text_console.write("OK");
@@ -1398,6 +1470,15 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
         },
         else => return abi.result_not_supported,
     }
+}
+
+fn mapStorageError(err: anyerror) i16 {
+    return switch (err) {
+        error.OutOfRange, error.UnalignedLength, error.InvalidSlot, error.CorruptLayout => abi.result_invalid_argument,
+        error.NoSpace => abi.result_no_space,
+        error.NotMounted => abi.result_conflict,
+        else => abi.result_not_supported,
+    };
 }
 
 fn recordCommand(seq: u32, opcode: u16, arg0: u64, arg1: u64, result: i16, tick: u64) void {
@@ -2411,6 +2492,8 @@ fn resetBaremetalRuntimeForTest() void {
     oc_timer_reset();
     oc_wake_queue_clear();
     vga_text_console.resetForTest();
+    ram_disk.resetForTest();
+    tool_layout.resetForTest();
 }
 
 fn captureStackPointer() u64 {
@@ -8973,4 +9056,58 @@ test "baremetal console export surface updates host-backed console state" {
     try std.testing.expectEqual(@as(u16, 2), console.cursor_col);
     try std.testing.expectEqual((@as(u16, console.attribute) << 8) | @as(u16, 'O'), oc_console_cell(0));
     try std.testing.expectEqual((@as(u16, console.attribute) << 8) | @as(u16, 'K'), oc_console_cell(1));
+}
+
+test "baremetal storage export surface persists block writes and flush state" {
+    resetBaremetalRuntimeForTest();
+
+    oc_storage_init();
+    const storage = oc_storage_state_ptr();
+    try std.testing.expectEqual(@as(u32, abi.storage_magic), storage.magic);
+    try std.testing.expectEqual(@as(u16, abi.api_version), storage.api_version);
+    try std.testing.expectEqual(@as(u8, abi.storage_backend_ram_disk), storage.backend);
+    try std.testing.expectEqual(@as(u8, 1), storage.mounted);
+    try std.testing.expectEqual(@as(u32, ram_disk.block_size), storage.block_size);
+    try std.testing.expectEqual(@as(u32, ram_disk.block_count), storage.block_count);
+
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_storage_write_pattern(4, 2, 0x41));
+    try std.testing.expectEqual(@as(u32, 2), storage.write_ops);
+    try std.testing.expectEqual(@as(u8, 1), storage.dirty);
+    try std.testing.expectEqual(@as(u8, 0x41), oc_storage_read_byte(4, 0));
+    try std.testing.expectEqual(@as(u8, 0x42), oc_storage_read_byte(4, 1));
+    try std.testing.expectEqual(@as(u8, 0x41), oc_storage_read_byte(5, 0));
+
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_storage_flush());
+    try std.testing.expectEqual(@as(u32, 1), storage.flush_ops);
+    try std.testing.expectEqual(@as(u8, 0), storage.dirty);
+}
+
+test "baremetal tool layout persists patterned tool slot payloads on ram disk" {
+    resetBaremetalRuntimeForTest();
+
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_tool_layout_init());
+    const layout = oc_tool_layout_state_ptr();
+    try std.testing.expectEqual(@as(u32, abi.tool_layout_magic), layout.magic);
+    try std.testing.expectEqual(@as(u8, 1), layout.formatted);
+    try std.testing.expectEqual(@as(u16, tool_layout.slot_count), layout.slot_count);
+    try std.testing.expectEqual(@as(u32, tool_layout.slot_data_lba), layout.slot_data_lba);
+
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_tool_slot_write_pattern(1, 1000, 0x30));
+    const slot = oc_tool_layout_slot(1);
+    try std.testing.expectEqual(@as(u32, 1), layout.write_count);
+    try std.testing.expectEqual(@as(u32, 2), slot.block_count);
+    try std.testing.expectEqual(@as(u32, 1000), slot.byte_len);
+    try std.testing.expectEqual(tool_layout.tool_slot_flag_valid, slot.flags);
+    try std.testing.expectEqual(@as(u8, 0x30), oc_tool_slot_byte(1, 0));
+    try std.testing.expectEqual(@as(u8, 0x31), oc_tool_slot_byte(1, 1));
+    try std.testing.expectEqual(@as(u8, 0x30), oc_tool_slot_byte(1, 512));
+    try std.testing.expectEqual(@as(u8, 0x30), oc_storage_read_byte(slot.start_lba, 0));
+
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_tool_slot_clear(1));
+    const cleared = oc_tool_layout_slot(1);
+    try std.testing.expectEqual(@as(u32, 1), layout.clear_count);
+    try std.testing.expectEqual(@as(u32, 0), cleared.block_count);
+    try std.testing.expectEqual(@as(u32, 0), cleared.byte_len);
+    try std.testing.expectEqual(@as(u32, 0), cleared.flags);
+    try std.testing.expectEqual(@as(u8, 0), oc_tool_slot_byte(1, 0));
 }
