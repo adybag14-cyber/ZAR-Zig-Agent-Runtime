@@ -3,7 +3,7 @@
 ## Current Snapshot
 
 - Latest published edge release: `v0.2.0-zig-edge.28`
-- Latest local test gate: `zig build test --summary all` -> main `223/223` + bare-metal host `116/116` passing
+- Latest local test gate: `zig build test --summary all` -> main `223/223` + bare-metal host `133/133` passing
 - Latest parity gate: `scripts/check-go-method-parity.ps1` -> `GO_MISSING_IN_ZIG=0`, `ORIGINAL_MISSING_IN_ZIG=0`, `ORIGINAL_BETA_MISSING_IN_ZIG=0`, `UNION_MISSING_IN_ZIG=0`, `UNION_EVENTS_MISSING_IN_ZIG=0`, `ZIG_COUNT=174`, `ZIG_EVENTS_COUNT=19`
 - Current head: local source-of-truth on `main` (exact pushed head is tracked in issue `#1` and the latest GitHub Actions runs)
 - Toolchain lane: Codeberg `master` is canonical; `adybag14-cyber/zig` is the Windows release mirror with rolling `latest-master` plus immutable `upstream-<sha>` releases.
@@ -19,6 +19,10 @@
 - keyboard/mouse is now locally strict-closed in `FS5.5`:
   - `src/baremetal/ps2_input.zig` now has a real x86 port-I/O backed PS/2 controller path
   - `scripts/baremetal-qemu-ps2-input-probe-check.ps1` plus its wrapper probes are the live bare-metal proof for IRQ-driven keyboard/mouse updates
+- disk/block I/O is now on a real shared backend path in `FS5.5`:
+  - `src/baremetal/storage_backend.zig` selects between RAM-disk and ATA PIO backends
+  - `src/baremetal/ata_pio_disk.zig` now performs real x86 ATA PIO `IDENTIFY` / `READ` / `WRITE` / `FLUSH`
+  - `src/pal/storage.zig` and `src/baremetal/tool_layout.zig` now route through the backend facade instead of directly targeting the RAM disk
 - `scripts/package-registry-status.ps1` now performs default npmjs/PyPI visibility checks even when invoked with only `-ReleaseTag`, so local package diagnostics no longer silently skip unresolved public-registry state.
 - Latest CI:
   - latest pushed `main` head is tracked in issue `#1`

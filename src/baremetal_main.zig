@@ -1,9 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const abi = @import("baremetal/abi.zig");
+const ata_pio_disk = @import("baremetal/ata_pio_disk.zig");
 const x86_bootstrap = @import("baremetal/x86_bootstrap.zig");
 const vga_text_console = @import("baremetal/vga_text_console.zig");
-const ram_disk = @import("baremetal/ram_disk.zig");
+const storage_backend = @import("baremetal/storage_backend.zig");
 const ps2_input = @import("baremetal/ps2_input.zig");
 const tool_layout = @import("baremetal/tool_layout.zig");
 const BaremetalStatus = abi.BaremetalStatus;
@@ -337,37 +338,37 @@ pub export fn oc_mouse_inject_packet(buttons: u8, dx: i16, dy: i16) void {
 }
 
 pub export fn oc_storage_state_ptr() *const BaremetalStorageState {
-    return ram_disk.statePtr();
+    return storage_backend.statePtr();
 }
 
 pub export fn oc_storage_init() void {
-    ram_disk.init();
+    storage_backend.init();
 }
 
 pub export fn oc_storage_reset() void {
-    ram_disk.resetForTest();
-    ram_disk.init();
+    storage_backend.resetForTest();
+    storage_backend.init();
 }
 
 pub export fn oc_storage_read_byte(lba: u32, offset: u32) u8 {
-    return ram_disk.readByte(lba, offset);
+    return storage_backend.readByte(lba, offset);
 }
 
 pub export fn oc_storage_flush() i16 {
-    ram_disk.flush() catch |err| return mapStorageError(err);
+    storage_backend.flush() catch |err| return mapStorageError(err);
     return abi.result_ok;
 }
 
 pub export fn oc_storage_write_pattern(lba: u32, block_count: u32, seed: u8) i16 {
-    ram_disk.init();
-    var scratch = [_]u8{0} ** ram_disk.block_size;
+    storage_backend.init();
+    var scratch = [_]u8{0} ** storage_backend.block_size;
     var block_idx: u32 = 0;
     while (block_idx < block_count) : (block_idx += 1) {
         for (&scratch, 0..) |*byte, offset| {
-            const global_offset = (@as(usize, block_idx) * ram_disk.block_size) + offset;
+            const global_offset = (@as(usize, block_idx) * storage_backend.block_size) + offset;
             byte.* = seed +% @as(u8, @truncate(global_offset));
         }
-        ram_disk.writeBlocks(lba + block_idx, scratch[0..]) catch |err| return mapStorageError(err);
+        storage_backend.writeBlocks(lba + block_idx, scratch[0..]) catch |err| return mapStorageError(err);
     }
     return abi.result_ok;
 }
@@ -1055,7 +1056,7 @@ fn baremetalStart() callconv(.c) noreturn {
         qemuExit(qemu_boot_ok_code);
     }
     vga_text_console.init();
-    ram_disk.init();
+    storage_backend.init();
     ps2_input.init();
     tool_layout.init() catch unreachable;
     if (console_probe_banner_enabled) {
@@ -1508,6 +1509,7 @@ fn mapStorageError(err: anyerror) i16 {
         error.OutOfRange, error.UnalignedLength, error.InvalidSlot, error.CorruptLayout => abi.result_invalid_argument,
         error.NoSpace => abi.result_no_space,
         error.NotMounted => abi.result_conflict,
+        error.NoDevice, error.DeviceFault, error.BusyTimeout, error.ProtocolError => abi.result_not_supported,
         else => abi.result_not_supported,
     };
 }
@@ -2523,7 +2525,7 @@ fn resetBaremetalRuntimeForTest() void {
     oc_timer_reset();
     oc_wake_queue_clear();
     vga_text_console.resetForTest();
-    ram_disk.resetForTest();
+    storage_backend.resetForTest();
     ps2_input.resetForTest();
     tool_layout.resetForTest();
 }
@@ -9099,8 +9101,8 @@ test "baremetal storage export surface persists block writes and flush state" {
     try std.testing.expectEqual(@as(u16, abi.api_version), storage.api_version);
     try std.testing.expectEqual(@as(u8, abi.storage_backend_ram_disk), storage.backend);
     try std.testing.expectEqual(@as(u8, 1), storage.mounted);
-    try std.testing.expectEqual(@as(u32, ram_disk.block_size), storage.block_size);
-    try std.testing.expectEqual(@as(u32, ram_disk.block_count), storage.block_count);
+    try std.testing.expectEqual(@as(u32, storage_backend.block_size), storage.block_size);
+    try std.testing.expectEqual(@as(u32, storage_backend.block_count), storage.block_count);
 
     try std.testing.expectEqual(@as(i16, abi.result_ok), oc_storage_write_pattern(4, 2, 0x41));
     try std.testing.expectEqual(@as(u32, 2), storage.write_ops);
@@ -9112,6 +9114,33 @@ test "baremetal storage export surface persists block writes and flush state" {
     try std.testing.expectEqual(@as(i16, abi.result_ok), oc_storage_flush());
     try std.testing.expectEqual(@as(u32, 1), storage.flush_ops);
     try std.testing.expectEqual(@as(u8, 0), storage.dirty);
+}
+
+test "baremetal storage backend facade reports ram-disk backend baseline" {
+    resetBaremetalRuntimeForTest();
+
+    oc_storage_init();
+    const storage = oc_storage_state_ptr();
+    try std.testing.expectEqual(@as(u8, abi.storage_backend_ram_disk), storage.backend);
+    try std.testing.expectEqual(@as(u32, storage_backend.block_size), storage.block_size);
+    try std.testing.expectEqual(@as(u32, storage_backend.block_count), storage.block_count);
+    try std.testing.expectEqual(@as(u8, abi.storage_backend_ram_disk), storage_backend.activeBackend());
+}
+
+test "baremetal storage exports report ata pio backend when a device is available" {
+    resetBaremetalRuntimeForTest();
+    ata_pio_disk.testEnableMockDevice(4096);
+    defer ata_pio_disk.testDisableMockDevice();
+
+    oc_storage_init();
+    const storage = oc_storage_state_ptr();
+    try std.testing.expectEqual(@as(u8, abi.storage_backend_ata_pio), storage.backend);
+    try std.testing.expectEqual(@as(u8, 1), storage.mounted);
+    try std.testing.expectEqual(@as(u32, 4096), storage.block_count);
+
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_storage_write_pattern(6, 1, 0x55));
+    try std.testing.expectEqual(@as(u8, 0x55), oc_storage_read_byte(6, 0));
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_storage_flush());
 }
 
 test "baremetal tool layout persists patterned tool slot payloads on ram disk" {

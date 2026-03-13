@@ -1,6 +1,6 @@
 const std = @import("std");
 const abi = @import("abi.zig");
-const ram_disk = @import("ram_disk.zig");
+const storage_backend = @import("storage_backend.zig");
 
 pub const slot_count: usize = 4;
 pub const slot_block_capacity: usize = 32;
@@ -20,7 +20,7 @@ const Header = extern struct {
     reserved0: [12]u8,
 };
 
-pub const Error = ram_disk.Error || error{
+pub const Error = storage_backend.Error || error{
     InvalidSlot,
     NoSpace,
     CorruptLayout,
@@ -48,7 +48,7 @@ pub fn resetForTest() void {
 }
 
 pub fn init() Error!void {
-    ram_disk.init();
+    storage_backend.init();
     if (try loadExisting()) return;
     try format();
 }
@@ -66,25 +66,25 @@ pub fn writePattern(slot_id: u32, byte_len: u32, seed: u8, tick: u64) Error!void
     try init();
     if (slot_id >= slot_count) return error.InvalidSlot;
     const index = @as(usize, @intCast(slot_id));
-    const max_bytes = slot_block_capacity * ram_disk.block_size;
+    const max_bytes = slot_block_capacity * storage_backend.block_size;
     if (byte_len > max_bytes) return error.NoSpace;
 
-    const total_blocks: usize = if (byte_len == 0) 0 else ((@as(usize, byte_len) - 1) / ram_disk.block_size) + 1;
-    var scratch = [_]u8{0} ** ram_disk.block_size;
+    const total_blocks: usize = if (byte_len == 0) 0 else ((@as(usize, byte_len) - 1) / storage_backend.block_size) + 1;
+    var scratch = [_]u8{0} ** storage_backend.block_size;
 
     var block_idx: usize = 0;
     while (block_idx < slot_block_capacity) : (block_idx += 1) {
         @memset(scratch[0..], 0);
-        const global_start = block_idx * ram_disk.block_size;
+        const global_start = block_idx * storage_backend.block_size;
         if (global_start < byte_len) {
             const remaining = @as(usize, byte_len) - global_start;
-            const copy_len = @min(remaining, ram_disk.block_size);
+            const copy_len = @min(remaining, storage_backend.block_size);
             var offset: usize = 0;
             while (offset < copy_len) : (offset += 1) {
                 scratch[offset] = seed +% @as(u8, @truncate(global_start + offset));
             }
         }
-        try ram_disk.writeBlocks(slots[index].start_lba + @as(u32, @intCast(block_idx)), scratch[0..]);
+        try storage_backend.writeBlocks(slots[index].start_lba + @as(u32, @intCast(block_idx)), scratch[0..]);
     }
 
     slots[index].block_count = @as(u32, @intCast(total_blocks));
@@ -94,7 +94,7 @@ pub fn writePattern(slot_id: u32, byte_len: u32, seed: u8, tick: u64) Error!void
     slots[index].last_write_tick = tick;
     state.write_count +%= 1;
     try persistSlots();
-    try ram_disk.flush();
+    try storage_backend.flush();
 }
 
 pub fn clearSlot(slot_id: u32, tick: u64) Error!void {
@@ -102,10 +102,10 @@ pub fn clearSlot(slot_id: u32, tick: u64) Error!void {
     try init();
     if (slot_id >= slot_count) return error.InvalidSlot;
     const index = @as(usize, @intCast(slot_id));
-    var zero_block = [_]u8{0} ** ram_disk.block_size;
+    var zero_block = [_]u8{0} ** storage_backend.block_size;
     var block_idx: usize = 0;
     while (block_idx < slot_block_capacity) : (block_idx += 1) {
-        try ram_disk.writeBlocks(slots[index].start_lba + @as(u32, @intCast(block_idx)), zero_block[0..]);
+        try storage_backend.writeBlocks(slots[index].start_lba + @as(u32, @intCast(block_idx)), zero_block[0..]);
     }
     slots[index].block_count = 0;
     slots[index].byte_len = 0;
@@ -114,20 +114,20 @@ pub fn clearSlot(slot_id: u32, tick: u64) Error!void {
     slots[index].last_write_tick = 0;
     state.clear_count +%= 1;
     try persistSlots();
-    try ram_disk.flush();
+    try storage_backend.flush();
 }
 
 pub fn readToolByte(slot_id: u32, offset: u32) u8 {
     if (state.formatted == 0 or slot_id >= slot_count) return 0;
     const record = slots[@as(usize, @intCast(slot_id))];
     if (offset >= record.byte_len) return 0;
-    const lba = record.start_lba + (offset / @as(u32, ram_disk.block_size));
-    const block_offset = offset % @as(u32, ram_disk.block_size);
-    return ram_disk.readByte(lba, block_offset);
+    const lba = record.start_lba + (offset / @as(u32, storage_backend.block_size));
+    const block_offset = offset % @as(u32, storage_backend.block_size);
+    return storage_backend.readByte(lba, block_offset);
 }
 
 pub fn format() Error!void {
-    ram_disk.init();
+    storage_backend.init();
     resetForTest();
     var idx: usize = 0;
     while (idx < slot_count) : (idx += 1) {
@@ -145,14 +145,14 @@ pub fn format() Error!void {
     }
     try persistHeader();
     try persistSlots();
-    try ram_disk.flush();
+    try storage_backend.flush();
     state.formatted = 1;
     state.format_count +%= 1;
 }
 
 fn loadExisting() Error!bool {
-    var header_block = [_]u8{0} ** ram_disk.block_size;
-    try ram_disk.readBlocks(superblock_lba, header_block[0..]);
+    var header_block = [_]u8{0} ** storage_backend.block_size;
+    try storage_backend.readBlocks(superblock_lba, header_block[0..]);
     var header: Header = undefined;
     @memcpy(std.mem.asBytes(&header), header_block[0..@sizeOf(Header)]);
     if (header.magic != abi.tool_layout_magic) return false;
@@ -165,8 +165,8 @@ fn loadExisting() Error!bool {
         return error.CorruptLayout;
     }
 
-    var slot_block = [_]u8{0} ** ram_disk.block_size;
-    try ram_disk.readBlocks(slot_table_lba, slot_block[0..]);
+    var slot_block = [_]u8{0} ** storage_backend.block_size;
+    try storage_backend.readBlocks(slot_table_lba, slot_block[0..]);
     @memcpy(std.mem.sliceAsBytes(slots[0..]), slot_block[0..@sizeOf(@TypeOf(slots))]);
 
     resetForTest();
@@ -176,7 +176,7 @@ fn loadExisting() Error!bool {
 }
 
 fn persistHeader() Error!void {
-    var block = [_]u8{0} ** ram_disk.block_size;
+    var block = [_]u8{0} ** storage_backend.block_size;
     const header = Header{
         .magic = abi.tool_layout_magic,
         .version = abi.api_version,
@@ -188,14 +188,14 @@ fn persistHeader() Error!void {
         .reserved0 = .{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
     };
     @memcpy(block[0..@sizeOf(Header)], std.mem.asBytes(&header));
-    try ram_disk.writeBlocks(superblock_lba, block[0..]);
+    try storage_backend.writeBlocks(superblock_lba, block[0..]);
 }
 
 fn persistSlots() Error!void {
-    var block = [_]u8{0} ** ram_disk.block_size;
+    var block = [_]u8{0} ** storage_backend.block_size;
     const bytes = std.mem.sliceAsBytes(slots[0..]);
     @memcpy(block[0..bytes.len], bytes);
-    try ram_disk.writeBlocks(slot_table_lba, block[0..]);
+    try storage_backend.writeBlocks(slot_table_lba, block[0..]);
 }
 
 fn patternChecksum(seed: u8, byte_len: u32) u32 {
@@ -208,7 +208,7 @@ fn patternChecksum(seed: u8, byte_len: u32) u32 {
 }
 
 test "tool layout writes and clears slot payloads on the ram disk" {
-    ram_disk.resetForTest();
+    storage_backend.resetForTest();
     resetForTest();
     try init();
 

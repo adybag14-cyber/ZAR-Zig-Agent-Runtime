@@ -200,13 +200,29 @@ Status: `In progress`
 
 Current local source-of-truth evidence:
 
-- a real block read/write contract now exists via the RAM-disk backend
-- tool-layout metadata and payload writes already exercise that block path end to end
+- a shared storage backend facade now exists in `src/baremetal/storage_backend.zig`
+- the backend facade now selects between:
+  - `src/baremetal/ram_disk.zig`
+  - `src/baremetal/ata_pio_disk.zig`
+- `src/baremetal/ata_pio_disk.zig` now contains a real x86 ATA PIO path with:
+  - primary ATA port access (`0x1F0..0x1F7`, `0x3F6`)
+  - `IDENTIFY DEVICE` bring-up
+  - sector-count discovery from identify words `60/61`
+  - sector `READ`, `WRITE`, and `CACHE FLUSH`
+  - hosted mock-device support for deterministic regression coverage
+- `src/pal/storage.zig` now routes through the backend facade instead of directly through the RAM disk
+- `src/baremetal/tool_layout.zig` now routes through the backend facade instead of directly through the RAM disk
+- host regressions now prove:
+  - the storage facade prefers ATA PIO when a device is present
+  - ATA PIO mock-device mount and identify-backed capacity detection
+  - ATA PIO mock-device read/write/flush behavior
+- bare-metal exports now report ATA PIO as the active backend when a device is present
 
 Remaining gap before this subsystem is fully closed:
 
-- no real hardware-facing disk controller path exists yet
-- no ATA/AHCI/NVMe-style device bring-up, request queue, or hardware readback proof exists yet
+- no live bare-metal/QEMU proof exists yet for a real hardware-facing disk mutation + readback path
+- no filesystem-on-block layer exists yet on top of the shared backend
+- no AHCI/NVMe path exists yet; only ATA PIO is implemented today
 
 ### Ethernet Driver
 
@@ -222,8 +238,9 @@ Status: `In progress`
 
 Current local source-of-truth evidence:
 
-- tool-layout persistence is now backed by real RAM-disk blocks
+- tool-layout persistence is now backed by the shared storage backend
 - runtime can store and clear deterministic tool payloads through that path
+- the same path now works over either RAM-disk or ATA PIO backend selection
 
 Remaining gap before this subsystem is fully closed:
 

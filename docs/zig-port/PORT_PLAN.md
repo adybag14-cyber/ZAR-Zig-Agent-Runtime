@@ -25,6 +25,19 @@ Full-stack replacement execution reference:
     - `scripts/baremetal-qemu-ps2-keyboard-modifier-queue-probe-check.ps1`
     - `scripts/baremetal-qemu-ps2-mouse-accumulator-state-probe-check.ps1`
     - `scripts/baremetal-qemu-ps2-mouse-packet-payload-probe-check.ps1`
+  - storage/disk depth advanced locally:
+    - shared storage backend facade shipped in `src/baremetal/storage_backend.zig`
+    - real ATA PIO path shipped in `src/baremetal/ata_pio_disk.zig`
+    - ATA PIO currently supports `IDENTIFY`, sector `READ`, sector `WRITE`, and `CACHE FLUSH`
+    - PAL storage and bare-metal tool layout now route through the backend facade
+    - hosted and host validation now proves:
+      - ATA-backed backend selection
+      - identify-backed capacity detection
+      - ATA mock-device read/write/flush behavior
+      - ATA-backed bare-metal export reporting
+    - remaining strict gap:
+      - first live bare-metal/QEMU disk mutation + readback proof
+      - filesystem-on-block layer above the shared backend
 - `docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md` (FS0..FS7 scope/gates)
 
 ## Critical Points

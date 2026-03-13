@@ -1,24 +1,24 @@
 const abi = @import("../baremetal/abi.zig");
-const ram_disk = @import("../baremetal/ram_disk.zig");
+const storage_backend = @import("../baremetal/storage_backend.zig");
 const tool_layout = @import("../baremetal/tool_layout.zig");
 
 pub const StorageState = abi.BaremetalStorageState;
 pub const ToolLayoutState = abi.BaremetalToolLayoutState;
 pub const ToolSlot = abi.BaremetalToolSlot;
-pub const Error = ram_disk.Error || tool_layout.Error;
+pub const Error = storage_backend.Error || tool_layout.Error;
 
 pub fn init() Error!void {
-    ram_disk.init();
+    storage_backend.init();
     try tool_layout.init();
 }
 
 pub fn resetForTest() void {
-    ram_disk.resetForTest();
+    storage_backend.resetForTest();
     tool_layout.resetForTest();
 }
 
 pub fn storageStatePtr() *const StorageState {
-    return ram_disk.statePtr();
+    return storage_backend.statePtr();
 }
 
 pub fn toolLayoutStatePtr() *const ToolLayoutState {
@@ -26,7 +26,7 @@ pub fn toolLayoutStatePtr() *const ToolLayoutState {
 }
 
 pub fn readByte(lba: u32, offset: u32) u8 {
-    return ram_disk.readByte(lba, offset);
+    return storage_backend.readByte(lba, offset);
 }
 
 pub fn writePattern(slot_id: u32, byte_len: u32, seed: u8, tick: u64) Error!void {

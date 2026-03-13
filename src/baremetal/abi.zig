@@ -217,6 +217,7 @@ pub const interrupt_mask_profile_custom: u8 = 255;
 pub const console_backend_host_buffer: u8 = 0;
 pub const console_backend_vga_text: u8 = 1;
 pub const storage_backend_ram_disk: u8 = 1;
+pub const storage_backend_ata_pio: u8 = 2;
 pub const input_modifier_shift: u8 = 1 << 0;
 pub const input_modifier_ctrl: u8 = 1 << 1;
 pub const input_modifier_alt: u8 = 1 << 2;
