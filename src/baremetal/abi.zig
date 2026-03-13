@@ -7,6 +7,7 @@ pub const boot_diag_magic: u32 = 0x4f434244; // "OCBD"
 pub const console_magic: u32 = 0x4f43434e; // "OCCN"
 pub const framebuffer_magic: u32 = 0x4f434642; // "OCFB"
 pub const storage_magic: u32 = 0x4f435354; // "OCST"
+pub const ethernet_magic: u32 = 0x4f434554; // "OCET"
 pub const tool_layout_magic: u32 = 0x4f43544c; // "OCTL"
 pub const filesystem_magic: u32 = 0x4f434653; // "OCFS"
 pub const keyboard_magic: u32 = 0x4f434b42; // "OCKB"
@@ -219,6 +220,8 @@ pub const interrupt_mask_profile_custom: u8 = 255;
 pub const console_backend_host_buffer: u8 = 0;
 pub const console_backend_vga_text: u8 = 1;
 pub const console_backend_linear_framebuffer: u8 = 2;
+pub const ethernet_backend_none: u8 = 0;
+pub const ethernet_backend_rtl8139: u8 = 1;
 pub const storage_backend_ram_disk: u8 = 1;
 pub const storage_backend_ata_pio: u8 = 2;
 pub const input_modifier_shift: u8 = 1 << 0;
@@ -329,6 +332,38 @@ pub const BaremetalStorageState = extern struct {
     reserved0: [3]u8,
     bytes_read: u64,
     bytes_written: u64,
+};
+
+pub const BaremetalEthernetState = extern struct {
+    magic: u32,
+    api_version: u16,
+    backend: u8,
+    initialized: u8,
+    hardware_backed: u8,
+    tx_enabled: u8,
+    rx_enabled: u8,
+    loopback_enabled: u8,
+    link_up: u8,
+    pci_bus: u8,
+    pci_device: u8,
+    pci_function: u8,
+    irq_line: u8,
+    reserved0: [3]u8,
+    io_base: u32,
+    tx_packets: u32,
+    rx_packets: u32,
+    tx_errors: u32,
+    rx_errors: u32,
+    rx_overflows: u32,
+    last_tx_len: u32,
+    last_rx_len: u32,
+    last_tx_status: u32,
+    last_rx_status: u32,
+    tx_index: u8,
+    reserved1: [3]u8,
+    mac: [6]u8,
+    reserved2: [2]u8,
+    rx_consumer_offset: u32,
 };
 
 pub const BaremetalToolLayoutState = extern struct {
@@ -759,6 +794,7 @@ test "baremetal kernel info size contract stays stable" {
     try std.testing.expectEqual(@as(usize, 48), @sizeOf(BaremetalBootDiagnostics));
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalConsoleState));
     try std.testing.expectEqual(@as(usize, 56), @sizeOf(BaremetalStorageState));
+    try std.testing.expectEqual(@as(usize, 76), @sizeOf(BaremetalEthernetState));
     try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalToolLayoutState));
     try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalToolSlot));
     try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalKeyboardState));

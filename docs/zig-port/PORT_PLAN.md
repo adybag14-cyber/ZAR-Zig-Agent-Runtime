@@ -46,10 +46,23 @@ Full-stack replacement execution reference:
       - live QEMU ATA-backed mutation + readback
       - ATA-backed tool-layout persistence
       - ATA-backed filesystem persistence
-    - path-based filesystem usage is now also shipped above the shared backend:
-      - `src/baremetal/filesystem.zig` implements directory creation plus file read/write/stat
-      - `src/pal/fs.zig` routes the freestanding PAL through that layer
-      - hosted and host validation now proves RAM-disk and ATA-backed persistence for `/runtime/state/agent.json` and `/tools/cache/tool.txt`
+  - Ethernet driver depth advanced locally:
+    - real RTL8139 path shipped in `src/baremetal/rtl8139.zig`
+    - PCI RTL8139 discovery + I/O / bus-master enable shipped in `src/baremetal/pci.zig`
+    - bare-metal ABI/export surface shipped in `src/baremetal_main.zig`
+    - raw-frame PAL surface shipped in `src/pal/net.zig`
+    - hosted/host validation now proves mock-device init/send/receive plus PAL bridging
+    - live QEMU RTL8139 proof now passes:
+      - `scripts/baremetal-qemu-rtl8139-probe-check.ps1`
+      - MAC readout
+      - TX/RX loopback
+      - payload validation
+      - TX/RX counter advance
+    - TCP/IP remains the next strict networking stage above that now-real L2 slice
+  - path-based filesystem usage is now also shipped above the shared backend:
+    - `src/baremetal/filesystem.zig` implements directory creation plus file read/write/stat
+    - `src/pal/fs.zig` routes the freestanding PAL through that layer
+    - hosted and host validation now proves RAM-disk and ATA-backed persistence for `/runtime/state/agent.json` and `/tools/cache/tool.txt`
 - `docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md` (FS0..FS7 scope/gates)
 
 ## Critical Points

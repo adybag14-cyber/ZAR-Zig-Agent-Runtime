@@ -1,55 +1,34 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const abi = @import("abi.zig");
 const pci = @import("pci.zig");
 
 pub const Error = error{
-    NotPresent,
-    NotReady,
-    BusyTimeout,
-    TxTooLarge,
-    RxFrameTooLarge,
+    NotAvailable,
+    NotInitialized,
+    FrameTooLarge,
+    Timeout,
+    HardwareFault,
 };
 
-pub const state_magic: u32 = 0x4F43454E; // "OCEN"
-pub const backend_none: u8 = 0;
-pub const backend_rtl8139: u8 = 1;
-
-pub const State = extern struct {
-    magic: u32,
-    api_version: u16,
-    backend: u8,
-    present: u8,
-    initialized: u8,
-    hardware_backed: u8,
-    link_up: u8,
-    reserved0: u8,
-    pci_bus: u8,
-    pci_device: u8,
-    pci_function: u8,
-    irq_line: u8,
-    io_base: u16,
-    reserved1: u16,
-    mac: [6]u8,
-    reserved2: [2]u8,
-    tx_packets: u32,
-    tx_errors: u32,
-    rx_packets: u32,
-    rx_errors: u32,
-    last_tx_len: u32,
-    last_rx_len: u32,
-    last_isr: u16,
-    reserved3: u16,
+pub const InitError = error{
+    UnsupportedPlatform,
+    DeviceNotFound,
+    ResetTimeout,
+    BufferProgramFailed,
+    MacReadFailed,
+    DataPathEnableFailed,
 };
 
-pub const tx_buffer_size: usize = 1536;
-pub const tx_slot_count: usize = 4;
-pub const rx_ring_size: usize = 8192;
-pub const rx_buffer_size: usize = rx_ring_size + 16 + 1500;
-pub const snapshot_size: usize = 256;
-
-const vendor_realtek: u16 = 0x10EC;
-const device_rtl8139: u16 = 0x8139;
-const poll_limit: usize = 100_000;
+const pci_vendor_id: u16 = 0x10EC;
+const pci_device_id: u16 = 0x8139;
+const tx_descriptor_count: usize = 4;
+const tx_buffer_capacity: usize = 2048;
+const rx_ring_bytes: usize = 8192;
+const rx_ring_allocation_bytes: usize = rx_ring_bytes + 16 + 1500;
+const rx_snapshot_capacity: usize = 2048;
+const min_frame_len: usize = 60;
+const tx_poll_limit: usize = 100_000;
 
 const reg_idr0: u16 = 0x00;
 const reg_tsd0: u16 = 0x10;
@@ -64,317 +43,438 @@ const reg_tcr: u16 = 0x40;
 const reg_rcr: u16 = 0x44;
 const reg_config1: u16 = 0x52;
 
-const cr_rst: u8 = 0x10;
 const cr_re: u8 = 0x08;
 const cr_te: u8 = 0x04;
+const cr_rst: u8 = 0x10;
 
-const isr_rx_ok: u16 = 0x0001;
-const isr_rx_err: u16 = 0x0002;
-const isr_tx_ok: u16 = 0x0004;
-const isr_tx_err: u16 = 0x0008;
+const isr_rok: u16 = 0x0001;
+const isr_rer: u16 = 0x0002;
+const isr_tok: u16 = 0x0004;
+const isr_ter: u16 = 0x0008;
+const isr_rxovw: u16 = 0x0010;
+const isr_all_known: u16 = 0xFFFF;
 
+const tsd_tok: u32 = 0x0000_8000;
+const tsd_tabt: u32 = 0x4000_0000;
+const tsd_owc: u32 = 0x2000_0000;
+const tsd_tun: u32 = 0x4000_0000;
+const tsd_carrier_lost: u32 = 0x8000_0000;
+
+const tcr_mxdma_unlimited: u32 = 7 << 8;
+const tcr_loopback_internal: u32 = 3 << 17;
+const tcr_ifg96: u32 = 3 << 24;
+
+const rcr_aap: u32 = 1 << 0;
+const rcr_apm: u32 = 1 << 1;
+const rcr_ab: u32 = 1 << 3;
 const rcr_wrap: u32 = 1 << 7;
-const rcr_accept_all: u32 = 0x0F;
-const tcr_default: u32 = 0x0300_0700;
+const rcr_mxdma_unlimited: u32 = 7 << 8;
+const rcr_rblen_8k: u32 = 0 << 11;
 
-var state: State = undefined;
-var tx_slot: u8 = 0;
-var tx_buffers: [tx_slot_count][tx_buffer_size]u8 align(16) = [_][tx_buffer_size]u8{[_]u8{0} ** tx_buffer_size} ** tx_slot_count;
-var rx_buffer: [rx_buffer_size]u8 align(256) = [_]u8{0} ** rx_buffer_size;
-var last_tx_snapshot: [snapshot_size]u8 = [_]u8{0} ** snapshot_size;
-var last_rx_snapshot: [snapshot_size]u8 = [_]u8{0} ** snapshot_size;
-var rx_offset: u32 = 0;
+const default_mock_mac = [6]u8{ 0x52, 0x54, 0x00, 0x12, 0x34, 0x56 };
 
-var mock_rx_frame: [snapshot_size]u8 = [_]u8{0} ** snapshot_size;
-var mock_rx_len: u32 = 0;
-
-pub fn resetForTest() void {
-    state = .{
-        .magic = state_magic,
-        .api_version = 2,
-        .backend = backend_none,
-        .present = 0,
+fn defaultState() abi.BaremetalEthernetState {
+    return .{
+        .magic = abi.ethernet_magic,
+        .api_version = abi.api_version,
+        .backend = abi.ethernet_backend_none,
         .initialized = 0,
         .hardware_backed = 0,
+        .tx_enabled = 0,
+        .rx_enabled = 0,
+        .loopback_enabled = 0,
         .link_up = 0,
-        .reserved0 = 0,
         .pci_bus = 0,
         .pci_device = 0,
         .pci_function = 0,
         .irq_line = 0,
+        .reserved0 = .{ 0, 0, 0 },
         .io_base = 0,
-        .reserved1 = 0,
-        .mac = .{ 0, 0, 0, 0, 0, 0 },
-        .reserved2 = .{ 0, 0 },
         .tx_packets = 0,
-        .tx_errors = 0,
         .rx_packets = 0,
+        .tx_errors = 0,
         .rx_errors = 0,
+        .rx_overflows = 0,
         .last_tx_len = 0,
         .last_rx_len = 0,
-        .last_isr = 0,
-        .reserved3 = 0,
+        .last_tx_status = 0,
+        .last_rx_status = 0,
+        .tx_index = 0,
+        .reserved1 = .{ 0, 0, 0 },
+        .mac = .{ 0, 0, 0, 0, 0, 0 },
+        .reserved2 = .{ 0, 0 },
+        .rx_consumer_offset = 0,
     };
-    tx_slot = 0;
-    rx_offset = 0;
-    @memset(&tx_buffers, [_]u8{0} ** tx_buffer_size);
-    @memset(&rx_buffer, 0);
-    @memset(&last_tx_snapshot, 0);
-    @memset(&last_rx_snapshot, 0);
-    @memset(&mock_rx_frame, 0);
-    mock_rx_len = 0;
 }
 
-pub fn init() void {
-    if (state.initialized != 0) return;
+var state: abi.BaremetalEthernetState = defaultState();
+var tx_buffers: [tx_descriptor_count][tx_buffer_capacity]u8 align(16) = [_][tx_buffer_capacity]u8{[_]u8{0} ** tx_buffer_capacity} ** tx_descriptor_count;
+var rx_ring: [rx_ring_allocation_bytes]u8 align(16) = [_]u8{0} ** rx_ring_allocation_bytes;
+var rx_snapshot: [rx_snapshot_capacity]u8 = [_]u8{0} ** rx_snapshot_capacity;
+var mock_enabled: bool = false;
+var mock_pending_rx_len: u32 = 0;
+var mock_pending_rx_status: u32 = 0;
+
+pub fn resetForTest() void {
+    resetState();
+    @memset(&tx_buffers, [_]u8{0} ** tx_buffer_capacity);
+    @memset(&rx_ring, 0);
+    @memset(&rx_snapshot, 0);
+    mock_enabled = false;
+    mock_pending_rx_len = 0;
+    mock_pending_rx_status = 0;
+}
+
+pub fn testEnableMockDevice() void {
+    if (!builtin.is_test) return;
     resetForTest();
-
-    if (!hardwareBacked()) {
-        if (builtin.is_test) {
-            initMock();
-        }
-        return;
-    }
-
-    initHardware() catch {};
+    mock_enabled = true;
 }
 
-pub fn statePtr() *const State {
+pub fn testDisableMockDevice() void {
+    if (!builtin.is_test) return;
+    resetForTest();
+}
+
+pub fn statePtr() *const abi.BaremetalEthernetState {
     return &state;
 }
 
-pub fn poll() void {
-    if (state.initialized == 0) return;
-
-    if (!hardwareBacked()) {
-        if (builtin.is_test and mock_rx_len != 0) {
-            const copy_len = @min(snapshot_size, @as(usize, @intCast(mock_rx_len)));
-            std.mem.copyForwards(u8, last_rx_snapshot[0..copy_len], mock_rx_frame[0..copy_len]);
-            if (copy_len < snapshot_size) {
-                @memset(last_rx_snapshot[copy_len..], 0);
-            }
-            state.rx_packets +%= 1;
-            state.last_rx_len = mock_rx_len;
-            state.last_isr = isr_rx_ok;
-            mock_rx_len = 0;
-        }
-        return;
-    }
-
-    const isr = read16(state.io_base + reg_isr);
-    if (isr == 0 or isr == 0xFFFF) return;
-    state.last_isr = isr;
-    write16(state.io_base + reg_isr, isr);
-
-    if ((isr & isr_rx_err) != 0) state.rx_errors +%= 1;
-    if ((isr & isr_tx_err) != 0) state.tx_errors +%= 1;
-    if ((isr & isr_rx_ok) != 0) {
-        drainReceiveRing();
-    }
+pub fn init() bool {
+    initDetailed() catch return false;
+    return true;
 }
 
-pub fn sendPattern(byte_len: u32, seed: u8) Error!void {
-    if (state.initialized == 0 or state.present == 0) return error.NotReady;
-    if (byte_len == 0 or byte_len > tx_buffer_size) return error.TxTooLarge;
-
-    const len: usize = @intCast(byte_len);
-    const slot_index: usize = tx_slot;
-    for (tx_buffers[slot_index][0..len], 0..) |*byte, index| {
-        byte.* = seed +% @as(u8, @truncate(index));
+pub fn initDetailed() InitError!void {
+    if (state.magic != abi.ethernet_magic or state.api_version != abi.api_version) {
+        resetState();
     }
-    const tx_copy_len = @min(snapshot_size, len);
-    std.mem.copyForwards(u8, last_tx_snapshot[0..tx_copy_len], tx_buffers[slot_index][0..tx_copy_len]);
-    if (tx_copy_len < snapshot_size) {
-        @memset(last_tx_snapshot[tx_copy_len..], 0);
-    }
-    state.last_tx_len = byte_len;
+    if (state.initialized != 0) return;
 
-    if (!hardwareBacked()) {
+    resetState();
+    if (mockAvailable()) {
+        initMock();
+        return;
+    }
+    if (!hardwareBacked()) return error.UnsupportedPlatform;
+
+    const nic = pci.discoverRtl8139() orelse return error.DeviceNotFound;
+    pci.enableRtl8139IoAndBusMaster(nic.location);
+
+    state.backend = abi.ethernet_backend_rtl8139;
+    state.pci_bus = nic.location.bus;
+    state.pci_device = nic.location.device;
+    state.pci_function = nic.location.function;
+    state.irq_line = nic.irq_line;
+    state.io_base = nic.io_base;
+    state.hardware_backed = 1;
+    state.loopback_enabled = 1;
+
+    powerUp(nic.io_base);
+    if (!softReset(nic.io_base)) {
+        resetState();
+        return error.ResetTimeout;
+    }
+    if (!programBuffers(nic.io_base)) {
+        resetState();
+        return error.BufferProgramFailed;
+    }
+
+    readMac(nic.io_base, &state.mac);
+    if (macIsZero(state.mac)) {
+        resetState();
+        return error.MacReadFailed;
+    }
+
+    if (!ensureDataPath(nic.io_base)) {
+        resetState();
+        return error.DataPathEnableFailed;
+    }
+
+    // Re-acknowledge any latched status after the engine transitions to RE|TE.
+    write16(nic.io_base + reg_isr, isr_all_known);
+    // Reassert the intended loopback-friendly config after enable so the
+    // runtime path is not relying on pre-enable register state.
+    write32(nic.io_base + reg_tcr, tcr_mxdma_unlimited | tcr_ifg96 | tcr_loopback_internal);
+    write32(nic.io_base + reg_rcr, rcr_aap | rcr_apm | rcr_ab | rcr_wrap | rcr_mxdma_unlimited | rcr_rblen_8k);
+
+    state.initialized = 1;
+    return;
+}
+
+pub fn macByte(index: u32) u8 {
+    if (index >= state.mac.len) return 0;
+    return state.mac[index];
+}
+
+pub fn sendPattern(byte_len: u32, seed: u8) Error!u32 {
+    if (state.initialized == 0 and !init()) return error.NotAvailable;
+    const requested_len: usize = @intCast(byte_len);
+    const send_len = @min(tx_buffer_capacity, @max(min_frame_len, requested_len));
+    var frame = [_]u8{0} ** tx_buffer_capacity;
+    buildPatternFrame(frame[0..send_len], seed, state.mac);
+    try sendFrame(frame[0..send_len]);
+    return @as(u32, @intCast(send_len));
+}
+
+pub fn sendFrame(frame: []const u8) Error!void {
+    if (state.initialized == 0 and !init()) return error.NotAvailable;
+    if (frame.len > tx_buffer_capacity) return error.FrameTooLarge;
+
+    const tx_slot: usize = state.tx_index;
+    const send_len: usize = @max(min_frame_len, frame.len);
+    const tx_buf = tx_buffers[tx_slot][0..send_len];
+    @memset(tx_buf, 0);
+    std.mem.copyForwards(u8, tx_buf[0..frame.len], frame);
+
+    if (mockAvailable()) {
+        queueMockReceive(tx_buf[0..send_len]);
         state.tx_packets +%= 1;
-        state.last_isr = isr_tx_ok;
-        tx_slot = @intCast((slot_index + 1) % tx_slot_count);
+        state.last_tx_len = @as(u32, @intCast(send_len));
+        state.last_tx_status = tsd_tok;
+        state.tx_index = @as(u8, @intCast((tx_slot + 1) % tx_descriptor_count));
         return;
     }
 
-    const tsad_reg = reg_tsad0 + (@as(u16, @intCast(slot_index)) * 4);
-    const tsd_reg = reg_tsd0 + (@as(u16, @intCast(slot_index)) * 4);
-    write32(state.io_base + tsad_reg, @as(u32, @truncate(@intFromPtr(&tx_buffers[slot_index]))));
-    write32(state.io_base + tsd_reg, byte_len);
+    const io_base: u16 = @intCast(state.io_base & 0xFFFF);
+    if (!ensureDataPath(io_base)) {
+        state.tx_errors +%= 1;
+        return error.HardwareFault;
+    }
+    write32(io_base + reg_tsd0 + (@as(u16, @intCast(tx_slot)) * 4), @as(u32, @intCast(send_len)));
+    const status_word = pollTxStatus(io_base, tx_slot) catch |err| {
+        state.tx_errors +%= 1;
+        return err;
+    };
 
-    var attempt: usize = 0;
-    while (attempt < poll_limit) : (attempt += 1) {
-        const isr = read16(state.io_base + reg_isr);
-        if ((isr & isr_tx_ok) != 0) {
-            state.last_isr = isr;
-            write16(state.io_base + reg_isr, isr);
-            state.tx_packets +%= 1;
-            tx_slot = @intCast((slot_index + 1) % tx_slot_count);
-            return;
-        }
-        if ((isr & isr_tx_err) != 0) {
-            state.last_isr = isr;
-            write16(state.io_base + reg_isr, isr);
-            state.tx_errors +%= 1;
-            tx_slot = @intCast((slot_index + 1) % tx_slot_count);
-            return error.BusyTimeout;
-        }
-        std.atomic.spinLoopHint();
+    state.tx_packets +%= 1;
+    state.last_tx_len = @as(u32, @intCast(send_len));
+    state.last_tx_status = status_word;
+    state.tx_index = @as(u8, @intCast((tx_slot + 1) % tx_descriptor_count));
+}
+
+pub fn pollReceive() Error!u32 {
+    if (state.initialized == 0 and !init()) return error.NotAvailable;
+
+    if (mockAvailable()) {
+        if (mock_pending_rx_len == 0) return 0;
+        state.last_rx_len = mock_pending_rx_len;
+        state.last_rx_status = mock_pending_rx_status;
+        state.rx_packets +%= 1;
+        mock_pending_rx_len = 0;
+        mock_pending_rx_status = 0;
+        return state.last_rx_len;
     }
 
-    state.tx_errors +%= 1;
-    return error.BusyTimeout;
-}
-
-pub fn lastTxByte(index: u32) u8 {
-    if (index >= snapshot_size) return 0;
-    return last_tx_snapshot[index];
-}
-
-pub fn lastRxByte(index: u32) u8 {
-    if (index >= snapshot_size) return 0;
-    return last_rx_snapshot[index];
-}
-
-pub fn testInjectRxFrame(frame: []const u8) void {
-    if (!builtin.is_test) return;
-    const copy_len = @min(snapshot_size, frame.len);
-    std.mem.copyForwards(u8, mock_rx_frame[0..copy_len], frame[0..copy_len]);
-    if (copy_len < snapshot_size) {
-        @memset(mock_rx_frame[copy_len..], 0);
+    const io_base: u16 = @intCast(state.io_base & 0xFFFF);
+    if (!ensureDataPath(io_base)) {
+        state.rx_errors +%= 1;
+        return error.HardwareFault;
     }
-    mock_rx_len = @as(u32, @intCast(copy_len));
+    const producer = read16(io_base + reg_cbr);
+    if (producer == @as(u16, @intCast(state.rx_consumer_offset))) {
+        return 0;
+    }
+
+    const packet_offset: usize = @intCast(state.rx_consumer_offset);
+    const header = readU32Le(rx_ring[packet_offset .. packet_offset + 4]);
+    const packet_status: u16 = @as(u16, @truncate(header));
+    const total_len: usize = @as(usize, @intCast(header >> 16));
+    if ((packet_status & isr_rok) == 0 or total_len < 4) {
+        state.rx_errors +%= 1;
+        write16(io_base + reg_isr, isr_rer | isr_rxovw | isr_rok);
+        return error.HardwareFault;
+    }
+
+    const payload_len: usize = @min(total_len - 4, rx_snapshot_capacity);
+    std.mem.copyForwards(u8, rx_snapshot[0..payload_len], rx_ring[packet_offset + 4 .. packet_offset + 4 + payload_len]);
+    state.last_rx_len = @as(u32, @intCast(payload_len));
+    state.last_rx_status = packet_status;
+    state.rx_packets +%= 1;
+
+    var next_offset: usize = packet_offset + total_len + 4;
+    next_offset = (next_offset + 3) & ~@as(usize, 3);
+    next_offset %= rx_ring_bytes;
+    state.rx_consumer_offset = @as(u32, @intCast(next_offset));
+    const capr_value: u16 = @as(u16, @intCast((next_offset + rx_ring_bytes - 16) % rx_ring_bytes));
+    write16(io_base + reg_capr, capr_value);
+    write16(io_base + reg_isr, isr_rok | isr_rer | isr_rxovw | isr_tok | isr_ter);
+    return state.last_rx_len;
+}
+
+pub fn rxByte(index: u32) u8 {
+    if (index >= state.last_rx_len or index >= rx_snapshot_capacity) return 0;
+    return rx_snapshot[index];
+}
+
+pub fn debugProducerOffset() u16 {
+    if (state.initialized == 0) return 0;
+    if (mockAvailable()) return @as(u16, @intCast(state.rx_consumer_offset & 0xFFFF));
+    const io_base: u16 = @intCast(state.io_base & 0xFFFF);
+    return read16(io_base + reg_cbr);
+}
+
+pub fn debugInterruptStatus() u16 {
+    if (state.initialized == 0) return 0;
+    if (mockAvailable()) return isr_rok;
+    const io_base: u16 = @intCast(state.io_base & 0xFFFF);
+    return read16(io_base + reg_isr);
+}
+
+pub fn debugCommandRegister() u8 {
+    if (state.initialized == 0) return 0;
+    if (mockAvailable()) return cr_re | cr_te;
+    const io_base: u16 = @intCast(state.io_base & 0xFFFF);
+    return read8(io_base + reg_cr);
+}
+
+pub fn debugLastTxStatus() u32 {
+    if (state.initialized == 0) return 0;
+    if (mockAvailable()) return state.last_tx_status;
+    const io_base: u16 = @intCast(state.io_base & 0xFFFF);
+    const slot = if (state.tx_index == 0) tx_descriptor_count - 1 else @as(usize, state.tx_index) - 1;
+    return read32(io_base + reg_tsd0 + (@as(u16, @intCast(slot)) * 4));
+}
+
+fn resetState() void {
+    state = defaultState();
 }
 
 fn initMock() void {
-    state.backend = backend_rtl8139;
-    state.present = 1;
+    state.backend = abi.ethernet_backend_rtl8139;
     state.initialized = 1;
     state.hardware_backed = 0;
+    state.tx_enabled = 1;
+    state.rx_enabled = 1;
+    state.loopback_enabled = 1;
     state.link_up = 1;
-    state.pci_bus = 0;
-    state.pci_device = 3;
-    state.pci_function = 0;
+    state.io_base = 0xC100;
     state.irq_line = 11;
-    state.io_base = 0xC000;
-    state.mac = .{ 0x52, 0x54, 0x00, 0x12, 0x34, 0x56 };
+    state.mac = default_mock_mac;
 }
 
-fn initHardware() Error!void {
-    const dev = pci.discoverRealtekRtl8139() orelse return error.NotPresent;
-    if (dev.vendor_id != vendor_realtek or dev.device_id != device_rtl8139) return error.NotPresent;
-
-    state.backend = backend_rtl8139;
-    state.present = 1;
-    state.hardware_backed = 1;
-    state.pci_bus = dev.location.bus;
-    state.pci_device = dev.location.device;
-    state.pci_function = dev.location.function;
-    state.irq_line = dev.irq_line;
-    state.io_base = dev.io_base;
-
-    write8(state.io_base + reg_config1, 0x00);
-    write8(state.io_base + reg_cr, cr_rst);
-    try waitResetClear();
-
-    write32(state.io_base + reg_rbstart, @as(u32, @truncate(@intFromPtr(&rx_buffer))));
-    write16(state.io_base + reg_capr, 0);
-    write16(state.io_base + reg_imr, 0);
-    write16(state.io_base + reg_isr, 0xFFFF);
-    write32(state.io_base + reg_tcr, tcr_default);
-    write32(state.io_base + reg_rcr, rcr_accept_all | rcr_wrap);
-    write8(state.io_base + reg_cr, cr_re | cr_te);
-
-    var index: usize = 0;
-    while (index < state.mac.len) : (index += 1) {
-        state.mac[index] = read8(state.io_base + reg_idr0 + @as(u16, @intCast(index)));
-    }
-    state.initialized = 1;
-    state.link_up = 1;
-}
-
-fn waitResetClear() Error!void {
-    var attempt: usize = 0;
-    while (attempt < poll_limit) : (attempt += 1) {
-        if ((read8(state.io_base + reg_cr) & cr_rst) == 0) return;
-        std.atomic.spinLoopHint();
-    }
-    return error.BusyTimeout;
-}
-
-fn drainReceiveRing() void {
-    var safety: usize = 0;
-    while (safety < 16) : (safety += 1) {
-        const cbr = read16(state.io_base + reg_cbr);
-        if (@as(u16, @truncate(rx_offset)) == cbr) break;
-
-        const frame_status = readRing16(rx_offset);
-        const frame_len = readRing16(rx_offset + 2);
-        if (frame_len == 0 or frame_len > rx_buffer_size) {
-            state.rx_errors +%= 1;
-            break;
-        }
-        if ((frame_status & 0x0001) == 0) {
-            state.rx_errors +%= 1;
-            break;
-        }
-
-        const payload_len = @min(snapshot_size, @as(usize, frame_len));
-        copyFromRing((rx_offset + 4) % rx_ring_size, last_rx_snapshot[0..payload_len]);
-        if (payload_len < snapshot_size) {
-            @memset(last_rx_snapshot[payload_len..], 0);
-        }
-        state.rx_packets +%= 1;
-        state.last_rx_len = frame_len;
-
-        var next = rx_offset + 4 + @as(u32, frame_len);
-        next = (next + 3) & ~@as(u32, 3);
-        next %= rx_ring_size;
-        rx_offset = next;
-        const capr_value: u16 = if (next >= 16)
-            @truncate(next - 16)
-        else
-            @truncate((rx_ring_size + next) - 16);
-        write16(state.io_base + reg_capr, capr_value);
-    }
-}
-
-fn readRing16(offset: u32) u16 {
-    const lo = ringByte(offset);
-    const hi = ringByte(offset + 1);
-    return @as(u16, lo) | (@as(u16, hi) << 8);
-}
-
-fn ringByte(offset: u32) u8 {
-    const idx: usize = @intCast(offset % rx_ring_size);
-    return rx_buffer[idx];
-}
-
-fn copyFromRing(offset: u32, out: []u8) void {
-    var idx: usize = 0;
-    while (idx < out.len) : (idx += 1) {
-        out[idx] = ringByte(offset + @as(u32, @intCast(idx)));
-    }
+fn mockAvailable() bool {
+    return builtin.is_test and mock_enabled;
 }
 
 fn hardwareBacked() bool {
     return builtin.os.tag == .freestanding and builtin.cpu.arch == .x86_64;
 }
 
+fn macIsZero(mac: [6]u8) bool {
+    for (mac) |byte| {
+        if (byte != 0) return false;
+    }
+    return true;
+}
+
+fn powerUp(io_base: u16) void {
+    write8(io_base + reg_config1, 0x00);
+}
+
+fn softReset(io_base: u16) bool {
+    write8(io_base + reg_cr, cr_rst);
+    var attempts: usize = 0;
+    while (attempts < tx_poll_limit) : (attempts += 1) {
+        if ((read8(io_base + reg_cr) & cr_rst) == 0) return true;
+        std.atomic.spinLoopHint();
+    }
+    return false;
+}
+
+fn programBuffers(io_base: u16) bool {
+    const rx_addr = ptr32(&rx_ring) orelse return false;
+    write32(io_base + reg_rbstart, rx_addr);
+
+    var index: usize = 0;
+    while (index < tx_descriptor_count) : (index += 1) {
+        const tx_addr = ptr32(&tx_buffers[index]) orelse return false;
+        write32(io_base + reg_tsad0 + (@as(u16, @intCast(index)) * 4), tx_addr);
+        write32(io_base + reg_tsd0 + (@as(u16, @intCast(index)) * 4), 0);
+    }
+
+    state.rx_consumer_offset = 0;
+    write16(io_base + reg_capr, 0xFFF0);
+    write16(io_base + reg_imr, 0);
+    write16(io_base + reg_isr, isr_all_known);
+    write32(io_base + reg_tcr, tcr_mxdma_unlimited | tcr_ifg96 | tcr_loopback_internal);
+    write32(io_base + reg_rcr, rcr_aap | rcr_apm | rcr_ab | rcr_wrap | rcr_mxdma_unlimited | rcr_rblen_8k);
+    return true;
+}
+
+fn readMac(io_base: u16, out: *[6]u8) void {
+    var index: usize = 0;
+    while (index < out.len) : (index += 1) {
+        out[index] = read8(io_base + reg_idr0 + @as(u16, @intCast(index)));
+    }
+}
+
+fn ensureDataPath(io_base: u16) bool {
+    if (state.tx_enabled != 0 and state.rx_enabled != 0) return true;
+    write8(io_base + reg_cr, cr_re | cr_te);
+    const status = read8(io_base + reg_cr);
+    if ((status & (cr_re | cr_te)) != (cr_re | cr_te)) return false;
+    state.tx_enabled = 1;
+    state.rx_enabled = 1;
+    state.link_up = 1;
+    return true;
+}
+
+fn pollTxStatus(io_base: u16, tx_slot: usize) Error!u32 {
+    const tsd_offset = io_base + reg_tsd0 + (@as(u16, @intCast(tx_slot)) * 4);
+    var attempts: usize = 0;
+    while (attempts < tx_poll_limit) : (attempts += 1) {
+        const status_word = read32(tsd_offset);
+        if ((status_word & tsd_tok) != 0) return status_word;
+        if ((status_word & (tsd_tabt | tsd_owc | tsd_carrier_lost | tsd_tun)) != 0) return error.HardwareFault;
+        std.atomic.spinLoopHint();
+    }
+    return error.Timeout;
+}
+
+fn queueMockReceive(frame: []const u8) void {
+    const rx_len: usize = @min(frame.len, rx_snapshot_capacity);
+    std.mem.copyForwards(u8, rx_snapshot[0..rx_len], frame[0..rx_len]);
+    mock_pending_rx_len = @as(u32, @intCast(rx_len));
+    mock_pending_rx_status = isr_rok;
+}
+
+fn buildPatternFrame(frame: []u8, seed: u8, mac: [6]u8) void {
+    const dest = frame[0..6];
+    const src = frame[6..12];
+    std.mem.copyForwards(u8, dest, mac[0..]);
+    std.mem.copyForwards(u8, src, mac[0..]);
+    frame[12] = 0x88;
+    frame[13] = 0xB5;
+    var index: usize = 14;
+    while (index < frame.len) : (index += 1) {
+        frame[index] = seed +% @as(u8, @truncate(index - 14));
+    }
+}
+
+fn ptr32(ptr: anytype) ?u32 {
+    const value = @intFromPtr(ptr);
+    if (value > std.math.maxInt(u32)) return null;
+    return @as(u32, @intCast(value));
+}
+
+fn readU32Le(bytes: []const u8) u32 {
+    return @as(u32, bytes[0]) |
+        (@as(u32, bytes[1]) << 8) |
+        (@as(u32, bytes[2]) << 16) |
+        (@as(u32, bytes[3]) << 24);
+}
+
 fn read8(port: u16) u8 {
+    if (!hardwareBacked()) return 0;
     return asm volatile ("inb %[dx], %[al]"
         : [al] "={al}" (-> u8),
         : [dx] "{dx}" (port),
         : "memory");
 }
 
-fn read16(port: u16) u16 {
-    return asm volatile ("inw %[dx], %[ax]"
-        : [ax] "={ax}" (-> u16),
-        : [dx] "{dx}" (port),
-        : "memory");
-}
-
 fn write8(port: u16, value: u8) void {
+    if (!hardwareBacked()) return;
     asm volatile ("outb %[al], %[dx]"
         :
         : [dx] "{dx}" (port),
@@ -382,7 +482,16 @@ fn write8(port: u16, value: u8) void {
         : "memory");
 }
 
+fn read16(port: u16) u16 {
+    if (!hardwareBacked()) return 0;
+    return asm volatile ("inw %[dx], %[ax]"
+        : [ax] "={ax}" (-> u16),
+        : [dx] "{dx}" (port),
+        : "memory");
+}
+
 fn write16(port: u16, value: u16) void {
+    if (!hardwareBacked()) return;
     asm volatile ("outw %[ax], %[dx]"
         :
         : [dx] "{dx}" (port),
@@ -390,7 +499,16 @@ fn write16(port: u16, value: u16) void {
         : "memory");
 }
 
+fn read32(port: u16) u32 {
+    if (!hardwareBacked()) return 0;
+    return asm volatile ("inl %[dx], %[eax]"
+        : [eax] "={eax}" (-> u32),
+        : [dx] "{dx}" (port),
+        : "memory");
+}
+
 fn write32(port: u16, value: u32) void {
+    if (!hardwareBacked()) return;
     asm volatile ("outl %[eax], %[dx]"
         :
         : [dx] "{dx}" (port),
@@ -398,39 +516,26 @@ fn write32(port: u16, value: u32) void {
         : "memory");
 }
 
-test "rtl8139 mock init exposes deterministic state" {
-    resetForTest();
-    init();
-    const nic = statePtr();
-    try std.testing.expectEqual(@as(u32, state_magic), nic.magic);
-    try std.testing.expectEqual(@as(u8, backend_rtl8139), nic.backend);
-    try std.testing.expectEqual(@as(u8, 1), nic.present);
-    try std.testing.expectEqual(@as(u8, 1), nic.initialized);
-    try std.testing.expectEqual(@as(u8, 0), nic.hardware_backed);
-    try std.testing.expectEqualSlices(u8, &.{ 0x52, 0x54, 0x00, 0x12, 0x34, 0x56 }, &nic.mac);
-}
+test "rtl8139 mock init and loopback send path exports stable state" {
+    testEnableMockDevice();
+    defer testDisableMockDevice();
 
-test "rtl8139 mock send pattern updates tx snapshot and counters" {
-    resetForTest();
-    init();
-    try sendPattern(8, 0x41);
-    const nic = statePtr();
-    try std.testing.expectEqual(@as(u32, 1), nic.tx_packets);
-    try std.testing.expectEqual(@as(u32, 8), nic.last_tx_len);
-    try std.testing.expectEqual(@as(u8, 0x41), lastTxByte(0));
-    try std.testing.expectEqual(@as(u8, 0x42), lastTxByte(1));
-    try std.testing.expectEqual(@as(u16, isr_tx_ok), nic.last_isr);
-}
+    try std.testing.expect(init());
+    const eth = statePtr();
+    try std.testing.expectEqual(@as(u32, abi.ethernet_magic), eth.magic);
+    try std.testing.expectEqual(@as(u8, abi.ethernet_backend_rtl8139), eth.backend);
+    try std.testing.expectEqual(@as(u8, 1), eth.initialized);
+    try std.testing.expectEqual(@as(u8, 1), eth.loopback_enabled);
+    try std.testing.expectEqual(@as(u8, 0x52), macByte(0));
 
-test "rtl8139 mock poll consumes injected rx frame" {
-    resetForTest();
-    init();
-    testInjectRxFrame(&.{ 0xDE, 0xAD, 0xBE, 0xEF });
-    poll();
-    const nic = statePtr();
-    try std.testing.expectEqual(@as(u32, 1), nic.rx_packets);
-    try std.testing.expectEqual(@as(u32, 4), nic.last_rx_len);
-    try std.testing.expectEqual(@as(u8, 0xDE), lastRxByte(0));
-    try std.testing.expectEqual(@as(u8, 0xAD), lastRxByte(1));
-    try std.testing.expectEqual(@as(u16, isr_rx_ok), nic.last_isr);
+    const sent_len = try sendPattern(96, 0x41);
+    try std.testing.expectEqual(@as(u32, 96), sent_len);
+    const recv_len = try pollReceive();
+    try std.testing.expectEqual(sent_len, recv_len);
+    try std.testing.expectEqual(@as(u8, 0x52), rxByte(0));
+    try std.testing.expectEqual(@as(u8, 0x88), rxByte(12));
+    try std.testing.expectEqual(@as(u8, 0xB5), rxByte(13));
+    try std.testing.expectEqual(@as(u8, 0x41), rxByte(14));
+    try std.testing.expectEqual(@as(u32, 1), eth.tx_packets);
+    try std.testing.expectEqual(@as(u32, 1), eth.rx_packets);
 }

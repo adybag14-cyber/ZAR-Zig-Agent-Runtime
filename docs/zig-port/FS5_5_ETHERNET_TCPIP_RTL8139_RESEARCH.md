@@ -1,234 +1,375 @@
-# FS5.5 Ethernet/TCP-IP RTL8139 Research
+# FS5.5 Ethernet/TCP-IP First Slice Research: RTL8139 on QEMU x86_64 Bare Metal
 
-## Scope
+## Purpose
+This report defines the first real bare-metal Ethernet slice for `openclaw-zig-port` using an RTL8139 NIC under QEMU on `x86_64-freestanding`. It is intentionally strict:
 
-This document defines the first strict real-hardware Ethernet slice for the Zig bare-metal track.
+- no checklist-only progress
+- no abstraction-first work without hardware proof
+- no TCP/IP claims before a real L2 device path exists
+- no PAL networking surface that bypasses the actual device driver
 
-Target NIC:
+This slice is the minimum acceptable foundation for later IPv4, ARP, UDP, DHCP, DNS, TCP, and higher-level tool execution over the network.
 
-- `RTL8139`
-- QEMU-compatible PCI network path on `x86_64`
-- freestanding Zig runtime with no hosted network fallback counted toward hardware closure
+## Current Local Status
 
-This is not a generic network abstraction report. It is the concrete first implementation order for getting the bare-metal runtime onto a real NIC path that can later carry ARP, IPv4, UDP, TCP, and higher PAL traffic.
+The first strict Ethernet slice is now complete on the local source of truth:
 
-## Why RTL8139 First
+- `src/baremetal/rtl8139.zig` is implemented
+- `src/baremetal/pci.zig` discovers the RTL8139 I/O BAR and IRQ line and enables I/O plus bus-master decode
+- `src/pal/net.zig` exposes the raw-frame PAL seam through the real driver path
+- `src/baremetal_main.zig` exports the bare-metal Ethernet ABI surface
+- `scripts/baremetal-qemu-rtl8139-probe-check.ps1` is green and proves live MAC readout, TX, RX loopback, payload validation, and TX/RX counter advance over the freestanding PVH image
 
-`RTL8139` is the correct first strict slice because:
+This report remains relevant because TCP/IP is still pending. The next strict networking slice is ARP/IPv4/UDP/TCP above the now-real L2 driver.
 
-- QEMU exposes it reliably
-- the register model is small and deterministic
-- it uses I/O BAR access instead of requiring a full MMIO descriptor engine to start
-- it is sufficient for strict TX/RX bring-up before broader NIC depth
+## Scope of This First Slice
+This slice must deliver a real, deterministic Layer 2 path:
 
-For this repo, the first network slice must behave like the existing ATA/PS2 hardware modules:
+- PCI discovery of an RTL8139 device
+- device power-up and reset
+- MAC address readout
+- TX descriptor/buffer programming
+- RX ring setup and polling
+- deterministic packet send proof
+- deterministic packet receive proof
+- bare-metal PAL seam for raw Ethernet frames
 
+This slice does **not** attempt to finish:
+
+- ARP
+- IPv4
+- ICMP
+- UDP
+- TCP
+- DHCP
+- DNS
+- HTTP
+
+Those are unlocked only after this slice is proven.
+
+---
+
+## Why RTL8139
+RTL8139 is the correct first NIC target for this repo because:
+
+- QEMU supports it directly
+- it is old but simple
+- it exposes a small, well-understood register surface
+- it is a better first hardware target than a modern PCIe NIC with DMA rings and larger descriptor machinery
+- it is realistic enough that the PAL and later TCP/IP stack will sit on top of a real device path, not a fake transport
+
+For the first slice, simplicity and determinism matter more than performance.
+
+---
+
+## Expected QEMU Topology
+Target QEMU device:
+
+- `-device rtl8139,netdev=n0`
+
+Recommended deterministic first-proof topology:
+
+- use RTL8139 internal loopback for the first strict TX/RX proof
+- only after loopback is green, add an external peer topology
+
+Why loopback first:
+
+- it avoids nondeterministic slirp traffic
+- it allows a single-VM proof
+- it validates both TX and RX through the real device path
+
+External peer topologies can come in the second Ethernet slice:
+- QEMU socket netdev pair
+- tap/bridge
+- host-side frame injector
+
+---
+
+## Current Repo Integration Points
+The repo already has the correct structural seams:
+
+### PCI
+`src/baremetal/pci.zig`
+
+Use this file for:
+- config-space discovery
+- BAR discovery
+- command register enablement
+
+A network device must be discovered here rather than through an ad hoc second scanner.
+
+### Bare-metal runtime
+`src/baremetal_main.zig`
+
+Use this file for:
+- startup init order
+- exported test/probe symbols
+- `resetBaremetalRuntimeForTest()`
+- hosted regressions
+
+### ABI
+`src/baremetal/abi.zig`
+
+Use this file for:
+- Ethernet magic/state constants
+- stable struct layout for probe scripts and future PAL use
+
+### PAL
+`src/pal/net.zig`
+
+Today this is hosted-only HTTP. That is not sufficient for bare metal.
+This file needs a lower-level bare-metal device-facing seam for raw Ethernet frames.
+
+### Style references
+Follow the repo?s existing device module patterns:
+
+- `src/baremetal/ata_pio_disk.zig`
+- `src/baremetal/ps2_input.zig`
+
+That means:
 - deterministic state struct
-- test-friendly hosted fallback
-- freestanding `x86_64` hardware path only where the actual device exists
+- `init()`
+- `resetForTest()`
+- `statePtr()`
+- hardware-backed path only under `freestanding + x86_64`
+- mock-friendly hosted path for regression tests
 
-## Primary Hardware Model
+---
 
-The required device-facing control surface for the first slice is:
+## Hardware Model: RTL8139 Essentials
 
-- PCI vendor/device discovery:
-  - vendor `0x10EC`
-  - device `0x8139`
-- PCI command register:
-  - I/O enable
-  - memory decode enable
-  - bus mastering enable
-- I/O BAR discovery:
-  - BAR0 must resolve to an I/O base
-- MAC address read from device registers
-- software reset through command register
-- RX buffer base programming
-- TX descriptor base programming
-- interrupt status polling
+### PCI identity
+Use standard RTL8139 PCI ID:
 
-## Register Set For First Slice
+- vendor: `0x10EC`
+- device: `0x8139`
 
-The first slice only needs the stable RTL8139 register subset:
+### BAR usage
+The first slice should use the I/O BAR path.
 
-- `IDR0..IDR5` `0x00..0x05`: MAC address
-- `MAR0..MAR7` `0x08..0x0F`: multicast filter
-- `TSD0..TSD3` `0x10..0x1C`: transmit status / trigger
-- `TSAD0..TSAD3` `0x20..0x2C`: transmit buffer addresses
-- `RBSTART` `0x30`: receive buffer address
-- `CR` `0x37`: reset / RX enable / TX enable
-- `CAPR` `0x38`: current RX read pointer
-- `CBR` `0x3A`: current RX buffer write pointer
-- `IMR` `0x3C`: interrupt mask
-- `ISR` `0x3E`: interrupt status
-- `TCR` `0x40`: transmit config
-- `RCR` `0x44`: receive config
-- `CONFIG1` `0x52`: power-on / wake state
+At minimum, PCI command register must enable:
+- I/O space
+- bus mastering
 
-Required status bits:
+Enabling memory decode as well is acceptable if the helper remains generic, but the minimum required bits are:
+- bit 0: I/O space
+- bit 2: bus master
 
-- command:
-  - `RST = 0x10`
-  - `RE = 0x08`
-  - `TE = 0x04`
-- interrupt status / mask:
-  - `RxOK = 0x0001`
-  - `RxErr = 0x0002`
-  - `TxOK = 0x0004`
-  - `TxErr = 0x0008`
+### Core registers
+The first slice only needs a compact subset of the RTL8139 register surface.
+
+#### MAC / ID
+- `IDR0..IDR5` at `0x00..0x05`
+- read MAC address after power-up and reset
+
+#### Transmit
+- `TSD0..TSD3` at `0x10, 0x14, 0x18, 0x1C`
+- `TSAD0..TSAD3` at `0x20, 0x24, 0x28, 0x2C`
+
+#### Receive
+- `RBSTART` at `0x30`
+- `CAPR` at `0x38`
+- `CBR` at `0x3A`
+
+#### Interrupts
+- `IMR` at `0x3C`
+- `ISR` at `0x3E`
+
+#### Config / control
+- `CR` at `0x37`
+- `TCR` at `0x40`
+- `RCR` at `0x44`
+- `CONFIG1` at `0x52`
+
+### Important control bits
+#### `CR`
+- `RE` receive enable
+- `TE` transmit enable
+- `RST` software reset
+
+#### `ISR` / `IMR`
+Minimum interesting bits for this slice:
+- `ROK` receive OK
+- `RER` receive error
+- `TOK` transmit OK
+- `TER` transmit error
+- `RXOVW` receive overflow
+
+#### `TCR`
+For first proof:
+- default transmit configuration
+- optional loopback mode for deterministic single-VM proof
+
+#### `RCR`
+For first proof:
+- accept broadcast
+- accept physical match
+- optionally accept all in loopback proof mode
+- receive wrap enabled for simple ring handling
+
+---
 
 ## First-Slice Initialization Sequence
+The init sequence must be explicit and deterministic.
 
-The first strict initialization sequence is:
+### 1. Discover the device
+Scan PCI for:
+- vendor `0x10EC`
+- device `0x8139`
 
-1. Discover RTL8139 over PCI.
-2. Enable PCI I/O + memory + bus mastering.
-3. Resolve BAR0 as an I/O port base.
-4. Power the NIC on through `CONFIG1 = 0x00`.
-5. Issue software reset via `CR.RST`.
-6. Wait until `CR.RST` clears.
-7. Read MAC address from `IDR0..IDR5`.
-8. Program `RBSTART` with the static RX ring base.
-9. Clear `ISR`.
-10. Disable interrupts for the first slice by setting `IMR = 0`.
-11. Program a permissive first-slice `RCR` that allows deterministic bring-up.
-12. Program a stable `TCR`.
-13. Set `CR = RE | TE`.
-14. Mark device initialized and export state through the bare-metal ABI.
+Capture:
+- bus / device / function
+- I/O BAR base
+- interrupt line if available
 
-## TX Strategy For Slice 1
+### 2. Enable PCI command bits
+Enable:
+- I/O space
+- bus mastering
 
-The first slice should use the simplest deterministic TX path:
+Do not claim interrupts yet. Polling-first is the correct first slice.
 
-- four static aligned TX buffers
-- one active round-robin slot pointer
-- deterministic `sendPattern(byte_len, seed)` export
-- copy payload into current TX buffer
-- write TX buffer address to `TSADn`
-- write payload length to `TSDn`
-- poll `ISR` or the active `TSDn` for completion
+### 3. Power-up the NIC
+Write:
+- `CONFIG1 = 0x00`
 
-Success does not require a higher-level protocol yet. The first hardware proof only requires:
+### 4. Software reset
+Set `CR.RST`, then poll until clear.
 
-- device present
-- MAC exposed
-- deterministic payload copied into the active TX buffer
-- transmit command accepted and completion reflected in device/state telemetry
+### 5. Read MAC
+Read `IDR0..IDR5`.
 
-## RX Strategy For Slice 1
+### 6. Set up RX buffer
+Allocate contiguous receive buffer memory.
+Recommended first slice:
+- `8 KiB + 16 + 1500` bytes
 
-The first slice should include a real RX path, but keep it minimal:
+### 7. Set up TX buffers
+Allocate 4 transmit buffers, one per descriptor slot.
 
-- one static RX buffer of `8192 + 16 + 1500`
-- poll `ISR` for `RxOK`
-- use `CAPR` / `CBR` to detect receive progress
-- parse the RTL8139 packet header:
-  - packet status
-  - packet length
-- copy the first received frame into a small retained snapshot buffer
-- advance `CAPR` correctly with alignment
+### 8. Program receive config
+Set `RCR` for the minimal first slice:
+- physical match
+- broadcast
+- wrap
+- optional loopback-friendly acceptance
 
-This is enough to prove:
+### 9. Program transmit config
+Set `TCR` to a conservative default.
+For the deterministic proof path:
+- temporarily enable loopback mode
 
-- receive state exists as code
-- receive semantics are not stubbed
-- the next TCP/IP slice can consume frames from a real device path
+### 10. Clear interrupts
+Write back pending bits in `ISR`.
 
-## PAL Surface Required For This Slice
+### 11. Polling-first interrupt posture
+Set:
+- `IMR = 0`
 
-The PAL layer must expose a device-facing surface separate from hosted HTTP:
+### 12. Enable TX/RX
+Set:
+- `CR.RE | CR.TE`
 
-- bare-metal NIC state pointer
-- explicit init
-- explicit poll
-- deterministic test send path
-- retained RX-byte readback for proofs
+---
 
-This is the seam later TCP/IP work will consume. TCP/IP should not talk directly to device registers.
+## Minimal TX/RX Proof Strategy
+Preferred strict proof: internal loopback.
 
-## ABI Surface Required For This Slice
+### Success conditions
+- TX descriptor completes successfully
+- RX ring receives exactly one frame
+- received payload matches transmitted payload byte-for-byte
+- RX/TX counters both increment
+- no duplicate stale frame is emitted on the next poll
+- mailbox/probe state exposes the exact final telemetry
 
-The bare-metal ABI needs a dedicated Ethernet state struct with at least:
+---
 
-- magic + API version
-- backend identifier
-- present / initialized / hardware-backed flags
-- PCI address + IRQ line
-- I/O base
-- MAC address
-- link / status snapshot
-- TX/RX packet and error counters
-- last TX length
-- last RX length
-- last `ISR` snapshot
+## Required Driver State Contract
+Suggested fields for `BaremetalEthernetState`:
+- `magic`
+- `api_version`
+- `backend`
+- `initialized`
+- `hardware_backed`
+- `pci_bus`
+- `pci_device`
+- `pci_function`
+- `irq_line`
+- `io_base`
+- `tx_enabled`
+- `rx_enabled`
+- `loopback_enabled`
+- `link_up`
+- `mac[6]`
+- `tx_packets`
+- `rx_packets`
+- `tx_errors`
+- `rx_errors`
+- `rx_overflows`
+- `last_tx_len`
+- `last_rx_len`
+- `last_tx_status`
+- `last_rx_status`
+- `last_rx_vector`
+- `tx_index`
+- `rx_consumer_offset`
 
-The Ethernet ABI should be an exported state, not a checklist note.
+---
 
-## Strict Success Gates For Slice 1
+## PAL Integration Seam
+`src/pal/net.zig` must expose a lower-level bare-metal frame seam.
+Suggested first functions:
+- `initDevice()`
+- `deviceState()`
+- `macAddress()`
+- `pollReceive()`
+- `sendFrame(frame: []const u8)`
 
-Slice 1 is only complete when all of the following are true:
+---
 
-1. A real Zig module exists for RTL8139, not a stub.
-2. PCI discovery for RTL8139 exists in code.
-3. The module performs real reset/init against the device I/O base.
-4. The MAC address is readable through exported state.
-5. TX buffer descriptors are programmed by the driver.
-6. A deterministic payload send path exists and updates state telemetry.
-7. A real RX buffer and poll/consume path exists in code.
-8. The bare-metal ABI exports Ethernet state.
-9. PAL exposes the device-facing network seam.
-10. Host regressions cover mock/device-state behavior.
-11. A strict QEMU proof demonstrates:
-   - PCI discovery
-   - init success
-   - MAC exposure
-   - deterministic TX path acceptance
+## First-Slice Exports from baremetal_main.zig
+Recommended first export surface:
+- `oc_ethernet_state_ptr()`
+- `oc_ethernet_init()`
+- `oc_ethernet_reset()`
+- `oc_ethernet_poll()`
+- `oc_ethernet_mac_byte(index)`
+- `oc_ethernet_send_pattern(byte_len, seed)`
+- `oc_ethernet_rx_byte(index)`
+- `oc_ethernet_rx_len()`
 
-## What Does Not Count
+---
 
-The following do not count toward Ethernet closure:
+## Host Regression Requirements
+Minimum hosted regressions:
+1. init populates stable state
+2. reset clears counters and device posture
+3. MAC address export is stable
+4. send updates TX telemetry
+5. mock receive path updates RX telemetry
+6. PAL bare-metal frame functions route through the device state
 
-- hosted `std.http` only
-- abstract `sendPacket()` with no device module
-- docs-only claims
-- CI green without a real NIC path
+---
 
-## TCP/IP Dependency Closure
+## Strict Success Gates for This Slice
+- PCI discovery
+- Device init
+- TX proof
+- RX proof
+- PAL seam
+- CI/QEMU proof
 
-TCP/IP work starts only after the device slice exposes:
+---
 
-- deterministic RX ingress
-- deterministic TX egress
-- retained frame snapshots
-- PAL network-device seam
-
-Then the next strict order is:
-
-1. Ethernet frame encode/decode helpers
-2. ARP request/reply
-3. IPv4 header encode/decode
-4. UDP send/receive
-5. TCP staged handshake
-6. TCP payload exchange
-
-## Implementation Order
-
-The first implementation order should be:
-
+## First-Slice Implementation Order
 1. `src/baremetal/rtl8139.zig`
-2. `src/baremetal/pci.zig` RTL8139 discovery helpers
-3. `src/baremetal/abi.zig` Ethernet ABI state
-4. `src/baremetal_main.zig` import + export surface
-5. `src/pal/net.zig` freestanding device seam
+2. PCI discovery hook
+3. ABI state contract
+4. startup/reset/export integration
+5. PAL raw-frame surface
 6. hosted regressions
-7. first QEMU strict proof
+7. QEMU loopback proof
+8. CI/release-preview wiring
 
-## Notes For Later TCP/IP Work
-
-The first Ethernet slice should preserve these later extension points:
-
-- MAC address exposure for ARP sender identity
-- retained RX snapshot for frame parser tests
-- explicit link / ISR telemetry for network fault diagnosis
-- send path that accepts caller-provided payload bytes later, not only seeded patterns
-
-This keeps the first slice real while still bounded enough to land safely.
+This is the correct first hardware networking milestone.

@@ -13,10 +13,8 @@ pub const DeviceLocation = struct {
     function: u8,
 };
 
-pub const IoBarDevice = struct {
+pub const Rtl8139Device = struct {
     location: DeviceLocation,
-    vendor_id: u16,
-    device_id: u16,
     io_base: u16,
     irq_line: u8,
 };
@@ -110,16 +108,16 @@ fn writeConfig32(bus: u8, device: u8, function: u8, offset: u8, value: u32) void
     writePort32(config_data_port, value);
 }
 
-fn readConfig8(bus: u8, device: u8, function: u8, offset: u8) u8 {
-    const value = readConfig32(bus, device, function, offset);
-    const shift: u5 = @intCast((offset & 0x3) * 8);
-    return @as(u8, @truncate(value >> shift));
-}
-
 fn readConfig16(bus: u8, device: u8, function: u8, offset: u8) u16 {
     const value = readConfig32(bus, device, function, offset);
     const shift: u5 = @intCast((offset & 0x2) * 8);
     return @as(u16, @truncate(value >> shift));
+}
+
+fn readConfig8(bus: u8, device: u8, function: u8, offset: u8) u8 {
+    const value = readConfig32(bus, device, function, offset);
+    const shift: u5 = @intCast((offset & 0x3) * 8);
+    return @as(u8, @truncate(value >> shift));
 }
 
 fn writeConfig16(bus: u8, device: u8, function: u8, offset: u8, value: u16) void {
@@ -174,19 +172,6 @@ fn firstFramebufferMemoryBar(bus: u8, device: u8, function: u8) ?u64 {
     return null;
 }
 
-fn firstIoBar(bus: u8, device: u8, function: u8) ?u16 {
-    var bar_index: u8 = 0;
-    while (bar_index < 6) : (bar_index += 1) {
-        const offset: u8 = 0x10 + (bar_index * 4);
-        const low = readConfig32(bus, device, function, offset);
-        if (low == 0 or low == 0xFFFF_FFFF) continue;
-        if ((low & 0x1) == 0) continue;
-        const io_base = @as(u16, @truncate(low & 0xFFFC));
-        if (io_base != 0) return io_base;
-    }
-    return null;
-}
-
 fn enableMemoryAndIoDecode(location: DeviceLocation) void {
     const command = readConfig16(location.bus, location.device, location.function, 0x04);
     const wanted = command | 0x3;
@@ -195,12 +180,27 @@ fn enableMemoryAndIoDecode(location: DeviceLocation) void {
     }
 }
 
-fn enableIoMemoryAndBusMaster(location: DeviceLocation) void {
+fn enableIoAndBusMaster(location: DeviceLocation) void {
     const command = readConfig16(location.bus, location.device, location.function, 0x04);
-    const wanted = command | 0x7;
+    const wanted = command | 0x5;
     if (wanted != command) {
         writeConfig16(location.bus, location.device, location.function, 0x04, wanted);
     }
+}
+
+fn firstIoBar(bus: u8, device: u8, function: u8) ?u16 {
+    var bar_index: u8 = 0;
+    while (bar_index < 6) : (bar_index += 1) {
+        const offset: u8 = 0x10 + (bar_index * 4);
+        const value = readConfig32(bus, device, function, offset);
+        if (value == 0 or value == 0xFFFF_FFFF) continue;
+        if ((value & 0x1) == 0) continue;
+        const addr = value & 0xFFFF_FFFC;
+        if (addr != 0 and addr <= 0xFFFF) {
+            return @as(u16, @intCast(addr));
+        }
+    }
+    return null;
 }
 
 pub fn discoverDisplayFramebufferBar() ?u64 {
@@ -249,7 +249,7 @@ pub fn discoverDisplayFramebufferBar() ?u64 {
     return preferred orelse fallback;
 }
 
-pub fn discoverRealtekRtl8139() ?IoBarDevice {
+pub fn discoverRtl8139() ?Rtl8139Device {
     if (!hardwareBacked() and !(builtin.is_test and mock_enabled)) return null;
 
     var bus: usize = 0;
@@ -268,18 +268,13 @@ pub fn discoverRealtekRtl8139() ?IoBarDevice {
                 const vendor = vendorId(bus_id, device_id0, function_id);
                 if (vendor == 0xFFFF) continue;
                 if (vendor != 0x10EC or deviceId(bus_id, device_id0, function_id) != 0x8139) continue;
-
-                const location: DeviceLocation = .{
-                    .bus = bus_id,
-                    .device = device_id0,
-                    .function = function_id,
-                };
-                enableIoMemoryAndBusMaster(location);
                 const io_base = firstIoBar(bus_id, device_id0, function_id) orelse continue;
                 return .{
-                    .location = location,
-                    .vendor_id = vendor,
-                    .device_id = 0x8139,
+                    .location = .{
+                        .bus = bus_id,
+                        .device = device_id0,
+                        .function = function_id,
+                    },
                     .io_base = io_base,
                     .irq_line = readConfig8(bus_id, device_id0, function_id, 0x3C),
                 };
@@ -288,6 +283,10 @@ pub fn discoverRealtekRtl8139() ?IoBarDevice {
     }
 
     return null;
+}
+
+pub fn enableRtl8139IoAndBusMaster(location: DeviceLocation) void {
+    enableIoAndBusMaster(location);
 }
 
 pub fn testResetForTest() void {
@@ -318,19 +317,22 @@ test "pci display scan finds bochs-style framebuffer bar and enables decode" {
     try std.testing.expectEqual(@as(u16, 0x3), readConfig16(0, 1, 0, 0x04) & 0x3);
 }
 
-test "pci rtl8139 discovery finds io bar and enables bus mastering" {
+test "pci rtl8139 scan finds io bar and interrupt line and enables bus master" {
     testResetForTest();
     defer testResetForTest();
 
     testSetConfig32(0, 3, 0, 0x00, 0x8139_10EC);
     testSetConfig32(0, 3, 0, 0x04, 0x0000_0000);
-    testSetConfig32(0, 3, 0, 0x08, 0x0200_0000);
     testSetConfig32(0, 3, 0, 0x0C, 0x0000_0000);
-    testSetConfig32(0, 3, 0, 0x10, 0x0000_C001);
+    testSetConfig32(0, 3, 0, 0x10, 0x0000_C101);
     testSetConfig32(0, 3, 0, 0x3C, 0x0000_000B);
 
-    const dev = discoverRealtekRtl8139() orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqual(@as(u16, 0xC000), dev.io_base);
-    try std.testing.expectEqual(@as(u8, 11), dev.irq_line);
-    try std.testing.expectEqual(@as(u16, 0x7), readConfig16(0, 3, 0, 0x04) & 0x7);
+    const nic = discoverRtl8139() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u8, 0), nic.location.bus);
+    try std.testing.expectEqual(@as(u8, 3), nic.location.device);
+    try std.testing.expectEqual(@as(u16, 0xC100), nic.io_base);
+    try std.testing.expectEqual(@as(u8, 0x0B), nic.irq_line);
+
+    enableRtl8139IoAndBusMaster(nic.location);
+    try std.testing.expectEqual(@as(u16, 0x5), readConfig16(0, 3, 0, 0x04) & 0x5);
 }

@@ -5,6 +5,7 @@ const ata_pio_disk = @import("baremetal/ata_pio_disk.zig");
 const x86_bootstrap = @import("baremetal/x86_bootstrap.zig");
 const framebuffer_console = @import("baremetal/framebuffer_console.zig");
 const vga_text_console = @import("baremetal/vga_text_console.zig");
+const rtl8139 = @import("baremetal/rtl8139.zig");
 const storage_backend = @import("baremetal/storage_backend.zig");
 const filesystem = @import("baremetal/filesystem.zig");
 const ps2_input = @import("baremetal/ps2_input.zig");
@@ -16,6 +17,7 @@ const BaremetalKernelInfo = abi.BaremetalKernelInfo;
 const BaremetalBootDiagnostics = abi.BaremetalBootDiagnostics;
 const BaremetalConsoleState = abi.BaremetalConsoleState;
 const BaremetalFramebufferState = abi.BaremetalFramebufferState;
+const BaremetalEthernetState = abi.BaremetalEthernetState;
 const BaremetalStorageState = abi.BaremetalStorageState;
 const BaremetalToolLayoutState = abi.BaremetalToolLayoutState;
 const BaremetalToolSlot = abi.BaremetalToolSlot;
@@ -60,12 +62,14 @@ const multiboot2_architecture_i386: u32 = 0;
 const qemu_debug_exit_port: u16 = 0xF4;
 const qemu_boot_ok_code: u8 = 0x2A;
 const qemu_ata_storage_probe_ok_code: u8 = 0x34;
+const qemu_rtl8139_probe_ok_code: u8 = 0x36;
 const build_options = if (builtin.is_test)
     struct {
         pub const qemu_smoke: bool = false;
         pub const console_probe_banner: bool = false;
         pub const framebuffer_probe_banner: bool = false;
         pub const ata_storage_probe: bool = false;
+        pub const rtl8139_probe: bool = false;
     }
 else
     @import("build_options");
@@ -73,6 +77,7 @@ const qemu_smoke_enabled: bool = build_options.qemu_smoke;
 const console_probe_banner_enabled: bool = build_options.console_probe_banner;
 const framebuffer_probe_banner_enabled: bool = build_options.framebuffer_probe_banner;
 const ata_storage_probe_enabled: bool = build_options.ata_storage_probe;
+const rtl8139_probe_enabled: bool = build_options.rtl8139_probe;
 
 const ata_probe_raw_lba: u32 = 300;
 const ata_probe_raw_block_count: u32 = 2;
@@ -100,6 +105,29 @@ const AtaStorageProbeError = error{
     FilesystemWriteFailed,
     FilesystemReadbackFailed,
     FilesystemReloadFailed,
+};
+
+const Rtl8139ProbeError = error{
+    UnsupportedPlatform,
+    DeviceNotFound,
+    ResetTimeout,
+    BufferProgramFailed,
+    MacReadFailed,
+    DataPathEnableFailed,
+    StateMagicMismatch,
+    BackendMismatch,
+    InitFlagMismatch,
+    HardwareBackedMismatch,
+    IoBaseMismatch,
+    TxFailed,
+    DataPathDropped,
+    TxCompletedNoRxInterrupt,
+    TxCompletedNoRxProgress,
+    RxProducerStalled,
+    RxProducerAdvancedNoFrame,
+    RxLengthMismatch,
+    RxPatternMismatch,
+    CounterMismatch,
 };
 
 const Multiboot2Header = extern struct {
@@ -398,6 +426,40 @@ pub export fn oc_mouse_packet(index: u32) BaremetalMousePacket {
 
 pub export fn oc_mouse_inject_packet(buttons: u8, dx: i16, dy: i16) void {
     ps2_input.injectMousePacket(buttons, dx, dy);
+}
+
+pub export fn oc_ethernet_state_ptr() *const BaremetalEthernetState {
+    return rtl8139.statePtr();
+}
+
+pub export fn oc_ethernet_init() u8 {
+    return if (rtl8139.init()) 1 else 0;
+}
+
+pub export fn oc_ethernet_reset() u8 {
+    rtl8139.resetForTest();
+    return if (rtl8139.init()) 1 else 0;
+}
+
+pub export fn oc_ethernet_mac_byte(index: u32) u8 {
+    return rtl8139.macByte(index);
+}
+
+pub export fn oc_ethernet_send_pattern(byte_len: u32, seed: u8) i16 {
+    _ = rtl8139.sendPattern(byte_len, seed) catch return abi.result_not_supported;
+    return abi.result_ok;
+}
+
+pub export fn oc_ethernet_poll() u32 {
+    return rtl8139.pollReceive() catch 0;
+}
+
+pub export fn oc_ethernet_rx_byte(index: u32) u8 {
+    return rtl8139.rxByte(index);
+}
+
+pub export fn oc_ethernet_rx_len() u32 {
+    return rtl8139.statePtr().last_rx_len;
 }
 
 pub export fn oc_storage_state_ptr() *const BaremetalStorageState {
@@ -1142,6 +1204,10 @@ fn baremetalStart() callconv(.c) noreturn {
         runAtaStorageProbe() catch |err| qemuExit(ataStorageProbeFailureCode(err));
         qemuExit(qemu_ata_storage_probe_ok_code);
     }
+    if (rtl8139_probe_enabled) {
+        runRtl8139Probe() catch |err| qemuExit(rtl8139ProbeFailureCode(err));
+        qemuExit(qemu_rtl8139_probe_ok_code);
+    }
     ps2_input.init();
     tool_layout.init() catch unreachable;
     if (console_probe_banner_enabled) {
@@ -1226,6 +1292,97 @@ fn runAtaStorageProbe() AtaStorageProbeError!void {
     {
         return error.FilesystemReloadFailed;
     }
+}
+
+fn runRtl8139Probe() Rtl8139ProbeError!void {
+    rtl8139.initDetailed() catch |err| return switch (err) {
+        error.UnsupportedPlatform => error.UnsupportedPlatform,
+        error.DeviceNotFound => error.DeviceNotFound,
+        error.ResetTimeout => error.ResetTimeout,
+        error.BufferProgramFailed => error.BufferProgramFailed,
+        error.MacReadFailed => error.MacReadFailed,
+        error.DataPathEnableFailed => error.DataPathEnableFailed,
+    };
+    const eth = oc_ethernet_state_ptr();
+    if (eth.magic != abi.ethernet_magic) return error.StateMagicMismatch;
+    if (eth.backend != abi.ethernet_backend_rtl8139) return error.BackendMismatch;
+    if (eth.initialized == 0) return error.InitFlagMismatch;
+    if (eth.hardware_backed == 0) return error.HardwareBackedMismatch;
+    if (eth.io_base == 0) return error.IoBaseMismatch;
+    if (macBytesAreZero()) return error.MacReadFailed;
+
+    const expected_len: u32 = 96;
+    if (oc_ethernet_send_pattern(expected_len, 0x41) != abi.result_ok) return error.TxFailed;
+
+    var attempts: usize = 0;
+    var observed_len: u32 = 0;
+    while (attempts < 20_000) : (attempts += 1) {
+        observed_len = oc_ethernet_poll();
+        if (observed_len != 0) break;
+        spinPause(1);
+    }
+    if (observed_len == 0) {
+        const producer = rtl8139.debugProducerOffset();
+        const consumer: u16 = @intCast(eth.rx_consumer_offset & 0xFFFF);
+        const cr = rtl8139.debugCommandRegister();
+        const isr = rtl8139.debugInterruptStatus();
+        const tx_status = rtl8139.debugLastTxStatus();
+        if ((cr & 0x0C) != 0x0C) return error.DataPathDropped;
+        if ((tx_status & 0x0000_8000) != 0 and (isr & 0x0004) != 0 and (isr & 0x0001) == 0) {
+            return if (producer == consumer) error.TxCompletedNoRxInterrupt else error.RxProducerAdvancedNoFrame;
+        }
+        if ((tx_status & 0x0000_8000) != 0 and producer == consumer) return error.TxCompletedNoRxProgress;
+        return if (producer == consumer) error.RxProducerStalled else error.RxProducerAdvancedNoFrame;
+    }
+    if (observed_len != expected_len) return error.RxLengthMismatch;
+
+    var index: u32 = 0;
+    while (index < 6) : (index += 1) {
+        if (oc_ethernet_rx_byte(index) != oc_ethernet_mac_byte(index)) return error.RxPatternMismatch;
+        if (oc_ethernet_rx_byte(6 + index) != oc_ethernet_mac_byte(index)) return error.RxPatternMismatch;
+    }
+    if (oc_ethernet_rx_byte(12) != 0x88 or oc_ethernet_rx_byte(13) != 0xB5) return error.RxPatternMismatch;
+
+    index = 14;
+    while (index < expected_len) : (index += 1) {
+        const expected = 0x41 +% @as(u8, @truncate(index - 14));
+        if (oc_ethernet_rx_byte(index) != expected) return error.RxPatternMismatch;
+    }
+
+    if (eth.tx_packets == 0 or eth.rx_packets == 0 or eth.last_rx_len != expected_len) return error.CounterMismatch;
+}
+
+fn macBytesAreZero() bool {
+    var index: u32 = 0;
+    while (index < 6) : (index += 1) {
+        if (oc_ethernet_mac_byte(index) != 0) return false;
+    }
+    return true;
+}
+
+fn rtl8139ProbeFailureCode(err: Rtl8139ProbeError) u8 {
+    return switch (err) {
+        error.UnsupportedPlatform => 0x60,
+        error.DeviceNotFound => 0x61,
+        error.ResetTimeout => 0x62,
+        error.BufferProgramFailed => 0x63,
+        error.MacReadFailed => 0x64,
+        error.StateMagicMismatch => 0x65,
+        error.BackendMismatch => 0x66,
+        error.InitFlagMismatch => 0x67,
+        error.HardwareBackedMismatch => 0x68,
+        error.IoBaseMismatch => 0x69,
+        error.TxFailed => 0x6A,
+        error.RxProducerStalled => 0x6B,
+        error.RxProducerAdvancedNoFrame => 0x6C,
+        error.RxLengthMismatch => 0x6D,
+        error.RxPatternMismatch => 0x6E,
+        error.CounterMismatch => 0x6F,
+        error.DataPathDropped => 0x70,
+        error.TxCompletedNoRxInterrupt => 0x71,
+        error.TxCompletedNoRxProgress => 0x72,
+        error.DataPathEnableFailed => 0x73,
+    };
 }
 
 fn probeFilesystemContent(path: []const u8, expected: []const u8) bool {
@@ -2705,6 +2862,7 @@ fn resetBaremetalRuntimeForTest() void {
     oc_wake_queue_clear();
     framebuffer_console.resetForTest();
     vga_text_console.resetForTest();
+    rtl8139.resetForTest();
     storage_backend.resetForTest();
     ps2_input.resetForTest();
     tool_layout.resetForTest();
@@ -9307,6 +9465,30 @@ test "baremetal framebuffer export surface updates host-backed framebuffer state
     try std.testing.expect(o_has_ink);
     try std.testing.expect(k_has_ink);
     try std.testing.expectEqual(@as(u32, 0), oc_framebuffer_pixel_at(0, 0));
+}
+
+test "baremetal ethernet export surface initializes mock rtl8139 and loops a frame" {
+    resetBaremetalRuntimeForTest();
+    rtl8139.testEnableMockDevice();
+    defer rtl8139.testDisableMockDevice();
+
+    try std.testing.expectEqual(@as(u8, 1), oc_ethernet_init());
+    const eth = oc_ethernet_state_ptr();
+    try std.testing.expectEqual(@as(u32, abi.ethernet_magic), eth.magic);
+    try std.testing.expectEqual(@as(u16, abi.api_version), eth.api_version);
+    try std.testing.expectEqual(@as(u8, abi.ethernet_backend_rtl8139), eth.backend);
+    try std.testing.expectEqual(@as(u8, 1), eth.initialized);
+    try std.testing.expectEqual(@as(u8, 1), eth.loopback_enabled);
+    try std.testing.expectEqual(@as(u8, 0x52), oc_ethernet_mac_byte(0));
+
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_ethernet_send_pattern(96, 0x41));
+    try std.testing.expectEqual(@as(u32, 96), oc_ethernet_poll());
+    try std.testing.expectEqual(@as(u32, 96), oc_ethernet_rx_len());
+    try std.testing.expectEqual(@as(u8, 0x52), oc_ethernet_rx_byte(0));
+    try std.testing.expectEqual(@as(u8, 0x88), oc_ethernet_rx_byte(12));
+    try std.testing.expectEqual(@as(u8, 0x41), oc_ethernet_rx_byte(14));
+    try std.testing.expectEqual(@as(u32, 1), eth.tx_packets);
+    try std.testing.expectEqual(@as(u32, 1), eth.rx_packets);
 }
 
 test "baremetal storage export surface persists block writes and flush state" {

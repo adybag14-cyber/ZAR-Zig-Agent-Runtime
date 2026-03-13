@@ -29,6 +29,12 @@
   - `src/baremetal/ata_pio_disk.zig` now performs real x86 ATA PIO `IDENTIFY` / `READ` / `WRITE` / `FLUSH`
   - `src/pal/storage.zig` and `src/baremetal/tool_layout.zig` now route through the backend facade instead of directly targeting the RAM disk
   - `scripts/baremetal-qemu-ata-storage-probe-check.ps1` now proves live ATA-backed raw block mutation + readback plus ATA-backed tool-layout and filesystem persistence over the freestanding PVH image
+- Ethernet L2 is now also on a real device path in `FS5.5`:
+  - `src/baremetal/rtl8139.zig` provides real RTL8139 PCI-discovered bring-up, MAC readout, RX/TX setup, and loopback-friendly datapath validation
+  - `src/baremetal/pci.zig` now discovers the RTL8139 I/O BAR and IRQ line and enables I/O plus bus mastering on the selected PCI function
+  - `src/pal/net.zig` and `src/baremetal_main.zig` now expose the raw-frame PAL/export seam through the same driver path
+  - `scripts/baremetal-qemu-rtl8139-probe-check.ps1` now proves live MAC readout, TX, RX loopback, payload validation, and counter advance over the freestanding PVH image
+- TCP/IP remains the next networking slice above that L2 proof; it is not claimed complete yet.
 - filesystem usage is now also on a real shared-backend path in `FS5.5`:
   - `src/baremetal/filesystem.zig` implements path-based directory creation plus file read/write/stat
   - `src/pal/fs.zig` routes the freestanding PAL filesystem surface through that layer

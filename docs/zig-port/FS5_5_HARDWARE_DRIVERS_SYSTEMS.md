@@ -238,11 +238,46 @@ Notes:
 
 ### Ethernet Driver
 
-Status: `Not started`
+Status: `Complete`
+
+Current local source-of-truth evidence:
+
+- `src/baremetal/rtl8139.zig` now contains a real RTL8139 driver path with:
+  - PCI-discovered device bring-up
+  - MAC readout
+  - RX ring programming
+  - TX slot programming
+  - deterministic loopback-friendly TX/RX validation
+  - explicit datapath and error telemetry
+- `src/baremetal/pci.zig` now discovers vendor `0x10EC` / device `0x8139`, extracts the I/O BAR and IRQ line, and enables I/O plus bus-master decode on the selected PCI function
+- `src/baremetal/abi.zig` now exports `BaremetalEthernetState`
+- `src/baremetal_main.zig` now exports the bare-metal Ethernet surface:
+  - `oc_ethernet_state_ptr`
+  - `oc_ethernet_init`
+  - `oc_ethernet_reset`
+  - `oc_ethernet_mac_byte`
+  - `oc_ethernet_send_pattern`
+  - `oc_ethernet_poll`
+  - `oc_ethernet_rx_byte`
+  - `oc_ethernet_rx_len`
+- `src/pal/net.zig` now exposes the bare-metal raw-frame PAL seam through the same RTL8139 driver path instead of a fake transport
+- host regressions now prove mock-device initialization, raw-frame send, receive, ABI export, and PAL bridging
+- the live freestanding/QEMU proof is now green:
+  - `scripts/baremetal-qemu-rtl8139-probe-check.ps1`
+  - MAC readout succeeds
+  - TX succeeds
+  - RX loopback succeeds
+  - payload length and byte pattern are validated
+  - TX/RX counters advance over the hardware-backed PVH image
 
 ### TCP/IP
 
 Status: `Not started`
+
+Notes:
+
+- strict Ethernet L2 closure does **not** imply ARP, IPv4, UDP, DHCP, DNS, or TCP closure
+- the next strict networking slice is packet framing and exchange above the now-real RTL8139 raw-frame path
 
 ### Filesystem Usage
 
