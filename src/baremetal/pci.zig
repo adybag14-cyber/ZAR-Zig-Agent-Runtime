@@ -13,6 +13,14 @@ pub const DeviceLocation = struct {
     function: u8,
 };
 
+pub const IoBarDevice = struct {
+    location: DeviceLocation,
+    vendor_id: u16,
+    device_id: u16,
+    io_base: u16,
+    irq_line: u8,
+};
+
 const MockEntry = struct {
     bus: u8,
     device: u8,
@@ -102,6 +110,12 @@ fn writeConfig32(bus: u8, device: u8, function: u8, offset: u8, value: u32) void
     writePort32(config_data_port, value);
 }
 
+fn readConfig8(bus: u8, device: u8, function: u8, offset: u8) u8 {
+    const value = readConfig32(bus, device, function, offset);
+    const shift: u5 = @intCast((offset & 0x3) * 8);
+    return @as(u8, @truncate(value >> shift));
+}
+
 fn readConfig16(bus: u8, device: u8, function: u8, offset: u8) u16 {
     const value = readConfig32(bus, device, function, offset);
     const shift: u5 = @intCast((offset & 0x2) * 8);
@@ -160,9 +174,30 @@ fn firstFramebufferMemoryBar(bus: u8, device: u8, function: u8) ?u64 {
     return null;
 }
 
+fn firstIoBar(bus: u8, device: u8, function: u8) ?u16 {
+    var bar_index: u8 = 0;
+    while (bar_index < 6) : (bar_index += 1) {
+        const offset: u8 = 0x10 + (bar_index * 4);
+        const low = readConfig32(bus, device, function, offset);
+        if (low == 0 or low == 0xFFFF_FFFF) continue;
+        if ((low & 0x1) == 0) continue;
+        const io_base = @as(u16, @truncate(low & 0xFFFC));
+        if (io_base != 0) return io_base;
+    }
+    return null;
+}
+
 fn enableMemoryAndIoDecode(location: DeviceLocation) void {
     const command = readConfig16(location.bus, location.device, location.function, 0x04);
     const wanted = command | 0x3;
+    if (wanted != command) {
+        writeConfig16(location.bus, location.device, location.function, 0x04, wanted);
+    }
+}
+
+fn enableIoMemoryAndBusMaster(location: DeviceLocation) void {
+    const command = readConfig16(location.bus, location.device, location.function, 0x04);
+    const wanted = command | 0x7;
     if (wanted != command) {
         writeConfig16(location.bus, location.device, location.function, 0x04, wanted);
     }
@@ -214,6 +249,47 @@ pub fn discoverDisplayFramebufferBar() ?u64 {
     return preferred orelse fallback;
 }
 
+pub fn discoverRealtekRtl8139() ?IoBarDevice {
+    if (!hardwareBacked() and !(builtin.is_test and mock_enabled)) return null;
+
+    var bus: usize = 0;
+    while (bus < max_bus_count) : (bus += 1) {
+        var device: usize = 0;
+        while (device < max_device_count) : (device += 1) {
+            const bus_id: u8 = @intCast(bus);
+            const device_id0: u8 = @intCast(device);
+            const first_vendor = vendorId(bus_id, device_id0, 0);
+            if (first_vendor == 0xFFFF) continue;
+
+            const function_limit: usize = if ((headerType(bus_id, device_id0, 0) & 0x80) != 0) max_function_count else 1;
+            var function: usize = 0;
+            while (function < function_limit) : (function += 1) {
+                const function_id: u8 = @intCast(function);
+                const vendor = vendorId(bus_id, device_id0, function_id);
+                if (vendor == 0xFFFF) continue;
+                if (vendor != 0x10EC or deviceId(bus_id, device_id0, function_id) != 0x8139) continue;
+
+                const location: DeviceLocation = .{
+                    .bus = bus_id,
+                    .device = device_id0,
+                    .function = function_id,
+                };
+                enableIoMemoryAndBusMaster(location);
+                const io_base = firstIoBar(bus_id, device_id0, function_id) orelse continue;
+                return .{
+                    .location = location,
+                    .vendor_id = vendor,
+                    .device_id = 0x8139,
+                    .io_base = io_base,
+                    .irq_line = readConfig8(bus_id, device_id0, function_id, 0x3C),
+                };
+            }
+        }
+    }
+
+    return null;
+}
+
 pub fn testResetForTest() void {
     if (!builtin.is_test) return;
     mock_enabled = false;
@@ -240,4 +316,21 @@ test "pci display scan finds bochs-style framebuffer bar and enables decode" {
     const bar = discoverDisplayFramebufferBar() orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u64, 0xFD00_0000), bar);
     try std.testing.expectEqual(@as(u16, 0x3), readConfig16(0, 1, 0, 0x04) & 0x3);
+}
+
+test "pci rtl8139 discovery finds io bar and enables bus mastering" {
+    testResetForTest();
+    defer testResetForTest();
+
+    testSetConfig32(0, 3, 0, 0x00, 0x8139_10EC);
+    testSetConfig32(0, 3, 0, 0x04, 0x0000_0000);
+    testSetConfig32(0, 3, 0, 0x08, 0x0200_0000);
+    testSetConfig32(0, 3, 0, 0x0C, 0x0000_0000);
+    testSetConfig32(0, 3, 0, 0x10, 0x0000_C001);
+    testSetConfig32(0, 3, 0, 0x3C, 0x0000_000B);
+
+    const dev = discoverRealtekRtl8139() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u16, 0xC000), dev.io_base);
+    try std.testing.expectEqual(@as(u8, 11), dev.irq_line);
+    try std.testing.expectEqual(@as(u16, 0x7), readConfig16(0, 3, 0, 0x04) & 0x7);
 }
