@@ -20,7 +20,7 @@ The first strict Ethernet slice is now complete on the local source of truth:
 - `src/baremetal_main.zig` exports the bare-metal Ethernet ABI surface
 - `scripts/baremetal-qemu-rtl8139-probe-check.ps1` is green and proves live MAC readout, TX, RX loopback, payload validation, and TX/RX counter advance over the freestanding PVH image
 
-This report remains relevant because IPv4/UDP/TCP are still pending. The next strict networking slices after this update are IPv4 framing and deterministic UDP exchange above the now-real L2 + ARP path.
+This report remains relevant because the first strict networking lift above ARP is now implemented, and the next remaining strict networking slices are TCP, DHCP, and DNS above the now-real L2 + ARP + IPv4 + UDP path.
 
 ## Scope of This First Slice
 This slice must deliver a real, deterministic Layer 2 path:
@@ -45,21 +45,30 @@ This slice originally did **not** attempt to finish:
 - DNS
 - HTTP
 
-That constraint is now partially lifted. The repo now has a real ARP request encode/decode path above the strict Ethernet L2 slice, but it still does **not** claim IPv4, UDP, TCP, DHCP, or DNS completion.
+That constraint is now partially lifted. The repo now has real ARP, IPv4, and UDP encode/decode paths above the strict Ethernet L2 slice, but it still does **not** claim TCP, DHCP, or DNS completion.
 
-## Current ARP Slice Status
+## Current ARP + IPv4 + UDP Slice Status
 
-The strict ARP slice is now complete on the local source of truth:
+The first strict ARP + IPv4 + UDP slices are now complete on the local source of truth:
 
 - `src/protocol/ethernet.zig` provides real Ethernet header encode/decode helpers and constants
 - `src/protocol/arp.zig` provides ARP request frame encode plus full ARP frame decode
+- `src/protocol/ipv4.zig` provides IPv4 header encode/decode plus checksum validation
+- `src/protocol/udp.zig` provides UDP header encode/decode plus pseudo-header checksum validation
 - `src/pal/net.zig` now exposes:
   - `sendArpRequest`
   - `pollArpPacket`
+  - `sendIpv4Frame`
+  - `pollIpv4PacketStrict`
+  - `sendUdpPacket`
+  - `pollUdpPacketStrictInto`
 - `src/baremetal_main.zig` now contains a dedicated `rtl8139_arp_probe` boot path and host regression proving ARP request loopback through the RTL8139 mock path
+- `src/baremetal_main.zig` now also contains dedicated `rtl8139_ipv4_probe` and `rtl8139_udp_probe` boot paths with host regressions proving live IPv4 and UDP loopback through the RTL8139 mock path
 - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1` now proves live ARP request transmission, receipt, decode, and counter advance against the freestanding PVH image
+- `scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1` now proves live IPv4 frame transmission, receipt, decode, and counter advance against the freestanding PVH image
+- `scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1` now proves live UDP datagram transmission, receipt, decode, checksum validation, and counter advance against the freestanding PVH image
 
-This closes the first real TCP/IP-adjacent slice above the Ethernet driver without overstating the rest of the stack.
+This closes the first real Ethernet + ARP + IPv4 + UDP slice above the hardware driver without overstating the rest of the stack. TCP, DHCP, and DNS still remain open.
 
 ---
 

@@ -277,13 +277,25 @@ Status: `In progress`
 Notes:
 
 - strict Ethernet L2 closure did **not** imply ARP, IPv4, UDP, DHCP, DNS, or TCP closure
-- the first strict networking slice above the raw-frame RTL8139 path is now complete locally:
+- the first strict networking slices above the raw-frame RTL8139 path are now complete locally:
   - `src/protocol/ethernet.zig` encodes and decodes Ethernet headers
   - `src/protocol/arp.zig` encodes ARP request frames and decodes ARP frames
-  - `src/pal/net.zig` exposes `sendArpRequest` and `pollArpPacket`
-  - host regressions prove ARP request loopback through the mock RTL8139 device
-  - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1` proves live ARP request transmission, receipt, decode, and TX/RX counter advance against the freestanding PVH image
-- IPv4, UDP, DHCP, DNS, and TCP remain open
+  - `src/protocol/ipv4.zig` encodes and decodes IPv4 headers and validates header checksums
+  - `src/protocol/udp.zig` encodes and decodes UDP datagrams and validates pseudo-header checksums
+  - `src/pal/net.zig` exposes:
+    - `sendArpRequest`
+    - `pollArpPacket`
+    - `sendIpv4Frame`
+    - `pollIpv4PacketStrict`
+    - `sendUdpPacket`
+    - `pollUdpPacketStrictInto`
+  - host regressions prove mock-device ARP, IPv4, and UDP loopback/decode through the RTL8139 path
+  - live QEMU proofs now pass:
+    - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1`
+    - `scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1`
+    - `scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1`
+  - those proofs now cover live ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, and TX/RX counter advance over the freestanding PVH image
+- TCP, DHCP, and DNS remain open
 
 ### Filesystem Usage
 
