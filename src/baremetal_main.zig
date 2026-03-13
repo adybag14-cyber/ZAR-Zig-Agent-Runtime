@@ -4,6 +4,7 @@ const abi = @import("baremetal/abi.zig");
 const x86_bootstrap = @import("baremetal/x86_bootstrap.zig");
 const vga_text_console = @import("baremetal/vga_text_console.zig");
 const ram_disk = @import("baremetal/ram_disk.zig");
+const ps2_input = @import("baremetal/ps2_input.zig");
 const tool_layout = @import("baremetal/tool_layout.zig");
 const BaremetalStatus = abi.BaremetalStatus;
 const BaremetalCommand = abi.BaremetalCommand;
@@ -13,6 +14,10 @@ const BaremetalConsoleState = abi.BaremetalConsoleState;
 const BaremetalStorageState = abi.BaremetalStorageState;
 const BaremetalToolLayoutState = abi.BaremetalToolLayoutState;
 const BaremetalToolSlot = abi.BaremetalToolSlot;
+const BaremetalKeyboardState = abi.BaremetalKeyboardState;
+const BaremetalKeyboardEvent = abi.BaremetalKeyboardEvent;
+const BaremetalMouseState = abi.BaremetalMouseState;
+const BaremetalMousePacket = abi.BaremetalMousePacket;
 const BaremetalCommandEvent = abi.BaremetalCommandEvent;
 const BaremetalHealthEvent = abi.BaremetalHealthEvent;
 const BaremetalModeEvent = abi.BaremetalModeEvent;
@@ -305,6 +310,30 @@ pub export fn oc_console_putc(byte: u8) void {
 
 pub export fn oc_console_cell(index: u32) u16 {
     return vga_text_console.cell(index);
+}
+
+pub export fn oc_keyboard_state_ptr() *const BaremetalKeyboardState {
+    return ps2_input.keyboardStatePtr();
+}
+
+pub export fn oc_keyboard_event(index: u32) BaremetalKeyboardEvent {
+    return ps2_input.keyboardEvent(index);
+}
+
+pub export fn oc_keyboard_inject_scancode(scancode: u8) void {
+    ps2_input.injectKeyboardScancode(scancode);
+}
+
+pub export fn oc_mouse_state_ptr() *const BaremetalMouseState {
+    return ps2_input.mouseStatePtr();
+}
+
+pub export fn oc_mouse_packet(index: u32) BaremetalMousePacket {
+    return ps2_input.mousePacket(index);
+}
+
+pub export fn oc_mouse_inject_packet(buttons: u8, dx: i16, dy: i16) void {
+    ps2_input.injectMousePacket(buttons, dx, dy);
 }
 
 pub export fn oc_storage_state_ptr() *const BaremetalStorageState {
@@ -1002,6 +1031,7 @@ pub export fn oc_tick() void {
         recordMode(previous_mode, status.mode, abi.mode_change_reason_runtime_tick, status.ticks, status.command_seq_ack);
         setBootPhase(abi.boot_phase_runtime, abi.boot_phase_change_reason_runtime_tick);
     }
+    ps2_input.processInterruptHistory(status.ticks);
     timerTick(status.ticks);
     schedulerTick(status.ticks);
     if (status.mode != abi.mode_panicked) {
@@ -1026,6 +1056,7 @@ fn baremetalStart() callconv(.c) noreturn {
     }
     vga_text_console.init();
     ram_disk.init();
+    ps2_input.init();
     tool_layout.init() catch unreachable;
     if (console_probe_banner_enabled) {
         vga_text_console.clear();
@@ -2493,6 +2524,7 @@ fn resetBaremetalRuntimeForTest() void {
     oc_wake_queue_clear();
     vga_text_console.resetForTest();
     ram_disk.resetForTest();
+    ps2_input.resetForTest();
     tool_layout.resetForTest();
 }
 
@@ -9110,4 +9142,55 @@ test "baremetal tool layout persists patterned tool slot payloads on ram disk" {
     try std.testing.expectEqual(@as(u32, 0), cleared.byte_len);
     try std.testing.expectEqual(@as(u32, 0), cleared.flags);
     try std.testing.expectEqual(@as(u8, 0), oc_tool_slot_byte(1, 0));
+}
+
+test "baremetal keyboard export surface captures interrupt-driven scancodes" {
+    resetBaremetalRuntimeForTest();
+    x86_bootstrap.init();
+    const keyboard = oc_keyboard_state_ptr();
+    try std.testing.expectEqual(@as(u32, abi.keyboard_magic), keyboard.magic);
+    try std.testing.expectEqual(@as(u16, abi.api_version), keyboard.api_version);
+    try std.testing.expectEqual(@as(u8, 1), keyboard.connected);
+
+    oc_keyboard_inject_scancode(0x2A);
+    _ = oc_submit_command(abi.command_trigger_interrupt, ps2_input.keyboard_irq_vector, 0);
+    oc_tick();
+    try std.testing.expectEqual(abi.input_modifier_shift, keyboard.modifiers);
+
+    oc_keyboard_inject_scancode(0x1E);
+    _ = oc_submit_command(abi.command_trigger_interrupt, ps2_input.keyboard_irq_vector, 0);
+    oc_tick();
+    try std.testing.expectEqual(@as(u16, 2), keyboard.queue_len);
+    try std.testing.expectEqual(@as(u32, 2), keyboard.event_count);
+    try std.testing.expectEqual(@as(u8, 0x1E), keyboard.last_scancode);
+    try std.testing.expectEqual(@as(u16, 'A'), keyboard.last_keycode);
+
+    const evt = oc_keyboard_event(1);
+    try std.testing.expectEqual(@as(u8, 0x1E), evt.scancode);
+    try std.testing.expectEqual(@as(u8, 1), evt.pressed);
+    try std.testing.expectEqual(@as(u16, 'A'), evt.keycode);
+}
+
+test "baremetal mouse export surface captures interrupt-driven packets" {
+    resetBaremetalRuntimeForTest();
+    x86_bootstrap.init();
+    const mouse = oc_mouse_state_ptr();
+    try std.testing.expectEqual(@as(u32, abi.mouse_magic), mouse.magic);
+    try std.testing.expectEqual(@as(u16, abi.api_version), mouse.api_version);
+    try std.testing.expectEqual(@as(u8, 1), mouse.connected);
+
+    oc_mouse_inject_packet(0x05, 6, -3);
+    _ = oc_submit_command(abi.command_trigger_interrupt, ps2_input.mouse_irq_vector, 0);
+    oc_tick();
+
+    try std.testing.expectEqual(@as(u16, 1), mouse.queue_len);
+    try std.testing.expectEqual(@as(u32, 1), mouse.packet_count);
+    try std.testing.expectEqual(@as(u8, 0x05), mouse.last_buttons);
+    try std.testing.expectEqual(@as(i32, 6), mouse.accum_x);
+    try std.testing.expectEqual(@as(i32, -3), mouse.accum_y);
+
+    const pkt = oc_mouse_packet(0);
+    try std.testing.expectEqual(@as(u8, 0x05), pkt.buttons);
+    try std.testing.expectEqual(@as(i16, 6), pkt.dx);
+    try std.testing.expectEqual(@as(i16, -3), pkt.dy);
 }

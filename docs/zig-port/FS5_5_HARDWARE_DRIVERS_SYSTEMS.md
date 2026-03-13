@@ -144,7 +144,25 @@ Remaining gap before this subsystem is fully closed:
 
 ### Keyboard / Mouse
 
-Status: `Not started`
+Status: `In progress`
+
+Current local source-of-truth evidence:
+
+- real PS/2-style keyboard and mouse state machine shipped in `src/baremetal/ps2_input.zig`
+- interrupt-driven capture is wired through the existing x86 interrupt history path:
+  - keyboard IRQ vector `33`
+  - mouse IRQ vector `44`
+- exported bare-metal keyboard/mouse ABI state now exists in `src/baremetal/abi.zig`
+- PAL input surface shipped in `src/pal/input.zig`
+- bare-metal export surface shipped in `src/baremetal_main.zig`
+- host regressions prove:
+  - keyboard modifier and scancode queue capture through IRQ delivery
+  - mouse packet queue and position accumulator updates through IRQ delivery
+
+Remaining gap before this subsystem is fully closed:
+
+- there is not yet a true hardware port-I/O backed PS/2 controller path
+- there is not yet a QEMU bare-metal proof script for IRQ-driven keyboard/mouse updates
 
 ### In-RAM Disk Persistence
 

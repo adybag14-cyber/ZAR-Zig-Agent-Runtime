@@ -7,6 +7,8 @@ pub const boot_diag_magic: u32 = 0x4f434244; // "OCBD"
 pub const console_magic: u32 = 0x4f43434e; // "OCCN"
 pub const storage_magic: u32 = 0x4f435354; // "OCST"
 pub const tool_layout_magic: u32 = 0x4f43544c; // "OCTL"
+pub const keyboard_magic: u32 = 0x4f434b42; // "OCKB"
+pub const mouse_magic: u32 = 0x4f434d53; // "OCMS"
 
 pub const api_version: u16 = 2;
 
@@ -215,6 +217,9 @@ pub const interrupt_mask_profile_custom: u8 = 255;
 pub const console_backend_host_buffer: u8 = 0;
 pub const console_backend_vga_text: u8 = 1;
 pub const storage_backend_ram_disk: u8 = 1;
+pub const input_modifier_shift: u8 = 1 << 0;
+pub const input_modifier_ctrl: u8 = 1 << 1;
+pub const input_modifier_alt: u8 = 1 << 2;
 
 pub const BaremetalStatus = extern struct {
     magic: u32,
@@ -323,6 +328,64 @@ pub const BaremetalToolSlot = extern struct {
     checksum: u32,
     reserved0: u32,
     last_write_tick: u64,
+};
+
+pub const BaremetalKeyboardState = extern struct {
+    magic: u32,
+    api_version: u16,
+    connected: u8,
+    modifiers: u8,
+    queue_len: u16,
+    queue_overflow: u16,
+    event_count: u32,
+    key_down_count: u32,
+    key_up_count: u32,
+    last_scancode: u8,
+    last_pressed: u8,
+    reserved0: [2]u8,
+    last_keycode: u16,
+    reserved1: u16,
+    last_tick: u64,
+};
+
+pub const BaremetalKeyboardEvent = extern struct {
+    seq: u32,
+    scancode: u8,
+    pressed: u8,
+    modifiers: u8,
+    reserved0: u8,
+    keycode: u16,
+    reserved1: u16,
+    tick: u64,
+    interrupt_seq: u32,
+    reserved2: u32,
+};
+
+pub const BaremetalMouseState = extern struct {
+    magic: u32,
+    api_version: u16,
+    connected: u8,
+    reserved0: u8,
+    queue_len: u16,
+    queue_overflow: u16,
+    packet_count: u32,
+    last_buttons: u8,
+    reserved1: [3]u8,
+    accum_x: i32,
+    accum_y: i32,
+    last_dx: i16,
+    last_dy: i16,
+    last_tick: u64,
+};
+
+pub const BaremetalMousePacket = extern struct {
+    seq: u32,
+    buttons: u8,
+    reserved0: u8,
+    dx: i16,
+    dy: i16,
+    tick: u64,
+    interrupt_seq: u32,
 };
 
 pub const BaremetalCommandEvent = extern struct {
@@ -627,6 +690,10 @@ test "baremetal kernel info size contract stays stable" {
     try std.testing.expectEqual(@as(usize, 56), @sizeOf(BaremetalStorageState));
     try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalToolLayoutState));
     try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalToolSlot));
+    try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalKeyboardState));
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalKeyboardEvent));
+    try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalMouseState));
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalMousePacket));
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalCommandEvent));
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(BaremetalHealthEvent));
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(BaremetalModeEvent));
