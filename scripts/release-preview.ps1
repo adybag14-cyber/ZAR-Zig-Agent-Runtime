@@ -151,8 +151,8 @@ try {
         OutputJsonPath = $parityJsonPath
         OutputMarkdownPath = $parityMdPath
         GoTag = "v2.14.0-go"
-        OriginalRef = "v2026.3.8"
-        OriginalBetaRef = "v2026.3.8-beta.1"
+        OriginalRef = "v2026.3.11"
+        OriginalBetaRef = "v2026.3.11-beta.1"
     }
     if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
         $parityArgs.GitHubToken = $env:GITHUB_TOKEN
