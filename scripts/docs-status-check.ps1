@@ -7,6 +7,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$PinnedGoRef = "v2.14.0-go"
+$PinnedOriginalRef = "v2026.3.8"
+$PinnedOriginalBetaRef = "v2026.3.8-beta.1"
+
 function Assert-Contains {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -26,10 +30,17 @@ Push-Location $repoRoot
 try {
     $parityScript = Join-Path $PSScriptRoot "check-go-method-parity.ps1"
     if ($RefreshParity -or -not (Test-Path $ParityJsonPath)) {
+        $parityArgs = @{
+            OutputJsonPath   = $ParityJsonPath
+            GoTag            = $PinnedGoRef
+            OriginalRef      = $PinnedOriginalRef
+            OriginalBetaRef  = $PinnedOriginalBetaRef
+        }
         if ($GitHubToken) {
-            & $parityScript -OutputJsonPath $ParityJsonPath -GitHubToken $GitHubToken | Out-Host
+            $parityArgs.GitHubToken = $GitHubToken
+            & $parityScript @parityArgs | Out-Host
         } else {
-            & $parityScript -OutputJsonPath $ParityJsonPath | Out-Host
+            & $parityScript @parityArgs | Out-Host
         }
     }
 
