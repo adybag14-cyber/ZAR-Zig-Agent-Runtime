@@ -2427,6 +2427,8 @@ const Rtl8139TcpProbeScratch = struct {
     service_scratch: [2048]u8,
     service_request_put_buffer: [256]u8,
     service_response_put_expected_buffer: [160]u8,
+    service_batch_request_buffer: [320]u8,
+    service_batch_response_expected_buffer: [512]u8,
     package_install_request_buffer: [512]u8,
     package_entrypoint_buffer: [filesystem.max_path_len]u8,
 };
@@ -2468,6 +2470,10 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const package_script_body = "mkdir /pkg/out\nwrite-file /pkg/out/result.txt pkg-service-data\necho pkg-service-ok";
     const package_output_path = "/pkg/out/result.txt";
     const package_output_expected = "pkg-service-data";
+    const batch_request_id_script: u32 = 41;
+    const batch_request_id_package_script: u32 = 42;
+    const batch_request_id_package_list: u32 = 43;
+    const batch_request_id_package_output: u32 = 44;
     const retransmit_interval_ticks: u64 = 4;
     const flow_a = tcp_protocol.FlowKey{
         .local_ip = source_ip,
@@ -2839,6 +2845,70 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const package_output_readback = filesystem.readFileAlloc(service_fba.allocator(), package_output_path, 64) catch return error.ToolServiceFailed;
     if (!std.mem.eql(u8, package_output_readback, package_output_expected)) return error.ToolServiceResponseMismatch;
+
+    client_b.local_window = 48;
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const batch_service_request = std.fmt.bufPrint(&scratch.service_batch_request_buffer, "REQ {d} GET {s}\nREQ {d} GET {s}\nREQ {d} PKGLIST\nREQ {d} GET {s}", .{
+        batch_request_id_script,
+        service_script_path,
+        batch_request_id_package_script,
+        package_entrypoint,
+        batch_request_id_package_list,
+        batch_request_id_package_output,
+        package_output_path,
+    }) catch return error.ToolServiceFailed;
+    const batch_service_request_payload = client_b.buildPayload(batch_service_request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, batch_service_request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, batch_service_request_payload);
+    server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    if (server_b.remote_window != client_b.local_window) return error.WindowUpdateMismatch;
+
+    const batch_service_response = tool_service.handleFramedRequestBatch(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        512,
+        256,
+        512,
+    ) catch return error.ToolServiceFailed;
+    const batch_service_response_expected = std.fmt.bufPrint(&scratch.service_batch_response_expected_buffer, "RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} 5\ndemo\nRESP {d} {d}\n{s}", .{
+        batch_request_id_script,
+        service_script_body.len,
+        service_script_body,
+        batch_request_id_package_script,
+        package_script_body.len,
+        package_script_body,
+        batch_request_id_package_list,
+        batch_request_id_package_output,
+        package_output_expected.len,
+        package_output_expected,
+    }) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, batch_service_response, batch_service_response_expected)) return error.ToolServiceResponseMismatch;
+
+    var batch_service_response_offset: usize = 0;
+    var batch_service_response_chunks: usize = 0;
+    while (batch_service_response_offset < batch_service_response.len) {
+        const batch_service_reply_chunk = server_b.buildPayloadChunk(batch_service_response[batch_service_response_offset..]) catch |err| return mapTcpSessionProbeError(err);
+        const expected_chunk = batch_service_response[batch_service_response_offset .. batch_service_response_offset + batch_service_reply_chunk.payload.len];
+        _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, batch_service_reply_chunk);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, batch_service_reply_chunk);
+        if (!std.mem.eql(u8, batch_service_reply_chunk.payload, expected_chunk)) return error.PayloadMismatch;
+        const mapped_b_batch_service_reply_chunk = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+        if (mapped_b_batch_service_reply_chunk != client_b) return error.SessionStateMismatch;
+        mapped_b_batch_service_reply_chunk.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+        batch_service_response_offset += batch_service_reply_chunk.payload.len;
+        batch_service_response_chunks += 1;
+
+        const batch_service_reply_chunk_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+        _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, batch_service_reply_chunk_ack);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, batch_service_reply_chunk_ack);
+        server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    }
+    if (batch_service_response_offset != batch_service_response.len) return error.PayloadMismatch;
+    if (batch_service_response_chunks < 2) return error.CounterMismatch;
 
     const client_fin_a = client_a.buildFinWithTimeout(probe_tick, retransmit_interval_ticks) catch |err| return mapTcpSessionProbeError(err);
     if (!client_a.retransmit.armed() or client_a.retransmit.kind != .fin) return error.RetransmitMissing;
