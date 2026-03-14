@@ -138,17 +138,19 @@ Current local source-of-truth evidence:
   - runtime startup banner writes `OK`
   - raw VGA memory at `0xB8000` reads back `O` and `K`
 - a real linear-framebuffer path now exists beyond VGA text mode:
-  - `src/baremetal/framebuffer_console.zig` programs Bochs/QEMU BGA linear framebuffer mode and renders glyphs into a `640x400x32bpp` surface
+  - `src/baremetal/framebuffer_console.zig` programs Bochs/QEMU BGA linear framebuffer modes and renders glyphs into bounded `640x400x32bpp`, `800x600x32bpp`, and `1024x768x32bpp` surfaces
   - `src/baremetal/pci.zig` discovers the display adapter BAR and enables decode on the selected PCI display function
   - `src/pal/framebuffer.zig` exposes the framebuffer path through the PAL surface
-  - `src/baremetal_main.zig` exports framebuffer state/pixel access through the bare-metal ABI
-- host regressions now prove the framebuffer export surface updates host-backed framebuffer state and glyph pixels
+  - `src/baremetal_main.zig` exports framebuffer state/pixel access plus bounded mode switching through the bare-metal ABI
+- host regressions now prove the framebuffer export surface updates host-backed framebuffer state, glyph pixels, and preserves the last valid mode on unsupported requests
 - a live bare-metal PVH/QEMU proof now passes:
   - `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1`
-  - exported framebuffer state has `magic=framebuffer_magic`, `api_version=2`, `width=640`, `height=400`, `cols=80`, `rows=25`
+  - exported framebuffer state has `magic=framebuffer_magic`, `api_version=2`, and now proves both `640x400` (`cols=80`, `rows=25`) and `1024x768` (`cols=128`, `rows=48`) surfaces over the same BGA path
   - runtime reports `backend=linear_framebuffer`
   - the startup banner writes `OK`
   - actual MMIO framebuffer pixels read back `bg`, `O`, and `K` from the hardware-backed framebuffer BAR
+- current real source-of-truth display support is bounded Bochs/QEMU BGA mode-setting only
+- HDMI/DisplayPort/EDID/controller-specific output paths are not yet implemented and are not claimed by this branch
 
 ### Keyboard / Mouse
 

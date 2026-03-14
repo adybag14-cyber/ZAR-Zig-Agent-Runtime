@@ -3,16 +3,26 @@ const builtin = @import("builtin");
 const abi = @import("abi.zig");
 const pci = @import("pci.zig");
 
-pub const width: usize = 640;
-pub const height: usize = 400;
+pub const Mode = struct {
+    width: u16,
+    height: u16,
+};
+
 pub const bytes_per_pixel: usize = 4;
-pub const pitch: usize = width * bytes_per_pixel;
-pub const cols: usize = 80;
-pub const rows: usize = 25;
 pub const cell_width: usize = 8;
 pub const cell_height: usize = 16;
-const pixel_count: usize = width * height;
-const cell_count: usize = cols * rows;
+pub const default_mode: Mode = .{ .width = 640, .height = 400 };
+pub const supported_modes = [_]Mode{
+    default_mode,
+    .{ .width = 800, .height = 600 },
+    .{ .width = 1024, .height = 768 },
+};
+pub const max_width: usize = 1024;
+pub const max_height: usize = 768;
+pub const max_cols: usize = max_width / cell_width;
+pub const max_rows: usize = max_height / cell_height;
+const pixel_count: usize = max_width * max_height;
+const cell_count: usize = max_cols * max_rows;
 const fg_color: u32 = 0x00FFFFFF;
 const bg_color: u32 = 0x00000000;
 
@@ -37,6 +47,45 @@ var cells: [cell_count]u8 = [_]u8{' '} ** cell_count;
 var cursor_row: u16 = 0;
 var cursor_col: u16 = 0;
 
+fn colsForMode(mode: Mode) u16 {
+    return @as(u16, @intCast(@as(usize, mode.width) / cell_width));
+}
+
+fn rowsForMode(mode: Mode) u16 {
+    return @as(u16, @intCast(@as(usize, mode.height) / cell_height));
+}
+
+fn activeWidth() usize {
+    return @as(usize, state.width);
+}
+
+fn activeHeight() usize {
+    return @as(usize, state.height);
+}
+
+fn activeCols() usize {
+    return @as(usize, state.cols);
+}
+
+fn activeRows() usize {
+    return @as(usize, state.rows);
+}
+
+fn activePixelCount() usize {
+    return activeWidth() * activeHeight();
+}
+
+fn activeCellCount() usize {
+    return activeCols() * activeRows();
+}
+
+fn modeByDimensions(width: u16, height: u16) ?Mode {
+    for (supported_modes) |mode| {
+        if (mode.width == width and mode.height == height) return mode;
+    }
+    return null;
+}
+
 fn hardwareBacked() bool {
     return builtin.os.tag == .freestanding and builtin.cpu.arch == .x86_64;
 }
@@ -50,11 +99,11 @@ fn pixelPtr() [*]volatile u32 {
 
 fn fillAllPixels(color: u32) void {
     if (state.hardware_backed != 0 and state.framebuffer_addr != 0) {
-        const pixels = @as([*]u32, @ptrFromInt(@as(usize, @intCast(state.framebuffer_addr))))[0..pixel_count];
+        const pixels = @as([*]u32, @ptrFromInt(@as(usize, @intCast(state.framebuffer_addr))))[0..activePixelCount()];
         @memset(pixels, color);
         return;
     }
-    @memset(&host_pixels, color);
+    @memset(host_pixels[0..activePixelCount()], color);
 }
 
 fn writePort16(port: u16, value: u16) void {
@@ -84,14 +133,19 @@ fn bgaReadReg(index: u16) u16 {
     return readPort16(bga_data_port);
 }
 
-fn initState() void {
+fn initState(mode: Mode) void {
+    const width: usize = @as(usize, mode.width);
+    const height: usize = @as(usize, mode.height);
+    const cols = colsForMode(mode);
+    const rows = rowsForMode(mode);
+    const pitch: usize = width * bytes_per_pixel;
     state = .{
         .magic = abi.framebuffer_magic,
         .api_version = abi.api_version,
-        .width = @intCast(width),
-        .height = @intCast(height),
-        .cols = @intCast(cols),
-        .rows = @intCast(rows),
+        .width = mode.width,
+        .height = mode.height,
+        .cols = cols,
+        .rows = rows,
         .pitch = @intCast(pitch),
         .framebuffer_bytes = @intCast(width * height * bytes_per_pixel),
         .framebuffer_addr = @intCast(@intFromPtr(&host_pixels[0])),
@@ -110,7 +164,7 @@ fn initState() void {
     };
 }
 
-fn initHardwareMode() bool {
+fn initHardwareMode(mode: Mode) bool {
     if (!hardwareBacked()) return false;
     const framebuffer_addr = pci.discoverDisplayFramebufferBar() orelse return false;
 
@@ -118,12 +172,12 @@ fn initHardwareMode() bool {
     if ((version & 0xFFF0) != 0xB0C0) return false;
 
     bgaWriteReg(bga_reg_enable, 0);
-    bgaWriteReg(bga_reg_xres, width);
-    bgaWriteReg(bga_reg_yres, height);
+    bgaWriteReg(bga_reg_xres, mode.width);
+    bgaWriteReg(bga_reg_yres, mode.height);
     bgaWriteReg(bga_reg_bpp, 32);
     bgaWriteReg(bga_reg_bank, 0);
-    bgaWriteReg(bga_reg_virtual_width, width);
-    bgaWriteReg(bga_reg_virtual_height, height);
+    bgaWriteReg(bga_reg_virtual_width, mode.width);
+    bgaWriteReg(bga_reg_virtual_height, mode.height);
     bgaWriteReg(bga_reg_x_offset, 0);
     bgaWriteReg(bga_reg_y_offset, 0);
     bgaWriteReg(bga_reg_enable, bga_enable_flag | bga_linear_framebuffer_flag);
@@ -132,19 +186,19 @@ fn initHardwareMode() bool {
 }
 
 fn plotPixel(x: usize, y: usize, color: u32) void {
-    if (x >= width or y >= height) return;
-    pixelPtr()[(y * width) + x] = color;
+    if (x >= activeWidth() or y >= activeHeight()) return;
+    pixelPtr()[(y * activeWidth()) + x] = color;
 }
 
 fn fillRect(x: usize, y: usize, w: usize, h: usize, color: u32) void {
-    if (x >= width or y >= height) return;
-    const clipped_w = @min(w, width - x);
-    const clipped_h = @min(h, height - y);
+    if (x >= activeWidth() or y >= activeHeight()) return;
+    const clipped_w = @min(w, activeWidth() - x);
+    const clipped_h = @min(h, activeHeight() - y);
     const pixels = pixelPtr();
 
     var py: usize = 0;
     while (py < clipped_h) : (py += 1) {
-        const row_base = ((y + py) * width) + x;
+        const row_base = ((y + py) * activeWidth()) + x;
         var px: usize = 0;
         while (px < clipped_w) : (px += 1) {
             pixels[row_base + px] = color;
@@ -225,10 +279,10 @@ fn glyphRow(byte: u8, row: usize) u8 {
 }
 
 fn renderCell(index: usize) void {
-    if (index >= cell_count) return;
+    if (index >= activeCellCount()) return;
     const ch = cells[index];
-    const col = index % cols;
-    const row = index / cols;
+    const col = index % activeCols();
+    const row = index / activeCols();
     const origin_x = col * cell_width;
     const origin_y = row * cell_height;
 
@@ -250,49 +304,62 @@ fn renderCell(index: usize) void {
 fn rerenderAll() void {
     fillAllPixels(bg_color);
     var index: usize = 0;
-    while (index < cell_count) : (index += 1) renderCell(index);
+    while (index < activeCellCount()) : (index += 1) renderCell(index);
 }
 
 fn lineFeed() void {
     cursor_col = 0;
-    if (cursor_row + 1 >= rows) {
+    if (cursor_row + 1 >= @as(u16, @intCast(activeRows()))) {
         var row: usize = 1;
-        while (row < rows) : (row += 1) {
+        while (row < activeRows()) : (row += 1) {
             var col: usize = 0;
-            while (col < cols) : (col += 1) {
-                cells[((row - 1) * cols) + col] = cells[(row * cols) + col];
+            while (col < activeCols()) : (col += 1) {
+                cells[((row - 1) * activeCols()) + col] = cells[(row * activeCols()) + col];
             }
         }
         var col: usize = 0;
-        while (col < cols) : (col += 1) cells[((rows - 1) * cols) + col] = ' ';
-        cursor_row = rows - 1;
+        while (col < activeCols()) : (col += 1) cells[((activeRows() - 1) * activeCols()) + col] = ' ';
+        cursor_row = @as(u16, @intCast(activeRows() - 1));
         rerenderAll();
     } else {
         cursor_row += 1;
     }
 }
 
-pub fn init() bool {
-    initState();
+fn initCommon(mode: Mode, clear_on_init: bool) bool {
+    initState(mode);
     @memset(&cells, ' ');
     cursor_row = 0;
     cursor_col = 0;
     @memset(&host_pixels, 0);
-    state.hardware_backed = if (initHardwareMode()) 1 else 0;
+    state.hardware_backed = if (initHardwareMode(mode)) 1 else 0;
     state.framebuffer_addr = if (state.hardware_backed != 0) state.framebuffer_addr else @intFromPtr(&host_pixels[0]);
-    clear();
+    if (clear_on_init) clear();
     return state.hardware_backed != 0;
 }
 
+pub fn init() bool {
+    return initCommon(default_mode, true);
+}
+
 pub fn initForProbe() bool {
-    initState();
-    @memset(&cells, ' ');
-    cursor_row = 0;
-    cursor_col = 0;
-    @memset(&host_pixels, 0);
-    state.hardware_backed = if (initHardwareMode()) 1 else 0;
-    state.framebuffer_addr = if (state.hardware_backed != 0) state.framebuffer_addr else @intFromPtr(&host_pixels[0]);
-    return state.hardware_backed != 0;
+    return initCommon(default_mode, false);
+}
+
+pub fn initMode(width: u16, height: u16) bool {
+    const mode = modeByDimensions(width, height) orelse return false;
+    _ = initCommon(mode, true);
+    return true;
+}
+
+pub fn initForProbeMode(width: u16, height: u16) bool {
+    const mode = modeByDimensions(width, height) orelse return false;
+    _ = initCommon(mode, false);
+    return true;
+}
+
+pub fn setMode(width: u16, height: u16) error{UnsupportedMode}!void {
+    if (!initMode(width, height)) return error.UnsupportedMode;
 }
 
 pub fn clear() void {
@@ -322,13 +389,13 @@ pub fn putByte(byte: u8) void {
         else => {},
     }
 
-    const index = (@as(usize, cursor_row) * cols) + cursor_col;
+    const index = (@as(usize, cursor_row) * activeCols()) + @as(usize, cursor_col);
     cells[index] = byte;
     renderCell(index);
     state.write_count +%= 1;
 
     cursor_col += 1;
-    if (cursor_col >= cols) lineFeed();
+    if (cursor_col >= @as(u16, @intCast(activeCols()))) lineFeed();
 }
 
 pub fn write(text: []const u8) void {
@@ -341,19 +408,19 @@ pub fn statePtr() *const abi.BaremetalFramebufferState {
 
 pub fn pixel(index: u32) u32 {
     const idx: usize = @intCast(index);
-    if (idx >= pixel_count) return 0;
+    if (idx >= activePixelCount()) return 0;
     return pixelPtr()[idx];
 }
 
 pub fn pixelAt(x: u32, y: u32) u32 {
     const xi: usize = @intCast(x);
     const yi: usize = @intCast(y);
-    if (xi >= width or yi >= height) return 0;
-    return pixelPtr()[(yi * width) + xi];
+    if (xi >= activeWidth() or yi >= activeHeight()) return 0;
+    return pixelPtr()[(yi * activeWidth()) + xi];
 }
 
 pub fn resetForTest() void {
-    initState();
+    initState(default_mode);
     pci.testResetForTest();
     @memset(&host_pixels, 0);
     @memset(&cells, ' ');
@@ -384,10 +451,10 @@ test "framebuffer console clear and write update host state" {
     try std.testing.expectEqual(@as(u32, abi.framebuffer_magic), fb.magic);
     try std.testing.expectEqual(@as(u8, abi.console_backend_linear_framebuffer), fb.backend);
     try std.testing.expectEqual(@as(u8, 0), fb.hardware_backed);
-    try std.testing.expectEqual(@as(u16, @intCast(width)), fb.width);
-    try std.testing.expectEqual(@as(u16, @intCast(height)), fb.height);
-    try std.testing.expectEqual(@as(u16, @intCast(cols)), fb.cols);
-    try std.testing.expectEqual(@as(u16, @intCast(rows)), fb.rows);
+    try std.testing.expectEqual(default_mode.width, fb.width);
+    try std.testing.expectEqual(default_mode.height, fb.height);
+    try std.testing.expectEqual(colsForMode(default_mode), fb.cols);
+    try std.testing.expectEqual(rowsForMode(default_mode), fb.rows);
 
     clear();
     write("OK");
@@ -395,4 +462,23 @@ test "framebuffer console clear and write update host state" {
     try std.testing.expect(fb.clear_count >= 1);
     try std.testing.expect(cellHasInk(0, 0));
     try std.testing.expect(cellHasInk(1, 0));
+}
+
+test "framebuffer console supports bounded mode switching" {
+    resetForTest();
+    _ = init();
+
+    try setMode(1024, 768);
+    const fb = statePtr();
+    try std.testing.expectEqual(@as(u16, 1024), fb.width);
+    try std.testing.expectEqual(@as(u16, 768), fb.height);
+    try std.testing.expectEqual(@as(u16, 128), fb.cols);
+    try std.testing.expectEqual(@as(u16, 48), fb.rows);
+    try std.testing.expectEqual(@as(u32, 4096), fb.pitch);
+    try std.testing.expectEqual(@as(u32, 1024 * 768 * 4), fb.framebuffer_bytes);
+
+    write("HI");
+    try std.testing.expect(cellHasInk(0, 0));
+    try std.testing.expect(cellHasInk(1, 0));
+    try std.testing.expectError(error.UnsupportedMode, setMode(1920, 1080));
 }

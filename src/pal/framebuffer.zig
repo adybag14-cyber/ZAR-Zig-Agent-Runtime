@@ -7,6 +7,10 @@ pub fn init() bool {
     return framebuffer_console.init();
 }
 
+pub fn initMode(width: u16, height: u16) bool {
+    return framebuffer_console.initMode(width, height);
+}
+
 pub fn clear() void {
     framebuffer_console.clear();
 }
@@ -29,6 +33,10 @@ pub fn pixel(index: u32) u32 {
 
 pub fn pixelAt(x: u32, y: u32) u32 {
     return framebuffer_console.pixelAt(x, y);
+}
+
+pub fn setMode(width: u16, height: u16) error{UnsupportedMode}!void {
+    try framebuffer_console.setMode(width, height);
 }
 
 pub fn resetForTest() void {

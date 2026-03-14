@@ -38,10 +38,11 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - strict FS4 matrix source is [`docs/zig-port/FS4_SECURITY_TRUST_MATRIX.md`](docs/zig-port/FS4_SECURITY_TRUST_MATRIX.md)
 - Current hardware pivot (`FS5.5`):
   - framebuffer/console is now strict-closed in [`docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md`](docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md)
-  - `src/baremetal/framebuffer_console.zig` now contains a real Bochs/QEMU BGA linear-framebuffer console path
+  - `src/baremetal/framebuffer_console.zig` now contains a real Bochs/QEMU BGA linear-framebuffer console path with bounded mode support for `640x400`, `800x600`, and `1024x768`
   - `src/baremetal/pci.zig` discovers the display BAR and enables decode on the selected PCI display function
-  - `src/pal/framebuffer.zig` exposes the framebuffer path through the bare-metal PAL
-  - `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1` proves live MMIO banner pixels against the freestanding PVH artifact
+  - `src/pal/framebuffer.zig` exposes the framebuffer path through the bare-metal PAL and the bare-metal ABI now supports bounded mode switching through `oc_framebuffer_set_mode`
+  - `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1` proves live MMIO banner pixels against the freestanding PVH artifact at both `640x400` and `1024x768`
+  - real HDMI/DisplayPort/EDID connector-specific output paths are still future depth and are not claimed by this branch
   - keyboard/mouse is now strict-closed in [`docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md`](docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md)
   - `src/baremetal/ps2_input.zig` now contains a real x86 port-I/O backed PS/2 controller path
   - `scripts/baremetal-qemu-ps2-input-probe-check.ps1` proves IRQ-driven keyboard/mouse state updates against the freestanding PVH artifact
