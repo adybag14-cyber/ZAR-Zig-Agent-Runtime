@@ -49,9 +49,12 @@
   - `src/protocol/dns.zig` implements strict DNS query + A-response encode/decode
   - `src/pal/net.zig` now exposes `sendDnsQuery`, `pollDnsPacket`, and `pollDnsPacketStrictInto`
   - `scripts/baremetal-qemu-rtl8139-dns-probe-check.ps1` proves live RTL8139 DNS query transport and strict A-response decode over the freestanding PVH image
+- ARP cache + gateway routing are now also proven on the real RTL8139 path:
+  - `src/protocol/arp.zig` now also encodes ARP reply frames
+  - `src/pal/net.zig` now exposes `configureIpv4Route`, `configureIpv4RouteFromDhcp`, `resolveNextHop`, `learnArpPacket`, and `sendUdpPacketRouted`
+  - hosted regressions prove DHCP-driven route configuration, gateway ARP learning, routed off-subnet UDP delivery, and direct-subnet gateway bypass
+  - `scripts/baremetal-qemu-rtl8139-gateway-probe-check.ps1` proves live ARP-reply learning, ARP-cache population, gateway next-hop selection, direct-subnet bypass, and routed UDP delivery over the freestanding PVH image
 - deeper networking depth remains future work above the FS5.5 closure bar:
-  - ARP cache management
-  - gateway routing
   - retransmission/timeout handling
   - connection teardown and multi-flow session management
 - filesystem usage is now also on a real shared-backend path in `FS5.5`:

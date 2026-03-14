@@ -279,7 +279,7 @@ Notes:
 - strict Ethernet L2 closure did **not** imply ARP, IPv4, UDP, DHCP, DNS, or TCP closure; that gap is now closed for the FS5.5 acceptance bar
 - the strict networking slices above the raw-frame RTL8139 path are now complete locally:
   - `src/protocol/ethernet.zig` encodes and decodes Ethernet headers
-  - `src/protocol/arp.zig` encodes ARP request frames and decodes ARP frames
+  - `src/protocol/arp.zig` encodes ARP request/reply frames and decodes ARP frames
   - `src/protocol/ipv4.zig` encodes and decodes IPv4 headers and validates header checksums
   - `src/protocol/udp.zig` encodes and decodes UDP datagrams and validates pseudo-header checksums
   - `src/protocol/tcp.zig` now also provides a minimal session/state machine for client/server handshake and established payload exchange
@@ -292,13 +292,20 @@ Notes:
     - `pollUdpPacketStrictInto`
     - `sendTcpPacket`
     - `pollTcpPacketStrictInto`
-  - host regressions prove mock-device ARP, IPv4, UDP, DHCP, DNS, and TCP handshake/payload exchange through the RTL8139 path
+    - `configureIpv4Route`
+    - `configureIpv4RouteFromDhcp`
+    - `resolveNextHop`
+    - `learnArpPacket`
+    - `sendUdpPacketRouted`
+  - host regressions prove mock-device ARP, IPv4, UDP, DHCP, DNS, TCP handshake/payload exchange, DHCP-driven route configuration, gateway ARP learning, routed off-subnet UDP delivery, and direct-subnet UDP bypass through the RTL8139 path
   - live QEMU proofs now pass:
     - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1`
     - `scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1`
     - `scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1`
     - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1`
+    - `scripts/baremetal-qemu-rtl8139-gateway-probe-check.ps1`
   - those proofs now cover live ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, TCP `SYN -> SYN-ACK -> ACK` handshake plus payload exchange, and TX/RX counter advance over the freestanding PVH image
+  - the routed UDP proof now also covers live ARP-reply learning, ARP-cache population, gateway next-hop selection for off-subnet traffic, direct-subnet gateway bypass, and routed UDP delivery with the gateway MAC on the Ethernet frame while preserving the remote IPv4 destination
 - A real DHCP framing/decode slice is now also closed locally:
   - `src/protocol/dhcp.zig` provides strict DHCP discover encode/decode
   - `src/pal/net.zig` exposes DHCP send/poll helpers for the hosted/mock path
@@ -309,8 +316,6 @@ Notes:
   - host regressions prove DNS query encode/decode, DNS A-response decode, and strict rejection of non-DNS UDP frames over the mock RTL8139 path
   - `scripts/baremetal-qemu-rtl8139-dns-probe-check.ps1` now proves real RTL8139 TX/RX of a DNS query plus strict decode/validation of a DNS A response over the freestanding PVH artifact
 - deeper networking depth remains future work above the FS5.5 closure bar:
-  - ARP cache management
-  - gateway routing
   - retransmission/timeout handling
   - connection teardown and multi-flow session management
 

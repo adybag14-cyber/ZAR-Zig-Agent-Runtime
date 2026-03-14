@@ -79,6 +79,7 @@ const qemu_rtl8139_tcp_probe_ok_code: u8 = 0x3A;
 const qemu_rtl8139_dhcp_probe_ok_code: u8 = 0x3B;
 const qemu_rtl8139_dns_probe_ok_code: u8 = 0x3C;
 const qemu_tool_exec_probe_ok_code: u8 = 0x3D;
+const qemu_rtl8139_gateway_probe_ok_code: u8 = 0x3E;
 const build_options = if (builtin.is_test)
     struct {
         pub const qemu_smoke: bool = false;
@@ -93,6 +94,7 @@ const build_options = if (builtin.is_test)
         pub const rtl8139_dhcp_probe: bool = false;
         pub const rtl8139_dns_probe: bool = false;
         pub const tool_exec_probe: bool = false;
+        pub const rtl8139_gateway_probe: bool = false;
     }
 else
     @import("build_options");
@@ -108,6 +110,7 @@ const rtl8139_tcp_probe_enabled: bool = build_options.rtl8139_tcp_probe;
 const rtl8139_dhcp_probe_enabled: bool = build_options.rtl8139_dhcp_probe;
 const rtl8139_dns_probe_enabled: bool = build_options.rtl8139_dns_probe;
 const tool_exec_probe_enabled: bool = build_options.tool_exec_probe;
+const rtl8139_gateway_probe_enabled: bool = build_options.rtl8139_gateway_probe;
 
 const ata_probe_raw_lba: u32 = 300;
 const ata_probe_raw_block_count: u32 = 2;
@@ -180,6 +183,42 @@ const Rtl8139ArpProbeError = error{
     PacketOperationMismatch,
     PacketSenderMismatch,
     PacketTargetMismatch,
+    CounterMismatch,
+};
+
+const Rtl8139GatewayProbeError = error{
+    UnsupportedPlatform,
+    DeviceNotFound,
+    ResetTimeout,
+    BufferProgramFailed,
+    MacReadFailed,
+    DataPathEnableFailed,
+    StateMagicMismatch,
+    BackendMismatch,
+    InitFlagMismatch,
+    HardwareBackedMismatch,
+    IoBaseMismatch,
+    RouteUnconfigured,
+    UnexpectedGatewayBypass,
+    UnexpectedGatewayUse,
+    AddressUnresolved,
+    ArpRequestMissing,
+    ArpRequestTargetMismatch,
+    ArpRequestSenderMismatch,
+    ArpReplySendFailed,
+    ArpReplyMissing,
+    ArpReplyOperationMismatch,
+    ArpReplyTargetMismatch,
+    ArpLearnFailed,
+    PacketMissing,
+    PacketDestinationMismatch,
+    PacketSourceMismatch,
+    PacketProtocolMismatch,
+    PacketSenderMismatch,
+    PacketTargetMismatch,
+    PacketPortsMismatch,
+    PayloadMismatch,
+    FrameLengthMismatch,
     CounterMismatch,
 };
 
@@ -1520,6 +1559,10 @@ fn baremetalStart() callconv(.c) noreturn {
         runToolExecProbe() catch |err| qemuExit(toolExecProbeFailureCode(err));
         qemuExit(qemu_tool_exec_probe_ok_code);
     }
+    if (rtl8139_gateway_probe_enabled) {
+        runRtl8139GatewayProbe() catch |err| qemuExit(rtl8139GatewayProbeFailureCode(err));
+        qemuExit(qemu_rtl8139_gateway_probe_ok_code);
+    }
     ps2_input.init();
     tool_layout.init() catch unreachable;
     if (console_probe_banner_enabled) {
@@ -1763,6 +1806,176 @@ fn rtl8139ArpProbeFailureCode(err: Rtl8139ArpProbeError) u8 {
         error.PacketSenderMismatch => 0x85,
         error.PacketTargetMismatch => 0x86,
         error.CounterMismatch => 0x87,
+    };
+}
+
+fn runRtl8139GatewayProbe() Rtl8139GatewayProbeError!void {
+    rtl8139.initDetailed() catch |err| return switch (err) {
+        error.UnsupportedPlatform => error.UnsupportedPlatform,
+        error.DeviceNotFound => error.DeviceNotFound,
+        error.ResetTimeout => error.ResetTimeout,
+        error.BufferProgramFailed => error.BufferProgramFailed,
+        error.MacReadFailed => error.MacReadFailed,
+        error.DataPathEnableFailed => error.DataPathEnableFailed,
+    };
+
+    const eth = oc_ethernet_state_ptr();
+    if (eth.magic != abi.ethernet_magic) return error.StateMagicMismatch;
+    if (eth.backend != abi.ethernet_backend_rtl8139) return error.BackendMismatch;
+    if (eth.initialized == 0) return error.InitFlagMismatch;
+    if (!builtin.is_test and eth.hardware_backed == 0) return error.HardwareBackedMismatch;
+    if (eth.io_base == 0) return error.IoBaseMismatch;
+
+    pal_net.clearRouteState();
+    const local_ip = [4]u8{ 192, 168, 56, 10 };
+    const gateway_ip = [4]u8{ 192, 168, 56, 1 };
+    const remote_ip = [4]u8{ 1, 1, 1, 1 };
+    const local_peer_ip = [4]u8{ 192, 168, 56, 77 };
+    const gateway_mac = [6]u8{ 0x02, 0xAA, 0xBB, 0xCC, 0xDD, 0x01 };
+    const local_peer_mac = [6]u8{ 0x02, 0x10, 0x20, 0x30, 0x40, 0x50 };
+    const remote_payload = "ROUTED-UDP";
+    const local_payload = "DIRECT-UDP";
+    pal_net.configureIpv4Route(local_ip, .{ 255, 255, 255, 0 }, gateway_ip);
+    if (!pal_net.routeStatePtr().configured) return error.RouteUnconfigured;
+
+    const remote_route = pal_net.resolveNextHop(remote_ip) catch return error.RouteUnconfigured;
+    if (!remote_route.used_gateway) return error.UnexpectedGatewayBypass;
+    if (!std.mem.eql(u8, gateway_ip[0..], remote_route.next_hop_ip[0..])) return error.UnexpectedGatewayBypass;
+
+    _ = pal_net.sendUdpPacketRouted(remote_ip, 54000, 53, remote_payload) catch |err| switch (err) {
+        error.AddressUnresolved => {},
+        error.RouteUnconfigured => return error.RouteUnconfigured,
+        else => return error.AddressUnresolved,
+    };
+
+    var attempts: usize = 0;
+    var arp_packet_opt: ?pal_net.ArpPacket = null;
+    while (attempts < 20_000) : (attempts += 1) {
+        arp_packet_opt = pal_net.pollArpPacket() catch return error.ArpRequestMissing;
+        if (arp_packet_opt != null) break;
+        spinPause(1);
+    }
+    const request_packet = arp_packet_opt orelse return error.ArpRequestMissing;
+    if (!std.mem.eql(u8, gateway_ip[0..], request_packet.target_ip[0..])) return error.ArpRequestTargetMismatch;
+    if (!std.mem.eql(u8, local_ip[0..], request_packet.sender_ip[0..])) return error.ArpRequestSenderMismatch;
+    if (pal_net.learnArpPacket(request_packet)) return error.ArpLearnFailed;
+
+    var reply_frame: [arp_protocol.frame_len]u8 = undefined;
+    const reply_len = arp_protocol.encodeReplyFrame(reply_frame[0..], gateway_mac, gateway_ip, eth.mac, local_ip) catch return error.ArpReplySendFailed;
+    pal_net.sendFrame(reply_frame[0..reply_len]) catch return error.ArpReplySendFailed;
+    attempts = 0;
+    arp_packet_opt = null;
+    while (attempts < 20_000) : (attempts += 1) {
+        arp_packet_opt = pal_net.pollArpPacket() catch return error.ArpReplyMissing;
+        if (arp_packet_opt != null) break;
+        spinPause(1);
+    }
+    const reply_packet = arp_packet_opt orelse return error.ArpReplyMissing;
+    if (reply_packet.operation != arp_protocol.operation_reply) return error.ArpReplyOperationMismatch;
+    if (!std.mem.eql(u8, local_ip[0..], reply_packet.target_ip[0..])) return error.ArpReplyTargetMismatch;
+    if (!pal_net.learnArpPacket(reply_packet)) return error.ArpLearnFailed;
+
+    const expected_remote_wire_len: u32 = ethernet_protocol.header_len + ipv4_protocol.header_len + udp_protocol.header_len + remote_payload.len;
+    const expected_remote_frame_len: u32 = @max(expected_remote_wire_len, 60);
+    if ((pal_net.sendUdpPacketRouted(remote_ip, 54000, 53, remote_payload) catch return error.AddressUnresolved) != expected_remote_wire_len) {
+        return error.AddressUnresolved;
+    }
+
+    var packet_received = false;
+    var routed_packet_storage: pal_net.UdpPacket = undefined;
+    attempts = 0;
+    while (attempts < 20_000) : (attempts += 1) {
+        packet_received = pal_net.pollUdpPacketStrictInto(&routed_packet_storage) catch return error.PacketMissing;
+        if (packet_received) break;
+        spinPause(1);
+    }
+    if (!packet_received) return error.PacketMissing;
+    const routed_packet = &routed_packet_storage;
+    if (!std.mem.eql(u8, gateway_mac[0..], routed_packet.ethernet_destination[0..])) return error.PacketDestinationMismatch;
+    if (!std.mem.eql(u8, eth.mac[0..], routed_packet.ethernet_source[0..])) return error.PacketSourceMismatch;
+    if (routed_packet.ipv4_header.protocol != ipv4_protocol.protocol_udp) return error.PacketProtocolMismatch;
+    if (!std.mem.eql(u8, local_ip[0..], routed_packet.ipv4_header.source_ip[0..])) return error.PacketSenderMismatch;
+    if (!std.mem.eql(u8, remote_ip[0..], routed_packet.ipv4_header.destination_ip[0..])) return error.PacketTargetMismatch;
+    if (routed_packet.source_port != 54000 or routed_packet.destination_port != 53) return error.PacketPortsMismatch;
+    if (!std.mem.eql(u8, remote_payload, routed_packet.payload[0..routed_packet.payload_len])) return error.PayloadMismatch;
+    if (eth.last_rx_len != expected_remote_frame_len) return error.FrameLengthMismatch;
+    if (!pal_net.routeStatePtr().last_used_gateway or !pal_net.routeStatePtr().last_cache_hit) return error.UnexpectedGatewayBypass;
+
+    var local_reply_frame: [arp_protocol.frame_len]u8 = undefined;
+    const local_reply_len = arp_protocol.encodeReplyFrame(local_reply_frame[0..], local_peer_mac, local_peer_ip, eth.mac, local_ip) catch return error.ArpReplySendFailed;
+    pal_net.sendFrame(local_reply_frame[0..local_reply_len]) catch return error.ArpReplySendFailed;
+    attempts = 0;
+    arp_packet_opt = null;
+    while (attempts < 20_000) : (attempts += 1) {
+        arp_packet_opt = pal_net.pollArpPacket() catch return error.ArpReplyMissing;
+        if (arp_packet_opt != null) break;
+        spinPause(1);
+    }
+    const local_reply_packet = arp_packet_opt orelse return error.ArpReplyMissing;
+    if (!pal_net.learnArpPacket(local_reply_packet)) return error.ArpLearnFailed;
+
+    const local_route = pal_net.resolveNextHop(local_peer_ip) catch return error.RouteUnconfigured;
+    if (local_route.used_gateway) return error.UnexpectedGatewayUse;
+
+    const expected_local_wire_len: u32 = ethernet_protocol.header_len + ipv4_protocol.header_len + udp_protocol.header_len + local_payload.len;
+    const expected_local_frame_len: u32 = @max(expected_local_wire_len, 60);
+    if ((pal_net.sendUdpPacketRouted(local_peer_ip, 54001, 9001, local_payload) catch return error.AddressUnresolved) != expected_local_wire_len) {
+        return error.AddressUnresolved;
+    }
+
+    packet_received = false;
+    attempts = 0;
+    while (attempts < 20_000) : (attempts += 1) {
+        packet_received = pal_net.pollUdpPacketStrictInto(&routed_packet_storage) catch return error.PacketMissing;
+        if (packet_received) break;
+        spinPause(1);
+    }
+    if (!packet_received) return error.PacketMissing;
+    if (!std.mem.eql(u8, local_peer_mac[0..], routed_packet_storage.ethernet_destination[0..])) return error.PacketDestinationMismatch;
+    if (!std.mem.eql(u8, local_ip[0..], routed_packet_storage.ipv4_header.source_ip[0..])) return error.PacketSenderMismatch;
+    if (!std.mem.eql(u8, local_peer_ip[0..], routed_packet_storage.ipv4_header.destination_ip[0..])) return error.PacketTargetMismatch;
+    if (routed_packet_storage.source_port != 54001 or routed_packet_storage.destination_port != 9001) return error.PacketPortsMismatch;
+    if (!std.mem.eql(u8, local_payload, routed_packet_storage.payload[0..routed_packet_storage.payload_len])) return error.PayloadMismatch;
+    if (eth.last_rx_len != expected_local_frame_len) return error.FrameLengthMismatch;
+    if (pal_net.routeStatePtr().last_used_gateway or !pal_net.routeStatePtr().last_cache_hit) return error.UnexpectedGatewayUse;
+    if (eth.tx_packets < 5 or eth.rx_packets < 5) return error.CounterMismatch;
+}
+
+fn rtl8139GatewayProbeFailureCode(err: Rtl8139GatewayProbeError) u8 {
+    return switch (err) {
+        error.UnsupportedPlatform => 0x91,
+        error.DeviceNotFound => 0x92,
+        error.ResetTimeout => 0x93,
+        error.BufferProgramFailed => 0x94,
+        error.MacReadFailed => 0x95,
+        error.DataPathEnableFailed => 0x96,
+        error.StateMagicMismatch => 0x97,
+        error.BackendMismatch => 0x98,
+        error.InitFlagMismatch => 0x99,
+        error.HardwareBackedMismatch => 0x9A,
+        error.IoBaseMismatch => 0x9B,
+        error.RouteUnconfigured => 0x9C,
+        error.UnexpectedGatewayBypass => 0x9D,
+        error.UnexpectedGatewayUse => 0x9E,
+        error.AddressUnresolved => 0x9F,
+        error.ArpRequestMissing => 0xA0,
+        error.ArpRequestTargetMismatch => 0xA1,
+        error.ArpRequestSenderMismatch => 0xA2,
+        error.ArpReplySendFailed => 0xA3,
+        error.ArpReplyMissing => 0xA4,
+        error.ArpReplyOperationMismatch => 0xA5,
+        error.ArpReplyTargetMismatch => 0xA6,
+        error.ArpLearnFailed => 0xA7,
+        error.PacketMissing => 0xA8,
+        error.PacketDestinationMismatch => 0xA9,
+        error.PacketSourceMismatch => 0xAA,
+        error.PacketProtocolMismatch => 0xAB,
+        error.PacketSenderMismatch => 0xAC,
+        error.PacketTargetMismatch => 0xAD,
+        error.PacketPortsMismatch => 0xAE,
+        error.PayloadMismatch => 0xAF,
+        error.FrameLengthMismatch => 0xB0,
+        error.CounterMismatch => 0xB1,
     };
 }
 
@@ -10877,6 +11090,14 @@ test "baremetal rtl8139 dns probe succeeds through mock device" {
     defer rtl8139.testDisableMockDevice();
 
     try runRtl8139DnsProbe();
+}
+
+test "baremetal rtl8139 gateway routing probe succeeds through mock device" {
+    resetBaremetalRuntimeForTest();
+    rtl8139.testEnableMockDevice();
+    defer rtl8139.testDisableMockDevice();
+
+    try runRtl8139GatewayProbe();
 }
 
 test "baremetal tool exec probe succeeds through pal proc freestanding path" {

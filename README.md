@@ -64,9 +64,12 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
     - `src/protocol/dns.zig` provides strict DNS query and A-response encode/decode
     - `src/pal/net.zig` exposes `sendDnsQuery`, `pollDnsPacket`, and `pollDnsPacketStrictInto`
     - `scripts/baremetal-qemu-rtl8139-dns-probe-check.ps1` now proves real RTL8139 TX/RX of a DNS query and strict decode of a DNS A response with checksum, question, and answer validation
+  - ARP cache + gateway routing are now also proven on the real RTL8139 path:
+    - `src/protocol/arp.zig` now also encodes ARP reply frames
+    - `src/pal/net.zig` now exposes `configureIpv4Route`, `configureIpv4RouteFromDhcp`, `resolveNextHop`, `learnArpPacket`, and `sendUdpPacketRouted`
+    - hosted regressions prove DHCP-driven route configuration, gateway ARP learning, routed off-subnet UDP delivery, and direct-subnet gateway bypass
+    - `scripts/baremetal-qemu-rtl8139-gateway-probe-check.ps1` now proves live ARP-reply learning, ARP-cache population, gateway next-hop selection, direct-subnet bypass, and routed UDP delivery over the freestanding PVH artifact
   - deeper networking depth remains open above the FS5.5 closure bar:
-    - ARP cache management
-    - gateway routing
     - retransmission/timeout handling
     - connection teardown and multi-flow session management
   - path-based filesystem usage is now locally strict-closed:

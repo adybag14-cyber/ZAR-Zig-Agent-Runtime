@@ -30,6 +30,13 @@ pub const DnsError = rtl8139.Error || ethernet.Error || ipv4.Error || udp.Error 
 pub const Ipv4Error = rtl8139.Error || ethernet.Error || ipv4.Error;
 pub const TcpError = rtl8139.Error || ethernet.Error || ipv4.Error || tcp.Error;
 pub const UdpError = rtl8139.Error || ethernet.Error || ipv4.Error || udp.Error;
+pub const RouteError = error{
+    RouteUnconfigured,
+    MissingLeaseIp,
+    MissingSubnetMask,
+    AddressUnresolved,
+};
+pub const RoutedUdpError = UdpError || RouteError;
 pub const StrictDhcpPollError = rtl8139.Error || ethernet.Error || ipv4.Error || udp.Error || dhcp.Error || error{ NotIpv4, NotUdp, NotDhcp };
 pub const StrictDnsPollError = rtl8139.Error || ethernet.Error || ipv4.Error || udp.Error || dns.Error || error{ NotIpv4, NotUdp, NotDns };
 pub const StrictIpv4PollError = rtl8139.Error || ethernet.Error || ipv4.Error || error{NotIpv4};
@@ -46,6 +53,7 @@ pub const max_dhcp_dns_servers: usize = 2;
 pub const max_dns_name_len: usize = dns.max_name_len;
 pub const max_dns_answers: usize = dns.max_answers;
 pub const max_dns_answer_data_len: usize = dns.max_answer_data_len;
+pub const arp_cache_capacity: usize = 8;
 
 pub const Ipv4Packet = struct {
     ethernet_destination: [ethernet.mac_len]u8,
@@ -143,6 +151,209 @@ pub const DnsPacket = struct {
     answer_count: usize,
     answers: [max_dns_answers]dns.Answer,
 };
+
+pub const ArpCacheEntry = struct {
+    valid: bool,
+    ip: [4]u8,
+    mac: [ethernet.mac_len]u8,
+};
+
+pub const RouteDecision = struct {
+    next_hop_ip: [4]u8,
+    used_gateway: bool,
+};
+
+pub const RouteState = struct {
+    configured: bool,
+    local_ip: [4]u8,
+    subnet_mask_valid: bool,
+    subnet_mask: [4]u8,
+    gateway_valid: bool,
+    gateway: [4]u8,
+    last_next_hop: [4]u8,
+    last_used_gateway: bool,
+    last_cache_hit: bool,
+    pending_resolution: bool,
+    pending_ip: [4]u8,
+    cache_entry_count: usize,
+    cache: [arp_cache_capacity]ArpCacheEntry,
+};
+
+fn defaultRouteState() RouteState {
+    return .{
+        .configured = false,
+        .local_ip = [_]u8{ 0, 0, 0, 0 },
+        .subnet_mask_valid = false,
+        .subnet_mask = [_]u8{ 0, 0, 0, 0 },
+        .gateway_valid = false,
+        .gateway = [_]u8{ 0, 0, 0, 0 },
+        .last_next_hop = [_]u8{ 0, 0, 0, 0 },
+        .last_used_gateway = false,
+        .last_cache_hit = false,
+        .pending_resolution = false,
+        .pending_ip = [_]u8{ 0, 0, 0, 0 },
+        .cache_entry_count = 0,
+        .cache = [_]ArpCacheEntry{.{
+            .valid = false,
+            .ip = [_]u8{ 0, 0, 0, 0 },
+            .mac = [_]u8{ 0, 0, 0, 0, 0, 0 },
+        }} ** arp_cache_capacity,
+    };
+}
+
+var route_state: RouteState = defaultRouteState();
+var route_cache_insert_index: usize = 0;
+
+fn ipv4IsZero(ip: [4]u8) bool {
+    return std.mem.eql(u8, ip[0..], &[_]u8{ 0, 0, 0, 0 });
+}
+
+fn macIsZero(mac: [ethernet.mac_len]u8) bool {
+    return std.mem.eql(u8, mac[0..], &[_]u8{ 0, 0, 0, 0, 0, 0 });
+}
+
+fn sameSubnet(local_ip: [4]u8, destination_ip: [4]u8, subnet_mask: [4]u8) bool {
+    var index: usize = 0;
+    while (index < 4) : (index += 1) {
+        if ((local_ip[index] & subnet_mask[index]) != (destination_ip[index] & subnet_mask[index])) return false;
+    }
+    return true;
+}
+
+fn arpCacheIndexFor(ip: [4]u8) ?usize {
+    var index: usize = 0;
+    while (index < route_state.cache.len) : (index += 1) {
+        if (route_state.cache[index].valid and std.mem.eql(u8, route_state.cache[index].ip[0..], ip[0..])) {
+            return index;
+        }
+    }
+    return null;
+}
+
+fn arpCacheUpsert(ip: [4]u8, mac: [ethernet.mac_len]u8) void {
+    if (arpCacheIndexFor(ip)) |existing_index| {
+        route_state.cache[existing_index].mac = mac;
+        return;
+    }
+
+    const insert_index = route_cache_insert_index;
+    const was_valid = route_state.cache[insert_index].valid;
+    route_state.cache[insert_index] = .{
+        .valid = true,
+        .ip = ip,
+        .mac = mac,
+    };
+    if (!was_valid and route_state.cache_entry_count < route_state.cache.len) {
+        route_state.cache_entry_count += 1;
+    }
+    route_cache_insert_index = (route_cache_insert_index + 1) % route_state.cache.len;
+}
+
+pub fn clearRouteState() void {
+    route_state = defaultRouteState();
+    route_cache_insert_index = 0;
+}
+
+pub fn clearRouteStateForTest() void {
+    if (!builtin.is_test) return;
+    clearRouteState();
+}
+
+pub fn routeStatePtr() *const RouteState {
+    return &route_state;
+}
+
+pub fn configureIpv4Route(local_ip: [4]u8, subnet_mask: ?[4]u8, gateway: ?[4]u8) void {
+    route_state.configured = true;
+    route_state.local_ip = local_ip;
+    route_state.subnet_mask_valid = subnet_mask != null;
+    route_state.subnet_mask = subnet_mask orelse [_]u8{ 0, 0, 0, 0 };
+    route_state.gateway_valid = gateway != null and !ipv4IsZero(gateway.?);
+    route_state.gateway = gateway orelse [_]u8{ 0, 0, 0, 0 };
+    route_state.last_next_hop = [_]u8{ 0, 0, 0, 0 };
+    route_state.last_used_gateway = false;
+    route_state.last_cache_hit = false;
+    route_state.pending_resolution = false;
+    route_state.pending_ip = [_]u8{ 0, 0, 0, 0 };
+}
+
+pub fn configureIpv4RouteFromDhcp(packet: *const DhcpPacket) RouteError!void {
+    if (ipv4IsZero(packet.your_ip)) return error.MissingLeaseIp;
+    if (!packet.subnet_mask_valid) return error.MissingSubnetMask;
+    const gateway: ?[4]u8 = if (packet.router_valid and !ipv4IsZero(packet.router)) packet.router else null;
+    configureIpv4Route(packet.your_ip, packet.subnet_mask, gateway);
+}
+
+pub fn resolveNextHop(destination_ip: [4]u8) RouteError!RouteDecision {
+    if (!route_state.configured) return error.RouteUnconfigured;
+
+    const used_gateway = route_state.subnet_mask_valid and route_state.gateway_valid and
+        !sameSubnet(route_state.local_ip, destination_ip, route_state.subnet_mask);
+    const next_hop_ip = if (used_gateway) route_state.gateway else destination_ip;
+    route_state.last_next_hop = next_hop_ip;
+    route_state.last_used_gateway = used_gateway;
+    route_state.last_cache_hit = false;
+    return .{
+        .next_hop_ip = next_hop_ip,
+        .used_gateway = used_gateway,
+    };
+}
+
+pub fn lookupArpCache(ip: [4]u8) ?[ethernet.mac_len]u8 {
+    if (arpCacheIndexFor(ip)) |index| {
+        route_state.last_cache_hit = true;
+        return route_state.cache[index].mac;
+    }
+    route_state.last_cache_hit = false;
+    return null;
+}
+
+pub fn learnArpPacket(packet: ArpPacket) bool {
+    if (ipv4IsZero(packet.sender_ip) or macIsZero(packet.sender_mac)) return false;
+    if (route_state.configured and
+        std.mem.eql(u8, route_state.local_ip[0..], packet.sender_ip[0..]) and
+        std.mem.eql(u8, macAddress()[0..], packet.sender_mac[0..]))
+    {
+        return false;
+    }
+
+    arpCacheUpsert(packet.sender_ip, packet.sender_mac);
+    if (std.mem.eql(u8, route_state.pending_ip[0..], packet.sender_ip[0..])) {
+        route_state.pending_resolution = false;
+    }
+    return true;
+}
+
+pub fn sendUdpPacketRouted(
+    destination_ip: [4]u8,
+    source_port: u16,
+    destination_port: u16,
+    payload: []const u8,
+) RoutedUdpError!u32 {
+    const route = try resolveNextHop(destination_ip);
+    if (lookupArpCache(route.next_hop_ip)) |destination_mac| {
+        return try sendUdpPacket(
+            destination_mac,
+            route_state.local_ip,
+            destination_ip,
+            source_port,
+            destination_port,
+            payload,
+        );
+    }
+
+    _ = sendArpRequest(route_state.local_ip, route.next_hop_ip) catch |err| switch (err) {
+        error.BufferTooSmall => unreachable,
+        error.NotAvailable => return error.NotAvailable,
+        error.NotInitialized => return error.NotInitialized,
+        error.Timeout => return error.Timeout,
+        error.HardwareFault => return error.HardwareFault,
+        else => return error.HardwareFault,
+    };
+    route_state.pending_resolution = true;
+    route_state.pending_ip = route.next_hop_ip;
+    return error.AddressUnresolved;
+}
 
 pub fn post(
     allocator: std.mem.Allocator,
@@ -979,6 +1190,102 @@ test "baremetal net pal sends and parses dhcp discover through rtl8139 mock devi
     try std.testing.expect(packet.max_message_size_valid);
     try std.testing.expectEqual(@as(u16, 1500), packet.max_message_size);
     try std.testing.expect(packet.udp_checksum_value != 0);
+}
+
+test "baremetal net pal configures route state from dhcp lease" {
+    clearRouteStateForTest();
+    defer clearRouteStateForTest();
+
+    var packet: DhcpPacket = std.mem.zeroes(DhcpPacket);
+    packet.your_ip = .{ 192, 168, 56, 10 };
+    packet.subnet_mask_valid = true;
+    packet.subnet_mask = .{ 255, 255, 255, 0 };
+    packet.router_valid = true;
+    packet.router = .{ 192, 168, 56, 1 };
+
+    try configureIpv4RouteFromDhcp(&packet);
+
+    const state = routeStatePtr().*;
+    try std.testing.expect(state.configured);
+    try std.testing.expect(state.subnet_mask_valid);
+    try std.testing.expect(state.gateway_valid);
+    try std.testing.expectEqualSlices(u8, packet.your_ip[0..], state.local_ip[0..]);
+    try std.testing.expectEqualSlices(u8, packet.subnet_mask[0..], state.subnet_mask[0..]);
+    try std.testing.expectEqualSlices(u8, packet.router[0..], state.gateway[0..]);
+}
+
+test "baremetal net pal routes off-subnet udp via learned gateway arp entry" {
+    rtl8139.testEnableMockDevice();
+    defer rtl8139.testDisableMockDevice();
+    clearRouteStateForTest();
+    defer clearRouteStateForTest();
+
+    try std.testing.expect(initDevice());
+    const local_ip = [4]u8{ 192, 168, 56, 10 };
+    const remote_ip = [4]u8{ 1, 1, 1, 1 };
+    const gateway_ip = [4]u8{ 192, 168, 56, 1 };
+    const gateway_mac = [6]u8{ 0x02, 0xAA, 0xBB, 0xCC, 0xDD, 0x01 };
+    const payload = "ROUTED-UDP";
+    configureIpv4Route(local_ip, .{ 255, 255, 255, 0 }, gateway_ip);
+
+    try std.testing.expectError(error.AddressUnresolved, sendUdpPacketRouted(remote_ip, 54000, 53, payload));
+    const request_packet = (try pollArpPacket()).?;
+    try std.testing.expectEqual(arp.operation_request, request_packet.operation);
+    try std.testing.expectEqualSlices(u8, gateway_ip[0..], request_packet.target_ip[0..]);
+    try std.testing.expectEqualSlices(u8, local_ip[0..], request_packet.sender_ip[0..]);
+    try std.testing.expect(!learnArpPacket(request_packet));
+
+    var reply_frame: [arp.frame_len]u8 = undefined;
+    const reply_len = try arp.encodeReplyFrame(reply_frame[0..], gateway_mac, gateway_ip, macAddress(), local_ip);
+    try sendFrame(reply_frame[0..reply_len]);
+    const reply_packet = (try pollArpPacket()).?;
+    try std.testing.expectEqual(arp.operation_reply, reply_packet.operation);
+    try std.testing.expect(learnArpPacket(reply_packet));
+
+    const expected_wire_len: u32 = ethernet.header_len + ipv4.header_len + udp.header_len + payload.len;
+    try std.testing.expectEqual(expected_wire_len, try sendUdpPacketRouted(remote_ip, 54000, 53, payload));
+
+    const packet = (try pollUdpPacketStrict()).?;
+    try std.testing.expectEqualSlices(u8, gateway_mac[0..], packet.ethernet_destination[0..]);
+    try std.testing.expectEqualSlices(u8, local_ip[0..], packet.ipv4_header.source_ip[0..]);
+    try std.testing.expectEqualSlices(u8, remote_ip[0..], packet.ipv4_header.destination_ip[0..]);
+    try std.testing.expectEqualSlices(u8, payload, packet.payload[0..packet.payload_len]);
+    try std.testing.expect(routeStatePtr().last_used_gateway);
+    try std.testing.expect(routeStatePtr().last_cache_hit);
+    try std.testing.expect(!routeStatePtr().pending_resolution);
+    try std.testing.expectEqual(@as(usize, 1), routeStatePtr().cache_entry_count);
+}
+
+test "baremetal net pal routes local-subnet udp directly after arp learning" {
+    rtl8139.testEnableMockDevice();
+    defer rtl8139.testDisableMockDevice();
+    clearRouteStateForTest();
+    defer clearRouteStateForTest();
+
+    try std.testing.expect(initDevice());
+    const local_ip = [4]u8{ 192, 168, 56, 10 };
+    const peer_ip = [4]u8{ 192, 168, 56, 77 };
+    const peer_mac = [6]u8{ 0x02, 0x10, 0x20, 0x30, 0x40, 0x50 };
+    const gateway_ip = [4]u8{ 192, 168, 56, 1 };
+    const payload = "DIRECT-UDP";
+    configureIpv4Route(local_ip, .{ 255, 255, 255, 0 }, gateway_ip);
+
+    var reply_frame: [arp.frame_len]u8 = undefined;
+    const reply_len = try arp.encodeReplyFrame(reply_frame[0..], peer_mac, peer_ip, macAddress(), local_ip);
+    try sendFrame(reply_frame[0..reply_len]);
+    const reply_packet = (try pollArpPacket()).?;
+    try std.testing.expect(learnArpPacket(reply_packet));
+
+    const expected_wire_len: u32 = ethernet.header_len + ipv4.header_len + udp.header_len + payload.len;
+    try std.testing.expectEqual(expected_wire_len, try sendUdpPacketRouted(peer_ip, 54001, 9001, payload));
+
+    const packet = (try pollUdpPacketStrict()).?;
+    try std.testing.expectEqualSlices(u8, peer_mac[0..], packet.ethernet_destination[0..]);
+    try std.testing.expectEqualSlices(u8, local_ip[0..], packet.ipv4_header.source_ip[0..]);
+    try std.testing.expectEqualSlices(u8, peer_ip[0..], packet.ipv4_header.destination_ip[0..]);
+    try std.testing.expectEqualSlices(u8, payload, packet.payload[0..packet.payload_len]);
+    try std.testing.expect(!routeStatePtr().last_used_gateway);
+    try std.testing.expect(routeStatePtr().last_cache_hit);
 }
 
 test "baremetal net pal sends and parses dns query through rtl8139 mock device" {
