@@ -291,6 +291,7 @@ const Rtl8139TcpProbeError = error{
     PayloadMismatch,
     FrameLengthMismatch,
     CounterMismatch,
+    SessionStateMismatch,
 };
 
 const Rtl8139DhcpProbeError = error{
@@ -2099,6 +2100,99 @@ fn rtl8139UdpProbeFailureCode(err: Rtl8139UdpProbeError) u8 {
     };
 }
 
+fn mapTcpSessionProbeError(err: tcp_protocol.Error) Rtl8139TcpProbeError {
+    return switch (err) {
+        error.InvalidState => error.SessionStateMismatch,
+        error.UnexpectedFlags => error.PacketFlagsMismatch,
+        error.PortMismatch => error.PacketPortsMismatch,
+        error.SequenceMismatch => error.PacketSequenceMismatch,
+        error.AcknowledgmentMismatch => error.PacketAcknowledgmentMismatch,
+        error.EmptyPayload => error.PayloadMismatch,
+        else => error.LastTcpDecodeFailed,
+    };
+}
+
+fn tcpPacketView(packet: *const pal_net.TcpPacket) tcp_protocol.Packet {
+    return .{
+        .source_port = packet.source_port,
+        .destination_port = packet.destination_port,
+        .sequence_number = packet.sequence_number,
+        .acknowledgment_number = packet.acknowledgment_number,
+        .data_offset_bytes = tcp_protocol.header_len,
+        .flags = packet.flags,
+        .window_size = packet.window_size,
+        .checksum_value = packet.checksum_value,
+        .urgent_pointer = packet.urgent_pointer,
+        .payload = packet.payload[0..packet.payload_len],
+    };
+}
+
+fn pollTcpProbePacket(eth: *const BaremetalEthernetState, result: *pal_net.TcpPacket) Rtl8139TcpProbeError!void {
+    var attempts: usize = 0;
+    while (attempts < 20_000) : (attempts += 1) {
+        if (pal_net.pollTcpPacketStrictInto(result)) |packet_received| {
+            if (packet_received) return;
+        } else |err| {
+            return switch (err) {
+                error.NotIpv4 => error.LastFrameNotIpv4,
+                error.NotTcp => error.LastPacketNotTcp,
+                error.FrameTooShort, error.PacketTooShort => error.LastFrameTooShort,
+                error.InvalidVersion, error.UnsupportedOptions, error.InvalidTotalLength, error.HeaderChecksumMismatch => error.LastIpv4DecodeFailed,
+                error.InvalidDataOffset, error.ChecksumMismatch => error.LastTcpDecodeFailed,
+                else => error.PacketMissing,
+            };
+        }
+        spinPause(1);
+    }
+    return classifyTcpProbeTimeout(eth);
+}
+
+fn sendTcpProbeSegment(
+    source_ip: [4]u8,
+    destination_ip: [4]u8,
+    source_port: u16,
+    destination_port: u16,
+    outbound: tcp_protocol.Outbound,
+) Rtl8139TcpProbeError!u32 {
+    const expected_wire_len: u32 = @as(u32, @intCast(ethernet_protocol.header_len + ipv4_protocol.header_len + tcp_protocol.header_len + outbound.payload.len));
+    const sent = pal_net.sendTcpPacket(
+        ethernet_protocol.broadcast_mac,
+        source_ip,
+        destination_ip,
+        source_port,
+        destination_port,
+        outbound.sequence_number,
+        outbound.acknowledgment_number,
+        outbound.flags,
+        outbound.window_size,
+        outbound.payload,
+    ) catch return error.TxFailed;
+    if (sent != expected_wire_len) return error.TxFailed;
+    return @max(expected_wire_len, 60);
+}
+
+fn expectTcpProbePacket(
+    packet: *const pal_net.TcpPacket,
+    expected_source_mac: [ethernet_protocol.mac_len]u8,
+    expected_source_ip: [4]u8,
+    expected_destination_ip: [4]u8,
+    expected_source_port: u16,
+    expected_destination_port: u16,
+    expected: tcp_protocol.Outbound,
+) Rtl8139TcpProbeError!void {
+    if (!std.mem.eql(u8, ethernet_protocol.broadcast_mac[0..], packet.ethernet_destination[0..])) return error.PacketDestinationMismatch;
+    if (!std.mem.eql(u8, expected_source_mac[0..], packet.ethernet_source[0..])) return error.PacketSourceMismatch;
+    if (packet.ipv4_header.protocol != ipv4_protocol.protocol_tcp) return error.PacketProtocolMismatch;
+    if (!std.mem.eql(u8, expected_source_ip[0..], packet.ipv4_header.source_ip[0..])) return error.PacketSenderMismatch;
+    if (!std.mem.eql(u8, expected_destination_ip[0..], packet.ipv4_header.destination_ip[0..])) return error.PacketTargetMismatch;
+    if (packet.source_port != expected_source_port or packet.destination_port != expected_destination_port) return error.PacketPortsMismatch;
+    if (packet.sequence_number != expected.sequence_number) return error.PacketSequenceMismatch;
+    if (packet.acknowledgment_number != expected.acknowledgment_number) return error.PacketAcknowledgmentMismatch;
+    if (packet.flags != expected.flags) return error.PacketFlagsMismatch;
+    if (packet.window_size != expected.window_size) return error.WindowSizeMismatch;
+    if (!std.mem.eql(u8, expected.payload, packet.payload[0..packet.payload_len])) return error.PayloadMismatch;
+}
+
 fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     rtl8139.initDetailed() catch |err| return switch (err) {
         error.UnsupportedPlatform => error.UnsupportedPlatform,
@@ -2119,49 +2213,37 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const destination_ip = [4]u8{ 192, 168, 56, 1 };
     const source_port: u16 = 4321;
     const destination_port: u16 = 443;
-    const sequence_number: u32 = 0x0102_0304;
-    const acknowledgment_number: u32 = 0xA0B0_C0D0;
-    const flags: u16 = tcp_protocol.flag_ack | tcp_protocol.flag_psh;
-    const window_size: u16 = 8192;
     const payload = "OPENCLAW-TCP";
-    const expected_wire_len: u32 = ethernet_protocol.header_len + ipv4_protocol.header_len + tcp_protocol.header_len + payload.len;
-    const expected_frame_len: u32 = @max(expected_wire_len, 60);
-    if ((pal_net.sendTcpPacket(ethernet_protocol.broadcast_mac, source_ip, destination_ip, source_port, destination_port, sequence_number, acknowledgment_number, flags, window_size, payload) catch return error.TxFailed) != expected_wire_len) {
-        return error.TxFailed;
-    }
-    var attempts: usize = 0;
-    var packet_received = false;
+    const server_window_size: u16 = 8192;
+    var client = tcp_protocol.Session.initClient(source_port, destination_port, 0x0102_0304, 4096);
+    var server = tcp_protocol.Session.initServer(destination_port, source_port, 0xA0B0_C0D0, server_window_size);
     var packet_storage: pal_net.TcpPacket = undefined;
-    while (attempts < 20_000) : (attempts += 1) {
-        packet_received = pal_net.pollTcpPacketStrictInto(&packet_storage) catch |err| return switch (err) {
-            error.NotIpv4 => error.LastFrameNotIpv4,
-            error.NotTcp => error.LastPacketNotTcp,
-            error.FrameTooShort, error.PacketTooShort => error.LastFrameTooShort,
-            error.InvalidVersion, error.UnsupportedOptions, error.InvalidTotalLength, error.HeaderChecksumMismatch => error.LastIpv4DecodeFailed,
-            error.InvalidDataOffset, error.ChecksumMismatch => error.LastTcpDecodeFailed,
-            else => error.PacketMissing,
-        };
-        if (packet_received) break;
-        spinPause(1);
-    }
-    if (packet_received) {
-        const packet = &packet_storage;
-        if (!std.mem.eql(u8, ethernet_protocol.broadcast_mac[0..], packet.ethernet_destination[0..])) return error.PacketDestinationMismatch;
-        if (!std.mem.eql(u8, eth.mac[0..], packet.ethernet_source[0..])) return error.PacketSourceMismatch;
-        if (packet.ipv4_header.protocol != ipv4_protocol.protocol_tcp) return error.PacketProtocolMismatch;
-        if (!std.mem.eql(u8, source_ip[0..], packet.ipv4_header.source_ip[0..])) return error.PacketSenderMismatch;
-        if (!std.mem.eql(u8, destination_ip[0..], packet.ipv4_header.destination_ip[0..])) return error.PacketTargetMismatch;
-        if (packet.source_port != source_port or packet.destination_port != destination_port) return error.PacketPortsMismatch;
-        if (packet.sequence_number != sequence_number) return error.PacketSequenceMismatch;
-        if (packet.acknowledgment_number != acknowledgment_number) return error.PacketAcknowledgmentMismatch;
-        if (packet.flags != flags) return error.PacketFlagsMismatch;
-        if (packet.window_size != window_size) return error.WindowSizeMismatch;
-        if (!std.mem.eql(u8, payload, packet.payload[0..packet.payload_len])) return error.PayloadMismatch;
-        if (eth.last_rx_len != expected_frame_len) return error.FrameLengthMismatch;
-        if (eth.tx_packets == 0 or eth.rx_packets == 0) return error.CounterMismatch;
-    } else {
-        return classifyTcpProbeTimeout(eth);
-    }
+
+    const syn = client.buildSyn() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, source_port, destination_port, syn);
+    try pollTcpProbePacket(eth, &packet_storage);
+    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, source_port, destination_port, syn);
+
+    const syn_ack = server.acceptSyn(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, destination_port, source_port, syn_ack);
+    try pollTcpProbePacket(eth, &packet_storage);
+    try expectTcpProbePacket(&packet_storage, eth.mac, destination_ip, source_ip, destination_port, source_port, syn_ack);
+
+    const ack = client.acceptSynAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, source_port, destination_port, ack);
+    try pollTcpProbePacket(eth, &packet_storage);
+    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, source_port, destination_port, ack);
+    server.acceptAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const data = client.buildPayload(payload) catch |err| return mapTcpSessionProbeError(err);
+    const expected_frame_len = try sendTcpProbeSegment(source_ip, destination_ip, source_port, destination_port, data);
+    try pollTcpProbePacket(eth, &packet_storage);
+    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, source_port, destination_port, data);
+    server.acceptPayload(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    if (client.state != .established or server.state != .established) return error.SessionStateMismatch;
+    if (eth.last_rx_len != expected_frame_len) return error.FrameLengthMismatch;
+    if (eth.tx_packets < 4 or eth.rx_packets < 4) return error.CounterMismatch;
 }
 
 fn rtl8139TcpProbeFailureCode(err: Rtl8139TcpProbeError) u8 {
@@ -2203,6 +2285,7 @@ fn rtl8139TcpProbeFailureCode(err: Rtl8139TcpProbeError) u8 {
         error.PayloadMismatch => 0xEA,
         error.FrameLengthMismatch => 0xEB,
         error.CounterMismatch => 0xEC,
+        error.SessionStateMismatch => 0xED,
     };
 }
 

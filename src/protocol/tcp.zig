@@ -22,6 +22,12 @@ pub const Error = error{
     UnsupportedOptions,
     PayloadTooLarge,
     ChecksumMismatch,
+    EmptyPayload,
+    InvalidState,
+    UnexpectedFlags,
+    PortMismatch,
+    SequenceMismatch,
+    AcknowledgmentMismatch,
 };
 
 pub const Header = struct {
@@ -73,6 +79,173 @@ pub const Packet = struct {
     urgent_pointer: u16,
     payload: []const u8,
 };
+
+pub const Role = enum {
+    client,
+    server,
+};
+
+pub const State = enum {
+    closed,
+    listen,
+    syn_sent,
+    syn_received,
+    established,
+};
+
+pub const Outbound = struct {
+    sequence_number: u32,
+    acknowledgment_number: u32,
+    flags: u16,
+    window_size: u16,
+    payload: []const u8 = "",
+};
+
+pub const Session = struct {
+    role: Role,
+    state: State,
+    local_port: u16,
+    remote_port: u16,
+    send_next: u32,
+    recv_next: u32 = 0,
+    local_window: u16,
+    remote_window: u16 = 0,
+
+    pub fn initClient(local_port: u16, remote_port: u16, initial_sequence_number: u32, window_size: u16) Session {
+        return .{
+            .role = .client,
+            .state = .closed,
+            .local_port = local_port,
+            .remote_port = remote_port,
+            .send_next = initial_sequence_number,
+            .local_window = window_size,
+        };
+    }
+
+    pub fn initServer(local_port: u16, remote_port: u16, initial_sequence_number: u32, window_size: u16) Session {
+        return .{
+            .role = .server,
+            .state = .listen,
+            .local_port = local_port,
+            .remote_port = remote_port,
+            .send_next = initial_sequence_number,
+            .local_window = window_size,
+        };
+    }
+
+    pub fn headerFor(self: Session, outbound: Outbound) Header {
+        return .{
+            .source_port = self.local_port,
+            .destination_port = self.remote_port,
+            .sequence_number = outbound.sequence_number,
+            .acknowledgment_number = outbound.acknowledgment_number,
+            .flags = outbound.flags,
+            .window_size = outbound.window_size,
+        };
+    }
+
+    pub fn buildSyn(self: *Session) Error!Outbound {
+        if (self.role != .client or self.state != .closed) return error.InvalidState;
+
+        const outbound = Outbound{
+            .sequence_number = self.send_next,
+            .acknowledgment_number = 0,
+            .flags = flag_syn,
+            .window_size = self.local_window,
+        };
+        self.send_next +%= 1;
+        self.state = .syn_sent;
+        return outbound;
+    }
+
+    pub fn acceptSyn(self: *Session, packet: Packet) Error!Outbound {
+        if (self.role != .server or self.state != .listen) return error.InvalidState;
+        try self.validatePorts(packet);
+        if (packet.flags != flag_syn or packet.payload.len != 0) return error.UnexpectedFlags;
+
+        self.recv_next = packet.sequence_number +% 1;
+        self.remote_window = packet.window_size;
+        const outbound = Outbound{
+            .sequence_number = self.send_next,
+            .acknowledgment_number = self.recv_next,
+            .flags = flag_syn | flag_ack,
+            .window_size = self.local_window,
+        };
+        self.send_next +%= 1;
+        self.state = .syn_received;
+        return outbound;
+    }
+
+    pub fn acceptSynAck(self: *Session, packet: Packet) Error!Outbound {
+        if (self.role != .client or self.state != .syn_sent) return error.InvalidState;
+        try self.validatePorts(packet);
+        if (packet.flags != (flag_syn | flag_ack) or packet.payload.len != 0) return error.UnexpectedFlags;
+        if (packet.acknowledgment_number != self.send_next) return error.AcknowledgmentMismatch;
+
+        self.recv_next = packet.sequence_number +% 1;
+        self.remote_window = packet.window_size;
+        self.state = .established;
+        return .{
+            .sequence_number = self.send_next,
+            .acknowledgment_number = self.recv_next,
+            .flags = flag_ack,
+            .window_size = self.local_window,
+        };
+    }
+
+    pub fn acceptAck(self: *Session, packet: Packet) Error!void {
+        if (self.role != .server or self.state != .syn_received) return error.InvalidState;
+        try self.validatePorts(packet);
+        if (packet.flags != flag_ack or packet.payload.len != 0) return error.UnexpectedFlags;
+        if (packet.sequence_number != self.recv_next) return error.SequenceMismatch;
+        if (packet.acknowledgment_number != self.send_next) return error.AcknowledgmentMismatch;
+
+        self.remote_window = packet.window_size;
+        self.state = .established;
+    }
+
+    pub fn buildPayload(self: *Session, payload: []const u8) Error!Outbound {
+        if (self.state != .established) return error.InvalidState;
+        if (payload.len == 0) return error.EmptyPayload;
+
+        const outbound = Outbound{
+            .sequence_number = self.send_next,
+            .acknowledgment_number = self.recv_next,
+            .flags = flag_ack | flag_psh,
+            .window_size = self.local_window,
+            .payload = payload,
+        };
+        self.send_next +%= @as(u32, @intCast(payload.len));
+        return outbound;
+    }
+
+    pub fn acceptPayload(self: *Session, packet: Packet) Error!void {
+        if (self.state != .established) return error.InvalidState;
+        try self.validatePorts(packet);
+        if (packet.flags != (flag_ack | flag_psh) or packet.payload.len == 0) return error.UnexpectedFlags;
+        if (packet.sequence_number != self.recv_next) return error.SequenceMismatch;
+        if (packet.acknowledgment_number != self.send_next) return error.AcknowledgmentMismatch;
+
+        self.remote_window = packet.window_size;
+        self.recv_next +%= @as(u32, @intCast(packet.payload.len));
+    }
+
+    fn validatePorts(self: Session, packet: Packet) Error!void {
+        if (packet.source_port != self.remote_port or packet.destination_port != self.local_port) {
+            return error.PortMismatch;
+        }
+    }
+};
+
+pub fn encodeOutboundSegment(
+    session: Session,
+    outbound: Outbound,
+    buffer: []u8,
+    source_ip: [4]u8,
+    destination_ip: [4]u8,
+) Error!usize {
+    return try session.headerFor(outbound).encode(buffer, outbound.payload, source_ip, destination_ip);
+}
 
 pub fn decode(packet: []const u8, source_ip: [4]u8, destination_ip: [4]u8) Error!Packet {
     if (packet.len < header_len) return error.PacketTooShort;
@@ -228,4 +401,66 @@ test "tcp rejects unsupported options in strict slice" {
     writeU16Be(segment[16..18], 0);
     writeU16Be(segment[16..18], checksum(segment[0..], source_ip, destination_ip));
     try std.testing.expectError(error.UnsupportedOptions, decode(segment[0..], source_ip, destination_ip));
+}
+
+test "tcp session completes handshake and payload exchange" {
+    const client_ip = [4]u8{ 192, 168, 56, 10 };
+    const server_ip = [4]u8{ 192, 168, 56, 1 };
+    const payload = "OPENCLAW-TCP-HANDSHAKE";
+
+    var client = Session.initClient(4321, 443, 0x0102_0304, 4096);
+    var server = Session.initServer(443, 4321, 0xA0B0_C0D0, 8192);
+
+    var syn_segment: [header_len]u8 = undefined;
+    const syn = try client.buildSyn();
+    const syn_len = try encodeOutboundSegment(client, syn, syn_segment[0..], client_ip, server_ip);
+    const syn_packet = try decode(syn_segment[0..syn_len], client_ip, server_ip);
+    const syn_ack = try server.acceptSyn(syn_packet);
+    try std.testing.expectEqual(State.syn_sent, client.state);
+    try std.testing.expectEqual(State.syn_received, server.state);
+
+    var syn_ack_segment: [header_len]u8 = undefined;
+    const syn_ack_len = try encodeOutboundSegment(server, syn_ack, syn_ack_segment[0..], server_ip, client_ip);
+    const syn_ack_packet = try decode(syn_ack_segment[0..syn_ack_len], server_ip, client_ip);
+    const ack = try client.acceptSynAck(syn_ack_packet);
+    try std.testing.expectEqual(State.established, client.state);
+
+    var ack_segment: [header_len]u8 = undefined;
+    const ack_len = try encodeOutboundSegment(client, ack, ack_segment[0..], client_ip, server_ip);
+    const ack_packet = try decode(ack_segment[0..ack_len], client_ip, server_ip);
+    try server.acceptAck(ack_packet);
+    try std.testing.expectEqual(State.established, server.state);
+
+    var payload_segment: [header_len + payload.len]u8 = undefined;
+    const data = try client.buildPayload(payload);
+    const data_len = try encodeOutboundSegment(client, data, payload_segment[0..], client_ip, server_ip);
+    const data_packet = try decode(payload_segment[0..data_len], client_ip, server_ip);
+    try server.acceptPayload(data_packet);
+
+    try std.testing.expectEqual(@as(u32, 0x0102_0305 + payload.len), client.send_next);
+    try std.testing.expectEqual(@as(u32, 0xA0B0_C0D1), client.recv_next);
+    try std.testing.expectEqual(@as(u32, 0xA0B0_C0D1), server.send_next);
+    try std.testing.expectEqual(@as(u32, 0x0102_0305 + payload.len), server.recv_next);
+    try std.testing.expectEqual(@as(u16, 4096), server.remote_window);
+}
+
+test "tcp session rejects synack with mismatched acknowledgment number" {
+    const client_ip = [4]u8{ 192, 168, 56, 10 };
+    const server_ip = [4]u8{ 192, 168, 56, 1 };
+
+    var client = Session.initClient(4321, 443, 0x0102_0304, 4096);
+    _ = try client.buildSyn();
+
+    const bad_syn_ack = Outbound{
+        .sequence_number = 0xA0B0_C0D0,
+        .acknowledgment_number = client.send_next +% 1,
+        .flags = flag_syn | flag_ack,
+        .window_size = 8192,
+    };
+    var syn_ack_segment: [header_len]u8 = undefined;
+    const server = Session.initServer(443, 4321, 0xA0B0_C0D0, 8192);
+    const syn_ack_len = try encodeOutboundSegment(server, bad_syn_ack, syn_ack_segment[0..], server_ip, client_ip);
+    const syn_ack_packet = try decode(syn_ack_segment[0..syn_ack_len], server_ip, client_ip);
+
+    try std.testing.expectError(error.AcknowledgmentMismatch, client.acceptSynAck(syn_ack_packet));
 }

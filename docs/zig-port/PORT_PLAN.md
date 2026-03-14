@@ -78,7 +78,16 @@ Full-stack replacement execution reference:
       - live TCP segment framing/payload loopback + decode over the freestanding PVH artifact
     - DHCP framing/decode is now also proven over the real RTL8139 path via `src/protocol/dhcp.zig`, `src/pal/net.zig`, and `scripts/baremetal-qemu-rtl8139-dhcp-probe-check.ps1`
     - DNS framing/decode is now also proven over the real RTL8139 path via `src/protocol/dns.zig`, `src/pal/net.zig`, and `scripts/baremetal-qemu-rtl8139-dns-probe-check.ps1`
-    - full TCP handshake/connection management remains the next strict networking stage above that now-real L2 + ARP + IPv4 + UDP + staged TCP + DHCP + DNS slice
+    - TCP session/state closure is now reached locally:
+      - `src/protocol/tcp.zig` now carries a minimal client/server session state machine for `SYN -> SYN-ACK -> ACK` and established payload exchange
+      - `src/pal/net.zig` host regressions now prove that session behavior over the mock RTL8139 path
+      - `src/baremetal_main.zig` now drives the live RTL8139 TCP proof through the same session/state machine instead of a single framing-only segment
+      - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1` now proves live handshake + payload exchange over the freestanding PVH artifact
+    - deeper networking depth remains future work above the FS5.5 closure bar:
+      - ARP cache management
+      - gateway routing
+      - retransmission/timeout handling
+      - connection teardown and multi-flow session management
   - path-based filesystem usage is now also shipped above the shared backend:
     - `src/baremetal/filesystem.zig` implements directory creation plus file read/write/stat
     - `src/pal/fs.zig` routes the freestanding PAL through that layer
