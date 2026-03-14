@@ -79,11 +79,11 @@ Full-stack replacement execution reference:
     - DHCP framing/decode is now also proven over the real RTL8139 path via `src/protocol/dhcp.zig`, `src/pal/net.zig`, and `scripts/baremetal-qemu-rtl8139-dhcp-probe-check.ps1`
     - DNS framing/decode is now also proven over the real RTL8139 path via `src/protocol/dns.zig`, `src/pal/net.zig`, and `scripts/baremetal-qemu-rtl8139-dns-probe-check.ps1`
     - TCP session/state closure is now reached locally:
-      - `src/protocol/tcp.zig` now carries a minimal client/server session state machine for `SYN -> SYN-ACK -> ACK`, established payload exchange, bounded four-way teardown, bounded SYN/payload/FIN retransmission recovery, bounded multi-flow session-table management, a strict remote-window guard for the single-segment send path, and zero-window blocking until a pure ACK reopens the remote window
+      - `src/protocol/tcp.zig` now carries a minimal client/server session state machine for `SYN -> SYN-ACK -> ACK`, established payload exchange, bounded four-way teardown, bounded SYN/payload/FIN retransmission recovery, bounded multi-flow session-table management, strict remote-window enforcement for bounded sequential payload chunking, and zero-window blocking until a pure ACK reopens the remote window
       - `src/pal/net.zig` host regressions now prove that session behavior over the mock RTL8139 path, including dropped-first-SYN recovery, dropped-first-payload recovery, dropped-first-FIN recovery on both close sides, bounded four-way close, and bounded multi-flow session isolation
-      - `src/baremetal/tool_service.zig` now provides a bounded command request/response shim on top of the bare-metal tool substrate for the TCP path
-      - `src/baremetal_main.zig` now drives the live RTL8139 TCP proof through the same session/state machine instead of a single framing-only segment, including zero-window block/reopen and a bounded `echo tcp-service-ok` request/response exchange on flow B
-      - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1` now proves live handshake + payload exchange + bounded four-way close with dropped-first-SYN recovery, dropped-first-payload recovery, dropped-first-FIN recovery on both close sides, bounded two-flow session isolation, zero-window block/reopen, and bounded command-service request/response over the freestanding PVH artifact
+      - `src/baremetal/tool_service.zig` now provides a bounded framed request/response shim on top of the bare-metal tool substrate for the TCP path (`REQ <id> <command>` -> `RESP <id> <len>\n<payload>`)
+      - `src/baremetal_main.zig` now drives the live RTL8139 TCP proof through the same session/state machine, including zero-window block/reopen, framed multi-request service exchange on a single flow, and bounded long-response chunking under the advertised remote window
+      - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1` now proves live handshake + payload exchange + bounded four-way close with dropped-first-SYN recovery, dropped-first-payload recovery, dropped-first-FIN recovery on both close sides, bounded two-flow session isolation, zero-window block/reopen, bounded sequential payload chunking, and framed multi-request command-service exchange over the freestanding PVH artifact
     - routed networking depth now also closes through the real RTL8139 path:
       - `src/protocol/arp.zig` now also encodes ARP replies
       - `src/pal/net.zig` now carries ARP-cache learning, DHCP-driven route configuration, next-hop resolution, and routed UDP send helpers
@@ -91,8 +91,8 @@ Full-stack replacement execution reference:
       - `src/baremetal_main.zig` now drives the live gateway-routing proof through the same route helpers instead of a framing-only shortcut
       - `scripts/baremetal-qemu-rtl8139-gateway-probe-check.ps1` now proves live ARP-reply learning, ARP-cache population, gateway next-hop selection, direct-subnet bypass, and routed UDP delivery over the freestanding PVH artifact
     - deeper networking depth remains future work above the FS5.5 closure bar:
-      - sliding-window and congestion-control behavior beyond the current bounded zero-window reopen + single-segment session model
-      - richer service/runtime multiplexing beyond the current bounded command request/response shim on the bare-metal TCP path
+      - sliding-window and congestion-control behavior beyond the current bounded zero-window reopen + sequential chunk-and-ACK session model
+      - richer service/runtime multiplexing beyond the current framed multi-request command shim on the bare-metal TCP path
   - path-based filesystem usage is now also shipped above the shared backend:
     - `src/baremetal/filesystem.zig` implements directory creation plus file read/write/stat
     - `src/pal/fs.zig` routes the freestanding PAL through that layer
