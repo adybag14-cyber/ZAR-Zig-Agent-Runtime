@@ -93,12 +93,34 @@ pub const State = enum {
     established,
 };
 
+pub const RetransmitKind = enum {
+    none,
+    syn,
+};
+
 pub const Outbound = struct {
     sequence_number: u32,
     acknowledgment_number: u32,
     flags: u16,
     window_size: u16,
     payload: []const u8 = "",
+};
+
+pub const RetransmitState = struct {
+    kind: RetransmitKind = .none,
+    timeout_ticks: u64 = 0,
+    deadline_tick: u64 = 0,
+    last_fire_tick: u64 = 0,
+    fire_recorded: bool = false,
+    attempts: u32 = 0,
+    sequence_number: u32 = 0,
+    acknowledgment_number: u32 = 0,
+    flags: u16 = 0,
+    window_size: u16 = 0,
+
+    pub fn armed(self: RetransmitState) bool {
+        return self.kind != .none;
+    }
 };
 
 pub const Session = struct {
@@ -110,6 +132,7 @@ pub const Session = struct {
     recv_next: u32 = 0,
     local_window: u16,
     remote_window: u16 = 0,
+    retransmit: RetransmitState = .{},
 
     pub fn initClient(local_port: u16, remote_port: u16, initial_sequence_number: u32, window_size: u16) Session {
         return .{
@@ -158,6 +181,38 @@ pub const Session = struct {
         return outbound;
     }
 
+    pub fn buildSynWithTimeout(self: *Session, now_tick: u64, timeout_ticks: u64) Error!Outbound {
+        const outbound = try self.buildSyn();
+        self.armRetransmit(.syn, outbound, now_tick, timeout_ticks);
+        return outbound;
+    }
+
+    pub fn pollRetransmit(self: *Session, now_tick: u64) ?Outbound {
+        if (!self.retransmit.armed()) return null;
+        switch (self.retransmit.kind) {
+            .none => return null,
+            .syn => {
+                if (self.state != .syn_sent) {
+                    self.clearRetransmit();
+                    return null;
+                }
+            },
+        }
+        if (now_tick < self.retransmit.deadline_tick) return null;
+        if (self.retransmit.fire_recorded and self.retransmit.last_fire_tick == now_tick) return null;
+
+        self.retransmit.attempts +%= 1;
+        self.retransmit.last_fire_tick = now_tick;
+        self.retransmit.fire_recorded = true;
+        self.retransmit.deadline_tick = addTicksSaturating(now_tick, self.retransmit.timeout_ticks);
+        return .{
+            .sequence_number = self.retransmit.sequence_number,
+            .acknowledgment_number = self.retransmit.acknowledgment_number,
+            .flags = self.retransmit.flags,
+            .window_size = self.retransmit.window_size,
+        };
+    }
+
     pub fn acceptSyn(self: *Session, packet: Packet) Error!Outbound {
         if (self.role != .server or self.state != .listen) return error.InvalidState;
         try self.validatePorts(packet);
@@ -185,6 +240,7 @@ pub const Session = struct {
         self.recv_next = packet.sequence_number +% 1;
         self.remote_window = packet.window_size;
         self.state = .established;
+        self.clearRetransmit();
         return .{
             .sequence_number = self.send_next,
             .acknowledgment_number = self.recv_next,
@@ -234,6 +290,26 @@ pub const Session = struct {
         if (packet.source_port != self.remote_port or packet.destination_port != self.local_port) {
             return error.PortMismatch;
         }
+    }
+
+    fn armRetransmit(self: *Session, kind: RetransmitKind, outbound: Outbound, now_tick: u64, timeout_ticks: u64) void {
+        const effective_timeout = if (timeout_ticks == 0) @as(u64, 1) else timeout_ticks;
+        self.retransmit = .{
+            .kind = kind,
+            .timeout_ticks = effective_timeout,
+            .deadline_tick = addTicksSaturating(now_tick, effective_timeout),
+            .last_fire_tick = 0,
+            .fire_recorded = false,
+            .attempts = 0,
+            .sequence_number = outbound.sequence_number,
+            .acknowledgment_number = outbound.acknowledgment_number,
+            .flags = outbound.flags,
+            .window_size = outbound.window_size,
+        };
+    }
+
+    fn clearRetransmit(self: *Session) void {
+        self.retransmit = .{};
     }
 };
 
@@ -297,6 +373,11 @@ pub fn checksum(segment: []const u8, source_ip: [4]u8, destination_ip: [4]u8) u1
         sum = (sum & 0xFFFF) + (sum >> 16);
     }
     return ~@as(u16, @truncate(sum));
+}
+
+fn addTicksSaturating(base: u64, delta: u64) u64 {
+    const sum, const overflowed = @addWithOverflow(base, delta);
+    return if (overflowed != 0) std.math.maxInt(u64) else sum;
 }
 
 fn writeU16Be(bytes: []u8, value: u16) void {
@@ -463,4 +544,60 @@ test "tcp session rejects synack with mismatched acknowledgment number" {
     const syn_ack_packet = try decode(syn_ack_segment[0..syn_ack_len], server_ip, client_ip);
 
     try std.testing.expectError(error.AcknowledgmentMismatch, client.acceptSynAck(syn_ack_packet));
+}
+
+test "tcp session retransmits client syn after timeout and clears timer on synack" {
+    const client_ip = [4]u8{ 192, 168, 56, 10 };
+    const server_ip = [4]u8{ 192, 168, 56, 1 };
+
+    var client = Session.initClient(4321, 443, 0x0102_0304, 4096);
+    var server = Session.initServer(443, 4321, 0xA0B0_C0D0, 8192);
+
+    const syn = try client.buildSynWithTimeout(100, 5);
+    try std.testing.expectEqual(State.syn_sent, client.state);
+    try std.testing.expect(client.retransmit.armed());
+    try std.testing.expectEqual(RetransmitKind.syn, client.retransmit.kind);
+    try std.testing.expectEqual(@as(u64, 105), client.retransmit.deadline_tick);
+    try std.testing.expectEqual(@as(u32, 0), client.retransmit.attempts);
+    try std.testing.expectEqual(@as(?Outbound, null), client.pollRetransmit(104));
+
+    const retry = client.pollRetransmit(105).?;
+    try std.testing.expectEqual(syn.sequence_number, retry.sequence_number);
+    try std.testing.expectEqual(syn.acknowledgment_number, retry.acknowledgment_number);
+    try std.testing.expectEqual(syn.flags, retry.flags);
+    try std.testing.expectEqual(syn.window_size, retry.window_size);
+    try std.testing.expectEqual(@as(u32, 1), client.retransmit.attempts);
+    try std.testing.expectEqual(@as(u64, 110), client.retransmit.deadline_tick);
+
+    var retry_segment: [header_len]u8 = undefined;
+    const retry_len = try encodeOutboundSegment(client, retry, retry_segment[0..], client_ip, server_ip);
+    const retry_packet = try decode(retry_segment[0..retry_len], client_ip, server_ip);
+    const syn_ack = try server.acceptSyn(retry_packet);
+
+    var syn_ack_segment: [header_len]u8 = undefined;
+    const syn_ack_len = try encodeOutboundSegment(server, syn_ack, syn_ack_segment[0..], server_ip, client_ip);
+    const syn_ack_packet = try decode(syn_ack_segment[0..syn_ack_len], server_ip, client_ip);
+    _ = try client.acceptSynAck(syn_ack_packet);
+
+    try std.testing.expectEqual(State.established, client.state);
+    try std.testing.expectEqual(State.syn_received, server.state);
+    try std.testing.expect(!client.retransmit.armed());
+}
+
+test "tcp session retransmit timeout clamps zero and does not double fire on one tick" {
+    var client = Session.initClient(4321, 443, 0x0102_0304, 4096);
+
+    const syn = try client.buildSynWithTimeout(40, 0);
+    try std.testing.expectEqual(@as(u64, 1), client.retransmit.timeout_ticks);
+    try std.testing.expectEqual(@as(u64, 41), client.retransmit.deadline_tick);
+    try std.testing.expectEqual(@as(?Outbound, null), client.pollRetransmit(40));
+
+    const first_retry = client.pollRetransmit(41).?;
+    try std.testing.expectEqual(syn.sequence_number, first_retry.sequence_number);
+    try std.testing.expectEqual(@as(u32, 1), client.retransmit.attempts);
+    try std.testing.expectEqual(@as(?Outbound, null), client.pollRetransmit(41));
+
+    const second_retry = client.pollRetransmit(42).?;
+    try std.testing.expectEqual(syn.sequence_number, second_retry.sequence_number);
+    try std.testing.expectEqual(@as(u32, 2), client.retransmit.attempts);
 }
