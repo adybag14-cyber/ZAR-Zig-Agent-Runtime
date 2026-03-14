@@ -21,6 +21,7 @@ pub const Error = error{
     InvalidDataOffset,
     UnsupportedOptions,
     PayloadTooLarge,
+    WindowExceeded,
     ChecksumMismatch,
     EmptyPayload,
     InvalidState,
@@ -96,6 +97,7 @@ pub const State = enum {
 pub const RetransmitKind = enum {
     none,
     syn,
+    payload,
 };
 
 pub const Outbound = struct {
@@ -117,6 +119,7 @@ pub const RetransmitState = struct {
     acknowledgment_number: u32 = 0,
     flags: u16 = 0,
     window_size: u16 = 0,
+    payload: []const u8 = "",
 
     pub fn armed(self: RetransmitState) bool {
         return self.kind != .none;
@@ -197,6 +200,12 @@ pub const Session = struct {
                     return null;
                 }
             },
+            .payload => {
+                if (self.state != .established) {
+                    self.clearRetransmit();
+                    return null;
+                }
+            },
         }
         if (now_tick < self.retransmit.deadline_tick) return null;
         if (self.retransmit.fire_recorded and self.retransmit.last_fire_tick == now_tick) return null;
@@ -210,6 +219,7 @@ pub const Session = struct {
             .acknowledgment_number = self.retransmit.acknowledgment_number,
             .flags = self.retransmit.flags,
             .window_size = self.retransmit.window_size,
+            .payload = self.retransmit.payload,
         };
     }
 
@@ -250,19 +260,46 @@ pub const Session = struct {
     }
 
     pub fn acceptAck(self: *Session, packet: Packet) Error!void {
-        if (self.role != .server or self.state != .syn_received) return error.InvalidState;
         try self.validatePorts(packet);
         if (packet.flags != flag_ack or packet.payload.len != 0) return error.UnexpectedFlags;
         if (packet.sequence_number != self.recv_next) return error.SequenceMismatch;
         if (packet.acknowledgment_number != self.send_next) return error.AcknowledgmentMismatch;
 
         self.remote_window = packet.window_size;
-        self.state = .established;
+        switch (self.state) {
+            .syn_received => self.state = .established,
+            .established => self.clearRetransmit(),
+            else => return error.InvalidState,
+        }
+    }
+
+    pub fn buildAck(self: *Session) Error!Outbound {
+        if (self.state != .established) return error.InvalidState;
+
+        return .{
+            .sequence_number = self.send_next,
+            .acknowledgment_number = self.recv_next,
+            .flags = flag_ack,
+            .window_size = self.local_window,
+        };
     }
 
     pub fn buildPayload(self: *Session, payload: []const u8) Error!Outbound {
+        return self.buildPayloadInternal(payload);
+    }
+
+    pub fn buildPayloadWithTimeout(self: *Session, payload: []const u8, now_tick: u64, timeout_ticks: u64) Error!Outbound {
+        if (self.retransmit.armed()) return error.InvalidState;
+
+        const outbound = try self.buildPayloadInternal(payload);
+        self.armRetransmit(.payload, outbound, now_tick, timeout_ticks);
+        return outbound;
+    }
+
+    fn buildPayloadInternal(self: *Session, payload: []const u8) Error!Outbound {
         if (self.state != .established) return error.InvalidState;
         if (payload.len == 0) return error.EmptyPayload;
+        if (self.remote_window != 0 and payload.len > self.remote_window) return error.WindowExceeded;
 
         const outbound = Outbound{
             .sequence_number = self.send_next,
@@ -305,6 +342,7 @@ pub const Session = struct {
             .acknowledgment_number = outbound.acknowledgment_number,
             .flags = outbound.flags,
             .window_size = outbound.window_size,
+            .payload = outbound.payload,
         };
     }
 
@@ -600,4 +638,126 @@ test "tcp session retransmit timeout clamps zero and does not double fire on one
     const second_retry = client.pollRetransmit(42).?;
     try std.testing.expectEqual(syn.sequence_number, second_retry.sequence_number);
     try std.testing.expectEqual(@as(u32, 2), client.retransmit.attempts);
+}
+
+test "tcp session retransmits established payload after timeout and clears timer on ack" {
+    const client_ip = [4]u8{ 192, 168, 56, 10 };
+    const server_ip = [4]u8{ 192, 168, 56, 1 };
+    const payload = "OPENCLAW-TCP-PAYLOAD-RETRY";
+
+    var client = Session.initClient(4321, 443, 0x0102_0304, 4096);
+    var server = Session.initServer(443, 4321, 0xA0B0_C0D0, 8192);
+
+    const syn = try client.buildSyn();
+    var syn_segment: [header_len]u8 = undefined;
+    const syn_len = try encodeOutboundSegment(client, syn, syn_segment[0..], client_ip, server_ip);
+    const syn_packet = try decode(syn_segment[0..syn_len], client_ip, server_ip);
+    const syn_ack = try server.acceptSyn(syn_packet);
+
+    var syn_ack_segment: [header_len]u8 = undefined;
+    const syn_ack_len = try encodeOutboundSegment(server, syn_ack, syn_ack_segment[0..], server_ip, client_ip);
+    const syn_ack_packet = try decode(syn_ack_segment[0..syn_ack_len], server_ip, client_ip);
+    const ack = try client.acceptSynAck(syn_ack_packet);
+
+    var ack_segment: [header_len]u8 = undefined;
+    const ack_len = try encodeOutboundSegment(client, ack, ack_segment[0..], client_ip, server_ip);
+    const ack_packet = try decode(ack_segment[0..ack_len], client_ip, server_ip);
+    try server.acceptAck(ack_packet);
+
+    const data = try client.buildPayloadWithTimeout(payload, 200, 5);
+    try std.testing.expect(client.retransmit.armed());
+    try std.testing.expectEqual(RetransmitKind.payload, client.retransmit.kind);
+    try std.testing.expectEqual(@as(u64, 205), client.retransmit.deadline_tick);
+    try std.testing.expectEqualStrings(payload, client.retransmit.payload);
+    try std.testing.expectEqual(@as(?Outbound, null), client.pollRetransmit(204));
+
+    const retry = client.pollRetransmit(205).?;
+    try std.testing.expectEqual(data.sequence_number, retry.sequence_number);
+    try std.testing.expectEqual(data.acknowledgment_number, retry.acknowledgment_number);
+    try std.testing.expectEqual(data.flags, retry.flags);
+    try std.testing.expectEqual(data.window_size, retry.window_size);
+    try std.testing.expectEqualStrings(payload, retry.payload);
+    try std.testing.expectEqual(@as(u32, 1), client.retransmit.attempts);
+    try std.testing.expectEqual(@as(u64, 210), client.retransmit.deadline_tick);
+
+    var retry_segment: [header_len + payload.len]u8 = undefined;
+    const retry_len = try encodeOutboundSegment(client, retry, retry_segment[0..], client_ip, server_ip);
+    const retry_packet = try decode(retry_segment[0..retry_len], client_ip, server_ip);
+    try server.acceptPayload(retry_packet);
+
+    const payload_ack = try server.buildAck();
+    var payload_ack_segment: [header_len]u8 = undefined;
+    const payload_ack_len = try encodeOutboundSegment(server, payload_ack, payload_ack_segment[0..], server_ip, client_ip);
+    const payload_ack_packet = try decode(payload_ack_segment[0..payload_ack_len], server_ip, client_ip);
+    try client.acceptAck(payload_ack_packet);
+
+    try std.testing.expectEqual(State.established, client.state);
+    try std.testing.expectEqual(State.established, server.state);
+    try std.testing.expectEqual(@as(u32, 0x0102_0305 + payload.len), client.send_next);
+    try std.testing.expectEqual(@as(u32, 0x0102_0305 + payload.len), server.recv_next);
+    try std.testing.expect(!client.retransmit.armed());
+}
+
+test "tcp session payload retransmit timeout clamps zero and does not double fire on one tick" {
+    const client_ip = [4]u8{ 192, 168, 56, 10 };
+    const server_ip = [4]u8{ 192, 168, 56, 1 };
+    const payload = "PING";
+
+    var client = Session.initClient(4321, 443, 0x0102_0304, 4096);
+    var server = Session.initServer(443, 4321, 0xA0B0_C0D0, 8192);
+
+    const syn = try client.buildSyn();
+    var syn_segment: [header_len]u8 = undefined;
+    const syn_len = try encodeOutboundSegment(client, syn, syn_segment[0..], client_ip, server_ip);
+    const syn_packet = try decode(syn_segment[0..syn_len], client_ip, server_ip);
+    const syn_ack = try server.acceptSyn(syn_packet);
+
+    var syn_ack_segment: [header_len]u8 = undefined;
+    const syn_ack_len = try encodeOutboundSegment(server, syn_ack, syn_ack_segment[0..], server_ip, client_ip);
+    const syn_ack_packet = try decode(syn_ack_segment[0..syn_ack_len], server_ip, client_ip);
+    const ack = try client.acceptSynAck(syn_ack_packet);
+
+    var ack_segment: [header_len]u8 = undefined;
+    const ack_len = try encodeOutboundSegment(client, ack, ack_segment[0..], client_ip, server_ip);
+    const ack_packet = try decode(ack_segment[0..ack_len], client_ip, server_ip);
+    try server.acceptAck(ack_packet);
+
+    const data = try client.buildPayloadWithTimeout(payload, 40, 0);
+    try std.testing.expectEqual(@as(u64, 1), client.retransmit.timeout_ticks);
+    try std.testing.expectEqual(@as(u64, 41), client.retransmit.deadline_tick);
+    try std.testing.expectEqual(@as(?Outbound, null), client.pollRetransmit(40));
+
+    const first_retry = client.pollRetransmit(41).?;
+    try std.testing.expectEqual(data.sequence_number, first_retry.sequence_number);
+    try std.testing.expectEqualStrings(payload, first_retry.payload);
+    try std.testing.expectEqual(@as(u32, 1), client.retransmit.attempts);
+    try std.testing.expectEqual(@as(?Outbound, null), client.pollRetransmit(41));
+
+    const second_retry = client.pollRetransmit(42).?;
+    try std.testing.expectEqual(data.sequence_number, second_retry.sequence_number);
+    try std.testing.expectEqualStrings(payload, second_retry.payload);
+    try std.testing.expectEqual(@as(u32, 2), client.retransmit.attempts);
+}
+
+test "tcp session rejects payload larger than remote window" {
+    const client_ip = [4]u8{ 192, 168, 56, 10 };
+    const server_ip = [4]u8{ 192, 168, 56, 1 };
+
+    var client = Session.initClient(4321, 443, 0x0102_0304, 4096);
+    var server = Session.initServer(443, 4321, 0xA0B0_C0D0, 4);
+
+    const syn = try client.buildSyn();
+    var syn_segment: [header_len]u8 = undefined;
+    const syn_len = try encodeOutboundSegment(client, syn, syn_segment[0..], client_ip, server_ip);
+    const syn_packet = try decode(syn_segment[0..syn_len], client_ip, server_ip);
+    const syn_ack = try server.acceptSyn(syn_packet);
+
+    var syn_ack_segment: [header_len]u8 = undefined;
+    const syn_ack_len = try encodeOutboundSegment(server, syn_ack, syn_ack_segment[0..], server_ip, client_ip);
+    const syn_ack_packet = try decode(syn_ack_segment[0..syn_ack_len], server_ip, client_ip);
+    _ = try client.acceptSynAck(syn_ack_packet);
+
+    try std.testing.expectEqual(@as(u16, 4), client.remote_window);
+    try std.testing.expectError(error.WindowExceeded, client.buildPayload("12345"));
+    try std.testing.expectError(error.WindowExceeded, client.buildPayloadWithTimeout("12345", 10, 3));
 }

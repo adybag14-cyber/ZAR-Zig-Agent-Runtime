@@ -79,10 +79,10 @@ Full-stack replacement execution reference:
     - DHCP framing/decode is now also proven over the real RTL8139 path via `src/protocol/dhcp.zig`, `src/pal/net.zig`, and `scripts/baremetal-qemu-rtl8139-dhcp-probe-check.ps1`
     - DNS framing/decode is now also proven over the real RTL8139 path via `src/protocol/dns.zig`, `src/pal/net.zig`, and `scripts/baremetal-qemu-rtl8139-dns-probe-check.ps1`
     - TCP session/state closure is now reached locally:
-      - `src/protocol/tcp.zig` now carries a minimal client/server session state machine for `SYN -> SYN-ACK -> ACK`, established payload exchange, and bounded client-side SYN retransmission
-      - `src/pal/net.zig` host regressions now prove that session behavior over the mock RTL8139 path, including dropped-first-SYN recovery
+      - `src/protocol/tcp.zig` now carries a minimal client/server session state machine for `SYN -> SYN-ACK -> ACK`, established payload exchange, bounded client-side SYN and established-payload retransmission, and a strict remote-window guard for the single-segment send path
+      - `src/pal/net.zig` host regressions now prove that session behavior over the mock RTL8139 path, including dropped-first-SYN recovery and dropped-first-payload recovery
       - `src/baremetal_main.zig` now drives the live RTL8139 TCP proof through the same session/state machine instead of a single framing-only segment
-      - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1` now proves live handshake + payload exchange with dropped-first-SYN recovery over the freestanding PVH artifact
+      - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1` now proves live handshake + payload exchange with dropped-first-SYN recovery and dropped-first-payload recovery over the freestanding PVH artifact
     - routed networking depth now also closes through the real RTL8139 path:
       - `src/protocol/arp.zig` now also encodes ARP replies
       - `src/pal/net.zig` now carries ARP-cache learning, DHCP-driven route configuration, next-hop resolution, and routed UDP send helpers

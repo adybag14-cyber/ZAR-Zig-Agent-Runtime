@@ -2470,15 +2470,39 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, source_port, destination_port, ack);
     server.acceptAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
 
-    const data = client.buildPayload(payload) catch |err| return mapTcpSessionProbeError(err);
-    const expected_frame_len = try sendTcpProbeSegment(source_ip, destination_ip, source_port, destination_port, data);
+    const data = client.buildPayloadWithTimeout(payload, probe_tick, retransmit_interval_ticks) catch |err| return mapTcpSessionProbeError(err);
+    const expected_data_frame_len = try sendTcpProbeSegment(source_ip, destination_ip, source_port, destination_port, data);
     try pollTcpProbePacket(eth, &packet_storage);
     try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, source_port, destination_port, data);
+    if (eth.last_rx_len != expected_data_frame_len) return error.FrameLengthMismatch;
+
+    if (client.pollRetransmit(probe_tick + retransmit_interval_ticks - 1) != null) return error.RetransmitTooEarly;
+    probe_tick +%= retransmit_interval_ticks;
+    const retry_data = client.pollRetransmit(probe_tick) orelse return error.RetransmitMissing;
+    if (retry_data.sequence_number != data.sequence_number or
+        retry_data.acknowledgment_number != data.acknowledgment_number or
+        retry_data.flags != data.flags or
+        retry_data.window_size != data.window_size or
+        !std.mem.eql(u8, retry_data.payload, data.payload))
+    {
+        return error.RetransmitShapeMismatch;
+    }
+
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, source_port, destination_port, retry_data);
+    try pollTcpProbePacket(eth, &packet_storage);
+    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, source_port, destination_port, retry_data);
     server.acceptPayload(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
 
+    const payload_ack = server.buildAck() catch |err| return mapTcpSessionProbeError(err);
+    const expected_ack_frame_len = try sendTcpProbeSegment(destination_ip, source_ip, destination_port, source_port, payload_ack);
+    try pollTcpProbePacket(eth, &packet_storage);
+    try expectTcpProbePacket(&packet_storage, eth.mac, destination_ip, source_ip, destination_port, source_port, payload_ack);
+    client.acceptAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    if (client.retransmit.armed()) return error.RetransmitNotCleared;
+
     if (client.state != .established or server.state != .established) return error.SessionStateMismatch;
-    if (eth.last_rx_len != expected_frame_len) return error.FrameLengthMismatch;
-    if (eth.tx_packets < 5 or eth.rx_packets < 5) return error.CounterMismatch;
+    if (eth.last_rx_len != expected_ack_frame_len) return error.FrameLengthMismatch;
+    if (eth.tx_packets < 7 or eth.rx_packets < 7) return error.CounterMismatch;
 }
 
 fn rtl8139TcpProbeFailureCode(err: Rtl8139TcpProbeError) u8 {

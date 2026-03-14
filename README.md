@@ -53,9 +53,9 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
     - `src/protocol/ethernet.zig` + `src/protocol/arp.zig` provide Ethernet/ARP framing
     - `src/protocol/ipv4.zig` provides IPv4 header encode/decode plus checksum handling
     - `src/protocol/udp.zig` provides UDP encode/decode plus pseudo-header checksum handling
-    - `src/protocol/tcp.zig` now provides strict TCP framing, checksum, a minimal client/server session state machine for `SYN -> SYN-ACK -> ACK` plus established payload exchange, and bounded client-side SYN retransmission state
+    - `src/protocol/tcp.zig` now provides strict TCP framing, checksum, a minimal client/server session state machine for `SYN -> SYN-ACK -> ACK` plus established payload exchange, bounded client-side SYN and established-payload retransmission state, and a strict remote-window guard for the single-segment send path
     - `src/pal/net.zig` now exposes `sendArpRequest` / `pollArpPacket`, `sendIpv4Frame` / `pollIpv4PacketStrict`, `sendUdpPacket` / `pollUdpPacketStrictInto`, and `sendTcpPacket` / `pollTcpPacketStrictInto`
-    - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1`, and `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1` now prove live ARP, IPv4, UDP, and TCP handshake/payload exchange over the freestanding PVH artifact, including dropped-first-SYN recovery through bounded retransmission
+    - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1`, and `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1` now prove live ARP, IPv4, UDP, and TCP handshake/payload exchange over the freestanding PVH artifact, including dropped-first-SYN recovery and dropped-first-payload recovery through bounded retransmission
   - DHCP framing/decode is now also proven on the real RTL8139 path:
     - `src/protocol/dhcp.zig` provides strict DHCP discover encode/decode
     - `src/pal/net.zig` exposes DHCP send/poll helpers for the hosted/mock path

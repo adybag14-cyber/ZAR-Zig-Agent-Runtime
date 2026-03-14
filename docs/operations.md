@@ -38,9 +38,9 @@
   - `src/protocol/ethernet.zig` + `src/protocol/arp.zig` implement Ethernet/ARP framing
   - `src/protocol/ipv4.zig` implements IPv4 framing plus checksum validation
   - `src/protocol/udp.zig` implements UDP framing plus pseudo-header checksum validation
-  - `src/protocol/tcp.zig` now implements a real strict TCP framing/checksum slice plus a minimal client/server handshake and payload-exchange state machine with bounded client-side SYN retransmission
+  - `src/protocol/tcp.zig` now implements a real strict TCP framing/checksum slice plus a minimal client/server handshake and payload-exchange state machine with bounded client-side SYN and established-payload retransmission plus a strict remote-window guard for the single-segment send path
   - `src/pal/net.zig` now also exposes `sendTcpPacket` / `pollTcpPacketStrictInto`
-  - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1`, and `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1` prove live ARP, IPv4, UDP, and TCP handshake/payload exchange plus decode over the freestanding PVH image, including dropped-first-SYN recovery through bounded retransmission
+  - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1`, and `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1` prove live ARP, IPv4, UDP, and TCP handshake/payload exchange plus decode over the freestanding PVH image, including dropped-first-SYN recovery and dropped-first-payload recovery through bounded retransmission
 - DHCP framing/decode is now also proven on the real RTL8139 path:
   - `src/protocol/dhcp.zig` provides strict DHCP discover encode/decode
   - `src/pal/net.zig` exposes DHCP send/poll helpers for the hosted/mock path
