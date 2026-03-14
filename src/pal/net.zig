@@ -1158,6 +1158,98 @@ test "baremetal net pal surfaces tcp handshake acknowledgment mismatch through r
     }));
 }
 
+test "baremetal net pal retransmits dropped syn and establishes tcp session through rtl8139 mock device" {
+    rtl8139.testEnableMockDevice();
+    defer rtl8139.testDisableMockDevice();
+
+    try std.testing.expect(initDevice());
+    const client_ip = [4]u8{ 192, 168, 56, 10 };
+    const server_ip = [4]u8{ 192, 168, 56, 1 };
+    const destination_mac = macAddress();
+    const payload = "OPENCLAW-TCP-RETRY";
+
+    var client = tcp.Session.initClient(4321, 443, 0x0102_0304, 4096);
+    var server = tcp.Session.initServer(443, 4321, 0xA0B0_C0D0, 8192);
+
+    const syn = try client.buildSynWithTimeout(0, 4);
+    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client.local_port, client.remote_port, syn.sequence_number, syn.acknowledgment_number, syn.flags, syn.window_size, syn.payload);
+    const first_syn_packet = (try pollTcpPacketStrict()).?;
+    try std.testing.expectEqual(tcp.flag_syn, first_syn_packet.flags);
+    try std.testing.expectEqual(syn.sequence_number, first_syn_packet.sequence_number);
+    try std.testing.expectEqual(@as(?tcp.Outbound, null), client.pollRetransmit(3));
+
+    const retry_syn = client.pollRetransmit(4).?;
+    try std.testing.expectEqual(syn.sequence_number, retry_syn.sequence_number);
+    try std.testing.expectEqual(syn.flags, retry_syn.flags);
+    try std.testing.expectEqual(@as(u32, 1), client.retransmit.attempts);
+    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client.local_port, client.remote_port, retry_syn.sequence_number, retry_syn.acknowledgment_number, retry_syn.flags, retry_syn.window_size, retry_syn.payload);
+    const retry_syn_packet = (try pollTcpPacketStrict()).?;
+    const syn_ack = try server.acceptSyn(.{
+        .source_port = retry_syn_packet.source_port,
+        .destination_port = retry_syn_packet.destination_port,
+        .sequence_number = retry_syn_packet.sequence_number,
+        .acknowledgment_number = retry_syn_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = retry_syn_packet.flags,
+        .window_size = retry_syn_packet.window_size,
+        .checksum_value = retry_syn_packet.checksum_value,
+        .urgent_pointer = retry_syn_packet.urgent_pointer,
+        .payload = retry_syn_packet.payload[0..retry_syn_packet.payload_len],
+    });
+
+    _ = try sendTcpPacket(destination_mac, server_ip, client_ip, server.local_port, server.remote_port, syn_ack.sequence_number, syn_ack.acknowledgment_number, syn_ack.flags, syn_ack.window_size, syn_ack.payload);
+    const syn_ack_packet = (try pollTcpPacketStrict()).?;
+    const ack = try client.acceptSynAck(.{
+        .source_port = syn_ack_packet.source_port,
+        .destination_port = syn_ack_packet.destination_port,
+        .sequence_number = syn_ack_packet.sequence_number,
+        .acknowledgment_number = syn_ack_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = syn_ack_packet.flags,
+        .window_size = syn_ack_packet.window_size,
+        .checksum_value = syn_ack_packet.checksum_value,
+        .urgent_pointer = syn_ack_packet.urgent_pointer,
+        .payload = syn_ack_packet.payload[0..syn_ack_packet.payload_len],
+    });
+
+    try std.testing.expect(!client.retransmit.armed());
+    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client.local_port, client.remote_port, ack.sequence_number, ack.acknowledgment_number, ack.flags, ack.window_size, ack.payload);
+    const ack_packet = (try pollTcpPacketStrict()).?;
+    try server.acceptAck(.{
+        .source_port = ack_packet.source_port,
+        .destination_port = ack_packet.destination_port,
+        .sequence_number = ack_packet.sequence_number,
+        .acknowledgment_number = ack_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = ack_packet.flags,
+        .window_size = ack_packet.window_size,
+        .checksum_value = ack_packet.checksum_value,
+        .urgent_pointer = ack_packet.urgent_pointer,
+        .payload = ack_packet.payload[0..ack_packet.payload_len],
+    });
+
+    const data = try client.buildPayload(payload);
+    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client.local_port, client.remote_port, data.sequence_number, data.acknowledgment_number, data.flags, data.window_size, data.payload);
+    const data_packet = (try pollTcpPacketStrict()).?;
+    try server.acceptPayload(.{
+        .source_port = data_packet.source_port,
+        .destination_port = data_packet.destination_port,
+        .sequence_number = data_packet.sequence_number,
+        .acknowledgment_number = data_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = data_packet.flags,
+        .window_size = data_packet.window_size,
+        .checksum_value = data_packet.checksum_value,
+        .urgent_pointer = data_packet.urgent_pointer,
+        .payload = data_packet.payload[0..data_packet.payload_len],
+    });
+
+    try std.testing.expectEqual(tcp.State.established, client.state);
+    try std.testing.expectEqual(tcp.State.established, server.state);
+    try std.testing.expectEqual(@as(u32, 0x0102_0305 + payload.len), client.send_next);
+    try std.testing.expectEqual(@as(u32, 0x0102_0305 + payload.len), server.recv_next);
+}
+
 test "baremetal net pal sends and parses dhcp discover through rtl8139 mock device" {
     rtl8139.testEnableMockDevice();
     defer rtl8139.testDisableMockDevice();

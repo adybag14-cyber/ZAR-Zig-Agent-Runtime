@@ -331,6 +331,10 @@ const Rtl8139TcpProbeError = error{
     FrameLengthMismatch,
     CounterMismatch,
     SessionStateMismatch,
+    RetransmitTooEarly,
+    RetransmitMissing,
+    RetransmitShapeMismatch,
+    RetransmitNotCleared,
 };
 
 const Rtl8139DhcpProbeError = error{
@@ -2428,14 +2432,31 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const destination_port: u16 = 443;
     const payload = "OPENCLAW-TCP";
     const server_window_size: u16 = 8192;
+    const retransmit_interval_ticks: u64 = 4;
     var client = tcp_protocol.Session.initClient(source_port, destination_port, 0x0102_0304, 4096);
     var server = tcp_protocol.Session.initServer(destination_port, source_port, 0xA0B0_C0D0, server_window_size);
     var packet_storage: pal_net.TcpPacket = undefined;
+    var probe_tick: u64 = 0;
 
-    const syn = client.buildSyn() catch |err| return mapTcpSessionProbeError(err);
+    const syn = client.buildSynWithTimeout(probe_tick, retransmit_interval_ticks) catch |err| return mapTcpSessionProbeError(err);
     _ = try sendTcpProbeSegment(source_ip, destination_ip, source_port, destination_port, syn);
     try pollTcpProbePacket(eth, &packet_storage);
     try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, source_port, destination_port, syn);
+
+    if (client.pollRetransmit(retransmit_interval_ticks - 1) != null) return error.RetransmitTooEarly;
+    probe_tick = retransmit_interval_ticks;
+    const retry_syn = client.pollRetransmit(probe_tick) orelse return error.RetransmitMissing;
+    if (retry_syn.sequence_number != syn.sequence_number or
+        retry_syn.acknowledgment_number != syn.acknowledgment_number or
+        retry_syn.flags != syn.flags or
+        retry_syn.window_size != syn.window_size or
+        retry_syn.payload.len != 0)
+    {
+        return error.RetransmitShapeMismatch;
+    }
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, source_port, destination_port, retry_syn);
+    try pollTcpProbePacket(eth, &packet_storage);
+    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, source_port, destination_port, retry_syn);
 
     const syn_ack = server.acceptSyn(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
     _ = try sendTcpProbeSegment(destination_ip, source_ip, destination_port, source_port, syn_ack);
@@ -2443,6 +2464,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     try expectTcpProbePacket(&packet_storage, eth.mac, destination_ip, source_ip, destination_port, source_port, syn_ack);
 
     const ack = client.acceptSynAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    if (client.retransmit.armed()) return error.RetransmitNotCleared;
     _ = try sendTcpProbeSegment(source_ip, destination_ip, source_port, destination_port, ack);
     try pollTcpProbePacket(eth, &packet_storage);
     try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, source_port, destination_port, ack);
@@ -2456,7 +2478,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
 
     if (client.state != .established or server.state != .established) return error.SessionStateMismatch;
     if (eth.last_rx_len != expected_frame_len) return error.FrameLengthMismatch;
-    if (eth.tx_packets < 4 or eth.rx_packets < 4) return error.CounterMismatch;
+    if (eth.tx_packets < 5 or eth.rx_packets < 5) return error.CounterMismatch;
 }
 
 fn rtl8139TcpProbeFailureCode(err: Rtl8139TcpProbeError) u8 {
@@ -2499,6 +2521,10 @@ fn rtl8139TcpProbeFailureCode(err: Rtl8139TcpProbeError) u8 {
         error.FrameLengthMismatch => 0xEB,
         error.CounterMismatch => 0xEC,
         error.SessionStateMismatch => 0xED,
+        error.RetransmitTooEarly => 0xEE,
+        error.RetransmitMissing => 0xEF,
+        error.RetransmitShapeMismatch => 0xF0,
+        error.RetransmitNotCleared => 0xF1,
     };
 }
 
