@@ -283,6 +283,7 @@ Notes:
   - `src/protocol/ipv4.zig` encodes and decodes IPv4 headers and validates header checksums
   - `src/protocol/udp.zig` encodes and decodes UDP datagrams and validates pseudo-header checksums
   - `src/protocol/tcp.zig` now also provides a minimal session/state machine for client/server handshake and established payload exchange
+  - `src/protocol/tcp.zig` now also provides client-side SYN retransmission/timeout recovery for the initial handshake path
   - `src/pal/net.zig` exposes:
     - `sendArpRequest`
     - `pollArpPacket`
@@ -297,7 +298,7 @@ Notes:
     - `resolveNextHop`
     - `learnArpPacket`
     - `sendUdpPacketRouted`
-  - host regressions prove mock-device ARP, IPv4, UDP, DHCP, DNS, TCP handshake/payload exchange, DHCP-driven route configuration, gateway ARP learning, routed off-subnet UDP delivery, and direct-subnet UDP bypass through the RTL8139 path
+  - host regressions prove mock-device ARP, IPv4, UDP, DHCP, DNS, TCP handshake/payload exchange, SYN retransmission/timeout recovery, DHCP-driven route configuration, gateway ARP learning, routed off-subnet UDP delivery, and direct-subnet UDP bypass through the RTL8139 path
   - live QEMU proofs now pass:
     - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1`
     - `scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1`
@@ -316,7 +317,7 @@ Notes:
   - host regressions prove DNS query encode/decode, DNS A-response decode, and strict rejection of non-DNS UDP frames over the mock RTL8139 path
   - `scripts/baremetal-qemu-rtl8139-dns-probe-check.ps1` now proves real RTL8139 TX/RX of a DNS query plus strict decode/validation of a DNS A response over the freestanding PVH artifact
 - deeper networking depth remains future work above the FS5.5 closure bar:
-  - retransmission/timeout handling
+  - broader payload retransmission and window-management behavior
   - connection teardown and multi-flow session management
 
 ### Filesystem Usage
