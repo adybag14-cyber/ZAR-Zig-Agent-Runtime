@@ -57,10 +57,10 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
     - `src/protocol/ethernet.zig` + `src/protocol/arp.zig` provide Ethernet/ARP framing
     - `src/protocol/ipv4.zig` provides IPv4 header encode/decode plus checksum handling
     - `src/protocol/udp.zig` provides UDP encode/decode plus pseudo-header checksum handling
-    - `src/protocol/tcp.zig` now provides strict TCP framing, checksum, a minimal client/server session state machine for `SYN -> SYN-ACK -> ACK`, established payload exchange, bounded client-side SYN and established-payload retransmission state, four-way teardown, a bounded multi-flow session table, and a strict remote-window guard for the single-segment send path
+    - `src/protocol/tcp.zig` now provides strict TCP framing, checksum, a minimal client/server session state machine for `SYN -> SYN-ACK -> ACK`, established payload exchange, bounded client-side SYN and established-payload retransmission state, bounded FIN retransmission/timeout recovery during teardown, four-way teardown, a bounded multi-flow session table, and a strict remote-window guard for the single-segment send path
     - `src/pal/net.zig` now exposes `sendArpRequest` / `pollArpPacket`, `sendIpv4Frame` / `pollIpv4PacketStrict`, `sendUdpPacket` / `pollUdpPacketStrictInto`, and `sendTcpPacket` / `pollTcpPacketStrictInto`
     - `src/pal/net.zig` host regressions now also prove two TCP flows can handshake, exchange payloads, and teardown independently through the mock RTL8139 path
-    - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1`, and `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1` now prove live ARP, IPv4, UDP, and TCP handshake/payload exchange plus four-way close over the freestanding PVH artifact, including dropped-first-SYN recovery, dropped-first-payload recovery, and bounded two-flow session isolation
+    - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1`, and `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1` now prove live ARP, IPv4, UDP, and TCP handshake/payload exchange plus four-way close over the freestanding PVH artifact, including dropped-first-SYN recovery, dropped-first-payload recovery, dropped-first-FIN recovery on both close sides, and bounded two-flow session isolation
   - DHCP framing/decode is now also proven on the real RTL8139 path:
     - `src/protocol/dhcp.zig` provides strict DHCP discover encode/decode
     - `src/pal/net.zig` exposes DHCP send/poll helpers for the hosted/mock path
@@ -75,7 +75,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
     - hosted regressions prove DHCP-driven route configuration, gateway ARP learning, routed off-subnet UDP delivery, and direct-subnet gateway bypass
     - `scripts/baremetal-qemu-rtl8139-gateway-probe-check.ps1` now proves live ARP-reply learning, ARP-cache population, gateway next-hop selection, direct-subnet bypass, and routed UDP delivery over the freestanding PVH artifact
   - deeper networking depth remains open above the FS5.5 closure bar:
-    - broader teardown robustness beyond the current bounded four-way close slice
+    - broader congestion/window-management behavior beyond the current bounded single-segment session model
     - higher-level network service and tool-runtime integration on the bare-metal TCP path
   - path-based filesystem usage is now locally strict-closed:
     - `src/baremetal/filesystem.zig` implements directory creation plus file read/write/stat on the shared storage backend

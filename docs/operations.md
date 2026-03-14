@@ -38,10 +38,10 @@
   - `src/protocol/ethernet.zig` + `src/protocol/arp.zig` implement Ethernet/ARP framing
   - `src/protocol/ipv4.zig` implements IPv4 framing plus checksum validation
   - `src/protocol/udp.zig` implements UDP framing plus pseudo-header checksum validation
-  - `src/protocol/tcp.zig` now implements a real strict TCP framing/checksum slice plus a minimal client/server handshake, payload-exchange, and bounded four-way teardown state machine with client-side SYN and established-payload retransmission, a bounded multi-flow session table, and a strict remote-window guard for the single-segment send path
+  - `src/protocol/tcp.zig` now implements a real strict TCP framing/checksum slice plus a minimal client/server handshake, payload-exchange, and bounded four-way teardown state machine with client-side SYN retransmission, established-payload retransmission, bounded FIN retransmission/timeout recovery during teardown, a bounded multi-flow session table, and a strict remote-window guard for the single-segment send path
   - `src/pal/net.zig` now also exposes `sendTcpPacket` / `pollTcpPacketStrictInto`
   - `src/pal/net.zig` host regressions now also prove two TCP flows can handshake, exchange payloads, and teardown independently through the mock RTL8139 path
-  - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1`, and `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1` prove live ARP, IPv4, UDP, and TCP handshake/payload exchange plus bounded four-way close over the freestanding PVH image, including dropped-first-SYN recovery, dropped-first-payload recovery, and bounded two-flow session isolation
+  - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1`, and `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1` prove live ARP, IPv4, UDP, and TCP handshake/payload exchange plus bounded four-way close over the freestanding PVH image, including dropped-first-SYN recovery, dropped-first-payload recovery, dropped-first-FIN recovery on both close sides, and bounded two-flow session isolation
 - DHCP framing/decode is now also proven on the real RTL8139 path:
   - `src/protocol/dhcp.zig` provides strict DHCP discover encode/decode
   - `src/pal/net.zig` exposes DHCP send/poll helpers for the hosted/mock path
@@ -56,7 +56,7 @@
   - hosted regressions prove DHCP-driven route configuration, gateway ARP learning, routed off-subnet UDP delivery, and direct-subnet gateway bypass
   - `scripts/baremetal-qemu-rtl8139-gateway-probe-check.ps1` proves live ARP-reply learning, ARP-cache population, gateway next-hop selection, direct-subnet bypass, and routed UDP delivery over the freestanding PVH image
 - deeper networking depth remains future work above the FS5.5 closure bar:
-  - broader teardown robustness beyond the current bounded four-way close slice
+  - broader congestion/window-management behavior beyond the current bounded single-segment session model
   - higher-level network service and tool-runtime integration on the bare-metal TCP path
 - filesystem usage is now also on a real shared-backend path in `FS5.5`:
   - `src/baremetal/filesystem.zig` implements path-based directory creation plus file read/write/stat

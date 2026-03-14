@@ -1362,7 +1362,7 @@ test "baremetal net pal retransmits dropped payload and clears timer on ack thro
     try std.testing.expect(!client.retransmit.armed());
 }
 
-test "baremetal net pal completes tcp teardown through rtl8139 mock device" {
+test "baremetal net pal retransmits dropped fins and completes tcp teardown through rtl8139 mock device" {
     rtl8139.testEnableMockDevice();
     defer rtl8139.testDisableMockDevice();
 
@@ -1371,6 +1371,7 @@ test "baremetal net pal completes tcp teardown through rtl8139 mock device" {
     const server_ip = [4]u8{ 192, 168, 56, 1 };
     const destination_mac = macAddress();
     const payload = "OPENCLAW-TCP-FIN";
+    const retransmit_interval_ticks: u64 = 5;
 
     var client = tcp.Session.initClient(4321, 443, 0x0102_0304, 4096);
     var server = tcp.Session.initServer(443, 4321, 0xA0B0_C0D0, 8192);
@@ -1453,8 +1454,18 @@ test "baremetal net pal completes tcp teardown through rtl8139 mock device" {
         .payload = payload_ack_packet.payload[0..payload_ack_packet.payload_len],
     });
 
-    const client_fin = try client.buildFin();
-    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client.local_port, client.remote_port, client_fin.sequence_number, client_fin.acknowledgment_number, client_fin.flags, client_fin.window_size, client_fin.payload);
+    const client_fin = try client.buildFinWithTimeout(100, retransmit_interval_ticks);
+    try std.testing.expect(client.retransmit.armed());
+    try std.testing.expectEqual(tcp.RetransmitKind.fin, client.retransmit.kind);
+    try std.testing.expectEqual(@as(?tcp.Outbound, null), client.pollRetransmit(104));
+    const retry_client_fin = client.pollRetransmit(105) orelse unreachable;
+    try std.testing.expectEqual(client_fin.sequence_number, retry_client_fin.sequence_number);
+    try std.testing.expectEqual(client_fin.acknowledgment_number, retry_client_fin.acknowledgment_number);
+    try std.testing.expectEqual(client_fin.flags, retry_client_fin.flags);
+    try std.testing.expectEqual(client_fin.window_size, retry_client_fin.window_size);
+    try std.testing.expectEqual(@as(u32, 1), client.retransmit.attempts);
+
+    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client.local_port, client.remote_port, retry_client_fin.sequence_number, retry_client_fin.acknowledgment_number, retry_client_fin.flags, retry_client_fin.window_size, retry_client_fin.payload);
     const client_fin_packet = (try pollTcpPacketStrict()).?;
     const fin_ack = try server.acceptFin(.{
         .source_port = client_fin_packet.source_port,
@@ -1483,9 +1494,20 @@ test "baremetal net pal completes tcp teardown through rtl8139 mock device" {
         .urgent_pointer = fin_ack_packet.urgent_pointer,
         .payload = fin_ack_packet.payload[0..fin_ack_packet.payload_len],
     });
+    try std.testing.expect(!client.retransmit.armed());
 
-    const server_fin = try server.buildFin();
-    _ = try sendTcpPacket(destination_mac, server_ip, client_ip, server.local_port, server.remote_port, server_fin.sequence_number, server_fin.acknowledgment_number, server_fin.flags, server_fin.window_size, server_fin.payload);
+    const server_fin = try server.buildFinWithTimeout(200, retransmit_interval_ticks);
+    try std.testing.expect(server.retransmit.armed());
+    try std.testing.expectEqual(tcp.RetransmitKind.fin, server.retransmit.kind);
+    try std.testing.expectEqual(@as(?tcp.Outbound, null), server.pollRetransmit(204));
+    const retry_server_fin = server.pollRetransmit(205) orelse unreachable;
+    try std.testing.expectEqual(server_fin.sequence_number, retry_server_fin.sequence_number);
+    try std.testing.expectEqual(server_fin.acknowledgment_number, retry_server_fin.acknowledgment_number);
+    try std.testing.expectEqual(server_fin.flags, retry_server_fin.flags);
+    try std.testing.expectEqual(server_fin.window_size, retry_server_fin.window_size);
+    try std.testing.expectEqual(@as(u32, 1), server.retransmit.attempts);
+
+    _ = try sendTcpPacket(destination_mac, server_ip, client_ip, server.local_port, server.remote_port, retry_server_fin.sequence_number, retry_server_fin.acknowledgment_number, retry_server_fin.flags, retry_server_fin.window_size, retry_server_fin.payload);
     const server_fin_packet = (try pollTcpPacketStrict()).?;
     const final_ack = try client.acceptFin(.{
         .source_port = server_fin_packet.source_port,
@@ -1514,6 +1536,7 @@ test "baremetal net pal completes tcp teardown through rtl8139 mock device" {
         .urgent_pointer = final_ack_packet.urgent_pointer,
         .payload = final_ack_packet.payload[0..final_ack_packet.payload_len],
     });
+    try std.testing.expect(!server.retransmit.armed());
 
     try std.testing.expectEqual(tcp.State.closed, client.state);
     try std.testing.expectEqual(tcp.State.closed, server.state);

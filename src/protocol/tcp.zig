@@ -102,6 +102,7 @@ pub const RetransmitKind = enum {
     none,
     syn,
     payload,
+    fin,
 };
 
 pub const Outbound = struct {
@@ -231,6 +232,13 @@ pub const Session = struct {
                     return null;
                 }
             },
+            .fin => switch (self.state) {
+                .fin_wait_1, .last_ack => {},
+                else => {
+                    self.clearRetransmit();
+                    return null;
+                },
+            },
         }
         if (now_tick < self.retransmit.deadline_tick) return null;
         if (self.retransmit.fire_recorded and self.retransmit.last_fire_tick == now_tick) return null;
@@ -294,8 +302,14 @@ pub const Session = struct {
         switch (self.state) {
             .syn_received => self.state = .established,
             .established => self.clearRetransmit(),
-            .fin_wait_1 => self.state = .fin_wait_2,
-            .last_ack => self.state = .closed,
+            .fin_wait_1 => {
+                self.state = .fin_wait_2;
+                self.clearRetransmit();
+            },
+            .last_ack => {
+                self.state = .closed;
+                self.clearRetransmit();
+            },
             else => return error.InvalidState,
         }
     }
@@ -317,6 +331,12 @@ pub const Session = struct {
         };
         self.send_next +%= 1;
         self.state = next_state;
+        return outbound;
+    }
+
+    pub fn buildFinWithTimeout(self: *Session, now_tick: u64, timeout_ticks: u64) Error!Outbound {
+        const outbound = try self.buildFin();
+        self.armRetransmit(.fin, outbound, now_tick, timeout_ticks);
         return outbound;
     }
 
@@ -922,6 +942,148 @@ test "tcp session payload retransmit timeout clamps zero and does not double fir
     try std.testing.expectEqual(data.sequence_number, second_retry.sequence_number);
     try std.testing.expectEqualStrings(payload, second_retry.payload);
     try std.testing.expectEqual(@as(u32, 2), client.retransmit.attempts);
+}
+
+test "tcp session retransmits client fin after timeout and clears timer on fin ack" {
+    const client_ip = [4]u8{ 192, 168, 56, 10 };
+    const server_ip = [4]u8{ 192, 168, 56, 1 };
+
+    var client = Session.initClient(4321, 443, 0x0102_0304, 4096);
+    var server = Session.initServer(443, 4321, 0xA0B0_C0D0, 8192);
+
+    var syn_segment: [header_len]u8 = undefined;
+    const syn = try client.buildSyn();
+    const syn_packet = try testDecodeOutbound(client, syn, client_ip, server_ip, syn_segment[0..]);
+
+    const syn_ack = try server.acceptSyn(syn_packet);
+    var syn_ack_segment: [header_len]u8 = undefined;
+    const syn_ack_packet = try testDecodeOutbound(server, syn_ack, server_ip, client_ip, syn_ack_segment[0..]);
+
+    const ack = try client.acceptSynAck(syn_ack_packet);
+    var ack_segment: [header_len]u8 = undefined;
+    const ack_packet = try testDecodeOutbound(client, ack, client_ip, server_ip, ack_segment[0..]);
+    try server.acceptAck(ack_packet);
+
+    const client_fin = try client.buildFinWithTimeout(100, 5);
+    try std.testing.expectEqual(State.fin_wait_1, client.state);
+    try std.testing.expect(client.retransmit.armed());
+    try std.testing.expectEqual(RetransmitKind.fin, client.retransmit.kind);
+    try std.testing.expectEqual(@as(u64, 105), client.retransmit.deadline_tick);
+    try std.testing.expectEqual(@as(u32, 0), client.retransmit.attempts);
+
+    try std.testing.expectEqual(@as(?Outbound, null), client.pollRetransmit(104));
+
+    const retry_fin = client.pollRetransmit(105) orelse unreachable;
+    try std.testing.expectEqual(client_fin.sequence_number, retry_fin.sequence_number);
+    try std.testing.expectEqual(client_fin.acknowledgment_number, retry_fin.acknowledgment_number);
+    try std.testing.expectEqual(client_fin.flags, retry_fin.flags);
+    try std.testing.expectEqual(client_fin.window_size, retry_fin.window_size);
+    try std.testing.expectEqual(@as(u32, 1), client.retransmit.attempts);
+    try std.testing.expectEqual(@as(u64, 110), client.retransmit.deadline_tick);
+
+    var retry_fin_segment: [header_len]u8 = undefined;
+    const retry_fin_packet = try testDecodeOutbound(client, retry_fin, client_ip, server_ip, retry_fin_segment[0..]);
+    const fin_ack = try server.acceptFin(retry_fin_packet);
+    try std.testing.expectEqual(State.close_wait, server.state);
+
+    var fin_ack_segment: [header_len]u8 = undefined;
+    const fin_ack_packet = try testDecodeOutbound(server, fin_ack, server_ip, client_ip, fin_ack_segment[0..]);
+    try client.acceptAck(fin_ack_packet);
+
+    try std.testing.expectEqual(State.fin_wait_2, client.state);
+    try std.testing.expect(!client.retransmit.armed());
+}
+
+test "tcp session fin retransmit timeout clamps zero and does not double fire on one tick" {
+    const client_ip = [4]u8{ 192, 168, 56, 10 };
+    const server_ip = [4]u8{ 192, 168, 56, 1 };
+
+    var client = Session.initClient(4321, 443, 0x0102_0304, 4096);
+    var server = Session.initServer(443, 4321, 0xA0B0_C0D0, 8192);
+
+    var syn_segment: [header_len]u8 = undefined;
+    const syn = try client.buildSyn();
+    const syn_packet = try testDecodeOutbound(client, syn, client_ip, server_ip, syn_segment[0..]);
+
+    const syn_ack = try server.acceptSyn(syn_packet);
+    var syn_ack_segment: [header_len]u8 = undefined;
+    const syn_ack_packet = try testDecodeOutbound(server, syn_ack, server_ip, client_ip, syn_ack_segment[0..]);
+
+    const ack = try client.acceptSynAck(syn_ack_packet);
+    var ack_segment: [header_len]u8 = undefined;
+    const ack_packet = try testDecodeOutbound(client, ack, client_ip, server_ip, ack_segment[0..]);
+    try server.acceptAck(ack_packet);
+
+    _ = try client.buildFinWithTimeout(40, 0);
+    try std.testing.expectEqual(@as(u64, 1), client.retransmit.timeout_ticks);
+    try std.testing.expectEqual(@as(u64, 41), client.retransmit.deadline_tick);
+
+    const retry1 = client.pollRetransmit(41) orelse unreachable;
+    try std.testing.expectEqual(flag_fin | flag_ack, retry1.flags);
+    try std.testing.expectEqual(@as(u32, 1), client.retransmit.attempts);
+    try std.testing.expectEqual(@as(?Outbound, null), client.pollRetransmit(41));
+
+    const retry2 = client.pollRetransmit(42) orelse unreachable;
+    try std.testing.expectEqual(retry1.sequence_number, retry2.sequence_number);
+    try std.testing.expectEqual(@as(u32, 2), client.retransmit.attempts);
+}
+
+test "tcp session retransmits responder fin after timeout and clears timer on final ack" {
+    const client_ip = [4]u8{ 192, 168, 56, 10 };
+    const server_ip = [4]u8{ 192, 168, 56, 1 };
+
+    var client = Session.initClient(4321, 443, 0x0102_0304, 4096);
+    var server = Session.initServer(443, 4321, 0xA0B0_C0D0, 8192);
+
+    var syn_segment: [header_len]u8 = undefined;
+    const syn = try client.buildSyn();
+    const syn_packet = try testDecodeOutbound(client, syn, client_ip, server_ip, syn_segment[0..]);
+
+    const syn_ack = try server.acceptSyn(syn_packet);
+    var syn_ack_segment: [header_len]u8 = undefined;
+    const syn_ack_packet = try testDecodeOutbound(server, syn_ack, server_ip, client_ip, syn_ack_segment[0..]);
+
+    const ack = try client.acceptSynAck(syn_ack_packet);
+    var ack_segment: [header_len]u8 = undefined;
+    const ack_packet = try testDecodeOutbound(client, ack, client_ip, server_ip, ack_segment[0..]);
+    try server.acceptAck(ack_packet);
+
+    const client_fin = try client.buildFin();
+    var client_fin_segment: [header_len]u8 = undefined;
+    const client_fin_packet = try testDecodeOutbound(client, client_fin, client_ip, server_ip, client_fin_segment[0..]);
+    const fin_ack = try server.acceptFin(client_fin_packet);
+
+    var fin_ack_segment: [header_len]u8 = undefined;
+    const fin_ack_packet = try testDecodeOutbound(server, fin_ack, server_ip, client_ip, fin_ack_segment[0..]);
+    try client.acceptAck(fin_ack_packet);
+
+    const server_fin = try server.buildFinWithTimeout(200, 5);
+    try std.testing.expectEqual(State.last_ack, server.state);
+    try std.testing.expect(server.retransmit.armed());
+    try std.testing.expectEqual(RetransmitKind.fin, server.retransmit.kind);
+    try std.testing.expectEqual(@as(u64, 205), server.retransmit.deadline_tick);
+
+    try std.testing.expectEqual(@as(?Outbound, null), server.pollRetransmit(204));
+
+    const retry_fin = server.pollRetransmit(205) orelse unreachable;
+    try std.testing.expectEqual(server_fin.sequence_number, retry_fin.sequence_number);
+    try std.testing.expectEqual(server_fin.acknowledgment_number, retry_fin.acknowledgment_number);
+    try std.testing.expectEqual(server_fin.flags, retry_fin.flags);
+    try std.testing.expectEqual(server_fin.window_size, retry_fin.window_size);
+    try std.testing.expectEqual(@as(u32, 1), server.retransmit.attempts);
+    try std.testing.expectEqual(@as(u64, 210), server.retransmit.deadline_tick);
+
+    var retry_fin_segment: [header_len]u8 = undefined;
+    const retry_fin_packet = try testDecodeOutbound(server, retry_fin, server_ip, client_ip, retry_fin_segment[0..]);
+    const final_ack = try client.acceptFin(retry_fin_packet);
+    try std.testing.expectEqual(State.closed, client.state);
+
+    var final_ack_segment: [header_len]u8 = undefined;
+    const final_ack_packet = try testDecodeOutbound(client, final_ack, client_ip, server_ip, final_ack_segment[0..]);
+    try server.acceptAck(final_ack_packet);
+
+    try std.testing.expectEqual(State.closed, server.state);
+    try std.testing.expect(!server.retransmit.armed());
 }
 
 test "tcp session completes four-way teardown after established payload exchange" {
