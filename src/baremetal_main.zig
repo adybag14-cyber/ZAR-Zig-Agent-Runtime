@@ -2428,103 +2428,201 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     if (eth.io_base == 0) return error.IoBaseMismatch;
     const source_ip = [4]u8{ 192, 168, 56, 10 };
     const destination_ip = [4]u8{ 192, 168, 56, 1 };
-    const source_port: u16 = 4321;
-    const destination_port: u16 = 443;
-    const payload = "OPENCLAW-TCP";
-    const server_window_size: u16 = 8192;
+    const payload_a = "OPENCLAW-TCP";
+    const payload_b = "OPENCLAW-TCP-B";
+    const payload_b_after_close = "OPENCLAW-TCP-B2";
     const retransmit_interval_ticks: u64 = 4;
-    var client = tcp_protocol.Session.initClient(source_port, destination_port, 0x0102_0304, 4096);
-    var server = tcp_protocol.Session.initServer(destination_port, source_port, 0xA0B0_C0D0, server_window_size);
+    const flow_a = tcp_protocol.FlowKey{
+        .local_ip = source_ip,
+        .remote_ip = destination_ip,
+        .local_port = 4321,
+        .remote_port = 443,
+    };
+    const flow_b = tcp_protocol.FlowKey{
+        .local_ip = source_ip,
+        .remote_ip = destination_ip,
+        .local_port = 4322,
+        .remote_port = 444,
+    };
+    var table = tcp_protocol.SessionTable(2).init();
+    const client_a = table.createClient(flow_a, 0x0102_0304, 4096) catch return error.SessionStateMismatch;
+    const client_b = table.createClient(flow_b, 0x1112_1314, 4096) catch return error.SessionStateMismatch;
+    var server_a = tcp_protocol.Session.initServer(flow_a.remote_port, flow_a.local_port, 0xA0B0_C0D0, 8192);
+    var server_b = tcp_protocol.Session.initServer(flow_b.remote_port, flow_b.local_port, 0xB0C0_D0E0, 6144);
     var packet_storage: pal_net.TcpPacket = undefined;
     var probe_tick: u64 = 0;
 
-    const syn = client.buildSynWithTimeout(probe_tick, retransmit_interval_ticks) catch |err| return mapTcpSessionProbeError(err);
-    _ = try sendTcpProbeSegment(source_ip, destination_ip, source_port, destination_port, syn);
+    const syn_a = client_a.buildSynWithTimeout(probe_tick, retransmit_interval_ticks) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_a.local_port, flow_a.remote_port, syn_a);
     try pollTcpProbePacket(eth, &packet_storage);
-    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, source_port, destination_port, syn);
+    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, flow_a.local_port, flow_a.remote_port, syn_a);
 
-    if (client.pollRetransmit(retransmit_interval_ticks - 1) != null) return error.RetransmitTooEarly;
+    if (client_a.pollRetransmit(retransmit_interval_ticks - 1) != null) return error.RetransmitTooEarly;
     probe_tick = retransmit_interval_ticks;
-    const retry_syn = client.pollRetransmit(probe_tick) orelse return error.RetransmitMissing;
-    if (retry_syn.sequence_number != syn.sequence_number or
-        retry_syn.acknowledgment_number != syn.acknowledgment_number or
-        retry_syn.flags != syn.flags or
-        retry_syn.window_size != syn.window_size or
-        retry_syn.payload.len != 0)
+    const retry_syn_a = client_a.pollRetransmit(probe_tick) orelse return error.RetransmitMissing;
+    if (retry_syn_a.sequence_number != syn_a.sequence_number or
+        retry_syn_a.acknowledgment_number != syn_a.acknowledgment_number or
+        retry_syn_a.flags != syn_a.flags or
+        retry_syn_a.window_size != syn_a.window_size or
+        retry_syn_a.payload.len != 0)
     {
         return error.RetransmitShapeMismatch;
     }
-    _ = try sendTcpProbeSegment(source_ip, destination_ip, source_port, destination_port, retry_syn);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_a.local_port, flow_a.remote_port, retry_syn_a);
     try pollTcpProbePacket(eth, &packet_storage);
-    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, source_port, destination_port, retry_syn);
+    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, flow_a.local_port, flow_a.remote_port, retry_syn_a);
 
-    const syn_ack = server.acceptSyn(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
-    _ = try sendTcpProbeSegment(destination_ip, source_ip, destination_port, source_port, syn_ack);
+    const syn_ack_a = server_a.acceptSyn(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_a.remote_port, flow_a.local_port, syn_ack_a);
     try pollTcpProbePacket(eth, &packet_storage);
-    try expectTcpProbePacket(&packet_storage, eth.mac, destination_ip, source_ip, destination_port, source_port, syn_ack);
+    try expectTcpProbePacket(&packet_storage, eth.mac, destination_ip, source_ip, flow_a.remote_port, flow_a.local_port, syn_ack_a);
 
-    const ack = client.acceptSynAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
-    if (client.retransmit.armed()) return error.RetransmitNotCleared;
-    _ = try sendTcpProbeSegment(source_ip, destination_ip, source_port, destination_port, ack);
+    const mapped_a_syn_ack = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&packet_storage)) orelse return error.SessionStateMismatch;
+    if (mapped_a_syn_ack != client_a) return error.SessionStateMismatch;
+    const ack_a = mapped_a_syn_ack.acceptSynAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    if (client_a.retransmit.armed()) return error.RetransmitNotCleared;
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_a.local_port, flow_a.remote_port, ack_a);
     try pollTcpProbePacket(eth, &packet_storage);
-    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, source_port, destination_port, ack);
-    server.acceptAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, flow_a.local_port, flow_a.remote_port, ack_a);
+    server_a.acceptAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
 
-    const data = client.buildPayloadWithTimeout(payload, probe_tick, retransmit_interval_ticks) catch |err| return mapTcpSessionProbeError(err);
-    const expected_data_frame_len = try sendTcpProbeSegment(source_ip, destination_ip, source_port, destination_port, data);
+    const data_a = client_a.buildPayloadWithTimeout(payload_a, probe_tick, retransmit_interval_ticks) catch |err| return mapTcpSessionProbeError(err);
+    const expected_data_frame_len_a = try sendTcpProbeSegment(source_ip, destination_ip, flow_a.local_port, flow_a.remote_port, data_a);
     try pollTcpProbePacket(eth, &packet_storage);
-    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, source_port, destination_port, data);
-    if (eth.last_rx_len != expected_data_frame_len) return error.FrameLengthMismatch;
+    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, flow_a.local_port, flow_a.remote_port, data_a);
+    if (eth.last_rx_len != expected_data_frame_len_a) return error.FrameLengthMismatch;
 
-    if (client.pollRetransmit(probe_tick + retransmit_interval_ticks - 1) != null) return error.RetransmitTooEarly;
+    if (client_a.pollRetransmit(probe_tick + retransmit_interval_ticks - 1) != null) return error.RetransmitTooEarly;
     probe_tick +%= retransmit_interval_ticks;
-    const retry_data = client.pollRetransmit(probe_tick) orelse return error.RetransmitMissing;
-    if (retry_data.sequence_number != data.sequence_number or
-        retry_data.acknowledgment_number != data.acknowledgment_number or
-        retry_data.flags != data.flags or
-        retry_data.window_size != data.window_size or
-        !std.mem.eql(u8, retry_data.payload, data.payload))
+    const retry_data_a = client_a.pollRetransmit(probe_tick) orelse return error.RetransmitMissing;
+    if (retry_data_a.sequence_number != data_a.sequence_number or
+        retry_data_a.acknowledgment_number != data_a.acknowledgment_number or
+        retry_data_a.flags != data_a.flags or
+        retry_data_a.window_size != data_a.window_size or
+        !std.mem.eql(u8, retry_data_a.payload, data_a.payload))
     {
         return error.RetransmitShapeMismatch;
     }
 
-    _ = try sendTcpProbeSegment(source_ip, destination_ip, source_port, destination_port, retry_data);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_a.local_port, flow_a.remote_port, retry_data_a);
     try pollTcpProbePacket(eth, &packet_storage);
-    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, source_port, destination_port, retry_data);
-    server.acceptPayload(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, flow_a.local_port, flow_a.remote_port, retry_data_a);
+    server_a.acceptPayload(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
 
-    const payload_ack = server.buildAck() catch |err| return mapTcpSessionProbeError(err);
-    _ = try sendTcpProbeSegment(destination_ip, source_ip, destination_port, source_port, payload_ack);
+    const payload_ack_a = server_a.buildAck() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_a.remote_port, flow_a.local_port, payload_ack_a);
     try pollTcpProbePacket(eth, &packet_storage);
-    try expectTcpProbePacket(&packet_storage, eth.mac, destination_ip, source_ip, destination_port, source_port, payload_ack);
-    client.acceptAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
-    if (client.retransmit.armed()) return error.RetransmitNotCleared;
+    try expectTcpProbePacket(&packet_storage, eth.mac, destination_ip, source_ip, flow_a.remote_port, flow_a.local_port, payload_ack_a);
+    const mapped_a_payload_ack = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&packet_storage)) orelse return error.SessionStateMismatch;
+    if (mapped_a_payload_ack != client_a) return error.SessionStateMismatch;
+    mapped_a_payload_ack.acceptAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    if (client_a.retransmit.armed()) return error.RetransmitNotCleared;
 
-    const client_fin = client.buildFin() catch |err| return mapTcpSessionProbeError(err);
-    _ = try sendTcpProbeSegment(source_ip, destination_ip, source_port, destination_port, client_fin);
+    const syn_b = client_b.buildSyn() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, syn_b);
     try pollTcpProbePacket(eth, &packet_storage);
-    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, source_port, destination_port, client_fin);
-    const fin_ack = server.acceptFin(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, syn_b);
+    const syn_ack_b = server_b.acceptSyn(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
 
-    _ = try sendTcpProbeSegment(destination_ip, source_ip, destination_port, source_port, fin_ack);
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, syn_ack_b);
     try pollTcpProbePacket(eth, &packet_storage);
-    try expectTcpProbePacket(&packet_storage, eth.mac, destination_ip, source_ip, destination_port, source_port, fin_ack);
-    client.acceptAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
-
-    const server_fin = server.buildFin() catch |err| return mapTcpSessionProbeError(err);
-    _ = try sendTcpProbeSegment(destination_ip, source_ip, destination_port, source_port, server_fin);
+    try expectTcpProbePacket(&packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, syn_ack_b);
+    const mapped_b_syn_ack = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&packet_storage)) orelse return error.SessionStateMismatch;
+    if (mapped_b_syn_ack != client_b) return error.SessionStateMismatch;
+    const ack_b = mapped_b_syn_ack.acceptSynAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, ack_b);
     try pollTcpProbePacket(eth, &packet_storage);
-    try expectTcpProbePacket(&packet_storage, eth.mac, destination_ip, source_ip, destination_port, source_port, server_fin);
-    const final_ack = client.acceptFin(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, ack_b);
+    server_b.acceptAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
 
-    const expected_final_ack_frame_len = try sendTcpProbeSegment(source_ip, destination_ip, source_port, destination_port, final_ack);
+    const data_b = client_b.buildPayload(payload_b) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, data_b);
     try pollTcpProbePacket(eth, &packet_storage);
-    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, source_port, destination_port, final_ack);
-    server.acceptAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, data_b);
+    server_b.acceptPayload(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
 
-    if (client.state != .closed or server.state != .closed) return error.SessionStateMismatch;
-    if (eth.last_rx_len != expected_final_ack_frame_len) return error.FrameLengthMismatch;
-    if (eth.tx_packets < 11 or eth.rx_packets < 11) return error.CounterMismatch;
+    const payload_ack_b = server_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, payload_ack_b);
+    try pollTcpProbePacket(eth, &packet_storage);
+    try expectTcpProbePacket(&packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, payload_ack_b);
+    const mapped_b_payload_ack = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&packet_storage)) orelse return error.SessionStateMismatch;
+    if (mapped_b_payload_ack != client_b) return error.SessionStateMismatch;
+    mapped_b_payload_ack.acceptAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const client_fin_a = client_a.buildFin() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_a.local_port, flow_a.remote_port, client_fin_a);
+    try pollTcpProbePacket(eth, &packet_storage);
+    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, flow_a.local_port, flow_a.remote_port, client_fin_a);
+    const fin_ack_a = server_a.acceptFin(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_a.remote_port, flow_a.local_port, fin_ack_a);
+    try pollTcpProbePacket(eth, &packet_storage);
+    try expectTcpProbePacket(&packet_storage, eth.mac, destination_ip, source_ip, flow_a.remote_port, flow_a.local_port, fin_ack_a);
+    const mapped_a_fin_ack = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&packet_storage)) orelse return error.SessionStateMismatch;
+    if (mapped_a_fin_ack != client_a) return error.SessionStateMismatch;
+    mapped_a_fin_ack.acceptAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const server_fin_a = server_a.buildFin() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_a.remote_port, flow_a.local_port, server_fin_a);
+    try pollTcpProbePacket(eth, &packet_storage);
+    try expectTcpProbePacket(&packet_storage, eth.mac, destination_ip, source_ip, flow_a.remote_port, flow_a.local_port, server_fin_a);
+    const mapped_a_server_fin = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&packet_storage)) orelse return error.SessionStateMismatch;
+    if (mapped_a_server_fin != client_a) return error.SessionStateMismatch;
+    const final_ack_a = mapped_a_server_fin.acceptFin(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_a.local_port, flow_a.remote_port, final_ack_a);
+    try pollTcpProbePacket(eth, &packet_storage);
+    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, flow_a.local_port, flow_a.remote_port, final_ack_a);
+    server_a.acceptAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    if (client_a.state != .closed or server_a.state != .closed) return error.SessionStateMismatch;
+    if (client_b.state != .established or server_b.state != .established) return error.SessionStateMismatch;
+
+    const data_b_after_close = client_b.buildPayload(payload_b_after_close) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, data_b_after_close);
+    try pollTcpProbePacket(eth, &packet_storage);
+    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, data_b_after_close);
+    server_b.acceptPayload(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const payload_ack_b_after_close = server_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, payload_ack_b_after_close);
+    try pollTcpProbePacket(eth, &packet_storage);
+    try expectTcpProbePacket(&packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, payload_ack_b_after_close);
+    const mapped_b_after_close = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&packet_storage)) orelse return error.SessionStateMismatch;
+    if (mapped_b_after_close != client_b) return error.SessionStateMismatch;
+    mapped_b_after_close.acceptAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const client_fin_b = client_b.buildFin() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, client_fin_b);
+    try pollTcpProbePacket(eth, &packet_storage);
+    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, client_fin_b);
+    const fin_ack_b = server_b.acceptFin(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, fin_ack_b);
+    try pollTcpProbePacket(eth, &packet_storage);
+    try expectTcpProbePacket(&packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, fin_ack_b);
+    const mapped_b_fin_ack = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&packet_storage)) orelse return error.SessionStateMismatch;
+    if (mapped_b_fin_ack != client_b) return error.SessionStateMismatch;
+    mapped_b_fin_ack.acceptAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const server_fin_b = server_b.buildFin() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, server_fin_b);
+    try pollTcpProbePacket(eth, &packet_storage);
+    try expectTcpProbePacket(&packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, server_fin_b);
+    const mapped_b_server_fin = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&packet_storage)) orelse return error.SessionStateMismatch;
+    if (mapped_b_server_fin != client_b) return error.SessionStateMismatch;
+    const final_ack_b = mapped_b_server_fin.acceptFin(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const expected_final_ack_frame_len_b = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, final_ack_b);
+    try pollTcpProbePacket(eth, &packet_storage);
+    try expectTcpProbePacket(&packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, final_ack_b);
+    server_b.acceptAck(tcpPacketView(&packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    if (client_a.state != .closed or server_a.state != .closed or client_b.state != .closed or server_b.state != .closed) {
+        return error.SessionStateMismatch;
+    }
+    if (eth.last_rx_len != expected_final_ack_frame_len_b) return error.FrameLengthMismatch;
+    if (eth.tx_packets < 20 or eth.rx_packets < 20) return error.CounterMismatch;
 }
 
 fn rtl8139TcpProbeFailureCode(err: Rtl8139TcpProbeError) u8 {

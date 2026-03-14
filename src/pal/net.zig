@@ -1523,6 +1523,371 @@ test "baremetal net pal completes tcp teardown through rtl8139 mock device" {
     try std.testing.expectEqual(@as(u32, 0xA0B0_C0D2), server.send_next);
 }
 
+test "baremetal net pal manages two tcp sessions independently through rtl8139 mock device" {
+    rtl8139.testEnableMockDevice();
+    defer rtl8139.testDisableMockDevice();
+
+    try std.testing.expect(initDevice());
+    const client_ip = [4]u8{ 192, 168, 56, 10 };
+    const server_ip = [4]u8{ 192, 168, 56, 1 };
+    const destination_mac = macAddress();
+    const flow_a = tcp.FlowKey{
+        .local_ip = client_ip,
+        .remote_ip = server_ip,
+        .local_port = 4321,
+        .remote_port = 443,
+    };
+    const flow_b = tcp.FlowKey{
+        .local_ip = client_ip,
+        .remote_ip = server_ip,
+        .local_port = 4322,
+        .remote_port = 444,
+    };
+
+    var table = tcp.SessionTable(2).init();
+    const client_a = try table.createClient(flow_a, 0x0102_0304, 4096);
+    const client_b = try table.createClient(flow_b, 0x1112_1314, 4096);
+    var server_a = tcp.Session.initServer(flow_a.remote_port, flow_a.local_port, 0xA0B0_C0D0, 8192);
+    var server_b = tcp.Session.initServer(flow_b.remote_port, flow_b.local_port, 0xB0C0_D0E0, 6144);
+
+    const syn_a = try client_a.buildSyn();
+    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client_a.local_port, client_a.remote_port, syn_a.sequence_number, syn_a.acknowledgment_number, syn_a.flags, syn_a.window_size, syn_a.payload);
+    const syn_a_packet = (try pollTcpPacketStrict()).?;
+    const syn_ack_a = try server_a.acceptSyn(.{
+        .source_port = syn_a_packet.source_port,
+        .destination_port = syn_a_packet.destination_port,
+        .sequence_number = syn_a_packet.sequence_number,
+        .acknowledgment_number = syn_a_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = syn_a_packet.flags,
+        .window_size = syn_a_packet.window_size,
+        .checksum_value = syn_a_packet.checksum_value,
+        .urgent_pointer = syn_a_packet.urgent_pointer,
+        .payload = syn_a_packet.payload[0..syn_a_packet.payload_len],
+    });
+
+    const syn_b = try client_b.buildSyn();
+    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client_b.local_port, client_b.remote_port, syn_b.sequence_number, syn_b.acknowledgment_number, syn_b.flags, syn_b.window_size, syn_b.payload);
+    const syn_b_packet = (try pollTcpPacketStrict()).?;
+    const syn_ack_b = try server_b.acceptSyn(.{
+        .source_port = syn_b_packet.source_port,
+        .destination_port = syn_b_packet.destination_port,
+        .sequence_number = syn_b_packet.sequence_number,
+        .acknowledgment_number = syn_b_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = syn_b_packet.flags,
+        .window_size = syn_b_packet.window_size,
+        .checksum_value = syn_b_packet.checksum_value,
+        .urgent_pointer = syn_b_packet.urgent_pointer,
+        .payload = syn_b_packet.payload[0..syn_b_packet.payload_len],
+    });
+
+    _ = try sendTcpPacket(destination_mac, server_ip, client_ip, server_a.local_port, server_a.remote_port, syn_ack_a.sequence_number, syn_ack_a.acknowledgment_number, syn_ack_a.flags, syn_ack_a.window_size, syn_ack_a.payload);
+    const syn_ack_a_packet = (try pollTcpPacketStrict()).?;
+    const mapped_a = table.findByInboundPacket(server_ip, client_ip, .{
+        .source_port = syn_ack_a_packet.source_port,
+        .destination_port = syn_ack_a_packet.destination_port,
+        .sequence_number = syn_ack_a_packet.sequence_number,
+        .acknowledgment_number = syn_ack_a_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = syn_ack_a_packet.flags,
+        .window_size = syn_ack_a_packet.window_size,
+        .checksum_value = syn_ack_a_packet.checksum_value,
+        .urgent_pointer = syn_ack_a_packet.urgent_pointer,
+        .payload = syn_ack_a_packet.payload[0..syn_ack_a_packet.payload_len],
+    }).?;
+    try std.testing.expect(mapped_a == client_a);
+    const ack_a = try mapped_a.acceptSynAck(.{
+        .source_port = syn_ack_a_packet.source_port,
+        .destination_port = syn_ack_a_packet.destination_port,
+        .sequence_number = syn_ack_a_packet.sequence_number,
+        .acknowledgment_number = syn_ack_a_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = syn_ack_a_packet.flags,
+        .window_size = syn_ack_a_packet.window_size,
+        .checksum_value = syn_ack_a_packet.checksum_value,
+        .urgent_pointer = syn_ack_a_packet.urgent_pointer,
+        .payload = syn_ack_a_packet.payload[0..syn_ack_a_packet.payload_len],
+    });
+    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client_a.local_port, client_a.remote_port, ack_a.sequence_number, ack_a.acknowledgment_number, ack_a.flags, ack_a.window_size, ack_a.payload);
+    const ack_a_packet = (try pollTcpPacketStrict()).?;
+    try server_a.acceptAck(.{
+        .source_port = ack_a_packet.source_port,
+        .destination_port = ack_a_packet.destination_port,
+        .sequence_number = ack_a_packet.sequence_number,
+        .acknowledgment_number = ack_a_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = ack_a_packet.flags,
+        .window_size = ack_a_packet.window_size,
+        .checksum_value = ack_a_packet.checksum_value,
+        .urgent_pointer = ack_a_packet.urgent_pointer,
+        .payload = ack_a_packet.payload[0..ack_a_packet.payload_len],
+    });
+
+    _ = try sendTcpPacket(destination_mac, server_ip, client_ip, server_b.local_port, server_b.remote_port, syn_ack_b.sequence_number, syn_ack_b.acknowledgment_number, syn_ack_b.flags, syn_ack_b.window_size, syn_ack_b.payload);
+    const syn_ack_b_packet = (try pollTcpPacketStrict()).?;
+    const mapped_b = table.findByInboundPacket(server_ip, client_ip, .{
+        .source_port = syn_ack_b_packet.source_port,
+        .destination_port = syn_ack_b_packet.destination_port,
+        .sequence_number = syn_ack_b_packet.sequence_number,
+        .acknowledgment_number = syn_ack_b_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = syn_ack_b_packet.flags,
+        .window_size = syn_ack_b_packet.window_size,
+        .checksum_value = syn_ack_b_packet.checksum_value,
+        .urgent_pointer = syn_ack_b_packet.urgent_pointer,
+        .payload = syn_ack_b_packet.payload[0..syn_ack_b_packet.payload_len],
+    }).?;
+    try std.testing.expect(mapped_b == client_b);
+    const ack_b = try mapped_b.acceptSynAck(.{
+        .source_port = syn_ack_b_packet.source_port,
+        .destination_port = syn_ack_b_packet.destination_port,
+        .sequence_number = syn_ack_b_packet.sequence_number,
+        .acknowledgment_number = syn_ack_b_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = syn_ack_b_packet.flags,
+        .window_size = syn_ack_b_packet.window_size,
+        .checksum_value = syn_ack_b_packet.checksum_value,
+        .urgent_pointer = syn_ack_b_packet.urgent_pointer,
+        .payload = syn_ack_b_packet.payload[0..syn_ack_b_packet.payload_len],
+    });
+    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client_b.local_port, client_b.remote_port, ack_b.sequence_number, ack_b.acknowledgment_number, ack_b.flags, ack_b.window_size, ack_b.payload);
+    const ack_b_packet = (try pollTcpPacketStrict()).?;
+    try server_b.acceptAck(.{
+        .source_port = ack_b_packet.source_port,
+        .destination_port = ack_b_packet.destination_port,
+        .sequence_number = ack_b_packet.sequence_number,
+        .acknowledgment_number = ack_b_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = ack_b_packet.flags,
+        .window_size = ack_b_packet.window_size,
+        .checksum_value = ack_b_packet.checksum_value,
+        .urgent_pointer = ack_b_packet.urgent_pointer,
+        .payload = ack_b_packet.payload[0..ack_b_packet.payload_len],
+    });
+
+    const payload_b = "FLOW-B";
+    const data_b = try client_b.buildPayload(payload_b);
+    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client_b.local_port, client_b.remote_port, data_b.sequence_number, data_b.acknowledgment_number, data_b.flags, data_b.window_size, data_b.payload);
+    const data_b_packet = (try pollTcpPacketStrict()).?;
+    try server_b.acceptPayload(.{
+        .source_port = data_b_packet.source_port,
+        .destination_port = data_b_packet.destination_port,
+        .sequence_number = data_b_packet.sequence_number,
+        .acknowledgment_number = data_b_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = data_b_packet.flags,
+        .window_size = data_b_packet.window_size,
+        .checksum_value = data_b_packet.checksum_value,
+        .urgent_pointer = data_b_packet.urgent_pointer,
+        .payload = data_b_packet.payload[0..data_b_packet.payload_len],
+    });
+    const payload_ack_b = try server_b.buildAck();
+    _ = try sendTcpPacket(destination_mac, server_ip, client_ip, server_b.local_port, server_b.remote_port, payload_ack_b.sequence_number, payload_ack_b.acknowledgment_number, payload_ack_b.flags, payload_ack_b.window_size, payload_ack_b.payload);
+    const payload_ack_b_packet = (try pollTcpPacketStrict()).?;
+    try table.findByInboundPacket(server_ip, client_ip, .{
+        .source_port = payload_ack_b_packet.source_port,
+        .destination_port = payload_ack_b_packet.destination_port,
+        .sequence_number = payload_ack_b_packet.sequence_number,
+        .acknowledgment_number = payload_ack_b_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = payload_ack_b_packet.flags,
+        .window_size = payload_ack_b_packet.window_size,
+        .checksum_value = payload_ack_b_packet.checksum_value,
+        .urgent_pointer = payload_ack_b_packet.urgent_pointer,
+        .payload = payload_ack_b_packet.payload[0..payload_ack_b_packet.payload_len],
+    }).?.acceptAck(.{
+        .source_port = payload_ack_b_packet.source_port,
+        .destination_port = payload_ack_b_packet.destination_port,
+        .sequence_number = payload_ack_b_packet.sequence_number,
+        .acknowledgment_number = payload_ack_b_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = payload_ack_b_packet.flags,
+        .window_size = payload_ack_b_packet.window_size,
+        .checksum_value = payload_ack_b_packet.checksum_value,
+        .urgent_pointer = payload_ack_b_packet.urgent_pointer,
+        .payload = payload_ack_b_packet.payload[0..payload_ack_b_packet.payload_len],
+    });
+
+    const payload_a = "FLOW-A";
+    const data_a = try client_a.buildPayload(payload_a);
+    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client_a.local_port, client_a.remote_port, data_a.sequence_number, data_a.acknowledgment_number, data_a.flags, data_a.window_size, data_a.payload);
+    const data_a_packet = (try pollTcpPacketStrict()).?;
+    try server_a.acceptPayload(.{
+        .source_port = data_a_packet.source_port,
+        .destination_port = data_a_packet.destination_port,
+        .sequence_number = data_a_packet.sequence_number,
+        .acknowledgment_number = data_a_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = data_a_packet.flags,
+        .window_size = data_a_packet.window_size,
+        .checksum_value = data_a_packet.checksum_value,
+        .urgent_pointer = data_a_packet.urgent_pointer,
+        .payload = data_a_packet.payload[0..data_a_packet.payload_len],
+    });
+    const payload_ack_a = try server_a.buildAck();
+    _ = try sendTcpPacket(destination_mac, server_ip, client_ip, server_a.local_port, server_a.remote_port, payload_ack_a.sequence_number, payload_ack_a.acknowledgment_number, payload_ack_a.flags, payload_ack_a.window_size, payload_ack_a.payload);
+    const payload_ack_a_packet = (try pollTcpPacketStrict()).?;
+    try table.findByInboundPacket(server_ip, client_ip, .{
+        .source_port = payload_ack_a_packet.source_port,
+        .destination_port = payload_ack_a_packet.destination_port,
+        .sequence_number = payload_ack_a_packet.sequence_number,
+        .acknowledgment_number = payload_ack_a_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = payload_ack_a_packet.flags,
+        .window_size = payload_ack_a_packet.window_size,
+        .checksum_value = payload_ack_a_packet.checksum_value,
+        .urgent_pointer = payload_ack_a_packet.urgent_pointer,
+        .payload = payload_ack_a_packet.payload[0..payload_ack_a_packet.payload_len],
+    }).?.acceptAck(.{
+        .source_port = payload_ack_a_packet.source_port,
+        .destination_port = payload_ack_a_packet.destination_port,
+        .sequence_number = payload_ack_a_packet.sequence_number,
+        .acknowledgment_number = payload_ack_a_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = payload_ack_a_packet.flags,
+        .window_size = payload_ack_a_packet.window_size,
+        .checksum_value = payload_ack_a_packet.checksum_value,
+        .urgent_pointer = payload_ack_a_packet.urgent_pointer,
+        .payload = payload_ack_a_packet.payload[0..payload_ack_a_packet.payload_len],
+    });
+
+    const client_fin_a = try client_a.buildFin();
+    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client_a.local_port, client_a.remote_port, client_fin_a.sequence_number, client_fin_a.acknowledgment_number, client_fin_a.flags, client_fin_a.window_size, client_fin_a.payload);
+    const client_fin_a_packet = (try pollTcpPacketStrict()).?;
+    const fin_ack_a = try server_a.acceptFin(.{
+        .source_port = client_fin_a_packet.source_port,
+        .destination_port = client_fin_a_packet.destination_port,
+        .sequence_number = client_fin_a_packet.sequence_number,
+        .acknowledgment_number = client_fin_a_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = client_fin_a_packet.flags,
+        .window_size = client_fin_a_packet.window_size,
+        .checksum_value = client_fin_a_packet.checksum_value,
+        .urgent_pointer = client_fin_a_packet.urgent_pointer,
+        .payload = client_fin_a_packet.payload[0..client_fin_a_packet.payload_len],
+    });
+    _ = try sendTcpPacket(destination_mac, server_ip, client_ip, server_a.local_port, server_a.remote_port, fin_ack_a.sequence_number, fin_ack_a.acknowledgment_number, fin_ack_a.flags, fin_ack_a.window_size, fin_ack_a.payload);
+    const fin_ack_a_packet = (try pollTcpPacketStrict()).?;
+    try table.findByInboundPacket(server_ip, client_ip, .{
+        .source_port = fin_ack_a_packet.source_port,
+        .destination_port = fin_ack_a_packet.destination_port,
+        .sequence_number = fin_ack_a_packet.sequence_number,
+        .acknowledgment_number = fin_ack_a_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = fin_ack_a_packet.flags,
+        .window_size = fin_ack_a_packet.window_size,
+        .checksum_value = fin_ack_a_packet.checksum_value,
+        .urgent_pointer = fin_ack_a_packet.urgent_pointer,
+        .payload = fin_ack_a_packet.payload[0..fin_ack_a_packet.payload_len],
+    }).?.acceptAck(.{
+        .source_port = fin_ack_a_packet.source_port,
+        .destination_port = fin_ack_a_packet.destination_port,
+        .sequence_number = fin_ack_a_packet.sequence_number,
+        .acknowledgment_number = fin_ack_a_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = fin_ack_a_packet.flags,
+        .window_size = fin_ack_a_packet.window_size,
+        .checksum_value = fin_ack_a_packet.checksum_value,
+        .urgent_pointer = fin_ack_a_packet.urgent_pointer,
+        .payload = fin_ack_a_packet.payload[0..fin_ack_a_packet.payload_len],
+    });
+
+    const server_fin_a = try server_a.buildFin();
+    _ = try sendTcpPacket(destination_mac, server_ip, client_ip, server_a.local_port, server_a.remote_port, server_fin_a.sequence_number, server_fin_a.acknowledgment_number, server_fin_a.flags, server_fin_a.window_size, server_fin_a.payload);
+    const server_fin_a_packet = (try pollTcpPacketStrict()).?;
+    const final_ack_a = try table.findByInboundPacket(server_ip, client_ip, .{
+        .source_port = server_fin_a_packet.source_port,
+        .destination_port = server_fin_a_packet.destination_port,
+        .sequence_number = server_fin_a_packet.sequence_number,
+        .acknowledgment_number = server_fin_a_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = server_fin_a_packet.flags,
+        .window_size = server_fin_a_packet.window_size,
+        .checksum_value = server_fin_a_packet.checksum_value,
+        .urgent_pointer = server_fin_a_packet.urgent_pointer,
+        .payload = server_fin_a_packet.payload[0..server_fin_a_packet.payload_len],
+    }).?.acceptFin(.{
+        .source_port = server_fin_a_packet.source_port,
+        .destination_port = server_fin_a_packet.destination_port,
+        .sequence_number = server_fin_a_packet.sequence_number,
+        .acknowledgment_number = server_fin_a_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = server_fin_a_packet.flags,
+        .window_size = server_fin_a_packet.window_size,
+        .checksum_value = server_fin_a_packet.checksum_value,
+        .urgent_pointer = server_fin_a_packet.urgent_pointer,
+        .payload = server_fin_a_packet.payload[0..server_fin_a_packet.payload_len],
+    });
+    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client_a.local_port, client_a.remote_port, final_ack_a.sequence_number, final_ack_a.acknowledgment_number, final_ack_a.flags, final_ack_a.window_size, final_ack_a.payload);
+    const final_ack_a_packet = (try pollTcpPacketStrict()).?;
+    try server_a.acceptAck(.{
+        .source_port = final_ack_a_packet.source_port,
+        .destination_port = final_ack_a_packet.destination_port,
+        .sequence_number = final_ack_a_packet.sequence_number,
+        .acknowledgment_number = final_ack_a_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = final_ack_a_packet.flags,
+        .window_size = final_ack_a_packet.window_size,
+        .checksum_value = final_ack_a_packet.checksum_value,
+        .urgent_pointer = final_ack_a_packet.urgent_pointer,
+        .payload = final_ack_a_packet.payload[0..final_ack_a_packet.payload_len],
+    });
+
+    try std.testing.expectEqual(tcp.State.closed, client_a.state);
+    try std.testing.expectEqual(tcp.State.closed, server_a.state);
+    try std.testing.expectEqual(tcp.State.established, client_b.state);
+    try std.testing.expectEqual(tcp.State.established, server_b.state);
+
+    const payload_b2 = "FLOW-B-LIVE";
+    const data_b2 = try client_b.buildPayload(payload_b2);
+    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client_b.local_port, client_b.remote_port, data_b2.sequence_number, data_b2.acknowledgment_number, data_b2.flags, data_b2.window_size, data_b2.payload);
+    const data_b2_packet = (try pollTcpPacketStrict()).?;
+    try server_b.acceptPayload(.{
+        .source_port = data_b2_packet.source_port,
+        .destination_port = data_b2_packet.destination_port,
+        .sequence_number = data_b2_packet.sequence_number,
+        .acknowledgment_number = data_b2_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = data_b2_packet.flags,
+        .window_size = data_b2_packet.window_size,
+        .checksum_value = data_b2_packet.checksum_value,
+        .urgent_pointer = data_b2_packet.urgent_pointer,
+        .payload = data_b2_packet.payload[0..data_b2_packet.payload_len],
+    });
+    const payload_b2_ack = try server_b.buildAck();
+    _ = try sendTcpPacket(destination_mac, server_ip, client_ip, server_b.local_port, server_b.remote_port, payload_b2_ack.sequence_number, payload_b2_ack.acknowledgment_number, payload_b2_ack.flags, payload_b2_ack.window_size, payload_b2_ack.payload);
+    const payload_b2_ack_packet = (try pollTcpPacketStrict()).?;
+    const mapped_b2 = table.findByInboundPacket(server_ip, client_ip, .{
+        .source_port = payload_b2_ack_packet.source_port,
+        .destination_port = payload_b2_ack_packet.destination_port,
+        .sequence_number = payload_b2_ack_packet.sequence_number,
+        .acknowledgment_number = payload_b2_ack_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = payload_b2_ack_packet.flags,
+        .window_size = payload_b2_ack_packet.window_size,
+        .checksum_value = payload_b2_ack_packet.checksum_value,
+        .urgent_pointer = payload_b2_ack_packet.urgent_pointer,
+        .payload = payload_b2_ack_packet.payload[0..payload_b2_ack_packet.payload_len],
+    }).?;
+    try std.testing.expect(mapped_b2 == client_b);
+    try mapped_b2.acceptAck(.{
+        .source_port = payload_b2_ack_packet.source_port,
+        .destination_port = payload_b2_ack_packet.destination_port,
+        .sequence_number = payload_b2_ack_packet.sequence_number,
+        .acknowledgment_number = payload_b2_ack_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = payload_b2_ack_packet.flags,
+        .window_size = payload_b2_ack_packet.window_size,
+        .checksum_value = payload_b2_ack_packet.checksum_value,
+        .urgent_pointer = payload_b2_ack_packet.urgent_pointer,
+        .payload = payload_b2_ack_packet.payload[0..payload_b2_ack_packet.payload_len],
+    });
+
+    try std.testing.expectEqual(@as(usize, 2), table.entryCount());
+    try std.testing.expectEqual(tcp.State.established, client_b.state);
+}
+
 test "baremetal net pal sends and parses dhcp discover through rtl8139 mock device" {
     rtl8139.testEnableMockDevice();
     defer rtl8139.testDisableMockDevice();
