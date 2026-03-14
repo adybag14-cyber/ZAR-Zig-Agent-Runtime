@@ -1362,6 +1362,114 @@ test "baremetal net pal retransmits dropped payload and clears timer on ack thro
     try std.testing.expect(!client.retransmit.armed());
 }
 
+test "baremetal net pal streams payload across remote window through rtl8139 mock device" {
+    rtl8139.testEnableMockDevice();
+    defer rtl8139.testDisableMockDevice();
+
+    try std.testing.expect(initDevice());
+    const client_ip = [4]u8{ 192, 168, 56, 10 };
+    const server_ip = [4]u8{ 192, 168, 56, 1 };
+    const destination_mac = macAddress();
+    const payload = "OPENCLAW-TCP-WINDOWED-PAYLOAD";
+
+    var client = tcp.Session.initClient(4321, 443, 0x0102_0304, 4096);
+    var server = tcp.Session.initServer(443, 4321, 0xA0B0_C0D0, 6);
+
+    const syn = try client.buildSyn();
+    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client.local_port, client.remote_port, syn.sequence_number, syn.acknowledgment_number, syn.flags, syn.window_size, syn.payload);
+    const syn_packet = (try pollTcpPacketStrict()).?;
+    const syn_ack = try server.acceptSyn(.{
+        .source_port = syn_packet.source_port,
+        .destination_port = syn_packet.destination_port,
+        .sequence_number = syn_packet.sequence_number,
+        .acknowledgment_number = syn_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = syn_packet.flags,
+        .window_size = syn_packet.window_size,
+        .checksum_value = syn_packet.checksum_value,
+        .urgent_pointer = syn_packet.urgent_pointer,
+        .payload = syn_packet.payload[0..syn_packet.payload_len],
+    });
+
+    _ = try sendTcpPacket(destination_mac, server_ip, client_ip, server.local_port, server.remote_port, syn_ack.sequence_number, syn_ack.acknowledgment_number, syn_ack.flags, syn_ack.window_size, syn_ack.payload);
+    const syn_ack_packet = (try pollTcpPacketStrict()).?;
+    const ack = try client.acceptSynAck(.{
+        .source_port = syn_ack_packet.source_port,
+        .destination_port = syn_ack_packet.destination_port,
+        .sequence_number = syn_ack_packet.sequence_number,
+        .acknowledgment_number = syn_ack_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = syn_ack_packet.flags,
+        .window_size = syn_ack_packet.window_size,
+        .checksum_value = syn_ack_packet.checksum_value,
+        .urgent_pointer = syn_ack_packet.urgent_pointer,
+        .payload = syn_ack_packet.payload[0..syn_ack_packet.payload_len],
+    });
+
+    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client.local_port, client.remote_port, ack.sequence_number, ack.acknowledgment_number, ack.flags, ack.window_size, ack.payload);
+    const ack_packet = (try pollTcpPacketStrict()).?;
+    try server.acceptAck(.{
+        .source_port = ack_packet.source_port,
+        .destination_port = ack_packet.destination_port,
+        .sequence_number = ack_packet.sequence_number,
+        .acknowledgment_number = ack_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = ack_packet.flags,
+        .window_size = ack_packet.window_size,
+        .checksum_value = ack_packet.checksum_value,
+        .urgent_pointer = ack_packet.urgent_pointer,
+        .payload = ack_packet.payload[0..ack_packet.payload_len],
+    });
+
+    var payload_offset: usize = 0;
+    while (payload_offset < payload.len) {
+        const outbound = try client.buildPayloadChunk(payload[payload_offset..]);
+        _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client.local_port, client.remote_port, outbound.sequence_number, outbound.acknowledgment_number, outbound.flags, outbound.window_size, outbound.payload);
+        const outbound_packet = (try pollTcpPacketStrict()).?;
+
+        const expected_chunk = payload[payload_offset .. payload_offset + outbound.payload.len];
+        try std.testing.expectEqualStrings(expected_chunk, outbound.payload);
+        try std.testing.expectEqualStrings(expected_chunk, outbound_packet.payload[0..outbound_packet.payload_len]);
+
+        try server.acceptPayload(.{
+            .source_port = outbound_packet.source_port,
+            .destination_port = outbound_packet.destination_port,
+            .sequence_number = outbound_packet.sequence_number,
+            .acknowledgment_number = outbound_packet.acknowledgment_number,
+            .data_offset_bytes = tcp.header_len,
+            .flags = outbound_packet.flags,
+            .window_size = outbound_packet.window_size,
+            .checksum_value = outbound_packet.checksum_value,
+            .urgent_pointer = outbound_packet.urgent_pointer,
+            .payload = outbound_packet.payload[0..outbound_packet.payload_len],
+        });
+
+        payload_offset += outbound.payload.len;
+
+        const payload_ack = try server.buildAck();
+        _ = try sendTcpPacket(destination_mac, server_ip, client_ip, server.local_port, server.remote_port, payload_ack.sequence_number, payload_ack.acknowledgment_number, payload_ack.flags, payload_ack.window_size, payload_ack.payload);
+        const payload_ack_packet = (try pollTcpPacketStrict()).?;
+        try client.acceptAck(.{
+            .source_port = payload_ack_packet.source_port,
+            .destination_port = payload_ack_packet.destination_port,
+            .sequence_number = payload_ack_packet.sequence_number,
+            .acknowledgment_number = payload_ack_packet.acknowledgment_number,
+            .data_offset_bytes = tcp.header_len,
+            .flags = payload_ack_packet.flags,
+            .window_size = payload_ack_packet.window_size,
+            .checksum_value = payload_ack_packet.checksum_value,
+            .urgent_pointer = payload_ack_packet.urgent_pointer,
+            .payload = payload_ack_packet.payload[0..payload_ack_packet.payload_len],
+        });
+    }
+
+    try std.testing.expectEqual(@as(usize, payload.len), payload_offset);
+    try std.testing.expectEqual(tcp.State.established, client.state);
+    try std.testing.expectEqual(tcp.State.established, server.state);
+    try std.testing.expectEqual(@as(u32, 0x0102_0305 + payload.len), client.send_next);
+    try std.testing.expectEqual(@as(u32, 0x0102_0305 + payload.len), server.recv_next);
+}
+
 test "baremetal net pal retransmits dropped fins and completes tcp teardown through rtl8139 mock device" {
     rtl8139.testEnableMockDevice();
     defer rtl8139.testDisableMockDevice();

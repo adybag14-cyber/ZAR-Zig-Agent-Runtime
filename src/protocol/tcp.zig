@@ -355,6 +355,15 @@ pub const Session = struct {
         return self.buildPayloadInternal(payload);
     }
 
+    pub fn buildPayloadChunk(self: *Session, payload: []const u8) Error!Outbound {
+        if (self.state != .established) return error.InvalidState;
+        if (payload.len == 0) return error.EmptyPayload;
+        if (self.remote_window == 0) return error.WindowExceeded;
+
+        const chunk_len: usize = @min(payload.len, @as(usize, self.remote_window));
+        return self.buildPayloadInternal(payload[0..chunk_len]);
+    }
+
     pub fn buildPayloadWithTimeout(self: *Session, payload: []const u8, now_tick: u64, timeout_ticks: u64) Error!Outbound {
         if (self.retransmit.armed()) return error.InvalidState;
 
@@ -366,7 +375,7 @@ pub const Session = struct {
     fn buildPayloadInternal(self: *Session, payload: []const u8) Error!Outbound {
         if (self.state != .established) return error.InvalidState;
         if (payload.len == 0) return error.EmptyPayload;
-        if (self.remote_window != 0 and payload.len > self.remote_window) return error.WindowExceeded;
+        if (payload.len > self.remote_window) return error.WindowExceeded;
 
         const outbound = Outbound{
             .sequence_number = self.send_next,
@@ -1219,6 +1228,83 @@ test "tcp session rejects payload larger than remote window" {
     try std.testing.expectEqual(@as(u16, 4), client.remote_window);
     try std.testing.expectError(error.WindowExceeded, client.buildPayload("12345"));
     try std.testing.expectError(error.WindowExceeded, client.buildPayloadWithTimeout("12345", 10, 3));
+}
+
+test "tcp session blocks payload on zero window until pure ack reopens it" {
+    const client_ip = [4]u8{ 192, 168, 56, 10 };
+    const server_ip = [4]u8{ 192, 168, 56, 1 };
+
+    var client = Session.initClient(4321, 443, 0x0102_0304, 4096);
+    var server = Session.initServer(443, 4321, 0xA0B0_C0D0, 4);
+
+    var buffer: [header_len + 32]u8 = undefined;
+
+    const syn = try client.buildSyn();
+    const syn_packet = try testDecodeOutbound(client, syn, client_ip, server_ip, buffer[0..]);
+    const syn_ack = try server.acceptSyn(syn_packet);
+    const syn_ack_packet = try testDecodeOutbound(server, syn_ack, server_ip, client_ip, buffer[0..]);
+    const ack = try client.acceptSynAck(syn_ack_packet);
+    const ack_packet = try testDecodeOutbound(client, ack, client_ip, server_ip, buffer[0..]);
+    try server.acceptAck(ack_packet);
+
+    var zero_window_update = try server.buildAck();
+    zero_window_update.window_size = 0;
+    const zero_window_packet = try testDecodeOutbound(server, zero_window_update, server_ip, client_ip, buffer[0..]);
+    try client.acceptAck(zero_window_packet);
+
+    try std.testing.expectEqual(@as(u16, 0), client.remote_window);
+    try std.testing.expectError(error.WindowExceeded, client.buildPayload("X"));
+    try std.testing.expectError(error.WindowExceeded, client.buildPayloadWithTimeout("X", 10, 3));
+
+    var reopen_window_update = try server.buildAck();
+    reopen_window_update.window_size = 4;
+    const reopen_window_packet = try testDecodeOutbound(server, reopen_window_update, server_ip, client_ip, buffer[0..]);
+    try client.acceptAck(reopen_window_packet);
+
+    try std.testing.expectEqual(@as(u16, 4), client.remote_window);
+    const reopened_payload = try client.buildPayload("1234");
+    try std.testing.expectEqual(@as(usize, 4), reopened_payload.payload.len);
+    const reopened_chunk = try client.buildPayloadChunk("12345");
+    try std.testing.expectEqualStrings("1234", reopened_chunk.payload);
+    try std.testing.expectError(error.WindowExceeded, client.buildPayload("12345"));
+}
+
+test "tcp session streams payload in remote-window-sized chunks" {
+    const client_ip = [4]u8{ 192, 168, 56, 10 };
+    const server_ip = [4]u8{ 192, 168, 56, 1 };
+    const payload = "ABCDEFGHIJ";
+
+    var client = Session.initClient(4321, 443, 0x0102_0304, 4096);
+    var server = Session.initServer(443, 4321, 0xA0B0_C0D0, 4);
+
+    var buffer: [header_len + 32]u8 = undefined;
+
+    const syn = try client.buildSyn();
+    const syn_packet = try testDecodeOutbound(client, syn, client_ip, server_ip, buffer[0..]);
+    const syn_ack = try server.acceptSyn(syn_packet);
+    const syn_ack_packet = try testDecodeOutbound(server, syn_ack, server_ip, client_ip, buffer[0..]);
+    const ack = try client.acceptSynAck(syn_ack_packet);
+    const ack_packet = try testDecodeOutbound(client, ack, client_ip, server_ip, buffer[0..]);
+    try server.acceptAck(ack_packet);
+
+    var payload_offset: usize = 0;
+    while (payload_offset < payload.len) {
+        const outbound = try client.buildPayloadChunk(payload[payload_offset..]);
+        const data_packet = try testDecodeOutbound(client, outbound, client_ip, server_ip, buffer[0..]);
+        try server.acceptPayload(data_packet);
+
+        const chunk = payload[payload_offset .. payload_offset + outbound.payload.len];
+        try std.testing.expectEqualStrings(chunk, outbound.payload);
+        payload_offset += outbound.payload.len;
+
+        const payload_ack = try server.buildAck();
+        const payload_ack_packet = try testDecodeOutbound(server, payload_ack, server_ip, client_ip, buffer[0..]);
+        try client.acceptAck(payload_ack_packet);
+    }
+
+    try std.testing.expectEqual(@as(usize, payload.len), payload_offset);
+    try std.testing.expectEqual(@as(u32, 0x0102_0305 + payload.len), client.send_next);
+    try std.testing.expectEqual(@as(u32, 0x0102_0305 + payload.len), server.recv_next);
 }
 
 fn testDecodeOutbound(
