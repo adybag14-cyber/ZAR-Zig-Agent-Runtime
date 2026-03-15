@@ -219,6 +219,7 @@ Current local source-of-truth evidence:
   - `IDENTIFY DEVICE` bring-up
   - sector-count discovery from identify words `60/61`
   - sector `READ`, `WRITE`, and `CACHE FLUSH`
+  - bounded multi-partition discovery/export for both MBR and GPT layouts
   - first usable MBR partition mount from sector `0`, with logical LBA translation above the mounted partition base
   - protective-MBR GPT header parsing plus first usable GPT partition mount with the same logical LBA translation model
   - hosted mock-device support for deterministic regression coverage
@@ -232,6 +233,7 @@ Current local source-of-truth evidence:
 - host regressions now prove:
   - the storage facade prefers ATA PIO when a device is present
   - ATA PIO mock-device mount and identify-backed capacity detection
+  - multi-partition export plus explicit selection for both MBR and GPT mock layouts
   - first-partition MBR mounting with logical base-LBA translation
   - protective-MBR GPT partition discovery with mounted logical base-LBA translation
   - ATA PIO mock-device read/write/flush behavior
@@ -240,6 +242,7 @@ Current local source-of-truth evidence:
   - `scripts/baremetal-qemu-ata-storage-probe-check.ps1`
   - a real MBR-partitioned raw image attached to the freestanding PVH artifact
   - raw ATA-backed block mutation + readback at physical-on-disk LBAs behind the mounted logical partition view
+  - secondary-partition export/selection plus physical readback behind that mounted logical partition view
   - tool-layout persistence through the ATA-backed shared storage facade on that partition-mounted view
   - path-based filesystem persistence through the ATA-backed shared storage facade on that partition-mounted view
   - `scripts/baremetal-qemu-ata-gpt-installer-probe-check.ps1`
@@ -321,6 +324,11 @@ Notes:
   - the freestanding branch now performs a real bounded `http://` POST over the existing RTL8139 + ARP + IPv4 + DNS + TCP stack
   - host regressions now prove hostname resolution through a DNS A response, ARP resolution, TCP connect, HTTP request framing, HTTP response parsing, and allocator-owned response buffering over the mock RTL8139 device
   - `https://` remains explicitly unsupported on the freestanding path until a real TLS layer exists; this is now an explicit boundary, not a silent hosted fallback
+- the live freestanding PAL `http://` POST path is now also proven directly:
+  - `scripts/baremetal-qemu-rtl8139-http-post-probe-check.ps1`
+  - the freestanding DNS path now decodes directly into caller-owned packet storage instead of copying through large stack temporaries
+  - the PVH boot stack was increased to `128 KiB` so the real DNS + TCP + HTTP + service path no longer overruns the early page-table scratch area
+  - the probe keeps interrupts masked on exit, because re-enabling them after the proof can surface a real hardware IRQ0 on the test path and collapse the guest before `isa-debug-exit`
 - host regressions prove mock-device ARP, IPv4, UDP, DHCP, DNS, TCP handshake/payload exchange, bounded four-way close, dropped-first-SYN retransmission/timeout recovery, dropped-first-payload retransmission/timeout recovery, dropped-first-FIN retransmission/timeout recovery on both close sides, bounded multi-flow session isolation, bounded cumulative-ACK advancement across multiple in-flight payload chunks, DHCP-driven route configuration, gateway ARP learning, routed off-subnet UDP delivery, and direct-subnet UDP bypass through the RTL8139 path
 - `src/baremetal/tool_service.zig` now provides a bounded framed request/response shim on top of the bare-metal tool substrate for the TCP path, with typed `CMD`, `GET`, `PUT`, `STAT`, `PKG`, `PKGLIST`, and `PKGRUN` requests plus bounded batched request parsing/execution on one flow
 - live QEMU proofs now pass:

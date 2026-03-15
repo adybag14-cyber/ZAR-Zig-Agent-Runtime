@@ -21,6 +21,11 @@ pub const Response = struct {
     }
 };
 
+pub const FreestandingHeader = struct {
+    name: []const u8,
+    value: []const u8,
+};
+
 pub const EthernetState = abi.BaremetalEthernetState;
 pub const Error = rtl8139.Error;
 pub const ArpPacket = arp.Packet;
@@ -424,6 +429,15 @@ pub fn post(
     };
 }
 
+pub fn postFreestandingExplicit(
+    allocator: std.mem.Allocator,
+    url: []const u8,
+    payload: []const u8,
+    headers: []const FreestandingHeader,
+) !Response {
+    return postFreestandingWithHeaders(allocator, url, payload, headers);
+}
+
 const PostScheme = enum {
     http,
     https,
@@ -450,6 +464,15 @@ fn postFreestanding(
     payload: []const u8,
     headers: []const std.http.Header,
 ) !Response {
+    return postFreestandingWithHeaders(allocator, url, payload, headers);
+}
+
+fn postFreestandingWithHeaders(
+    allocator: std.mem.Allocator,
+    url: []const u8,
+    payload: []const u8,
+    headers: anytype,
+) !Response {
     const parsed = try parsePostUrl(url);
     if (parsed.scheme != .http) return error.UnsupportedScheme;
     if (!route_state.configured or ipv4IsZero(route_state.local_ip)) return error.RouteUnconfigured;
@@ -462,7 +485,7 @@ fn postFreestanding(
     if (request_bytes.len > max_tcp_payload_len) return error.PayloadTooLarge;
 
     var client = tcp.Session.initClient(local_port, parsed.port, 0x0C10_0000 +% @as(u32, local_port), 4096);
-    const started_ms = time_util.nowMs();
+    const started_ms: i64 = if (builtin.os.tag == .freestanding) 0 else time_util.nowMs();
     const syn = try client.buildSynWithTimeout(0, post_retransmit_ticks);
     try sendTcpOutbound(destination_mac, route_state.local_ip, destination_ip, client, syn);
 
@@ -523,7 +546,7 @@ fn postFreestanding(
     return .{
         .status_code = response_meta.status_code,
         .body = try allocator.dupe(u8, response_bytes.items[response_meta.body_offset..]),
-        .latency_ms = time_util.nowMs() - started_ms,
+        .latency_ms = if (builtin.os.tag == .freestanding) 0 else time_util.nowMs() - started_ms,
     };
 }
 
@@ -657,7 +680,7 @@ fn buildHttpPostRequest(
     allocator: std.mem.Allocator,
     parsed: ParsedPostUrl,
     payload: []const u8,
-    headers: []const std.http.Header,
+    headers: anytype,
 ) ![]u8 {
     var request: std.ArrayList(u8) = .empty;
     errdefer request.deinit(allocator);
@@ -1136,37 +1159,13 @@ pub fn pollDnsPacketStrictInto(result: *DnsPacket) StrictDnsPollError!bool {
     if (!(try pollUdpPacketStrictInto(&packet))) return false;
     if (!(packet.source_port == dns.default_port or packet.destination_port == dns.default_port)) return error.NotDns;
 
-    const decoded = try dns.decode(packet.payload[0..packet.payload_len]);
-
     result.ethernet_destination = packet.ethernet_destination;
     result.ethernet_source = packet.ethernet_source;
     result.ipv4_header = packet.ipv4_header;
     result.source_port = packet.source_port;
     result.destination_port = packet.destination_port;
     result.udp_checksum_value = packet.checksum_value;
-    result.id = decoded.id;
-    result.flags = decoded.flags;
-    result.question_count = decoded.question_count;
-    result.answer_count_total = decoded.answer_count_total;
-    result.authority_count = decoded.authority_count;
-    result.additional_count = decoded.additional_count;
-    result.question_name_len = decoded.question_name_len;
-    result.question_name = [_]u8{0} ** max_dns_name_len;
-    if (decoded.question_name_len > 0) {
-        std.mem.copyForwards(u8, result.question_name[0..decoded.question_name_len], decoded.question_name[0..decoded.question_name_len]);
-    }
-    result.question_type = decoded.question_type;
-    result.question_class = decoded.question_class;
-    result.answer_count = decoded.answer_count;
-
-    var answer_index: usize = 0;
-    while (answer_index < max_dns_answers) : (answer_index += 1) {
-        if (answer_index < decoded.answer_count) {
-            result.answers[answer_index] = decoded.answers[answer_index];
-        } else {
-            result.answers[answer_index] = std.mem.zeroes(dns.Answer);
-        }
-    }
+    try dns.decodeInto(packet.payload[0..packet.payload_len], result);
     return true;
 }
 

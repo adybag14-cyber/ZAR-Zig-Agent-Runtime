@@ -3,7 +3,7 @@
 ## Current Snapshot
 
 - Latest published edge release: `v0.2.0-zig-edge.28`
-- Latest local test gate: `zig build test --summary all` -> main `282/282` + bare-metal host `212/212` passing
+- Latest local test gate: `zig build test --summary all` -> main `292/292` + bare-metal host `253/253` passing
 - Latest parity gate: `scripts/check-go-method-parity.ps1` -> `GO_MISSING_IN_ZIG=0`, `ORIGINAL_MISSING_IN_ZIG=0`, `ORIGINAL_BETA_MISSING_IN_ZIG=0`, `UNION_MISSING_IN_ZIG=0`, `UNION_EVENTS_MISSING_IN_ZIG=0`, `ZIG_COUNT=175`, `ZIG_EVENTS_COUNT=19`
 - Current head: local source-of-truth on `fs55-ethernet-integration` (exact pushed head is tracked in issue `#1` and the latest branch GitHub Actions runs)
 - Toolchain lane: Codeberg `master` is canonical; `adybag14-cyber/zig` is the Windows release mirror with rolling `latest-master` plus immutable `upstream-<sha>` releases.
@@ -27,9 +27,9 @@
   - `scripts/baremetal-qemu-ps2-input-probe-check.ps1` plus its wrapper probes are the live bare-metal proof for IRQ-driven keyboard/mouse updates
 - disk/block I/O is now on a real shared backend path in `FS5.5`:
   - `src/baremetal/storage_backend.zig` selects between RAM-disk and ATA PIO backends
-  - `src/baremetal/ata_pio_disk.zig` now performs real x86 ATA PIO `IDENTIFY` / `READ` / `WRITE` / `FLUSH` plus first-usable-MBR and protective-MBR GPT partition mounting with logical LBA translation
+  - `src/baremetal/ata_pio_disk.zig` now performs real x86 ATA PIO `IDENTIFY` / `READ` / `WRITE` / `FLUSH` plus bounded multi-partition MBR/GPT discovery/export, first-usable-MBR and protective-MBR GPT partition mounting, and logical LBA translation
   - `src/pal/storage.zig` and `src/baremetal/tool_layout.zig` now route through the backend facade instead of directly targeting the RAM disk
-  - `scripts/baremetal-qemu-ata-storage-probe-check.ps1` now proves live ATA-backed raw block mutation + readback plus ATA-backed tool-layout and filesystem persistence over the freestanding PVH image on top of a real MBR-partitioned raw disk, verifying physical-on-disk offsets behind the mounted logical partition view
+  - `scripts/baremetal-qemu-ata-storage-probe-check.ps1` now proves live ATA-backed raw block mutation + readback plus ATA-backed tool-layout and filesystem persistence over the freestanding PVH image on top of a real MBR-partitioned raw disk, verifying both primary and secondary partition export/selection plus physical-on-disk offsets behind the mounted logical partition view
   - `src/baremetal/disk_installer.zig` now seeds the canonical persisted install layout (`/boot`, `/system`, `/runtime/install`, bootstrap package) on the active backend
   - `scripts/baremetal-qemu-ata-gpt-installer-probe-check.ps1` now proves the freestanding PVH path mounts a protective-MBR GPT partition, preserves logical-to-physical LBA translation, seeds the install layout, and runs the persisted bootstrap package from disk
 - Ethernet L2 is now also on a real device path in `FS5.5`:
@@ -45,6 +45,7 @@
   - `src/pal/net.zig` now also exposes `sendTcpPacket` / `pollTcpPacketStrictInto`, explicit DNS server configuration, and a real freestanding bounded `http://` POST path on top of the RTL8139/TCP stack
   - `src/pal/net.zig` host regressions now also prove two TCP flows can handshake, exchange payloads, and teardown independently through the mock RTL8139 path
   - that same PAL surface now also proves hostname resolution through DNS, ARP resolution, TCP connect, HTTP request framing, and HTTP response parsing for freestanding plain HTTP; `https://` remains explicitly unsupported until TLS exists
+  - `scripts/baremetal-qemu-rtl8139-http-post-probe-check.ps1` now proves the freestanding PAL `http://` POST path live over RTL8139 with DNS, TCP, HTTP, and allocator-owned response buffering
   - `src/baremetal/tool_service.zig` now exposes a bounded framed request/response shim on top of the bare-metal tool substrate for the TCP path, with typed `CMD`, `GET`, `PUT`, `STAT`, `PKG`, `PKGLIST`, and `PKGRUN` requests plus bounded batched request parsing/execution on one flow
   - host/module validation now also proves typed TCP file-service and package-service behavior on top of the bare-metal filesystem, including `PUT`, `GET`, `STAT`, `PKG`, `PKGLIST`, `PKGRUN`, persisted `run-script`, canonical `run-package`, and mixed typed batch handling with concatenated framed responses through that service seam
   - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1`, and `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1` prove live ARP, IPv4, UDP, and TCP handshake/payload exchange plus bounded four-way close over the freestanding PVH image, including dropped-first-SYN recovery, dropped-first-payload recovery, dropped-first-FIN recovery on both close sides, bounded two-flow session isolation, zero-window block/reopen behavior, bounded sequential payload chunking, framed multi-request command-service exchange, bounded typed batch request multiplexing on one TCP flow, typed TCP `PUT` upload with direct filesystem readback, typed `PKG` / `PKGLIST` / `PKGRUN` package-service exchange, canonical `/packages/<name>/bin/main.oc` readback, and package output readback over the attached disk-backed bare-metal path

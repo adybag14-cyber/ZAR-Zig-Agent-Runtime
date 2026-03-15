@@ -11,9 +11,14 @@ $releaseDir = Join-Path $repo "release"
 $expectedProbeCode = 0x34
 $expectedExitCode = ($expectedProbeCode * 2) + 1
 $partitionStartLba = 2048
+$partitionSectorCount = 4096
+$secondaryPartitionStartLba = 8192
+$secondaryPartitionSectorCount = 2048
 $partitionType = 0x83
 $rawProbeLba = 300
 $rawProbeSeed = 0x41
+$secondaryRawProbeLba = 12
+$secondaryRawProbeSeed = 0x53
 $toolSlotLba = 34
 $toolSlotSeed = 0x30
 $filesystemSuperblockLba = 130
@@ -200,25 +205,35 @@ function Initialize-MbrPartitionedImage {
         [string] $Path,
         [int] $SizeMiB,
         [uint32] $PartitionStartLba,
+        [uint32] $PartitionSectorCount,
+        [uint32] $SecondaryPartitionStartLba,
+        [uint32] $SecondaryPartitionSectorCount,
         [byte] $PartitionType
     )
 
     New-RawDiskImage -Path $Path -SizeMiB $SizeMiB
     $bytes = [System.IO.File]::ReadAllBytes($Path)
     $totalSectors = [uint32]($bytes.Length / $blockSize)
-    if ($totalSectors -le $PartitionStartLba) {
-        throw "Disk image is too small for ATA partition start LBA $PartitionStartLba."
+    if ($totalSectors -le $PartitionStartLba -or $totalSectors -lt ($PartitionStartLba + $PartitionSectorCount)) {
+        throw "Disk image is too small for ATA primary partition."
+    }
+    if ($totalSectors -le $SecondaryPartitionStartLba -or $totalSectors -lt ($SecondaryPartitionStartLba + $SecondaryPartitionSectorCount)) {
+        throw "Disk image is too small for ATA secondary partition."
     }
 
-    $partitionSectorCount = [uint32]($totalSectors - $PartitionStartLba)
-    $entryOffset = 446
-    $bytes[$entryOffset + 4] = $PartitionType
-    Write-ImageU32LE -Bytes $bytes -Index ($entryOffset + 8) -Value $PartitionStartLba
-    Write-ImageU32LE -Bytes $bytes -Index ($entryOffset + 12) -Value $partitionSectorCount
+    $entryOffset0 = 446
+    $bytes[$entryOffset0 + 4] = $PartitionType
+    Write-ImageU32LE -Bytes $bytes -Index ($entryOffset0 + 8) -Value $PartitionStartLba
+    Write-ImageU32LE -Bytes $bytes -Index ($entryOffset0 + 12) -Value $PartitionSectorCount
+
+    $entryOffset1 = $entryOffset0 + 16
+    $bytes[$entryOffset1 + 4] = $PartitionType
+    Write-ImageU32LE -Bytes $bytes -Index ($entryOffset1 + 8) -Value $SecondaryPartitionStartLba
+    Write-ImageU32LE -Bytes $bytes -Index ($entryOffset1 + 12) -Value $SecondaryPartitionSectorCount
+
     $bytes[510] = 0x55
     $bytes[511] = 0xAA
     [System.IO.File]::WriteAllBytes($Path, $bytes)
-    return $partitionSectorCount
 }
 
 Set-Location $repo
@@ -310,7 +325,14 @@ if (-not (Test-Path $artifact)) {
     throw "ATA storage probe artifact is missing: $artifact"
 }
 
-$partitionSectorCount = Initialize-MbrPartitionedImage -Path $diskImage -SizeMiB $DiskSizeMiB -PartitionStartLba $partitionStartLba -PartitionType $partitionType
+Initialize-MbrPartitionedImage `
+    -Path $diskImage `
+    -SizeMiB $DiskSizeMiB `
+    -PartitionStartLba $partitionStartLba `
+    -PartitionSectorCount $partitionSectorCount `
+    -SecondaryPartitionStartLba $secondaryPartitionStartLba `
+    -SecondaryPartitionSectorCount $secondaryPartitionSectorCount `
+    -PartitionType $partitionType
 if (Test-Path $stdoutPath) { Remove-Item -Force $stdoutPath }
 if (Test-Path $stderrPath) { Remove-Item -Force $stderrPath }
 
@@ -362,11 +384,14 @@ if ($exitCode -ne $expectedExitCode) {
 
 $imageBytes = [System.IO.File]::ReadAllBytes($diskImage)
 $rawProbePhysicalLba = $partitionStartLba + $rawProbeLba
+$secondaryRawProbePhysicalLba = $secondaryPartitionStartLba + $secondaryRawProbeLba
 $toolSlotPhysicalLba = $partitionStartLba + $toolSlotLba
 $filesystemSuperblockPhysicalLba = $partitionStartLba + $filesystemSuperblockLba
 $rawByte0 = Read-ImageByte -Bytes $imageBytes -Lba $rawProbePhysicalLba -Offset 0
 $rawByte1 = Read-ImageByte -Bytes $imageBytes -Lba $rawProbePhysicalLba -Offset 1
 $rawNextBlockByte0 = Read-ImageByte -Bytes $imageBytes -Lba ($rawProbePhysicalLba + 1) -Offset 0
+$secondaryRawByte0 = Read-ImageByte -Bytes $imageBytes -Lba $secondaryRawProbePhysicalLba -Offset 0
+$secondaryRawByte1 = Read-ImageByte -Bytes $imageBytes -Lba $secondaryRawProbePhysicalLba -Offset 1
 $toolByte0 = Read-ImageByte -Bytes $imageBytes -Lba $toolSlotPhysicalLba -Offset 0
 $toolByte1 = Read-ImageByte -Bytes $imageBytes -Lba $toolSlotPhysicalLba -Offset 1
 $toolByte512 = Read-ImageByte -Bytes $imageBytes -Lba ($toolSlotPhysicalLba + 1) -Offset 0
@@ -375,6 +400,9 @@ $fsMagic = Read-ImageU32LE -Bytes $imageBytes -Lba $filesystemSuperblockPhysical
 
 if ($rawByte0 -ne $rawProbeSeed -or $rawByte1 -ne ($rawProbeSeed + 1) -or $rawNextBlockByte0 -ne $rawProbeSeed) {
     throw "Host-side ATA raw readback did not match the expected pattern."
+}
+if ($secondaryRawByte0 -ne $secondaryRawProbeSeed -or $secondaryRawByte1 -ne ($secondaryRawProbeSeed + 1)) {
+    throw "Host-side ATA secondary-partition raw readback did not match the expected pattern."
 }
 if ($toolByte0 -ne $toolSlotSeed -or $toolByte1 -ne ($toolSlotSeed + 1) -or $toolByte512 -ne $toolSlotSeed) {
     throw "Host-side tool slot payload did not match the expected persisted pattern."
@@ -392,9 +420,13 @@ Write-Output "BAREMETAL_QEMU_ATA_STORAGE_PROBE=pass"
 Write-Output "BAREMETAL_QEMU_ATA_STORAGE_IMAGE=$diskImage"
 Write-Output "BAREMETAL_ATA_PARTITION_START_LBA=$partitionStartLba"
 Write-Output "BAREMETAL_ATA_PARTITION_SECTOR_COUNT=$partitionSectorCount"
+Write-Output "BAREMETAL_ATA_SECONDARY_PARTITION_START_LBA=$secondaryPartitionStartLba"
+Write-Output "BAREMETAL_ATA_SECONDARY_PARTITION_SECTOR_COUNT=$secondaryPartitionSectorCount"
 Write-Output "BAREMETAL_ATA_RAW_LBA300_BYTE0=$rawByte0"
 Write-Output "BAREMETAL_ATA_RAW_LBA300_BYTE1=$rawByte1"
 Write-Output "BAREMETAL_ATA_RAW_LBA301_BYTE0=$rawNextBlockByte0"
+Write-Output "BAREMETAL_ATA_SECONDARY_RAW_LBA12_BYTE0=$secondaryRawByte0"
+Write-Output "BAREMETAL_ATA_SECONDARY_RAW_LBA12_BYTE1=$secondaryRawByte1"
 Write-Output "BAREMETAL_ATA_TOOL_SLOT_BYTE0=$toolByte0"
 Write-Output "BAREMETAL_ATA_TOOL_SLOT_BYTE1=$toolByte1"
 Write-Output "BAREMETAL_ATA_TOOL_SLOT_BYTE512=$toolByte512"

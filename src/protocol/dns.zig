@@ -123,17 +123,14 @@ pub fn encodeAResponse(
     return cursor + 16;
 }
 
-pub fn decode(packet: []const u8) Error!Packet {
+pub fn decodeInto(packet: []const u8, result: anytype) Error!void {
     if (packet.len < header_len) return error.PacketTooShort;
 
     const question_count = readU16Be(packet[4..6]);
     if (question_count != 1) return error.UnsupportedQuestionCount;
 
-    var question_name = [_]u8{0} ** max_name_len;
-    var answers = [_]Answer{zeroAnswer()} ** max_answers;
-
     var cursor: usize = header_len;
-    const question_info = try readName(packet, cursor, question_name[0..]);
+    const question_info = try readName(packet, cursor, result.question_name[0..]);
     cursor = question_info.next_index;
     if (cursor + 4 > packet.len) return error.PacketTooShort;
 
@@ -149,8 +146,8 @@ pub fn decode(packet: []const u8) Error!Packet {
     var answer_index: usize = 0;
     while (answer_index < answer_count_total) : (answer_index += 1) {
         if (stored_answer_count < max_answers) {
-            var answer_name = [_]u8{0} ** max_name_len;
-            const name_info = try readName(packet, cursor, answer_name[0..]);
+            const answer = &result.answers[stored_answer_count];
+            const name_info = try readName(packet, cursor, answer.name[0..]);
             cursor = name_info.next_index;
             if (cursor + 10 > packet.len) return error.PacketTooShort;
 
@@ -162,16 +159,12 @@ pub fn decode(packet: []const u8) Error!Packet {
             if (cursor + data_len > packet.len) return error.PacketTooShort;
             if (data_len > max_answer_data_len) return error.ResourceDataTooLarge;
 
-            answers[stored_answer_count] = .{
-                .name_len = name_info.len,
-                .name = answer_name,
-                .rr_type = rr_type,
-                .rr_class = rr_class,
-                .ttl = ttl,
-                .data_len = data_len,
-                .data = [_]u8{0} ** max_answer_data_len,
-            };
-            std.mem.copyForwards(u8, answers[stored_answer_count].data[0..data_len], packet[cursor .. cursor + data_len]);
+            answer.name_len = name_info.len;
+            answer.rr_type = rr_type;
+            answer.rr_class = rr_class;
+            answer.ttl = ttl;
+            answer.data_len = data_len;
+            std.mem.copyForwards(u8, answer.data[0..data_len], packet[cursor .. cursor + data_len]);
             stored_answer_count += 1;
             cursor += data_len;
         } else {
@@ -188,20 +181,94 @@ pub fn decode(packet: []const u8) Error!Packet {
         cursor = try skipResourceRecord(packet, cursor);
     }
 
+    result.id = readU16Be(packet[0..2]);
+    result.flags = readU16Be(packet[2..4]);
+    result.question_count = question_count;
+    result.answer_count_total = answer_count_total;
+    result.authority_count = authority_count;
+    result.additional_count = additional_count;
+    result.question_name_len = question_info.len;
+    result.question_type = question_type;
+    result.question_class = question_class;
+    result.answer_count = stored_answer_count;
+}
+
+pub fn decode(packet: []const u8) Error!Packet {
+    var result: Packet = undefined;
+    try decodeInto(packet, &result);
+    return result;
+}
+
+fn skipName(packet: []const u8, start: usize) Error!usize {
+    var cursor = start;
+    var next_index = start;
+    var jumped = false;
+    var steps: usize = 0;
+
+    while (true) {
+        if (steps >= packet.len) return error.CompressionLoop;
+        steps += 1;
+
+        if (cursor >= packet.len) return error.PacketTooShort;
+        const length = packet[cursor];
+        if (length == 0) {
+            if (!jumped) next_index = cursor + 1;
+            break;
+        }
+
+        const label_type = length & 0xC0;
+        if (label_type == 0xC0) {
+            if (cursor + 1 >= packet.len) return error.PacketTooShort;
+            const pointer = ((@as(u16, length & 0x3F)) << 8) | @as(u16, packet[cursor + 1]);
+            if (pointer >= packet.len) return error.InvalidPointer;
+            if (!jumped) next_index = cursor + 2;
+            cursor = pointer;
+            jumped = true;
+            continue;
+        }
+        if (label_type != 0) return error.UnsupportedLabelType;
+
+        const label_len = @as(usize, length);
+        if (label_len == 0 or label_len > max_label_len) return error.InvalidLabelLength;
+        if (cursor + 1 + label_len > packet.len) return error.PacketTooShort;
+        cursor += 1 + label_len;
+        if (!jumped) next_index = cursor;
+    }
+
+    return next_index;
+}
+
+fn skipResourceRecord(packet: []const u8, start: usize) Error!usize {
+    var cursor = try skipName(packet, start);
+    if (cursor + 10 > packet.len) return error.PacketTooShort;
+    const data_len = readU16Be(packet[cursor + 8 .. cursor + 10]);
+    cursor += 10;
+    if (cursor + data_len > packet.len) return error.PacketTooShort;
+    return cursor + data_len;
+}
+
+fn zeroAnswer() Answer {
     return .{
-        .id = readU16Be(packet[0..2]),
-        .flags = readU16Be(packet[2..4]),
-        .question_count = question_count,
-        .answer_count_total = answer_count_total,
-        .authority_count = authority_count,
-        .additional_count = additional_count,
-        .question_name_len = question_info.len,
-        .question_name = question_name,
-        .question_type = question_type,
-        .question_class = question_class,
-        .answer_count = stored_answer_count,
-        .answers = answers,
+        .name_len = 0,
+        .name = [_]u8{0} ** max_name_len,
+        .rr_type = 0,
+        .rr_class = 0,
+        .ttl = 0,
+        .data_len = 0,
+        .data = [_]u8{0} ** max_answer_data_len,
     };
+}
+
+fn writeU16Be(bytes: []u8, value: u16) void {
+    bytes[0] = @as(u8, @intCast(value >> 8));
+    bytes[1] = @as(u8, @truncate(value));
+}
+
+fn writeU32Be(bytes: []u8, value: u32) void {
+    bytes[0] = @as(u8, @intCast(value >> 24));
+    bytes[1] = @as(u8, @truncate(value >> 16));
+    bytes[2] = @as(u8, @truncate(value >> 8));
+    bytes[3] = @as(u8, @truncate(value));
 }
 
 fn encodeName(buffer: []u8, name: []const u8) Error!usize {
@@ -281,41 +348,6 @@ fn readName(packet: []const u8, start: usize, out: []u8) Error!NameInfo {
     }
 
     return .{ .next_index = next_index, .len = out_len };
-}
-
-fn skipResourceRecord(packet: []const u8, start: usize) Error!usize {
-    var scratch = [_]u8{0} ** max_name_len;
-    const name_info = try readName(packet, start, scratch[0..]);
-    var cursor = name_info.next_index;
-    if (cursor + 10 > packet.len) return error.PacketTooShort;
-    const data_len = readU16Be(packet[cursor + 8 .. cursor + 10]);
-    cursor += 10;
-    if (cursor + data_len > packet.len) return error.PacketTooShort;
-    return cursor + data_len;
-}
-
-fn zeroAnswer() Answer {
-    return .{
-        .name_len = 0,
-        .name = [_]u8{0} ** max_name_len,
-        .rr_type = 0,
-        .rr_class = 0,
-        .ttl = 0,
-        .data_len = 0,
-        .data = [_]u8{0} ** max_answer_data_len,
-    };
-}
-
-fn writeU16Be(bytes: []u8, value: u16) void {
-    bytes[0] = @as(u8, @intCast(value >> 8));
-    bytes[1] = @as(u8, @truncate(value));
-}
-
-fn writeU32Be(bytes: []u8, value: u32) void {
-    bytes[0] = @as(u8, @intCast(value >> 24));
-    bytes[1] = @as(u8, @truncate(value >> 16));
-    bytes[2] = @as(u8, @truncate(value >> 8));
-    bytes[3] = @as(u8, @truncate(value));
 }
 
 fn readU16Be(bytes: []const u8) u16 {

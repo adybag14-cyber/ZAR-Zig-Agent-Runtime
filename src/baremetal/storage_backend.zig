@@ -43,6 +43,34 @@ pub fn activeBackend() u8 {
     return statePtr().backend;
 }
 
+pub fn logicalBaseLba() u32 {
+    return switch (active_backend) {
+        .ram_disk => 0,
+        .ata_pio => ata_pio_disk.logicalBaseLba(),
+    };
+}
+
+pub fn partitionCount() u8 {
+    return switch (active_backend) {
+        .ram_disk => 0,
+        .ata_pio => ata_pio_disk.partitionCount(),
+    };
+}
+
+pub fn partitionInfo(index: u8) ?ata_pio_disk.PartitionInfo {
+    return switch (active_backend) {
+        .ram_disk => null,
+        .ata_pio => ata_pio_disk.partitionInfo(index),
+    };
+}
+
+pub fn selectPartition(index: u8) Error!void {
+    switch (active_backend) {
+        .ram_disk => return error.OutOfRange,
+        .ata_pio => try ata_pio_disk.selectPartition(index),
+    }
+}
+
 pub fn readBlocks(lba: u32, out: []u8) Error!void {
     switch (active_backend) {
         .ram_disk => try ram_disk.readBlocks(lba, out),
@@ -122,4 +150,28 @@ test "storage backend facade prefers ata pio backend when a device is available"
     try std.testing.expectEqual(@as(u8, 0), ata_pio_disk.testReadMockByteRaw(9, 0));
     try std.testing.expectEqual(@as(u8, 0x20), ata_pio_disk.testReadMockByteRaw(2048 + 9, 0));
     try std.testing.expectEqual(@as(u8, 0x21), ata_pio_disk.testReadMockByteRaw(2048 + 9, 1));
+}
+
+test "storage backend facade exports and selects ata partitions" {
+    resetForTest();
+    ata_pio_disk.testEnableMockDevice(16384);
+    ata_pio_disk.testInstallMockMbrPartition(2048, 4096, 0x83);
+    ata_pio_disk.testInstallMockMbrPartitionAt(1, 8192, 2048, 0x83);
+    defer ata_pio_disk.testDisableMockDevice();
+
+    init();
+
+    try std.testing.expectEqual(@as(u8, abi.storage_backend_ata_pio), activeBackend());
+    try std.testing.expectEqual(@as(u8, 2), partitionCount());
+    try std.testing.expectEqual(@as(u32, 2048), logicalBaseLba());
+    try std.testing.expectEqual(@as(u32, 8192), partitionInfo(1).?.start_lba);
+    try selectPartition(1);
+    try std.testing.expectEqual(@as(u32, 8192), logicalBaseLba());
+
+    var payload = [_]u8{0} ** block_size;
+    payload[0] = 0x44;
+    payload[1] = 0x45;
+    try writeBlocks(5, payload[0..]);
+    try std.testing.expectEqual(@as(u8, 0x44), ata_pio_disk.testReadMockByteRaw(8192 + 5, 0));
+    try std.testing.expectEqual(@as(u8, 0), ata_pio_disk.testReadMockByteRaw(2048 + 5, 0));
 }

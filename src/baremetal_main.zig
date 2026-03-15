@@ -83,6 +83,7 @@ const qemu_rtl8139_dhcp_probe_ok_code: u8 = 0x3B;
 const qemu_rtl8139_dns_probe_ok_code: u8 = 0x3C;
 const qemu_tool_exec_probe_ok_code: u8 = 0x3D;
 const qemu_rtl8139_gateway_probe_ok_code: u8 = 0x3E;
+const qemu_rtl8139_http_post_probe_ok_code: u8 = 0x3F;
 const qemu_ata_gpt_installer_probe_ok_code: u8 = 0x40;
 const build_options = if (builtin.is_test)
     struct {
@@ -99,6 +100,7 @@ const build_options = if (builtin.is_test)
         pub const rtl8139_tcp_probe: bool = false;
         pub const rtl8139_dhcp_probe: bool = false;
         pub const rtl8139_dns_probe: bool = false;
+        pub const rtl8139_http_post_probe: bool = false;
         pub const tool_exec_probe: bool = false;
         pub const rtl8139_gateway_probe: bool = false;
         pub const ata_gpt_installer_probe: bool = false;
@@ -118,6 +120,7 @@ const rtl8139_udp_probe_enabled: bool = build_options.rtl8139_udp_probe;
 const rtl8139_tcp_probe_enabled: bool = build_options.rtl8139_tcp_probe;
 const rtl8139_dhcp_probe_enabled: bool = build_options.rtl8139_dhcp_probe;
 const rtl8139_dns_probe_enabled: bool = build_options.rtl8139_dns_probe;
+const rtl8139_http_post_probe_enabled: bool = if (@hasDecl(build_options, "rtl8139_http_post_probe")) build_options.rtl8139_http_post_probe else false;
 const tool_exec_probe_enabled: bool = build_options.tool_exec_probe;
 const rtl8139_gateway_probe_enabled: bool = build_options.rtl8139_gateway_probe;
 const ata_gpt_installer_probe_enabled: bool = if (@hasDecl(build_options, "ata_gpt_installer_probe")) build_options.ata_gpt_installer_probe else false;
@@ -127,6 +130,10 @@ const ata_probe_raw_block_count: u32 = 2;
 const ata_probe_raw_seed: u8 = 0x41;
 const ata_probe_partition_start_lba: u32 = 2048;
 const ata_probe_partition_sector_count: u32 = 4096;
+const ata_probe_secondary_partition_start_lba: u32 = 8192;
+const ata_probe_secondary_partition_sector_count: u32 = 2048;
+const ata_probe_secondary_raw_lba: u32 = 12;
+const ata_probe_secondary_raw_seed: u8 = 0x53;
 const ata_probe_tool_slot_id: u32 = 1;
 const ata_probe_tool_slot_byte_len: u32 = 600;
 const ata_probe_tool_slot_seed: u8 = 0x30;
@@ -146,6 +153,9 @@ const AtaStorageProbeError = error{
     RawPatternWriteFailed,
     RawPatternFlushFailed,
     RawPatternReadbackFailed,
+    PartitionExportMismatch,
+    SecondaryRawPatternWriteFailed,
+    SecondaryRawPatternReadbackFailed,
     ToolLayoutInitFailed,
     ToolLayoutWriteFailed,
     ToolLayoutReadbackFailed,
@@ -374,6 +384,8 @@ const Rtl8139TcpProbeError = error{
     WindowBlockedBypass,
     ToolServiceFailed,
     ToolServiceResponseMismatch,
+    HttpPostFailed,
+    HttpPostResponseMismatch,
 };
 
 const Rtl8139DhcpProbeError = error{
@@ -1583,6 +1595,8 @@ fn baremetalStart() callconv(.c) noreturn {
         _ = framebuffer_console.init();
     }
     storage_backend.init();
+    x86_bootstrap.init();
+    _ = x86_bootstrap.oc_try_load_descriptor_tables();
     if (ata_storage_probe_enabled) {
         runAtaStorageProbe() catch |err| qemuExit(ataStorageProbeFailureCode(err));
         qemuExit(qemu_ata_storage_probe_ok_code);
@@ -1619,6 +1633,10 @@ fn baremetalStart() callconv(.c) noreturn {
         runRtl8139DnsProbe() catch |err| qemuExit(rtl8139DnsProbeFailureCode(err));
         qemuExit(qemu_rtl8139_dns_probe_ok_code);
     }
+    if (rtl8139_http_post_probe_enabled) {
+        runRtl8139HttpPostProbe() catch |err| qemuExit(rtl8139TcpProbeFailureCode(err));
+        qemuExit(qemu_rtl8139_http_post_probe_ok_code);
+    }
     if (tool_exec_probe_enabled) {
         runToolExecProbe() catch |err| qemuExit(toolExecProbeFailureCode(err));
         qemuExit(qemu_tool_exec_probe_ok_code);
@@ -1637,8 +1655,6 @@ fn baremetalStart() callconv(.c) noreturn {
         framebuffer_console.write("OK");
     }
     setBootPhase(abi.boot_phase_init, abi.boot_phase_change_reason_boot);
-    x86_bootstrap.init();
-    _ = x86_bootstrap.oc_try_load_descriptor_tables();
     const previous_mode = status.mode;
     status.mode = abi.mode_running;
     recordMode(previous_mode, status.mode, abi.mode_change_reason_boot, status.ticks, status.command_seq_ack);
@@ -1661,6 +1677,20 @@ fn runAtaStorageProbe() AtaStorageProbeError!void {
     if (ata_pio_disk.logicalBaseLba() != ata_probe_partition_start_lba) {
         return error.PartitionMountMismatch;
     }
+    if (storage_backend.partitionCount() != 2) {
+        return error.PartitionExportMismatch;
+    }
+    const primary_partition = storage_backend.partitionInfo(0) orelse return error.PartitionExportMismatch;
+    const secondary_partition = storage_backend.partitionInfo(1) orelse return error.PartitionExportMismatch;
+    if (primary_partition.scheme != .mbr or
+        primary_partition.start_lba != ata_probe_partition_start_lba or
+        primary_partition.sector_count != ata_probe_partition_sector_count or
+        secondary_partition.scheme != .mbr or
+        secondary_partition.start_lba != ata_probe_secondary_partition_start_lba or
+        secondary_partition.sector_count != ata_probe_secondary_partition_sector_count)
+    {
+        return error.PartitionExportMismatch;
+    }
 
     if (oc_storage_write_pattern(ata_probe_raw_lba, ata_probe_raw_block_count, ata_probe_raw_seed) != abi.result_ok) {
         return error.RawPatternWriteFailed;
@@ -1673,6 +1703,31 @@ fn runAtaStorageProbe() AtaStorageProbeError!void {
         oc_storage_read_byte(ata_probe_raw_lba + 1, 0) != ata_probe_raw_seed)
     {
         return error.RawPatternReadbackFailed;
+    }
+
+    storage_backend.selectPartition(1) catch return error.PartitionExportMismatch;
+    if (storage_backend.logicalBaseLba() != ata_probe_secondary_partition_start_lba or
+        storage_backend.statePtr().block_count != ata_probe_secondary_partition_sector_count)
+    {
+        return error.PartitionExportMismatch;
+    }
+    if (oc_storage_write_pattern(ata_probe_secondary_raw_lba, 1, ata_probe_secondary_raw_seed) != abi.result_ok) {
+        return error.SecondaryRawPatternWriteFailed;
+    }
+    if (oc_storage_flush() != abi.result_ok) {
+        return error.RawPatternFlushFailed;
+    }
+    if (oc_storage_read_byte(ata_probe_secondary_raw_lba, 0) != ata_probe_secondary_raw_seed or
+        oc_storage_read_byte(ata_probe_secondary_raw_lba, 1) != ata_probe_secondary_raw_seed +% 1)
+    {
+        return error.SecondaryRawPatternReadbackFailed;
+    }
+
+    storage_backend.selectPartition(0) catch return error.PartitionExportMismatch;
+    if (storage_backend.logicalBaseLba() != ata_probe_partition_start_lba or
+        storage_backend.statePtr().block_count != ata_probe_partition_sector_count)
+    {
+        return error.PartitionExportMismatch;
     }
 
     tool_layout.resetForTest();
@@ -2564,6 +2619,7 @@ fn expectTcpProbePacket(
 const Rtl8139TcpProbeScratch = struct {
     packet_storage: pal_net.TcpPacket,
     service_scratch: [2048]u8,
+    http_post_scratch: [2048]u8,
     service_request_put_buffer: [256]u8,
     service_response_put_expected_buffer: [160]u8,
     service_batch_request_buffer: [320]u8,
@@ -2573,6 +2629,239 @@ const Rtl8139TcpProbeScratch = struct {
 };
 
 var rtl8139_tcp_probe_scratch: Rtl8139TcpProbeScratch = undefined;
+
+const Rtl8139HttpPostHarness = struct {
+    local_mac: [ethernet_protocol.mac_len]u8,
+    server_mac: [ethernet_protocol.mac_len]u8 = .{ 0x02, 0x13, 0x37, 0x55, 0x80, 0x01 },
+    dns_mac: [ethernet_protocol.mac_len]u8 = .{ 0x02, 0x13, 0x37, 0x55, 0x80, 0x53 },
+    client_ip: [4]u8 = .{ 192, 168, 56, 10 },
+    server_ip: [4]u8 = .{ 192, 168, 56, 1 },
+    dns_ip: [4]u8 = .{ 192, 168, 56, 53 },
+    host_name: []const u8 = "post.openclaw.local",
+    path: []const u8 = "/fs55/live-post",
+    url: []const u8 = "http://post.openclaw.local:8080/fs55/live-post",
+    request_payload: []const u8 = "{\"probe\":\"live-http\"}",
+    response_body: []const u8 = "{\"ok\":true,\"live\":\"post\"}",
+    server_port: u16 = 8080,
+    client_port: u16 = 0,
+    server: tcp_protocol.Session = tcp_protocol.Session.initServer(8080, 0, 0xC0D0_E0F0, 512),
+    request_storage: [1024]u8 = [_]u8{0} ** 1024,
+    request_len: usize = 0,
+    response_storage: [512]u8 = [_]u8{0} ** 512,
+    response_len: usize = 0,
+    dns_payload_storage: [pal_net.max_ipv4_payload_len]u8 = [_]u8{0} ** pal_net.max_ipv4_payload_len,
+    dns_query_storage: dns_protocol.Packet = undefined,
+    segment_storage: [pal_net.max_ipv4_payload_len]u8 = [_]u8{0} ** pal_net.max_ipv4_payload_len,
+    frame_storage: [pal_net.max_frame_len]u8 = [_]u8{0} ** pal_net.max_frame_len,
+    response_sent: bool = false,
+    fin_sent: bool = false,
+    request_validated: bool = false,
+    failure: ?Rtl8139TcpProbeError = null,
+
+    fn handleOutgoingFrame(self: *Rtl8139HttpPostHarness, frame: []const u8) void {
+        self.handleOutgoingFrameImpl(frame) catch |err| {
+            self.failure = err;
+            if (!builtin.is_test) qemuExit(rtl8139TcpProbeFailureCode(err));
+        };
+    }
+
+    fn handleOutgoingFrameImpl(self: *Rtl8139HttpPostHarness, frame: []const u8) Rtl8139TcpProbeError!void {
+        if (self.failure != null) return;
+        const eth = ethernet_protocol.Header.decode(frame) catch return;
+        switch (eth.ether_type) {
+            ethernet_protocol.ethertype_arp => {
+                const packet = arp_protocol.decodeFrame(frame) catch return;
+                if (packet.operation != arp_protocol.operation_request) return;
+                if (std.mem.eql(u8, packet.target_ip[0..], self.server_ip[0..]) or
+                    std.mem.eql(u8, packet.target_ip[0..], self.dns_ip[0..]))
+                {
+                    try self.injectArpReply(packet.target_ip, packet.sender_ip);
+                }
+            },
+            ethernet_protocol.ethertype_ipv4 => {
+                const ip_packet = ipv4_protocol.decode(frame[ethernet_protocol.header_len..]) catch return;
+                switch (ip_packet.header.protocol) {
+                    ipv4_protocol.protocol_udp => try self.handleUdp(ip_packet),
+                    ipv4_protocol.protocol_tcp => try self.handleTcp(ip_packet),
+                    else => {},
+                }
+            },
+            else => {},
+        }
+    }
+
+    fn handleUdp(self: *Rtl8139HttpPostHarness, ip_packet: ipv4_protocol.Packet) Rtl8139TcpProbeError!void {
+        const packet = udp_protocol.decode(ip_packet.payload, ip_packet.header.source_ip, ip_packet.header.destination_ip) catch return;
+        if (packet.destination_port != dns_protocol.default_port) return;
+        if (!std.mem.eql(u8, ip_packet.header.destination_ip[0..], self.dns_ip[0..])) return;
+        dns_protocol.decodeInto(packet.payload, &self.dns_query_storage) catch return;
+        if (!std.mem.eql(u8, self.dns_query_storage.questionName(), self.host_name)) return;
+
+        const response_len = dns_protocol.encodeAResponse(self.dns_payload_storage[0..], self.dns_query_storage.id, self.host_name, 60, self.server_ip) catch {
+            return error.HttpPostFailed;
+        };
+        try self.injectUdp(self.dns_ip, self.client_ip, dns_protocol.default_port, packet.source_port, self.dns_payload_storage[0..response_len]);
+    }
+
+    fn handleTcp(self: *Rtl8139HttpPostHarness, ip_packet: ipv4_protocol.Packet) Rtl8139TcpProbeError!void {
+        const packet = tcp_protocol.decode(ip_packet.payload, ip_packet.header.source_ip, ip_packet.header.destination_ip) catch return;
+        if (!std.mem.eql(u8, ip_packet.header.destination_ip[0..], self.server_ip[0..])) return;
+        if (packet.destination_port != self.server_port) return;
+
+        if (packet.flags == tcp_protocol.flag_syn) {
+            self.client_port = packet.source_port;
+            self.server = tcp_protocol.Session.initServer(self.server_port, self.client_port, 0xC0D0_E0F0, 512);
+            const syn_ack = self.server.acceptSyn(packet) catch return error.HttpPostFailed;
+            try self.injectTcp(self.server_ip, self.client_ip, syn_ack);
+            return;
+        }
+
+        if (packet.flags == tcp_protocol.flag_ack and packet.payload.len == 0) {
+            if (self.server.state == .syn_received) {
+                self.server.acceptAck(packet) catch return error.HttpPostFailed;
+                return;
+            }
+            if (self.response_sent and !self.fin_sent) {
+                self.server.acceptAck(packet) catch return error.HttpPostFailed;
+                const fin = self.server.buildFin() catch return error.HttpPostFailed;
+                self.fin_sent = true;
+                try self.injectTcp(self.server_ip, self.client_ip, fin);
+                return;
+            }
+            if (self.fin_sent) {
+                self.server.acceptAck(packet) catch return error.HttpPostFailed;
+                return;
+            }
+            return;
+        }
+
+        if (packet.flags == (tcp_protocol.flag_ack | tcp_protocol.flag_psh) and packet.payload.len != 0) {
+            self.server.acceptPayload(packet) catch return error.HttpPostFailed;
+            if (self.request_len + packet.payload.len > self.request_storage.len) return error.HttpPostResponseMismatch;
+            std.mem.copyForwards(u8, self.request_storage[self.request_len .. self.request_len + packet.payload.len], packet.payload);
+            self.request_len += packet.payload.len;
+
+            if (!self.requestComplete()) {
+                const ack = self.server.buildAck() catch return error.HttpPostFailed;
+                try self.injectTcp(self.server_ip, self.client_ip, ack);
+                return;
+            }
+
+            try self.prepareResponse();
+            const response = self.server.buildPayload(self.response_storage[0..self.response_len]) catch return error.HttpPostFailed;
+            self.response_sent = true;
+            try self.injectTcp(self.server_ip, self.client_ip, response);
+        }
+    }
+
+    fn requestComplete(self: *const Rtl8139HttpPostHarness) bool {
+        const request = self.request_storage[0..self.request_len];
+        const header_end = std.mem.indexOf(u8, request, "\r\n\r\n") orelse return false;
+        if (!std.mem.startsWith(u8, request, "POST ")) return false;
+        if (std.mem.indexOf(u8, request[0..header_end], "Content-Length: ")) |index| {
+            const line = request[index + "Content-Length: ".len .. header_end];
+            const line_end = std.mem.indexOf(u8, line, "\r\n") orelse return false;
+            const content_length = std.fmt.parseUnsigned(usize, std.mem.trim(u8, line[0..line_end], " "), 10) catch return false;
+            return request.len >= header_end + 4 + content_length;
+        }
+        return false;
+    }
+
+    fn prepareResponse(self: *Rtl8139HttpPostHarness) Rtl8139TcpProbeError!void {
+        if (self.response_len != 0) return;
+        const request = self.request_storage[0..self.request_len];
+        if (std.mem.indexOf(u8, request, self.path) == null) return error.HttpPostResponseMismatch;
+        if (std.mem.indexOf(u8, request, "Host: post.openclaw.local:8080\r\n") == null) return error.HttpPostResponseMismatch;
+        if (std.mem.indexOf(u8, request, "content-type: application/json\r\n") == null and
+            std.mem.indexOf(u8, request, "Content-Type: application/json\r\n") == null and
+            std.mem.indexOf(u8, request, "Content-type: application/json\r\n") == null)
+        {
+            return error.HttpPostResponseMismatch;
+        }
+        const body_offset = (std.mem.indexOf(u8, request, "\r\n\r\n") orelse return error.HttpPostResponseMismatch) + 4;
+        if (!std.mem.eql(u8, request[body_offset..], self.request_payload)) return error.HttpPostResponseMismatch;
+        self.request_validated = true;
+
+        const response = std.fmt.bufPrint(
+            &self.response_storage,
+            "HTTP/1.1 200 OK\r\nContent-Length: {d}\r\nConnection: close\r\nContent-Type: application/json\r\n\r\n{s}",
+            .{ self.response_body.len, self.response_body },
+        ) catch return error.HttpPostFailed;
+        self.response_len = response.len;
+    }
+
+    fn injectArpReply(self: *Rtl8139HttpPostHarness, sender_ip: [4]u8, target_ip: [4]u8) Rtl8139TcpProbeError!void {
+        var frame: [arp_protocol.frame_len]u8 = undefined;
+        const sender_mac = self.peerMacForIp(sender_ip) orelse return error.HttpPostFailed;
+        const frame_len = arp_protocol.encodeReplyFrame(frame[0..], sender_mac, sender_ip, self.local_mac, target_ip) catch {
+            return error.HttpPostFailed;
+        };
+        rtl8139.injectProbeReceive(frame[0..frame_len]);
+    }
+
+    fn injectUdp(
+        self: *Rtl8139HttpPostHarness,
+        source_ip: [4]u8,
+        destination_ip: [4]u8,
+        source_port: u16,
+        destination_port: u16,
+        payload: []const u8,
+    ) Rtl8139TcpProbeError!void {
+        const segment_len = (udp_protocol.Header{
+            .source_port = source_port,
+            .destination_port = destination_port,
+        }).encode(self.segment_storage[0..], payload, source_ip, destination_ip) catch return error.HttpPostFailed;
+        try self.injectIpv4Frame(source_ip, destination_ip, ipv4_protocol.protocol_udp, self.segment_storage[0..segment_len]);
+    }
+
+    fn injectTcp(self: *Rtl8139HttpPostHarness, source_ip: [4]u8, destination_ip: [4]u8, outbound: tcp_protocol.Outbound) Rtl8139TcpProbeError!void {
+        const segment_len = tcp_protocol.encodeOutboundSegment(self.server, outbound, self.segment_storage[0..], source_ip, destination_ip) catch {
+            return error.HttpPostFailed;
+        };
+        try self.injectIpv4Frame(source_ip, destination_ip, ipv4_protocol.protocol_tcp, self.segment_storage[0..segment_len]);
+    }
+
+    fn injectIpv4Frame(
+        self: *Rtl8139HttpPostHarness,
+        source_ip: [4]u8,
+        destination_ip: [4]u8,
+        protocol: u8,
+        payload: []const u8,
+    ) Rtl8139TcpProbeError!void {
+        const source_mac = self.peerMacForIp(source_ip) orelse return error.HttpPostFailed;
+        _ = (ethernet_protocol.Header{
+            .destination = self.local_mac,
+            .source = source_mac,
+            .ether_type = ethernet_protocol.ethertype_ipv4,
+        }).encode(self.frame_storage[0..]) catch return error.HttpPostFailed;
+        const ipv4_header_len = (ipv4_protocol.Header{
+            .protocol = protocol,
+            .source_ip = source_ip,
+            .destination_ip = destination_ip,
+        }).encode(self.frame_storage[ethernet_protocol.header_len..], payload.len) catch return error.HttpPostFailed;
+        std.mem.copyForwards(u8, self.frame_storage[ethernet_protocol.header_len + ipv4_header_len ..][0..payload.len], payload);
+        rtl8139.injectProbeReceive(self.frame_storage[0 .. ethernet_protocol.header_len + ipv4_header_len + payload.len]);
+    }
+
+    fn peerMacForIp(self: *const Rtl8139HttpPostHarness, source_ip: [4]u8) ?[ethernet_protocol.mac_len]u8 {
+        if (std.mem.eql(u8, source_ip[0..], self.server_ip[0..])) return self.server_mac;
+        if (std.mem.eql(u8, source_ip[0..], self.dns_ip[0..])) return self.dns_mac;
+        return null;
+    }
+};
+
+var rtl8139_http_post_harness_scratch: Rtl8139HttpPostHarness = undefined;
+var rtl8139_http_post_harness: ?*Rtl8139HttpPostHarness = null;
+
+fn rtl8139TcpHttpPostHook(frame: []const u8) void {
+    if (rtl8139_http_post_harness) |harness| {
+        harness.handleOutgoingFrame(frame);
+    }
+}
+
+fn rtl8139DiscardMockSendHook(frame: []const u8) void {
+    _ = frame;
+}
 
 fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     rtl8139.initDetailed() catch |err| return switch (err) {
@@ -3148,7 +3437,67 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         return error.SessionStateMismatch;
     }
     if (eth.last_rx_len != expected_final_ack_frame_len_b) return error.FrameLengthMismatch;
+
     if (eth.tx_packets < 20 or eth.rx_packets < 20) return error.CounterMismatch;
+}
+
+fn runRtl8139HttpPostProbe() Rtl8139TcpProbeError!void {
+    setProbeInterruptsEnabled(false);
+
+    rtl8139.initDetailed() catch |err| return switch (err) {
+        error.UnsupportedPlatform => error.UnsupportedPlatform,
+        error.DeviceNotFound => error.DeviceNotFound,
+        error.ResetTimeout => error.ResetTimeout,
+        error.BufferProgramFailed => error.BufferProgramFailed,
+        error.MacReadFailed => error.MacReadFailed,
+        error.DataPathEnableFailed => error.DataPathEnableFailed,
+    };
+
+    const eth = oc_ethernet_state_ptr();
+    if (eth.magic != abi.ethernet_magic) return error.StateMagicMismatch;
+    if (eth.backend != abi.ethernet_backend_rtl8139) return error.BackendMismatch;
+    if (eth.initialized == 0) return error.InitFlagMismatch;
+    if (!builtin.is_test and eth.hardware_backed == 0) return error.HardwareBackedMismatch;
+    if (eth.io_base == 0) return error.IoBaseMismatch;
+    pal_net.clearRouteState();
+    defer pal_net.clearRouteState();
+    pal_net.configureIpv4Route(.{ 192, 168, 56, 10 }, .{ 255, 255, 255, 0 }, null);
+    rtl8139_http_post_harness_scratch = .{ .local_mac = eth.mac };
+    const http_harness = &rtl8139_http_post_harness_scratch;
+    pal_net.configureDnsServers(&.{http_harness.dns_ip});
+    rtl8139_http_post_harness = http_harness;
+    rtl8139.installProbeSendHook(rtl8139TcpHttpPostHook);
+    rtl8139.testInstallMockSendHook(rtl8139DiscardMockSendHook);
+    defer {
+        rtl8139.testInstallMockSendHook(null);
+        rtl8139.installProbeSendHook(null);
+        rtl8139_http_post_harness = null;
+    }
+
+    const tx_packets_before_http = eth.tx_packets;
+    const rx_packets_before_http = eth.rx_packets;
+    var http_fba = std.heap.FixedBufferAllocator.init(&rtl8139_tcp_probe_scratch.http_post_scratch);
+    const http_headers = [_]pal_net.FreestandingHeader{
+        .{ .name = "content-type", .value = "application/json" },
+    };
+    const http_response = pal_net.postFreestandingExplicit(
+        http_fba.allocator(),
+        http_harness.url,
+        http_harness.request_payload,
+        http_headers[0..],
+    ) catch return error.HttpPostFailed;
+    if (http_harness.failure != null) return error.HttpPostFailed;
+    if (!http_harness.request_validated or !http_harness.response_sent or !http_harness.fin_sent) {
+        return error.HttpPostResponseMismatch;
+    }
+    if (http_response.status_code != 200 or
+        !std.mem.eql(u8, http_response.body, http_harness.response_body))
+    {
+        return error.HttpPostResponseMismatch;
+    }
+    if (eth.tx_packets <= tx_packets_before_http or eth.rx_packets <= rx_packets_before_http) {
+        return error.CounterMismatch;
+    }
 }
 
 fn rtl8139TcpProbeFailureCode(err: Rtl8139TcpProbeError) u8 {
@@ -3199,6 +3548,8 @@ fn rtl8139TcpProbeFailureCode(err: Rtl8139TcpProbeError) u8 {
         error.WindowBlockedBypass => 0xF3,
         error.ToolServiceFailed => 0xF4,
         error.ToolServiceResponseMismatch => 0xF5,
+        error.HttpPostFailed => 0xF6,
+        error.HttpPostResponseMismatch => 0xF7,
     };
 }
 
@@ -3671,15 +4022,18 @@ fn ataStorageProbeFailureCode(err: AtaStorageProbeError) u8 {
         error.RawPatternWriteFailed => 0x44,
         error.RawPatternFlushFailed => 0x45,
         error.RawPatternReadbackFailed => 0x46,
-        error.ToolLayoutInitFailed => 0x47,
-        error.ToolLayoutWriteFailed => 0x48,
-        error.ToolLayoutReadbackFailed => 0x49,
-        error.ToolLayoutReloadFailed => 0x4A,
-        error.FilesystemInitFailed => 0x4B,
-        error.FilesystemDirCreateFailed => 0x4C,
-        error.FilesystemWriteFailed => 0x4D,
-        error.FilesystemReadbackFailed => 0x4E,
-        error.FilesystemReloadFailed => 0x4F,
+        error.PartitionExportMismatch => 0x47,
+        error.SecondaryRawPatternWriteFailed => 0x48,
+        error.SecondaryRawPatternReadbackFailed => 0x49,
+        error.ToolLayoutInitFailed => 0x4A,
+        error.ToolLayoutWriteFailed => 0x4B,
+        error.ToolLayoutReadbackFailed => 0x4C,
+        error.ToolLayoutReloadFailed => 0x4D,
+        error.FilesystemInitFailed => 0x4E,
+        error.FilesystemDirCreateFailed => 0x4F,
+        error.FilesystemWriteFailed => 0x50,
+        error.FilesystemReadbackFailed => 0x51,
+        error.FilesystemReloadFailed => 0x52,
     };
 }
 
@@ -5176,6 +5530,15 @@ fn spinPause(iterations: usize) void {
         } else {
             asm volatile ("" ::: "memory");
         }
+    }
+}
+
+fn setProbeInterruptsEnabled(enabled: bool) void {
+    if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86_64) return;
+    if (enabled) {
+        asm volatile ("sti" ::: "memory");
+    } else {
+        asm volatile ("cli" ::: "memory");
     }
 }
 
@@ -11867,6 +12230,14 @@ test "baremetal rtl8139 tcp probe succeeds through mock device" {
     try runRtl8139TcpProbe();
 }
 
+test "baremetal rtl8139 http post probe succeeds through mock device" {
+    resetBaremetalRuntimeForTest();
+    rtl8139.testEnableMockDevice();
+    defer rtl8139.testDisableMockDevice();
+
+    try runRtl8139HttpPostProbe();
+}
+
 test "baremetal rtl8139 dhcp probe succeeds through mock device" {
     resetBaremetalRuntimeForTest();
     rtl8139.testEnableMockDevice();
@@ -12049,8 +12420,9 @@ test "baremetal filesystem persists path-based files on ata-backed storage" {
 
 test "baremetal ata storage probe validates raw, tool layout, and filesystem persistence" {
     resetBaremetalRuntimeForTest();
-    ata_pio_disk.testEnableMockDevice(8192);
+    ata_pio_disk.testEnableMockDevice(16384);
     ata_pio_disk.testInstallMockMbrPartition(ata_probe_partition_start_lba, ata_probe_partition_sector_count, 0x83);
+    ata_pio_disk.testInstallMockMbrPartitionAt(1, ata_probe_secondary_partition_start_lba, ata_probe_secondary_partition_sector_count, 0x83);
     defer ata_pio_disk.testDisableMockDevice();
 
     try runAtaStorageProbe();
@@ -12058,12 +12430,15 @@ test "baremetal ata storage probe validates raw, tool layout, and filesystem per
     const storage = oc_storage_state_ptr();
     try std.testing.expectEqual(@as(u8, abi.storage_backend_ata_pio), storage.backend);
     try std.testing.expectEqual(ata_probe_partition_start_lba, ata_pio_disk.logicalBaseLba());
+    try std.testing.expectEqual(@as(u8, 2), storage_backend.partitionCount());
     try std.testing.expectEqual(@as(u8, 0x41), oc_storage_read_byte(ata_probe_raw_lba, 0));
     try std.testing.expectEqual(@as(u8, 0x42), oc_storage_read_byte(ata_probe_raw_lba, 1));
     try std.testing.expectEqual(@as(u8, 0x41), oc_storage_read_byte(ata_probe_raw_lba + 1, 0));
     try std.testing.expectEqual(@as(u8, 0x41), ata_pio_disk.testReadMockByteRaw(ata_probe_partition_start_lba + ata_probe_raw_lba, 0));
     try std.testing.expectEqual(@as(u8, 0x42), ata_pio_disk.testReadMockByteRaw(ata_probe_partition_start_lba + ata_probe_raw_lba, 1));
     try std.testing.expectEqual(@as(u8, 0x41), ata_pio_disk.testReadMockByteRaw(ata_probe_partition_start_lba + ata_probe_raw_lba + 1, 0));
+    try std.testing.expectEqual(@as(u8, ata_probe_secondary_raw_seed), ata_pio_disk.testReadMockByteRaw(ata_probe_secondary_partition_start_lba + ata_probe_secondary_raw_lba, 0));
+    try std.testing.expectEqual(@as(u8, ata_probe_secondary_raw_seed +% 1), ata_pio_disk.testReadMockByteRaw(ata_probe_secondary_partition_start_lba + ata_probe_secondary_raw_lba, 1));
 
     const slot = oc_tool_layout_slot(ata_probe_tool_slot_id);
     try std.testing.expectEqual(ata_probe_tool_slot_expected_lba, slot.start_lba);
