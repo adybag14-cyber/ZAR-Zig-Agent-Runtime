@@ -37,17 +37,20 @@ Full-stack replacement execution reference:
   - storage/disk depth advanced locally:
     - shared storage backend facade shipped in `src/baremetal/storage_backend.zig`
     - real ATA PIO path shipped in `src/baremetal/ata_pio_disk.zig`
-    - ATA PIO currently supports `IDENTIFY`, sector `READ`, sector `WRITE`, `CACHE FLUSH`, and first-usable-MBR-partition mounting with logical LBA translation
+    - ATA PIO currently supports `IDENTIFY`, sector `READ`, sector `WRITE`, `CACHE FLUSH`, first-usable-MBR-partition mounting, and protective-MBR GPT partition mounting with logical LBA translation
     - PAL storage and bare-metal tool layout now route through the backend facade
     - hosted and host validation now proves:
       - ATA-backed backend selection
       - identify-backed capacity detection
       - first-partition MBR mount and logical base-LBA translation
+      - protective-MBR GPT mount and logical base-LBA translation
       - ATA mock-device read/write/flush behavior
       - ATA-backed bare-metal export reporting
       - live QEMU ATA-backed mutation + readback against a real MBR-partitioned raw image
       - ATA-backed tool-layout persistence through the mounted partition view
       - ATA-backed filesystem persistence through the mounted partition view
+      - canonical persisted install-layout seeding through `src/baremetal/disk_installer.zig`
+      - live QEMU ATA-backed GPT install proof against a real protective-MBR GPT raw image, including mounted-view block mutation, `/boot` + `/system` + `/runtime/install` readback, and persisted bootstrap package execution from disk
   - Ethernet driver depth advanced locally:
     - real RTL8139 path shipped in `src/baremetal/rtl8139.zig`
     - PCI RTL8139 discovery + I/O / bus-master enable shipped in `src/baremetal/pci.zig`
@@ -82,7 +85,8 @@ Full-stack replacement execution reference:
     - DNS framing/decode is now also proven over the real RTL8139 path via `src/protocol/dns.zig`, `src/pal/net.zig`, and `scripts/baremetal-qemu-rtl8139-dns-probe-check.ps1`
     - TCP session/state closure is now reached locally:
       - `src/protocol/tcp.zig` now carries a minimal client/server session state machine for `SYN -> SYN-ACK -> ACK`, established payload exchange, bounded four-way teardown, bounded SYN/payload/FIN retransmission recovery, bounded multi-flow session-table management, bounded cumulative-ACK advancement across multiple in-flight payload chunks, strict remote-window enforcement for bounded sequential payload chunking, and zero-window blocking until a pure ACK reopens the remote window
-      - `src/pal/net.zig` host regressions now prove that session behavior over the mock RTL8139 path, including dropped-first-SYN recovery, dropped-first-payload recovery, dropped-first-FIN recovery on both close sides, bounded four-way close, bounded multi-flow session isolation, and bounded cumulative-ACK advancement through two in-flight chunks
+      - `src/pal/net.zig` host regressions now prove that session behavior over the mock RTL8139 path, including dropped-first-SYN recovery, dropped-first-payload recovery, dropped-first-FIN recovery on both close sides, bounded four-way close, bounded multi-flow session isolation, bounded cumulative-ACK advancement through two in-flight chunks, and a freestanding bounded `http://` POST path that resolves a hostname through DNS and completes a plain-HTTP request/response exchange over the same mock RTL8139 device
+      - `src/pal/net.zig` now also carries explicit DNS server configuration (`configureDnsServers`, `configureDnsServersFromDhcp`) and rejects freestanding `https://` requests explicitly until a real TLS layer exists
       - `src/baremetal/tool_service.zig` now provides a bounded framed request/response shim on top of the bare-metal tool substrate for the TCP path, with typed `CMD`, `GET`, `PUT`, `STAT`, `PKG`, `PKGLIST`, and `PKGRUN` requests plus bounded batched request parsing/execution on one flow
       - `src/baremetal/package_store.zig` now provides the canonical persisted package layout at `/packages/<name>/bin/main.oc` and `/packages/<name>/meta/package.txt`
       - host/module validation now also proves typed TCP file-service and package-service behavior on top of the bare-metal filesystem, including `PUT`, `GET`, `STAT`, `PKG`, `PKGLIST`, `PKGRUN`, persisted `run-script`, canonical `run-package`, ATA-backed package persistence, and mixed typed batch handling with concatenated framed responses through that service seam
@@ -98,6 +102,7 @@ Full-stack replacement execution reference:
     - deeper networking depth remains future work above the FS5.5 closure bar:
       - sliding-window and congestion-control behavior beyond the current bounded zero-window reopen + sequential chunk-and-ACK session model
       - higher-level service/runtime layers beyond the current bounded typed batch file/package seam on the bare-metal TCP path
+      - TLS-backed `https://` delivery on the freestanding PAL network path
   - path-based filesystem usage is now also shipped above the shared backend:
     - `src/baremetal/filesystem.zig` implements directory creation plus file read/write/stat
     - `src/pal/fs.zig` routes the freestanding PAL through that layer
