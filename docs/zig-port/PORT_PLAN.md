@@ -229,12 +229,12 @@ Full-stack replacement execution reference:
     - freestanding bare-metal smoke/probe validation and `build-baremetal-asset` are pinned to the known-good Linux build `0.16.0-dev.2736+3b515fbed`.
     - reason: current upstream Linux `master` can segfault on `zig build baremetal -Doptimize=ReleaseFast` even though the pinned Linux `0.16.0-dev.2736+3b515fbed` bare-metal lane validates cleanly.
   - `uvx` fallback from the tagged Git repo was validated locally:
-    - `uvx --from "git+https://github.com/adybag14-cyber/openclaw-zig-port@v0.2.0-zig-edge.29#subdirectory=python/openclaw-zig-rpc-client" openclaw-zig-rpc --help`
+    - `uvx --from "git+https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime@v0.2.0-zig-edge.29#subdirectory=python/openclaw-zig-rpc-client" openclaw-zig-rpc --help`
   - npm public publish remains externally blocked by npm scope/package permission on npmjs; the edge.29 tarball is attached to the GitHub prerelease and the GitHub Packages fallback path ran successfully.
   - `scripts/package-registry-status.ps1` now uses the resolved default npm/PyPI package names when called with only `-ReleaseTag`, so local release diagnostics correctly report public-registry 404 state instead of silently skipping those checks.
   - PyPI public publish remains externally blocked by missing trusted-publisher mapping, but the workflow now emits the confirmed OIDC claim shape for the branch release lane:
-    - `sub=repo:adybag14-cyber/openclaw-zig-port:environment:pypi`
-    - `workflow_ref=adybag14-cyber/openclaw-zig-port/.github/workflows/python-release.yml@refs/heads/fs55-ethernet-integration`
+    - `sub=repo:adybag14-cyber/ZAR-Zig-Agent-Runtime:environment:pypi`
+    - `workflow_ref=adybag14-cyber/ZAR-Zig-Agent-Runtime/.github/workflows/python-release.yml@refs/heads/fs55-ethernet-integration`
     - `ref=refs/heads/fs55-ethernet-integration`
   - FS1 runtime persistence posture slice shipped:
     - `security.audit` now emits `runtime.state_path.in_memory` when state is empty or memory-backed.
@@ -779,8 +779,8 @@ Full-stack replacement execution reference:
   - Local Zig toolchain reference doc refreshed to current local/remote hashes.
   - MkDocs documentation site scaffolded with full feature/domain documentation and GitHub Pages deployment workflow.
   - GitHub Pages enabled and verified with workflow deployment:
-    - site: https://adybag14-cyber.github.io/openclaw-zig-port/
-    - workflow run: https://github.com/adybag14-cyber/openclaw-zig-port/actions/runs/22653680203
+    - site: https://adybag14-cyber.github.io/ZAR-Zig-Agent-Runtime/
+    - workflow run: https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/actions/runs/22653680203
   - RPC reference automation and drift guard added:
     - `scripts/generate-rpc-reference.ps1` generates `docs/rpc-reference.md` from `src/gateway/registry.zig`.
     - `zig-ci`, `release-preview`, and `docs-pages` now regenerate and enforce `git diff --exit-code` on `docs/rpc-reference.md`.
@@ -789,8 +789,8 @@ Full-stack replacement execution reference:
     - npm client package scaffolded at `npm/openclaw-zig-rpc-client` with publish workflow `.github/workflows/npm-release.yml`.
     - npm package dry-run checks now enforced in `zig-ci`, `release-preview` validate stage, and local `scripts/npm-pack-check.ps1`.
   - GitHub tracking issue updated with optimization-slice evidence:
-    - https://github.com/adybag14-cyber/openclaw-zig-port/issues/1#issuecomment-3994942224
-    - https://github.com/adybag14-cyber/openclaw-zig-port/issues/1#issuecomment-3994964162
+    - https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/issues/1#issuecomment-3994942224
+    - https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/issues/1#issuecomment-3994964162
 - Phase 2 complete:
   - JSON-RPC envelope parser/encoder
   - Registry + dispatcher
@@ -1106,7 +1106,7 @@ Full-stack replacement execution reference:
   - built `ReleaseFast` artifacts for `x86_64-windows`, `x86_64-linux`, and `x86_64-macos`
   - generated `SHA256SUMS.txt` for release zips
   - published GitHub preview release `v0.1.0-zig-preview.1`:
-    - https://github.com/adybag14-cyber/openclaw-zig-port/releases/tag/v0.1.0-zig-preview.1
+    - https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases/tag/v0.1.0-zig-preview.1
   - target note: `aarch64-linux` and `aarch64-macos` failed on the local Windows Zig master toolchain (`0.16.0-dev.2703+0a412853a`) with compiler exit code `5`, so the preview matrix was constrained to passing x86_64 targets.
 - Post-release hardening:
   - added `scripts/release-preview.ps1` to automate deterministic preview artifact creation, checksum generation, and optional `gh release create` publishing.

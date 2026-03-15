@@ -1,6 +1,6 @@
-# OpenClaw Zig Port
+# ZAR-Zig-Agent-Runtime
 
-Zig runtime port of OpenClaw with parity-first delivery, deterministic validation gates, and Lightpanda-only browser bridge policy.
+ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first delivery, deterministic validation gates, and a Lightpanda-only browser bridge policy.
 
 ## Current Status
 
@@ -404,9 +404,9 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
 - Checklist: [`docs/zig-port/PHASE_CHECKLIST.md`](docs/zig-port/PHASE_CHECKLIST.md)
 - Package publishing and install paths: [`docs/package-publishing.md`](docs/package-publishing.md)
 - Local Zig toolchain notes: [`docs/zig-port/ZIG_TOOLCHAIN_LOCAL.md`](docs/zig-port/ZIG_TOOLCHAIN_LOCAL.md)
-- GitHub master tracking issue: <https://github.com/adybag14-cyber/openclaw-zig-port/issues/1>
+- GitHub master tracking issue: <https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/issues/1>
 - Full method registry (source of truth): [`src/gateway/registry.zig`](src/gateway/registry.zig)
-- GitHub Pages docs site (after first deploy): <https://adybag14-cyber.github.io/openclaw-zig-port/>
+- GitHub Pages docs site (after first deploy): <https://adybag14-cyber.github.io/ZAR-Zig-Agent-Runtime/>
 
 ## Architecture Overview
 
@@ -988,19 +988,19 @@ Run local preview packaging with CI-aligned validate gates:
 Manual release-preview trigger:
 
 ```powershell
-gh workflow run release-preview.yml -R adybag14-cyber/openclaw-zig-port -f version=<release-tag>
+gh workflow run release-preview.yml -R adybag14-cyber/ZAR-Zig-Agent-Runtime -f version=<release-tag>
 ```
 
 Manual npm release trigger:
 
 ```powershell
-gh workflow run npm-release.yml -R adybag14-cyber/openclaw-zig-port -f version=<release-tag> -f dist_tag=edge
+gh workflow run npm-release.yml -R adybag14-cyber/ZAR-Zig-Agent-Runtime -f version=<release-tag> -f dist_tag=edge
 ```
 
 Manual python release trigger:
 
 ```powershell
-gh workflow run python-release.yml -R adybag14-cyber/openclaw-zig-port -f version=<pep440-version> -f release_tag=<release-tag>
+gh workflow run python-release.yml -R adybag14-cyber/ZAR-Zig-Agent-Runtime -f version=<pep440-version> -f release_tag=<release-tag>
 ```
 
 

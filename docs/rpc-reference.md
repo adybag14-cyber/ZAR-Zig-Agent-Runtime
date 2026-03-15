@@ -7,7 +7,7 @@ Regenerate with:
 ./scripts/generate-rpc-reference.ps1
 ```
 
-Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/openclaw-zig-port/blob/main/src/gateway/registry.zig)
+Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/blob/main/src/gateway/registry.zig)
 
 ## Common Envelope
 
@@ -341,4 +341,3 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 - wizard.next
 - wizard.start
 - wizard.status
-

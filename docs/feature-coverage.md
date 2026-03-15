@@ -146,4 +146,4 @@ This page summarizes functional coverage across all major OpenClaw Zig runtime d
   - publishable JS client package `@adybag14-cyber/openclaw-zig-rpc-client`
   - npm release pipeline via GitHub Actions
 
-For the complete method set, see [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/openclaw-zig-port/blob/main/src/gateway/registry.zig).
+For the complete method set, see [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/blob/main/src/gateway/registry.zig).

@@ -1,6 +1,6 @@
-# OpenClaw Zig Port Documentation
+# ZAR-Zig-Agent-Runtime Documentation
 
-Full documentation for the OpenClaw Zig runtime port.
+Full documentation for ZAR-Zig-Agent-Runtime, the Zig runtime port of OpenClaw.
 
 ## Status Snapshot
 
@@ -44,12 +44,12 @@ Full documentation for the OpenClaw Zig runtime port.
 
 ## Project Links
 
-- Repository: <https://github.com/adybag14-cyber/openclaw-zig-port>
-- Tracking issue: <https://github.com/adybag14-cyber/openclaw-zig-port/issues/1>
+- Repository: <https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime>
+- Tracking issue: <https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/issues/1>
 - Package publishing guide: [package-publishing.md](package-publishing.md)
 - Strict FS2 matrix: [zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md](zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md)
 - Strict FS3 matrix: [zig-port/FS3_MEMORY_KNOWLEDGE_MATRIX.md](zig-port/FS3_MEMORY_KNOWLEDGE_MATRIX.md)
 - Strict FS4 matrix: [zig-port/FS4_SECURITY_TRUST_MATRIX.md](zig-port/FS4_SECURITY_TRUST_MATRIX.md)
 - Strict FS5 matrix: [zig-port/FS5_EDGE_WASM_FINETUNE_MATRIX.md](zig-port/FS5_EDGE_WASM_FINETUNE_MATRIX.md)
-- Method registry source: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/openclaw-zig-port/blob/main/src/gateway/registry.zig)
+- Method registry source: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/blob/main/src/gateway/registry.zig)
 

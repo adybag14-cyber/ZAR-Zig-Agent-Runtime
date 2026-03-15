@@ -28,7 +28,7 @@ The Zig OpenClaw port uses Codeberg `master` for freshness decisions, but the Gi
 
 ## Required Checks
 
-From `openclaw-zig-port`:
+From the `ZAR-Zig-Agent-Runtime` working tree:
 
 ```powershell
 ./scripts/zig-codeberg-master-check.ps1

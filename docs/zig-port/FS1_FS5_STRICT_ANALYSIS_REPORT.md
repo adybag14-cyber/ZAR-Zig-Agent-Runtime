@@ -4,7 +4,7 @@ Date: 2026-03-12
 
 ## Baseline
 
-- Local source of truth repo: `C:\Users\Ady\Documents\openclaw-zig-port`
+- Local source of truth repo: `C:\Users\Ady\Documents\openclaw-zig-port-clean` (`ZAR-Zig-Agent-Runtime` working tree)
 - Local head at initial analysis start: `c50ba7e` `feat(zig-port): add interrupt-timeout clamp wrapper probes`
 - Working tree at analysis start: clean
 - Latest verified CI baseline at analysis start:

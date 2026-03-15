@@ -25,7 +25,7 @@ npm install @adybag14-cyber/openclaw-zig-rpc-client@0.2.0-zig-edge.29
 Fallback from the GitHub release tarball:
 
 ```bash
-npm install "https://github.com/adybag14-cyber/openclaw-zig-port/releases/download/v0.2.0-zig-edge.29/adybag14-cyber-openclaw-zig-rpc-client-0.2.0-zig-edge.29.tgz"
+npm install "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases/download/v0.2.0-zig-edge.29/adybag14-cyber-openclaw-zig-rpc-client-0.2.0-zig-edge.29.tgz"
 ```
 
 ### pip
@@ -39,7 +39,7 @@ pip install openclaw-zig-rpc-client==0.2.0.dev29
 Fallback from the GitHub release wheel:
 
 ```bash
-pip install "https://github.com/adybag14-cyber/openclaw-zig-port/releases/download/v0.2.0-zig-edge.29/openclaw_zig_rpc_client-0.2.0.dev29-py3-none-any.whl"
+pip install "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases/download/v0.2.0-zig-edge.29/openclaw_zig_rpc_client-0.2.0.dev29-py3-none-any.whl"
 ```
 
 ### uvx
@@ -53,7 +53,7 @@ uvx --from openclaw-zig-rpc-client openclaw-zig-rpc health --base-url http://127
 Git fallback verified locally against the release tag:
 
 ```bash
-uvx --from "git+https://github.com/adybag14-cyber/openclaw-zig-port@v0.2.0-zig-edge.29#subdirectory=python/openclaw-zig-rpc-client" openclaw-zig-rpc health --base-url http://127.0.0.1:8080
+uvx --from "git+https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime@v0.2.0-zig-edge.29#subdirectory=python/openclaw-zig-rpc-client" openclaw-zig-rpc health --base-url http://127.0.0.1:8080
 ```
 
 ## Registry Configuration Requirements
@@ -101,18 +101,18 @@ Current state observed during `v0.2.0-zig-edge.29`:
 
 That means PyPI does not yet have a matching trusted publisher entry for:
 
-- repository: `adybag14-cyber/openclaw-zig-port`
+- repository: `adybag14-cyber/ZAR-Zig-Agent-Runtime`
 - workflow: `.github/workflows/python-release.yml`
 - ref: `refs/heads/main`
 - environment: `pypi`
 
 Exact claims emitted by the latest trusted-publish attempt (`python-release` run `23109251947`):
 
-- `sub`: `repo:adybag14-cyber/openclaw-zig-port:environment:pypi`
-- `repository`: `adybag14-cyber/openclaw-zig-port`
+- `sub`: `repo:adybag14-cyber/ZAR-Zig-Agent-Runtime:environment:pypi`
+- `repository`: `adybag14-cyber/ZAR-Zig-Agent-Runtime`
 - `repository_owner`: `adybag14-cyber`
-- `workflow_ref`: `adybag14-cyber/openclaw-zig-port/.github/workflows/python-release.yml@refs/heads/fs55-ethernet-integration`
-- `job_workflow_ref`: `adybag14-cyber/openclaw-zig-port/.github/workflows/python-release.yml@refs/heads/fs55-ethernet-integration`
+- `workflow_ref`: `adybag14-cyber/ZAR-Zig-Agent-Runtime/.github/workflows/python-release.yml@refs/heads/fs55-ethernet-integration`
+- `job_workflow_ref`: `adybag14-cyber/ZAR-Zig-Agent-Runtime/.github/workflows/python-release.yml@refs/heads/fs55-ethernet-integration`
 - `ref`: `refs/heads/fs55-ethernet-integration`
 - `environment`: `pypi`
 

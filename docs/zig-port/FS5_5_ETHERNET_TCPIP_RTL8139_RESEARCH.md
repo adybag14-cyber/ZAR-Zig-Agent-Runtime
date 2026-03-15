@@ -1,7 +1,7 @@
 # FS5.5 Ethernet/TCP-IP First Slice Research: RTL8139 on QEMU x86_64 Bare Metal
 
 ## Purpose
-This report defines the first real bare-metal Ethernet slice for `openclaw-zig-port` using an RTL8139 NIC under QEMU on `x86_64-freestanding`. It is intentionally strict:
+This report defines the first real bare-metal Ethernet slice for `ZAR-Zig-Agent-Runtime` using an RTL8139 NIC under QEMU on `x86_64-freestanding`. It is intentionally strict:
 
 - no checklist-only progress
 - no abstraction-first work without hardware proof
