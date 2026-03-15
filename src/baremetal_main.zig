@@ -387,6 +387,9 @@ const Rtl8139TcpProbeError = error{
     RetransmitNotCleared,
     WindowUpdateMismatch,
     WindowBlockedBypass,
+    CongestionWindowMismatch,
+    SlowStartThresholdMismatch,
+    CongestionBlockedBypass,
     ToolServiceFailed,
     ToolServiceResponseMismatch,
     HttpPostFailed,
@@ -3195,6 +3198,79 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     if (mapped_b_reopen != client_b) return error.SessionStateMismatch;
     mapped_b_reopen.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
     if (client_b.remote_window != reopen_window_update_b.window_size) return error.WindowUpdateMismatch;
+    if (server_b.congestionWindowBytes() != tcp_protocol.initial_congestion_window_bytes) return error.CongestionWindowMismatch;
+
+    const congestion_warmup = server_b.buildPayloadChunk("ABCD") catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, congestion_warmup);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, congestion_warmup);
+    const mapped_b_congestion_warmup = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+    if (mapped_b_congestion_warmup != client_b) return error.SessionStateMismatch;
+    mapped_b_congestion_warmup.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    if (server_b.buildPayloadChunk("EFGH")) |_| {
+        return error.CongestionBlockedBypass;
+    } else |err| switch (err) {
+        error.WindowExceeded => {},
+        else => return mapTcpSessionProbeError(err),
+    }
+
+    const congestion_warmup_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, congestion_warmup_ack);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, congestion_warmup_ack);
+    server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    if (server_b.congestionWindowBytes() != 8) return error.CongestionWindowMismatch;
+
+    const congestion_chunk_a = server_b.buildPayloadChunk("EFGH") catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, congestion_chunk_a);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, congestion_chunk_a);
+    const mapped_b_congestion_chunk_a = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+    if (mapped_b_congestion_chunk_a != client_b) return error.SessionStateMismatch;
+    mapped_b_congestion_chunk_a.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const congestion_chunk_b = server_b.buildPayloadChunk("IJKL") catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, congestion_chunk_b);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, congestion_chunk_b);
+    const mapped_b_congestion_chunk_b = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+    if (mapped_b_congestion_chunk_b != client_b) return error.SessionStateMismatch;
+    mapped_b_congestion_chunk_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    if (server_b.bytesInFlight() != 8) return error.WindowSizeMismatch;
+    if (server_b.buildPayloadChunk("MNOP")) |_| {
+        return error.CongestionBlockedBypass;
+    } else |err| switch (err) {
+        error.WindowExceeded => {},
+        else => return mapTcpSessionProbeError(err),
+    }
+
+    const congestion_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, congestion_ack);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, congestion_ack);
+    server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    if (server_b.congestionWindowBytes() != 16) return error.CongestionWindowMismatch;
+
+    _ = server_b.buildPayloadWithTimeout("WXYZ", probe_tick, retransmit_interval_ticks) catch |err| return mapTcpSessionProbeError(err);
+    if (server_b.pollRetransmit(probe_tick + retransmit_interval_ticks - 1) != null) return error.RetransmitTooEarly;
+    probe_tick +%= retransmit_interval_ticks;
+    const congestion_retry = server_b.pollRetransmit(probe_tick) orelse return error.RetransmitMissing;
+    if (!std.mem.eql(u8, congestion_retry.payload, "WXYZ")) return error.PayloadMismatch;
+    if (server_b.congestionWindowBytes() != tcp_protocol.initial_congestion_window_bytes) return error.CongestionWindowMismatch;
+    if (server_b.slowStartThresholdBytes() != 8) return error.SlowStartThresholdMismatch;
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, congestion_retry);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, congestion_retry);
+    const mapped_b_congestion_retry = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+    if (mapped_b_congestion_retry != client_b) return error.SessionStateMismatch;
+    mapped_b_congestion_retry.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const congestion_retry_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, congestion_retry_ack);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, congestion_retry_ack);
+    server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    if (server_b.retransmit.armed()) return error.RetransmitNotCleared;
 
     const service_request_short_payload = client_b.buildPayload(service_request_short) catch |err| return mapTcpSessionProbeError(err);
     _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, service_request_short_payload);
@@ -3686,10 +3762,13 @@ fn rtl8139TcpProbeFailureCode(err: Rtl8139TcpProbeError) u8 {
         error.RetransmitNotCleared => 0xF1,
         error.WindowUpdateMismatch => 0xF2,
         error.WindowBlockedBypass => 0xF3,
-        error.ToolServiceFailed => 0xF4,
-        error.ToolServiceResponseMismatch => 0xF5,
-        error.HttpPostFailed => 0xF6,
-        error.HttpPostResponseMismatch => 0xF7,
+        error.CongestionWindowMismatch => 0xF4,
+        error.SlowStartThresholdMismatch => 0xF5,
+        error.CongestionBlockedBypass => 0xF6,
+        error.ToolServiceFailed => 0xF7,
+        error.ToolServiceResponseMismatch => 0xF8,
+        error.HttpPostFailed => 0xF9,
+        error.HttpPostResponseMismatch => 0xFA,
     };
 }
 
