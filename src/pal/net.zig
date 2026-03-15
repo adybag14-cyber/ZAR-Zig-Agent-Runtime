@@ -201,8 +201,27 @@ fn defaultRouteState() RouteState {
     };
 }
 
+const DnsState = struct {
+    server_count: usize,
+    servers: [max_dhcp_dns_servers][4]u8,
+    next_query_id: u16,
+};
+
+fn defaultDnsState() DnsState {
+    return .{
+        .server_count = 0,
+        .servers = [_][4]u8{
+            [_]u8{ 0, 0, 0, 0 },
+            [_]u8{ 0, 0, 0, 0 },
+        },
+        .next_query_id = 1,
+    };
+}
+
 var route_state: RouteState = defaultRouteState();
 var route_cache_insert_index: usize = 0;
+var dns_state: DnsState = defaultDnsState();
+var next_tcp_local_port: u16 = 49152;
 
 fn ipv4IsZero(ip: [4]u8) bool {
     return std.mem.eql(u8, ip[0..], &[_]u8{ 0, 0, 0, 0 });
@@ -252,6 +271,8 @@ fn arpCacheUpsert(ip: [4]u8, mac: [ethernet.mac_len]u8) void {
 pub fn clearRouteState() void {
     route_state = defaultRouteState();
     route_cache_insert_index = 0;
+    dns_state = defaultDnsState();
+    next_tcp_local_port = 49152;
 }
 
 pub fn clearRouteStateForTest() void {
@@ -275,6 +296,18 @@ pub fn configureIpv4Route(local_ip: [4]u8, subnet_mask: ?[4]u8, gateway: ?[4]u8)
     route_state.last_cache_hit = false;
     route_state.pending_resolution = false;
     route_state.pending_ip = [_]u8{ 0, 0, 0, 0 };
+}
+
+pub fn configureDnsServers(servers: []const [4]u8) void {
+    dns_state.server_count = @min(servers.len, dns_state.servers.len);
+    var index: usize = 0;
+    while (index < dns_state.servers.len) : (index += 1) {
+        dns_state.servers[index] = if (index < dns_state.server_count) servers[index] else [_]u8{ 0, 0, 0, 0 };
+    }
+}
+
+pub fn configureDnsServersFromDhcp(packet: *const DhcpPacket) void {
+    configureDnsServers(packet.dns_servers[0..packet.dns_server_count]);
 }
 
 pub fn configureIpv4RouteFromDhcp(packet: *const DhcpPacket) RouteError!void {
@@ -361,6 +394,10 @@ pub fn post(
     payload: []const u8,
     headers: []const std.http.Header,
 ) !Response {
+    if (builtin.os.tag == .freestanding) {
+        return postFreestanding(allocator, url, payload, headers);
+    }
+
     var client: std.http.Client = .{
         .allocator = allocator,
         .io = std.Io.Threaded.global_single_threaded.io(),
@@ -384,6 +421,353 @@ pub fn post(
         .status_code = @as(u16, @intCast(@intFromEnum(fetch_result.status))),
         .body = try response_body.toOwnedSlice(),
         .latency_ms = time_util.nowMs() - started_ms,
+    };
+}
+
+const PostScheme = enum {
+    http,
+    https,
+};
+
+const ParsedPostUrl = struct {
+    scheme: PostScheme,
+    host: []const u8,
+    port: u16,
+    path: []const u8,
+};
+
+const HttpResponseMeta = struct {
+    status_code: u16,
+    body_offset: usize,
+};
+
+const post_poll_limit: usize = 4096;
+const post_retransmit_ticks: u64 = 32;
+
+fn postFreestanding(
+    allocator: std.mem.Allocator,
+    url: []const u8,
+    payload: []const u8,
+    headers: []const std.http.Header,
+) !Response {
+    const parsed = try parsePostUrl(url);
+    if (parsed.scheme != .http) return error.UnsupportedScheme;
+    if (!route_state.configured or ipv4IsZero(route_state.local_ip)) return error.RouteUnconfigured;
+
+    const destination_ip = try resolveHostIpv4(parsed.host);
+    const destination_mac = try resolveNextHopMac(destination_ip);
+    const local_port = allocateTcpLocalPort();
+    const request_bytes = try buildHttpPostRequest(allocator, parsed, payload, headers);
+    defer allocator.free(request_bytes);
+    if (request_bytes.len > max_tcp_payload_len) return error.PayloadTooLarge;
+
+    var client = tcp.Session.initClient(local_port, parsed.port, 0x0C10_0000 +% @as(u32, local_port), 4096);
+    const started_ms = time_util.nowMs();
+    const syn = try client.buildSynWithTimeout(0, post_retransmit_ticks);
+    try sendTcpOutbound(destination_mac, route_state.local_ip, destination_ip, client, syn);
+
+    var poll_tick: u64 = 0;
+    while (true) : (poll_tick += 1) {
+        if (poll_tick >= post_poll_limit) return error.Timeout;
+
+        if (try handlePostHandshakePacket(destination_mac, destination_ip, &client)) break;
+        if (client.pollRetransmit(poll_tick)) |retry_syn| {
+            try sendTcpOutbound(destination_mac, route_state.local_ip, destination_ip, client, retry_syn);
+        }
+    }
+
+    const request_packet = try client.buildPayloadWithTimeout(request_bytes, poll_tick, post_retransmit_ticks);
+    try sendTcpOutbound(destination_mac, route_state.local_ip, destination_ip, client, request_packet);
+
+    var response_bytes: std.ArrayList(u8) = .empty;
+    defer response_bytes.deinit(allocator);
+    var remote_closed = false;
+
+    while (!remote_closed) : (poll_tick += 1) {
+        if (poll_tick >= post_poll_limit) return error.Timeout;
+
+        var packet: TcpPacket = undefined;
+        const received = pollTcpPacketStrictInto(&packet) catch |err| switch (err) {
+            error.NotIpv4, error.NotTcp => false,
+            else => return err,
+        };
+        if (received and tcpPacketMatchesFlow(packet, destination_ip, route_state.local_ip, parsed.port, local_port)) {
+            const view = tcpPacketView(&packet);
+            if (view.flags == (tcp.flag_fin | tcp.flag_ack)) {
+                const ack = try client.acceptFin(view);
+                try sendTcpOutbound(destination_mac, route_state.local_ip, destination_ip, client, ack);
+                remote_closed = true;
+                continue;
+            }
+            if (view.flags == tcp.flag_ack and view.payload.len == 0) {
+                try client.acceptAck(view);
+                continue;
+            }
+            if (view.flags == (tcp.flag_ack | tcp.flag_psh) and view.payload.len != 0) {
+                try client.acceptPayload(view);
+                try response_bytes.appendSlice(allocator, view.payload);
+                const ack = try client.buildAck();
+                try sendTcpOutbound(destination_mac, route_state.local_ip, destination_ip, client, ack);
+                continue;
+            }
+        }
+
+        if (client.retransmit.kind == .payload) {
+            if (client.pollRetransmit(poll_tick)) |retry_payload| {
+                try sendTcpOutbound(destination_mac, route_state.local_ip, destination_ip, client, retry_payload);
+            }
+        }
+    }
+
+    const response_meta = try parseHttpResponseMeta(response_bytes.items);
+    return .{
+        .status_code = response_meta.status_code,
+        .body = try allocator.dupe(u8, response_bytes.items[response_meta.body_offset..]),
+        .latency_ms = time_util.nowMs() - started_ms,
+    };
+}
+
+fn parsePostUrl(url: []const u8) !ParsedPostUrl {
+    const trimmed = std.mem.trim(u8, url, " \t\r\n");
+    const scheme_sep = std.mem.indexOf(u8, trimmed, "://") orelse return error.UnsupportedUrl;
+    const scheme_text = trimmed[0..scheme_sep];
+    const remainder = trimmed[scheme_sep + 3 ..];
+    if (remainder.len == 0) return error.UnsupportedUrl;
+
+    const scheme: PostScheme = if (std.ascii.eqlIgnoreCase(scheme_text, "http"))
+        .http
+    else if (std.ascii.eqlIgnoreCase(scheme_text, "https"))
+        .https
+    else
+        return error.UnsupportedScheme;
+
+    const path_start = std.mem.indexOfScalar(u8, remainder, '/') orelse remainder.len;
+    const authority = remainder[0..path_start];
+    if (authority.len == 0) return error.UnsupportedUrl;
+
+    const path = if (path_start < remainder.len) remainder[path_start..] else "/";
+    const colon_index = std.mem.lastIndexOfScalar(u8, authority, ':');
+    const host = if (colon_index) |idx| authority[0..idx] else authority;
+    if (host.len == 0) return error.UnsupportedUrl;
+
+    const port = if (colon_index) |idx|
+        std.fmt.parseUnsigned(u16, authority[idx + 1 ..], 10) catch return error.UnsupportedUrl
+    else switch (scheme) {
+        .http => @as(u16, 80),
+        .https => @as(u16, 443),
+    };
+
+    return .{
+        .scheme = scheme,
+        .host = host,
+        .port = port,
+        .path = path,
+    };
+}
+
+fn parseIpv4Literal(text: []const u8) error{InvalidIpLiteral}![4]u8 {
+    var result = [_]u8{ 0, 0, 0, 0 };
+    var part_index: usize = 0;
+    var cursor: usize = 0;
+    while (part_index < result.len) : (part_index += 1) {
+        if (cursor >= text.len) return error.InvalidIpLiteral;
+        const next_dot = std.mem.indexOfScalarPos(u8, text, cursor, '.') orelse text.len;
+        const component = text[cursor..next_dot];
+        if (component.len == 0) return error.InvalidIpLiteral;
+        const value = std.fmt.parseUnsigned(u8, component, 10) catch return error.InvalidIpLiteral;
+        result[part_index] = value;
+        cursor = next_dot + 1;
+        if (next_dot == text.len) break;
+    }
+    if (part_index != result.len - 1 or cursor <= text.len) {
+        if (cursor != text.len + 1) return error.InvalidIpLiteral;
+    }
+    if (std.mem.count(u8, text, ".") != 3) return error.InvalidIpLiteral;
+    return result;
+}
+
+fn nextDnsQueryId() u16 {
+    const id = dns_state.next_query_id;
+    dns_state.next_query_id +%= 1;
+    if (dns_state.next_query_id == 0) dns_state.next_query_id = 1;
+    return if (id == 0) 1 else id;
+}
+
+fn allocateTcpLocalPort() u16 {
+    const port = next_tcp_local_port;
+    next_tcp_local_port +%= 1;
+    if (next_tcp_local_port < 49152) next_tcp_local_port = 49152;
+    return port;
+}
+
+fn resolveHostIpv4(host: []const u8) ![4]u8 {
+    return parseIpv4Literal(host) catch {
+        if (dns_state.server_count == 0) return error.MissingDnsServer;
+        const dns_server = dns_state.servers[0];
+        const dns_mac = try resolveNextHopMac(dns_server);
+        const query_id = nextDnsQueryId();
+        const source_port = allocateTcpLocalPort();
+        _ = try sendDnsQuery(dns_mac, route_state.local_ip, dns_server, source_port, query_id, host, dns.type_a);
+
+        var attempts: usize = 0;
+        while (attempts < post_poll_limit) : (attempts += 1) {
+            var packet: DnsPacket = undefined;
+            const received = pollDnsPacketStrictInto(&packet) catch |err| switch (err) {
+                error.NotIpv4, error.NotUdp, error.NotDns => false,
+                else => return err,
+            };
+            if (!received) continue;
+            if (packet.id != query_id) continue;
+            if (packet.source_port != dns.default_port or packet.destination_port != source_port) continue;
+            if (!std.mem.eql(u8, packet.question_name[0..packet.question_name_len], host)) continue;
+
+            var answer_index: usize = 0;
+            while (answer_index < packet.answer_count) : (answer_index += 1) {
+                const answer = packet.answers[answer_index];
+                if (answer.rr_type == dns.type_a and answer.rr_class == dns.class_in and answer.data_len == 4) {
+                    return .{ answer.data[0], answer.data[1], answer.data[2], answer.data[3] };
+                }
+            }
+            return error.NoAnswer;
+        }
+
+        return error.Timeout;
+    };
+}
+
+fn resolveNextHopMac(destination_ip: [4]u8) ![ethernet.mac_len]u8 {
+    const route = try resolveNextHop(destination_ip);
+    if (lookupArpCache(route.next_hop_ip)) |destination_mac| {
+        return destination_mac;
+    }
+
+    _ = try sendArpRequest(route_state.local_ip, route.next_hop_ip);
+    var attempts: usize = 0;
+    while (attempts < post_poll_limit) : (attempts += 1) {
+        if (lookupArpCache(route.next_hop_ip)) |destination_mac| return destination_mac;
+        const packet_opt = try pollArpPacket();
+        if (packet_opt) |packet| {
+            _ = learnArpPacket(packet);
+        }
+    }
+    return error.Timeout;
+}
+
+fn buildHttpPostRequest(
+    allocator: std.mem.Allocator,
+    parsed: ParsedPostUrl,
+    payload: []const u8,
+    headers: []const std.http.Header,
+) ![]u8 {
+    var request: std.ArrayList(u8) = .empty;
+    errdefer request.deinit(allocator);
+    const request_line = try std.fmt.allocPrint(allocator, "POST {s} HTTP/1.1\r\n", .{parsed.path});
+    defer allocator.free(request_line);
+    try request.appendSlice(allocator, request_line);
+    const host_line = if (parsed.port == 80)
+        try std.fmt.allocPrint(allocator, "Host: {s}\r\n", .{parsed.host})
+    else
+        try std.fmt.allocPrint(allocator, "Host: {s}:{d}\r\n", .{ parsed.host, parsed.port });
+    defer allocator.free(host_line);
+    try request.appendSlice(allocator, host_line);
+    const content_length_line = try std.fmt.allocPrint(allocator, "Content-Length: {d}\r\n", .{payload.len});
+    defer allocator.free(content_length_line);
+    try request.appendSlice(allocator, content_length_line);
+    try request.appendSlice(allocator, "Connection: close\r\n");
+    for (headers) |header| {
+        if (std.ascii.eqlIgnoreCase(header.name, "host") or
+            std.ascii.eqlIgnoreCase(header.name, "content-length") or
+            std.ascii.eqlIgnoreCase(header.name, "connection"))
+        {
+            return error.UnsupportedHeader;
+        }
+        const header_line = try std.fmt.allocPrint(allocator, "{s}: {s}\r\n", .{ header.name, header.value });
+        defer allocator.free(header_line);
+        try request.appendSlice(allocator, header_line);
+    }
+    try request.appendSlice(allocator, "\r\n");
+    try request.appendSlice(allocator, payload);
+    return request.toOwnedSlice(allocator);
+}
+
+fn handlePostHandshakePacket(
+    destination_mac: [ethernet.mac_len]u8,
+    destination_ip: [4]u8,
+    client: *tcp.Session,
+) !bool {
+    var packet: TcpPacket = undefined;
+    const received = pollTcpPacketStrictInto(&packet) catch |err| switch (err) {
+        error.NotIpv4, error.NotTcp => false,
+        else => return err,
+    };
+    if (!received) return false;
+    if (!tcpPacketMatchesFlow(packet, destination_ip, route_state.local_ip, client.remote_port, client.local_port)) {
+        return false;
+    }
+    const ack = try client.acceptSynAck(tcpPacketView(&packet));
+    try sendTcpOutbound(destination_mac, route_state.local_ip, destination_ip, client.*, ack);
+    return true;
+}
+
+fn sendTcpOutbound(
+    destination_mac: [ethernet.mac_len]u8,
+    source_ip: [4]u8,
+    destination_ip: [4]u8,
+    session: tcp.Session,
+    outbound: tcp.Outbound,
+) !void {
+    _ = try sendTcpPacket(
+        destination_mac,
+        source_ip,
+        destination_ip,
+        session.local_port,
+        session.remote_port,
+        outbound.sequence_number,
+        outbound.acknowledgment_number,
+        outbound.flags,
+        outbound.window_size,
+        outbound.payload,
+    );
+}
+
+fn parseHttpResponseMeta(response: []const u8) !HttpResponseMeta {
+    const header_end = std.mem.indexOf(u8, response, "\r\n\r\n") orelse return error.ResponseMalformed;
+    const line_end = std.mem.indexOf(u8, response[0..header_end], "\r\n") orelse return error.ResponseMalformed;
+    const status_line = response[0..line_end];
+    const first_space = std.mem.indexOfScalar(u8, status_line, ' ') orelse return error.ResponseMalformed;
+    if (first_space + 4 > status_line.len) return error.ResponseMalformed;
+    const status_code = std.fmt.parseUnsigned(u16, status_line[first_space + 1 .. first_space + 4], 10) catch return error.ResponseMalformed;
+    return .{
+        .status_code = status_code,
+        .body_offset = header_end + 4,
+    };
+}
+
+fn tcpPacketMatchesFlow(
+    packet: TcpPacket,
+    source_ip: [4]u8,
+    destination_ip: [4]u8,
+    source_port: u16,
+    destination_port: u16,
+) bool {
+    return std.mem.eql(u8, packet.ipv4_header.source_ip[0..], source_ip[0..]) and
+        std.mem.eql(u8, packet.ipv4_header.destination_ip[0..], destination_ip[0..]) and
+        packet.source_port == source_port and
+        packet.destination_port == destination_port;
+}
+
+fn tcpPacketView(packet: *const TcpPacket) tcp.Packet {
+    return .{
+        .source_port = packet.source_port,
+        .destination_port = packet.destination_port,
+        .sequence_number = packet.sequence_number,
+        .acknowledgment_number = packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = packet.flags,
+        .window_size = packet.window_size,
+        .checksum_value = packet.checksum_value,
+        .urgent_pointer = packet.urgent_pointer,
+        .payload = packet.payload[0..packet.payload_len],
     };
 }
 
@@ -2359,4 +2743,231 @@ test "baremetal net pal strict tcp poll reports non-tcp ipv4 frame" {
 
     _ = try sendUdpPacket(macAddress(), source_ip, destination_ip, 4321, 9001, payload);
     try std.testing.expectError(error.NotTcp, pollTcpPacketStrict());
+}
+
+const PostHarness = struct {
+    client_ip: [4]u8 = .{ 192, 168, 56, 10 },
+    server_ip: [4]u8 = .{ 192, 168, 56, 1 },
+    dns_ip: [4]u8 = .{ 192, 168, 56, 53 },
+    host_name: []const u8 = "post.openclaw.local",
+    path: []const u8 = "/botdemo/sendMessage",
+    expected_payload: []const u8 = "{\"text\":\"zig\"}",
+    response_body: []const u8 = "{\"ok\":true}",
+    server_port: u16 = 8080,
+    client_port: u16 = 0,
+    server: tcp.Session = tcp.Session.initServer(8080, 0, 0xA0B0_C0D0, 512),
+    request_storage: [1024]u8 = [_]u8{0} ** 1024,
+    request_len: usize = 0,
+    response_storage: [512]u8 = [_]u8{0} ** 512,
+    response_len: usize = 0,
+    response_offset: usize = 0,
+    response_started: bool = false,
+    fin_sent: bool = false,
+
+    fn handleOutgoingFrame(self: *PostHarness, frame: []const u8) !void {
+        const eth = ethernet.Header.decode(frame) catch return;
+        switch (eth.ether_type) {
+            ethernet.ethertype_arp => {
+                const packet = arp.decodeFrame(frame) catch return;
+                if (packet.operation != arp.operation_request) return;
+                if (std.mem.eql(u8, packet.target_ip[0..], self.server_ip[0..]) or
+                    std.mem.eql(u8, packet.target_ip[0..], self.dns_ip[0..]))
+                {
+                    try self.injectArpReply(packet.target_ip, packet.sender_ip);
+                }
+            },
+            ethernet.ethertype_ipv4 => {
+                const ip_packet = ipv4.decode(frame[ethernet.header_len..]) catch return;
+                switch (ip_packet.header.protocol) {
+                    ipv4.protocol_udp => try self.handleUdp(ip_packet),
+                    ipv4.protocol_tcp => try self.handleTcp(ip_packet),
+                    else => {},
+                }
+            },
+            else => {},
+        }
+    }
+
+    fn handleUdp(self: *PostHarness, ip_packet: ipv4.Packet) !void {
+        const packet = udp.decode(ip_packet.payload, ip_packet.header.source_ip, ip_packet.header.destination_ip) catch return;
+        if (packet.destination_port != dns.default_port) return;
+        if (!std.mem.eql(u8, ip_packet.header.destination_ip[0..], self.dns_ip[0..])) return;
+
+        const query = dns.decode(packet.payload) catch return;
+        if (!std.mem.eql(u8, query.question_name[0..query.question_name_len], self.host_name)) return;
+
+        var response_payload: [max_ipv4_payload_len]u8 = undefined;
+        const response_len = try dns.encodeAResponse(response_payload[0..], query.id, self.host_name, 60, self.server_ip);
+        try self.injectUdp(self.dns_ip, self.client_ip, dns.default_port, packet.source_port, response_payload[0..response_len]);
+    }
+
+    fn handleTcp(self: *PostHarness, ip_packet: ipv4.Packet) !void {
+        const packet = tcp.decode(ip_packet.payload, ip_packet.header.source_ip, ip_packet.header.destination_ip) catch return;
+        if (!std.mem.eql(u8, ip_packet.header.destination_ip[0..], self.server_ip[0..])) return;
+        if (packet.destination_port != self.server_port) return;
+
+        if (packet.flags == tcp.flag_syn) {
+            self.client_port = packet.source_port;
+            self.server = tcp.Session.initServer(self.server_port, self.client_port, 0xA0B0_C0D0, 512);
+            const syn_ack = try self.server.acceptSyn(packet);
+            try self.injectTcp(self.server_ip, self.client_ip, syn_ack);
+            return;
+        }
+
+        if (packet.flags == tcp.flag_ack and packet.payload.len == 0) {
+            if (self.server.state == .syn_received) {
+                try self.server.acceptAck(packet);
+                return;
+            }
+            if (self.fin_sent) {
+                try self.server.acceptAck(packet);
+                return;
+            }
+            if (self.response_started) {
+                try self.server.acceptAck(packet);
+                if (self.response_offset < self.response_len) {
+                    try self.sendNextResponseChunk();
+                } else if (!self.fin_sent) {
+                    const fin = try self.server.buildFin();
+                    self.fin_sent = true;
+                    try self.injectTcp(self.server_ip, self.client_ip, fin);
+                }
+            }
+            return;
+        }
+
+        if (packet.flags == (tcp.flag_ack | tcp.flag_psh) and packet.payload.len != 0) {
+            try self.server.acceptPayload(packet);
+            if (self.request_len + packet.payload.len > self.request_storage.len) return error.ResponseTooLarge;
+            std.mem.copyForwards(u8, self.request_storage[self.request_len .. self.request_len + packet.payload.len], packet.payload);
+            self.request_len += packet.payload.len;
+
+            if (self.requestComplete()) {
+                try self.prepareResponse();
+                try self.sendNextResponseChunk();
+            } else {
+                const ack = try self.server.buildAck();
+                try self.injectTcp(self.server_ip, self.client_ip, ack);
+            }
+        }
+    }
+
+    fn requestComplete(self: *const PostHarness) bool {
+        const request = self.request_storage[0..self.request_len];
+        const header_end = std.mem.indexOf(u8, request, "\r\n\r\n") orelse return false;
+        if (!std.mem.startsWith(u8, request, "POST ")) return false;
+        if (std.mem.indexOf(u8, request[0..header_end], "Content-Length: ")) |index| {
+            const line = request[index + "Content-Length: ".len .. header_end];
+            const line_end = std.mem.indexOf(u8, line, "\r\n") orelse return false;
+            const content_length = std.fmt.parseUnsigned(usize, std.mem.trim(u8, line[0..line_end], " "), 10) catch return false;
+            return request.len >= header_end + 4 + content_length;
+        }
+        return false;
+    }
+
+    fn prepareResponse(self: *PostHarness) !void {
+        if (self.response_len != 0) return;
+        const request = self.request_storage[0..self.request_len];
+        try std.testing.expect(std.mem.indexOf(u8, request, self.path) != null);
+        try std.testing.expect(std.mem.indexOf(u8, request, "Host: post.openclaw.local:8080\r\n") != null);
+        try std.testing.expect(std.mem.indexOf(u8, request, "content-type: application/json\r\n") != null or std.mem.indexOf(u8, request, "Content-Type: application/json\r\n") != null or std.mem.indexOf(u8, request, "content-type: application/json\r\n") != null or std.mem.indexOf(u8, request, "Content-type: application/json\r\n") != null);
+        const body_offset = (std.mem.indexOf(u8, request, "\r\n\r\n") orelse return error.InvalidDataOffset) + 4;
+        try std.testing.expectEqualStrings(self.expected_payload, request[body_offset..]);
+
+        const response = try std.fmt.bufPrint(
+            &self.response_storage,
+            "HTTP/1.1 200 OK\r\nContent-Length: {d}\r\nConnection: close\r\nContent-Type: application/json\r\n\r\n{s}",
+            .{ self.response_body.len, self.response_body },
+        );
+        self.response_len = response.len;
+        self.response_offset = 0;
+    }
+
+    fn sendNextResponseChunk(self: *PostHarness) !void {
+        if (self.response_offset >= self.response_len) return;
+        const outbound = try self.server.buildPayloadChunk(self.response_storage[self.response_offset..self.response_len]);
+        self.response_started = true;
+        self.response_offset += outbound.payload.len;
+        try self.injectTcp(self.server_ip, self.client_ip, outbound);
+    }
+
+    fn injectArpReply(self: *PostHarness, sender_ip: [4]u8, target_ip: [4]u8) !void {
+        _ = self;
+        var frame: [arp.frame_len]u8 = undefined;
+        const local_mac = macAddress();
+        const frame_len = try arp.encodeReplyFrame(frame[0..], local_mac, sender_ip, local_mac, target_ip);
+        rtl8139.testInstallMockSendHook(null);
+        defer rtl8139.testInstallMockSendHook(postHarnessHook);
+        try sendFrame(frame[0..frame_len]);
+    }
+
+    fn injectUdp(self: *PostHarness, source_ip: [4]u8, destination_ip: [4]u8, source_port: u16, destination_port: u16, payload: []const u8) !void {
+        _ = self;
+        rtl8139.testInstallMockSendHook(null);
+        defer rtl8139.testInstallMockSendHook(postHarnessHook);
+        _ = try sendUdpPacket(macAddress(), source_ip, destination_ip, source_port, destination_port, payload);
+    }
+
+    fn injectTcp(self: *PostHarness, source_ip: [4]u8, destination_ip: [4]u8, outbound: tcp.Outbound) !void {
+        rtl8139.testInstallMockSendHook(null);
+        defer rtl8139.testInstallMockSendHook(postHarnessHook);
+        _ = try sendTcpPacket(
+            macAddress(),
+            source_ip,
+            destination_ip,
+            self.server.local_port,
+            self.server.remote_port,
+            outbound.sequence_number,
+            outbound.acknowledgment_number,
+            outbound.flags,
+            outbound.window_size,
+            outbound.payload,
+        );
+    }
+};
+
+var post_harness_instance: ?*PostHarness = null;
+
+fn postHarnessHook(frame: []const u8) void {
+    if (post_harness_instance) |harness| {
+        harness.handleOutgoingFrame(frame) catch @panic("post harness failure");
+    }
+}
+
+test "baremetal net pal freestanding post rejects unsupported https scheme" {
+    try std.testing.expectError(
+        error.UnsupportedScheme,
+        postFreestanding(std.testing.allocator, "https://api.telegram.org/bottest/sendMessage", "{}", &.{}),
+    );
+}
+
+test "baremetal net pal freestanding post resolves dns and exchanges plain http through rtl8139 mock device" {
+    rtl8139.testEnableMockDevice();
+    defer rtl8139.testDisableMockDevice();
+    clearRouteState();
+    defer clearRouteState();
+
+    try std.testing.expect(initDevice());
+    configureIpv4Route(.{ 192, 168, 56, 10 }, .{ 255, 255, 255, 0 }, null);
+    configureDnsServers(&.{.{ 192, 168, 56, 53 }});
+
+    var harness = PostHarness{};
+    post_harness_instance = &harness;
+    rtl8139.testInstallMockSendHook(postHarnessHook);
+    defer {
+        rtl8139.testInstallMockSendHook(null);
+        post_harness_instance = null;
+    }
+
+    var response = try postFreestanding(
+        std.testing.allocator,
+        "http://post.openclaw.local:8080/botdemo/sendMessage",
+        harness.expected_payload,
+        &.{.{ .name = "content-type", .value = "application/json" }},
+    );
+    defer response.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u16, 200), response.status_code);
+    try std.testing.expectEqualStrings(harness.response_body, response.body);
+    try std.testing.expect(response.latency_ms >= 0);
 }

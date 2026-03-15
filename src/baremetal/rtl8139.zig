@@ -114,6 +114,8 @@ var rx_snapshot: [rx_snapshot_capacity]u8 = [_]u8{0} ** rx_snapshot_capacity;
 var mock_enabled: bool = false;
 var mock_pending_rx_len: u32 = 0;
 var mock_pending_rx_status: u32 = 0;
+const TestSendHook = *const fn (frame: []const u8) void;
+var mock_send_hook: ?TestSendHook = null;
 
 pub fn resetForTest() void {
     resetState();
@@ -123,6 +125,7 @@ pub fn resetForTest() void {
     mock_enabled = false;
     mock_pending_rx_len = 0;
     mock_pending_rx_status = 0;
+    mock_send_hook = null;
 }
 
 pub fn testEnableMockDevice() void {
@@ -134,6 +137,11 @@ pub fn testEnableMockDevice() void {
 pub fn testDisableMockDevice() void {
     if (!builtin.is_test) return;
     resetForTest();
+}
+
+pub fn testInstallMockSendHook(hook: ?TestSendHook) void {
+    if (!builtin.is_test) return;
+    mock_send_hook = hook;
 }
 
 pub fn statePtr() *const abi.BaremetalEthernetState {
@@ -228,7 +236,11 @@ pub fn sendFrame(frame: []const u8) Error!void {
     std.mem.copyForwards(u8, tx_buf[0..frame.len], frame);
 
     if (mockAvailable()) {
-        queueMockReceive(tx_buf[0..send_len]);
+        if (mock_send_hook) |hook| {
+            hook(tx_buf[0..send_len]);
+        } else {
+            queueMockReceive(tx_buf[0..send_len]);
+        }
         state.tx_packets +%= 1;
         state.last_tx_len = @as(u32, @intCast(send_len));
         state.last_tx_status = tsd_tok;

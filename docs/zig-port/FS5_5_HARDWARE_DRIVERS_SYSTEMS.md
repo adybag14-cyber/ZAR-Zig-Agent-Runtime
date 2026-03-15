@@ -312,9 +312,15 @@ Notes:
     - `pollTcpPacketStrictInto`
     - `configureIpv4Route`
     - `configureIpv4RouteFromDhcp`
+    - `configureDnsServers`
+    - `configureDnsServersFromDhcp`
     - `resolveNextHop`
   - `learnArpPacket`
   - `sendUdpPacketRouted`
+- `src/pal/net.zig` no longer leaves `post()` as a hosted-only hole on the freestanding path:
+  - the freestanding branch now performs a real bounded `http://` POST over the existing RTL8139 + ARP + IPv4 + DNS + TCP stack
+  - host regressions now prove hostname resolution through a DNS A response, ARP resolution, TCP connect, HTTP request framing, HTTP response parsing, and allocator-owned response buffering over the mock RTL8139 device
+  - `https://` remains explicitly unsupported on the freestanding path until a real TLS layer exists; this is now an explicit boundary, not a silent hosted fallback
 - host regressions prove mock-device ARP, IPv4, UDP, DHCP, DNS, TCP handshake/payload exchange, bounded four-way close, dropped-first-SYN retransmission/timeout recovery, dropped-first-payload retransmission/timeout recovery, dropped-first-FIN retransmission/timeout recovery on both close sides, bounded multi-flow session isolation, bounded cumulative-ACK advancement across multiple in-flight payload chunks, DHCP-driven route configuration, gateway ARP learning, routed off-subnet UDP delivery, and direct-subnet UDP bypass through the RTL8139 path
 - `src/baremetal/tool_service.zig` now provides a bounded framed request/response shim on top of the bare-metal tool substrate for the TCP path, with typed `CMD`, `GET`, `PUT`, `STAT`, `PKG`, `PKGLIST`, and `PKGRUN` requests plus bounded batched request parsing/execution on one flow
 - live QEMU proofs now pass:
