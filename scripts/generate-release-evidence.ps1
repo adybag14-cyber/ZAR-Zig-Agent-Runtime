@@ -26,7 +26,7 @@ if ([string]::IsNullOrWhiteSpace($Repository)) {
     if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY)) {
         $Repository = $env:GITHUB_REPOSITORY
     } else {
-        $Repository = "local/openclaw-zig-port"
+        $Repository = "local/ZAR-Zig-Agent-Runtime"
     }
 }
 
@@ -179,7 +179,7 @@ $provenance = @{
     predicateType = "https://slsa.dev/provenance/v1"
     predicate = @{
         buildDefinition = @{
-            buildType = "https://github.com/adybag14-cyber/openclaw-zig-port/.github/workflows/release-preview.yml@v1"
+            buildType = "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/.github/workflows/release-preview.yml@v1"
             externalParameters = @{
                 version = $Version
                 repository = $Repository

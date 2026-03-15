@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Repository = "adybag14-cyber/openclaw-zig-port",
+    [string]$Repository = "adybag14-cyber/ZAR-Zig-Agent-Runtime",
     [string]$ReleaseTag,
     [string]$NpmPackageName = "@adybag14-cyber/openclaw-zig-rpc-client",
     [string]$PythonPackageName = "openclaw-zig-rpc-client",

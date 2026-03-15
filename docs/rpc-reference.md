@@ -341,3 +341,4 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 - wizard.next
 - wizard.start
 - wizard.status
+

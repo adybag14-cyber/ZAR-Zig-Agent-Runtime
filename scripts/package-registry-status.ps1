@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Repository = "adybag14-cyber/openclaw-zig-port",
+    [string]$Repository = "adybag14-cyber/ZAR-Zig-Agent-Runtime",
     [string]$ReleaseTag,
     [string]$NpmPackageName,
     [string]$NpmVersion,

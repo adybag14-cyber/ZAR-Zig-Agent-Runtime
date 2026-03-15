@@ -63,7 +63,7 @@ try {
         $releaseHeaders["Authorization"] = "Bearer $GitHubToken"
     }
     try {
-        $releases = Invoke-RestMethod -Headers $releaseHeaders -Uri "https://api.github.com/repos/adybag14-cyber/openclaw-zig-port/releases?per_page=20"
+        $releases = Invoke-RestMethod -Headers $releaseHeaders -Uri "https://api.github.com/repos/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases?per_page=20"
         if ($releases) {
             foreach ($candidate in $releases) {
                 if ($candidate.draft) {
