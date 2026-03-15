@@ -8,9 +8,9 @@ This repo ships three package-consumption paths for the Zig RPC client surfaces:
 
 ## Current Edge Release
 
-- GitHub prerelease tag: `v0.2.0-zig-edge.28`
-- npm package version: `0.2.0-zig-edge.28`
-- Python package version: `0.2.0.dev28`
+- GitHub prerelease tag: `v0.2.0-zig-edge.29`
+- npm package version: `0.2.0-zig-edge.29`
+- Python package version: `0.2.0.dev29`
 
 ## Install Paths
 
@@ -19,13 +19,13 @@ This repo ships three package-consumption paths for the Zig RPC client surfaces:
 Preferred when npmjs is configured:
 
 ```bash
-npm install @adybag14-cyber/openclaw-zig-rpc-client@0.2.0-zig-edge.28
+npm install @adybag14-cyber/openclaw-zig-rpc-client@0.2.0-zig-edge.29
 ```
 
 Fallback from the GitHub release tarball:
 
 ```bash
-npm install "https://github.com/adybag14-cyber/openclaw-zig-port/releases/download/v0.2.0-zig-edge.28/adybag14-cyber-openclaw-zig-rpc-client-0.2.0-zig-edge.28.tgz"
+npm install "https://github.com/adybag14-cyber/openclaw-zig-port/releases/download/v0.2.0-zig-edge.29/adybag14-cyber-openclaw-zig-rpc-client-0.2.0-zig-edge.29.tgz"
 ```
 
 ### pip
@@ -33,13 +33,13 @@ npm install "https://github.com/adybag14-cyber/openclaw-zig-port/releases/downlo
 Preferred when PyPI is configured:
 
 ```bash
-pip install openclaw-zig-rpc-client==0.2.0.dev28
+pip install openclaw-zig-rpc-client==0.2.0.dev29
 ```
 
 Fallback from the GitHub release wheel:
 
 ```bash
-pip install "https://github.com/adybag14-cyber/openclaw-zig-port/releases/download/v0.2.0-zig-edge.28/openclaw_zig_rpc_client-0.2.0.dev28-py3-none-any.whl"
+pip install "https://github.com/adybag14-cyber/openclaw-zig-port/releases/download/v0.2.0-zig-edge.29/openclaw_zig_rpc_client-0.2.0.dev29-py3-none-any.whl"
 ```
 
 ### uvx
@@ -53,7 +53,7 @@ uvx --from openclaw-zig-rpc-client openclaw-zig-rpc health --base-url http://127
 Git fallback verified locally against the release tag:
 
 ```bash
-uvx --from "git+https://github.com/adybag14-cyber/openclaw-zig-port@v0.2.0-zig-edge.28#subdirectory=python/openclaw-zig-rpc-client" openclaw-zig-rpc health --base-url http://127.0.0.1:8080
+uvx --from "git+https://github.com/adybag14-cyber/openclaw-zig-port@v0.2.0-zig-edge.29#subdirectory=python/openclaw-zig-rpc-client" openclaw-zig-rpc health --base-url http://127.0.0.1:8080
 ```
 
 ## Registry Configuration Requirements
@@ -67,12 +67,14 @@ The workflow supports two public-publish paths:
 
 If neither public path succeeds, the workflow falls back to GitHub Packages and still attaches the tarball to the GitHub release.
 
-Current blocker observed during `v0.2.0-zig-edge.28`:
+Current state observed during `v0.2.0-zig-edge.29`:
 
-- npmjs trusted publishing reached npmjs and emitted signed provenance
-- npmjs then returned `404 Not Found` for `@adybag14-cyber/openclaw-zig-rpc-client`
+- `npm-release` completed successfully
+- the tarball was attached to the GitHub prerelease
+- the GitHub Packages fallback path executed successfully
+- public npmjs visibility for `@adybag14-cyber/openclaw-zig-rpc-client@0.2.0-zig-edge.29` still returns `404 Not Found`
 
-That means the npm side still needs one of:
+That means the public npmjs side still needs one of:
 
 1. the `@adybag14-cyber` scope/package provisioned on npmjs with publish permission for this repo/workflow
 2. a valid `NPM_TOKEN` configured in repo secrets
@@ -90,9 +92,12 @@ The workflow supports two public-publish paths:
 
 If neither public path succeeds, the workflow still attaches the wheel and sdist to the GitHub release.
 
-Current blocker observed during `v0.2.0-zig-edge.28`:
+Current state observed during `v0.2.0-zig-edge.29`:
 
-- trusted publishing failed with `invalid-publisher`
+- `python-release` completed successfully
+- the wheel and sdist were attached to the GitHub prerelease
+- public PyPI visibility for `openclaw-zig-rpc-client==0.2.0.dev29` still returns `404 Not Found`
+- trusted publishing still fails with `invalid-publisher`
 
 That means PyPI does not yet have a matching trusted publisher entry for:
 
@@ -101,14 +106,14 @@ That means PyPI does not yet have a matching trusted publisher entry for:
 - ref: `refs/heads/main`
 - environment: `pypi`
 
-Exact claims emitted by the latest trusted-publish attempt (`python-release` run `22749787597`):
+Exact claims emitted by the latest trusted-publish attempt (`python-release` run `23109251947`):
 
 - `sub`: `repo:adybag14-cyber/openclaw-zig-port:environment:pypi`
 - `repository`: `adybag14-cyber/openclaw-zig-port`
 - `repository_owner`: `adybag14-cyber`
-- `workflow_ref`: `adybag14-cyber/openclaw-zig-port/.github/workflows/python-release.yml@refs/heads/main`
-- `job_workflow_ref`: `adybag14-cyber/openclaw-zig-port/.github/workflows/python-release.yml@refs/heads/main`
-- `ref`: `refs/heads/main`
+- `workflow_ref`: `adybag14-cyber/openclaw-zig-port/.github/workflows/python-release.yml@refs/heads/fs55-ethernet-integration`
+- `job_workflow_ref`: `adybag14-cyber/openclaw-zig-port/.github/workflows/python-release.yml@refs/heads/fs55-ethernet-integration`
+- `ref`: `refs/heads/fs55-ethernet-integration`
 - `environment`: `pypi`
 
 Fix either by:
@@ -140,11 +145,11 @@ Local/operator check:
 
 ```powershell
 pwsh ./scripts/package-registry-status.ps1 `
-  -ReleaseTag v0.2.0-zig-edge.28 `
+  -ReleaseTag v0.2.0-zig-edge.29 `
   -NpmPackageName @adybag14-cyber/openclaw-zig-rpc-client `
-  -NpmVersion 0.2.0-zig-edge.28 `
+  -NpmVersion 0.2.0-zig-edge.29 `
   -PythonPackageName openclaw-zig-rpc-client `
-  -PythonVersion 0.2.0.dev28 `
+  -PythonVersion 0.2.0.dev29 `
   -OutputJsonPath ./release/package-registry-status.json
 ```
 
@@ -161,7 +166,7 @@ Local/operator snapshot:
 
 ```powershell
 pwsh ./scripts/release-status.ps1 `
-  -ReleaseTag v0.2.0-zig-edge.28 `
+  -ReleaseTag v0.2.0-zig-edge.29 `
   -OutputJsonPath ./release/release-status.json `
   -OutputMarkdownPath ./release/release-status.md
 ```
