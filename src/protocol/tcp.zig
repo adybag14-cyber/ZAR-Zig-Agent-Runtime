@@ -323,26 +323,28 @@ pub const Session = struct {
         try self.validatePorts(packet);
         if (packet.flags != flag_ack or packet.payload.len != 0) return error.UnexpectedFlags;
         if (packet.sequence_number != self.recv_next) return error.SequenceMismatch;
-        if (packet.acknowledgment_number != self.send_next) return error.AcknowledgmentMismatch;
 
         self.remote_window = packet.window_size;
         switch (self.state) {
             .syn_received => {
+                if (packet.acknowledgment_number != self.send_next) return error.AcknowledgmentMismatch;
                 self.state = .established;
                 self.send_unacked = self.send_next;
             },
             .established => {
-                try self.acceptEstablishedAck(packet.acknowledgment_number);
+                try self.acceptInFlightAck(packet.acknowledgment_number);
                 if (self.retransmit.kind == .payload and self.send_unacked == self.send_next) {
                     self.clearRetransmit();
                 }
             },
             .fin_wait_1 => {
+                if (packet.acknowledgment_number != self.send_next) return error.AcknowledgmentMismatch;
                 self.state = .fin_wait_2;
                 self.send_unacked = packet.acknowledgment_number;
                 self.clearRetransmit();
             },
             .last_ack => {
+                if (packet.acknowledgment_number != self.send_next) return error.AcknowledgmentMismatch;
                 self.state = .closed;
                 self.send_unacked = packet.acknowledgment_number;
                 self.clearRetransmit();
@@ -439,7 +441,7 @@ pub const Session = struct {
         return @as(usize, effective_window - @as(u16, @intCast(in_flight)));
     }
 
-    fn acceptEstablishedAck(self: *Session, acknowledgment_number: u32) Error!void {
+    fn acceptInFlightAck(self: *Session, acknowledgment_number: u32) Error!void {
         const acknowledged_bytes = acknowledgment_number -% self.send_unacked;
         const bytes_in_flight = self.send_next -% self.send_unacked;
         if (acknowledged_bytes > bytes_in_flight) return error.AcknowledgmentMismatch;
@@ -451,10 +453,13 @@ pub const Session = struct {
         try self.validatePorts(packet);
         if (packet.flags != (flag_fin | flag_ack) or packet.payload.len != 0) return error.UnexpectedFlags;
         if (packet.sequence_number != self.recv_next) return error.SequenceMismatch;
-        if (packet.acknowledgment_number != self.send_next) return error.AcknowledgmentMismatch;
+        try self.acceptInFlightAck(packet.acknowledgment_number);
 
         self.remote_window = packet.window_size;
         self.recv_next +%= 1;
+        if (self.retransmit.kind == .payload and self.send_unacked == self.send_next) {
+            self.clearRetransmit();
+        }
         self.state = switch (self.state) {
             .established => .close_wait,
             .fin_wait_1, .fin_wait_2 => .closed,
@@ -471,18 +476,27 @@ pub const Session = struct {
     pub fn acceptPayload(self: *Session, packet: Packet) Error!void {
         if (self.state != .established) return error.InvalidState;
         try self.validatePorts(packet);
-        if (packet.flags != (flag_ack | flag_psh) or packet.payload.len == 0) return error.UnexpectedFlags;
+        if (!isAckPayloadPacket(packet.flags, packet.payload.len)) return error.UnexpectedFlags;
         if (packet.sequence_number != self.recv_next) return error.SequenceMismatch;
-        if (packet.acknowledgment_number != self.send_next) return error.AcknowledgmentMismatch;
+        try self.acceptInFlightAck(packet.acknowledgment_number);
 
         self.remote_window = packet.window_size;
         self.recv_next +%= @as(u32, @intCast(packet.payload.len));
+        if (self.retransmit.kind == .payload and self.send_unacked == self.send_next) {
+            self.clearRetransmit();
+        }
     }
 
     fn validatePorts(self: Session, packet: Packet) Error!void {
         if (packet.source_port != self.remote_port or packet.destination_port != self.local_port) {
             return error.PortMismatch;
         }
+    }
+
+    fn isAckPayloadPacket(flags: u16, payload_len: usize) bool {
+        if (payload_len == 0) return false;
+        if ((flags & flag_ack) == 0) return false;
+        return (flags & ~(flag_ack | flag_psh)) == 0;
     }
 
     fn armRetransmit(self: *Session, kind: RetransmitKind, outbound: Outbound, now_tick: u64, timeout_ticks: u64) void {
@@ -1442,6 +1456,120 @@ test "tcp session allows multiple in-flight chunks within remote window and adva
     try std.testing.expectEqual(@as(u32, 0x0102_0305 + 12), client.send_unacked);
     try std.testing.expectEqual(@as(u32, 0x0102_0305 + 12), client.send_next);
     try std.testing.expectEqual(@as(u16, 16), client.congestionWindowBytes());
+}
+
+test "tcp session accepts partial pure ack while payload remains in flight" {
+    const client_ip = [4]u8{ 192, 168, 56, 10 };
+    const server_ip = [4]u8{ 192, 168, 56, 1 };
+
+    var client = Session.initClient(4321, 443, 0x0102_0304, 4096);
+    var server = Session.initServer(443, 4321, 0xA0B0_C0D0, 16);
+
+    var buffer: [header_len + 32]u8 = undefined;
+
+    const syn = try client.buildSyn();
+    const syn_packet = try testDecodeOutbound(client, syn, client_ip, server_ip, buffer[0..]);
+    const syn_ack = try server.acceptSyn(syn_packet);
+    const syn_ack_packet = try testDecodeOutbound(server, syn_ack, server_ip, client_ip, buffer[0..]);
+    const ack = try client.acceptSynAck(syn_ack_packet);
+    const ack_packet = try testDecodeOutbound(client, ack, client_ip, server_ip, buffer[0..]);
+    try server.acceptAck(ack_packet);
+
+    const first_chunk = try client.buildPayloadChunk("ABCD");
+    const first_packet = try testDecodeOutbound(client, first_chunk, client_ip, server_ip, buffer[0..]);
+    try server.acceptPayload(first_packet);
+
+    const first_payload_ack = try server.buildAck();
+    const first_payload_ack_packet = try testDecodeOutbound(server, first_payload_ack, server_ip, client_ip, buffer[0..]);
+    try client.acceptAck(first_payload_ack_packet);
+
+    const second_chunk = try client.buildPayloadChunk("EFGH");
+    const second_packet = try testDecodeOutbound(client, second_chunk, client_ip, server_ip, buffer[0..]);
+    try server.acceptPayload(second_packet);
+
+    const third_chunk = try client.buildPayloadChunk("IJKL");
+    const third_packet = try testDecodeOutbound(client, third_chunk, client_ip, server_ip, buffer[0..]);
+    try server.acceptPayload(third_packet);
+
+    var partial_payload_ack = try server.buildAck();
+    partial_payload_ack.acknowledgment_number -%= 4;
+    const partial_payload_ack_packet = try testDecodeOutbound(server, partial_payload_ack, server_ip, client_ip, buffer[0..]);
+    try client.acceptAck(partial_payload_ack_packet);
+
+    try std.testing.expectEqual(@as(u32, 4), client.bytesInFlight());
+    try std.testing.expectEqual(@as(u32, partial_payload_ack.acknowledgment_number), client.send_unacked);
+}
+
+test "tcp session accepts payload carrying a partial cumulative ack" {
+    const client_ip = [4]u8{ 192, 168, 56, 10 };
+    const server_ip = [4]u8{ 192, 168, 56, 1 };
+
+    var client = Session.initClient(4321, 443, 0x0102_0304, 4096);
+    var server = Session.initServer(443, 4321, 0xA0B0_C0D0, 32);
+
+    var buffer: [header_len + 64]u8 = undefined;
+
+    const syn = try client.buildSyn();
+    const syn_packet = try testDecodeOutbound(client, syn, client_ip, server_ip, buffer[0..]);
+    const syn_ack = try server.acceptSyn(syn_packet);
+    const syn_ack_packet = try testDecodeOutbound(server, syn_ack, server_ip, client_ip, buffer[0..]);
+    const ack = try client.acceptSynAck(syn_ack_packet);
+    const ack_packet = try testDecodeOutbound(client, ack, client_ip, server_ip, buffer[0..]);
+    try server.acceptAck(ack_packet);
+
+    const first_chunk = try client.buildPayloadChunk("ABCD");
+    const first_packet = try testDecodeOutbound(client, first_chunk, client_ip, server_ip, buffer[0..]);
+    try server.acceptPayload(first_packet);
+
+    const first_payload_ack = try server.buildAck();
+    const first_payload_ack_packet = try testDecodeOutbound(server, first_payload_ack, server_ip, client_ip, buffer[0..]);
+    try client.acceptAck(first_payload_ack_packet);
+
+    const second_chunk = try client.buildPayloadChunk("EFGH");
+    const second_packet = try testDecodeOutbound(client, second_chunk, client_ip, server_ip, buffer[0..]);
+    try server.acceptPayload(second_packet);
+
+    const third_chunk = try client.buildPayloadChunk("IJKL");
+    const third_packet = try testDecodeOutbound(client, third_chunk, client_ip, server_ip, buffer[0..]);
+    try server.acceptPayload(third_packet);
+
+    const server_payload = try server.buildPayload("OK");
+    const server_payload_packet = try testDecodeOutbound(server, server_payload, server_ip, client_ip, buffer[0..]);
+    var partial_server_payload = server_payload_packet;
+    partial_server_payload.acknowledgment_number -%= 4;
+    partial_server_payload.flags = flag_ack;
+
+    try client.acceptPayload(partial_server_payload);
+
+    try std.testing.expectEqual(@as(u32, 4), client.bytesInFlight());
+    try std.testing.expectEqual(@as(u32, partial_server_payload.acknowledgment_number), client.send_unacked);
+    try std.testing.expectEqual(server_payload_packet.sequence_number + @as(u32, @intCast(server_payload_packet.payload.len)), client.recv_next);
+}
+
+test "tcp session accepts ack-only payload packets without psh" {
+    const client_ip = [4]u8{ 192, 168, 56, 10 };
+    const server_ip = [4]u8{ 192, 168, 56, 1 };
+
+    var client = Session.initClient(4321, 443, 0x0102_0304, 4096);
+    var server = Session.initServer(443, 4321, 0xA0B0_C0D0, 32);
+
+    var buffer: [header_len + 64]u8 = undefined;
+
+    const syn = try client.buildSyn();
+    const syn_packet = try testDecodeOutbound(client, syn, client_ip, server_ip, buffer[0..]);
+    const syn_ack = try server.acceptSyn(syn_packet);
+    const syn_ack_packet = try testDecodeOutbound(server, syn_ack, server_ip, client_ip, buffer[0..]);
+    const ack = try client.acceptSynAck(syn_ack_packet);
+    const ack_packet = try testDecodeOutbound(client, ack, client_ip, server_ip, buffer[0..]);
+    try server.acceptAck(ack_packet);
+
+    const payload = try server.buildPayload("TLS");
+    const payload_packet = try testDecodeOutbound(server, payload, server_ip, client_ip, buffer[0..]);
+    var ack_only_payload = payload_packet;
+    ack_only_payload.flags = flag_ack;
+
+    try client.acceptPayload(ack_only_payload);
+    try std.testing.expectEqual(payload_packet.sequence_number + @as(u32, @intCast(payload_packet.payload.len)), client.recv_next);
 }
 
 test "tcp session collapses congestion window after payload retransmit timeout" {

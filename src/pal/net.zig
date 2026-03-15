@@ -10,6 +10,7 @@ const dns = @import("../protocol/dns.zig");
 const ipv4 = @import("../protocol/ipv4.zig");
 const tcp = @import("../protocol/tcp.zig");
 const udp = @import("../protocol/udp.zig");
+const tls = std.crypto.tls;
 
 pub const Response = struct {
     status_code: u16,
@@ -51,6 +52,7 @@ pub const max_frame_len: usize = 2048;
 pub const max_ipv4_payload_len: usize = max_frame_len - ethernet.header_len - ipv4.header_len;
 pub const max_tcp_payload_len: usize = max_ipv4_payload_len - tcp.header_len;
 pub const max_udp_payload_len: usize = max_ipv4_payload_len - udp.header_len;
+pub const max_tcp_segment_payload_len: usize = 1500 - ipv4.header_len - tcp.header_len;
 pub const max_dhcp_parameter_request_list_len: usize = 64;
 pub const max_dhcp_client_identifier_len: usize = 32;
 pub const max_dhcp_hostname_len: usize = 64;
@@ -457,6 +459,310 @@ const HttpResponseMeta = struct {
 
 const post_poll_limit: usize = 4096;
 const post_retransmit_ticks: u64 = 32;
+const tls_wire_buffer_len: usize = tls.Client.min_buffer_len;
+
+const TlsTcpTransport = struct {
+    session: *tcp.Session,
+    destination_mac: [ethernet.mac_len]u8,
+    source_ip: [4]u8,
+    destination_ip: [4]u8,
+    reader: std.Io.Reader,
+    writer: std.Io.Writer,
+    read_err: ?anyerror = null,
+    write_err: ?anyerror = null,
+    received_close_notify: bool = false,
+    pending_len: usize = 0,
+    pending_offset: usize = 0,
+    pending_payload: [max_tcp_payload_len]u8 = undefined,
+    packet_storage: TcpPacket = undefined,
+    read_budget: usize = post_poll_limit,
+    write_budget: usize = post_poll_limit,
+
+    fn init(
+        session: *tcp.Session,
+        destination_mac: [ethernet.mac_len]u8,
+        source_ip: [4]u8,
+        destination_ip: [4]u8,
+        read_buffer: []u8,
+        write_buffer: []u8,
+    ) TlsTcpTransport {
+        return .{
+            .session = session,
+            .destination_mac = destination_mac,
+            .source_ip = source_ip,
+            .destination_ip = destination_ip,
+            .reader = .{
+                .vtable = &.{
+                    .stream = streamReader,
+                    .readVec = readVecReader,
+                },
+                .buffer = read_buffer,
+                .seek = 0,
+                .end = 0,
+            },
+            .writer = .{
+                .vtable = &.{
+                    .drain = drainWriter,
+                    .flush = flushWriter,
+                },
+                .buffer = write_buffer,
+            },
+        };
+    }
+
+    fn streamReader(io_r: *std.Io.Reader, io_w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+        const dest = limit.slice(try io_w.writableSliceGreedy(1));
+        var data: [1][]u8 = .{dest};
+        const n = try readVecReader(io_r, &data);
+        io_w.advance(n);
+        return n;
+    }
+
+    fn readVecReader(io_r: *std.Io.Reader, data: [][]u8) std.Io.Reader.Error!usize {
+        const self: *TlsTcpTransport = @alignCast(@fieldParentPtr("reader", io_r));
+        var iovecs_buffer: [8][]u8 = undefined;
+        const dest_n, _ = try io_r.writableVector(&iovecs_buffer, data);
+        const dest = iovecs_buffer[0..dest_n];
+        const n = self.readInto(dest) catch |err| {
+            self.read_err = err;
+            return error.ReadFailed;
+        };
+        if (n == 0) return error.EndOfStream;
+        return n;
+    }
+
+    fn readInto(self: *TlsTcpTransport, dest: [][]u8) !usize {
+        if (self.pending_offset == self.pending_len) {
+            self.pending_offset = 0;
+            self.pending_len = 0;
+            if (!(try self.fillPendingPayload())) return 0;
+        }
+
+        var written: usize = 0;
+        for (dest) |chunk| {
+            if (self.pending_offset == self.pending_len or chunk.len == 0) break;
+            const remaining = self.pending_len - self.pending_offset;
+            const copy_len = @min(chunk.len, remaining);
+            std.mem.copyForwards(u8, chunk[0..copy_len], self.pending_payload[self.pending_offset .. self.pending_offset + copy_len]);
+            self.pending_offset += copy_len;
+            written += copy_len;
+        }
+        return written;
+    }
+
+    fn fillPendingPayload(self: *TlsTcpTransport) !bool {
+        var attempts: usize = 0;
+        while (attempts < self.read_budget) : (attempts += 1) {
+            if (self.received_close_notify) return false;
+
+            const received = pollTcpPacketStrictInto(&self.packet_storage) catch |err| switch (err) {
+                error.NotIpv4, error.NotTcp => false,
+                else => return err,
+            };
+            if (!received) continue;
+            if (!tcpPacketMatchesFlow(self.packet_storage, self.destination_ip, self.source_ip, self.session.remote_port, self.session.local_port)) continue;
+
+            const view = tcpPacketView(&self.packet_storage);
+            if ((view.flags & tcp.flag_fin) != 0) {
+                const ack = try self.session.acceptFin(view);
+                try sendTcpOutbound(self.destination_mac, self.source_ip, self.destination_ip, self.session.*, ack);
+                self.received_close_notify = true;
+                return false;
+            }
+            if (view.payload.len == 0) {
+                try self.session.acceptAck(view);
+                continue;
+            }
+            if (view.payload.len > self.pending_payload.len) return error.BufferTooSmall;
+
+            try self.session.acceptPayload(view);
+            std.mem.copyForwards(u8, self.pending_payload[0..view.payload.len], view.payload);
+            self.pending_offset = 0;
+            self.pending_len = view.payload.len;
+            const ack = try self.session.buildAck();
+            try sendTcpOutbound(self.destination_mac, self.source_ip, self.destination_ip, self.session.*, ack);
+            return true;
+        }
+        return error.Timeout;
+    }
+
+    fn drainWriter(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+        const self: *TlsTcpTransport = @alignCast(@fieldParentPtr("writer", io_w));
+        const buffered = io_w.buffered();
+        const consumed = std.Io.Writer.countSplat(data, splat);
+        self.writeAll(buffered, data, splat) catch |err| {
+            self.write_err = err;
+            return error.WriteFailed;
+        };
+        return io_w.consume(consumed);
+    }
+
+    fn flushWriter(io_w: *std.Io.Writer) std.Io.Writer.Error!void {
+        const self: *TlsTcpTransport = @alignCast(@fieldParentPtr("writer", io_w));
+        const buffered = io_w.buffered();
+        if (buffered.len == 0) return;
+        self.writeAll(buffered, &.{}, 1) catch |err| {
+            self.write_err = err;
+            return error.WriteFailed;
+        };
+        io_w.end = 0;
+    }
+
+    fn writeAll(self: *TlsTcpTransport, prefix: []const u8, data: []const []const u8, splat: usize) !void {
+        var temp: [max_tcp_payload_len]u8 = undefined;
+        var prefix_offset: usize = 0;
+        var data_index: usize = 0;
+        var data_offset: usize = 0;
+        var splat_remaining: usize = if (data.len == 0) 0 else splat;
+
+        while (true) {
+            const filled = fillWriteChunk(prefix, &prefix_offset, data, &data_index, &data_offset, &splat_remaining, &temp);
+            if (filled == 0) break;
+
+            var payload = temp[0..filled];
+            while (payload.len != 0) {
+                const segment = payload[0..@min(payload.len, max_tcp_segment_payload_len)];
+                const outbound = self.session.buildPayloadChunk(segment) catch |err| switch (err) {
+                    error.WindowExceeded => {
+                        try self.waitUntilWritable();
+                        continue;
+                    },
+                    else => return err,
+                };
+                try sendTcpOutbound(self.destination_mac, self.source_ip, self.destination_ip, self.session.*, outbound);
+                payload = payload[outbound.payload.len..];
+            }
+        }
+    }
+
+    fn waitUntilWritable(self: *TlsTcpTransport) !void {
+        var attempts: usize = 0;
+        while (attempts < self.write_budget) : (attempts += 1) {
+            const effective_window = @min(self.session.remote_window, self.session.congestionWindowBytes());
+            if (self.session.bytesInFlight() < effective_window) return;
+
+            const received = pollTcpPacketStrictInto(&self.packet_storage) catch |err| switch (err) {
+                error.NotIpv4, error.NotTcp => false,
+                else => return err,
+            };
+            if (!received) continue;
+            if (!tcpPacketMatchesFlow(self.packet_storage, self.destination_ip, self.source_ip, self.session.remote_port, self.session.local_port)) continue;
+
+            const view = tcpPacketView(&self.packet_storage);
+            if ((view.flags & tcp.flag_fin) != 0) {
+                const ack = try self.session.acceptFin(view);
+                try sendTcpOutbound(self.destination_mac, self.source_ip, self.destination_ip, self.session.*, ack);
+                self.received_close_notify = true;
+                return;
+            }
+            if (view.payload.len == 0) {
+                try self.session.acceptAck(view);
+                continue;
+            }
+            if (view.payload.len > self.pending_payload.len) return error.BufferTooSmall;
+
+            try self.session.acceptPayload(view);
+            std.mem.copyForwards(u8, self.pending_payload[0..view.payload.len], view.payload);
+            self.pending_offset = 0;
+            self.pending_len = view.payload.len;
+            const ack = try self.session.buildAck();
+            try sendTcpOutbound(self.destination_mac, self.source_ip, self.destination_ip, self.session.*, ack);
+            return;
+        }
+        return error.Timeout;
+    }
+};
+
+fn fillWriteChunk(
+    prefix: []const u8,
+    prefix_offset: *usize,
+    data: []const []const u8,
+    data_index: *usize,
+    data_offset: *usize,
+    splat_remaining: *usize,
+    dest: []u8,
+) usize {
+    var used: usize = 0;
+    while (used < dest.len) {
+        if (prefix_offset.* < prefix.len) {
+            const remaining = prefix.len - prefix_offset.*;
+            const copy_len = @min(dest.len - used, remaining);
+            std.mem.copyForwards(u8, dest[used .. used + copy_len], prefix[prefix_offset.* .. prefix_offset.* + copy_len]);
+            prefix_offset.* += copy_len;
+            used += copy_len;
+            continue;
+        }
+        if (data.len == 0 or data_index.* >= data.len) break;
+
+        const is_last = data_index.* == data.len - 1;
+        if (is_last and splat_remaining.* == 0) break;
+        const source = data[data_index.*];
+        if (data_offset.* >= source.len) {
+            data_offset.* = 0;
+            if (is_last) {
+                if (splat_remaining.* > 0) splat_remaining.* -= 1;
+                if (splat_remaining.* == 0) {
+                    data_index.* = data.len;
+                    break;
+                }
+            } else {
+                data_index.* += 1;
+            }
+            continue;
+        }
+
+        const remaining = source.len - data_offset.*;
+        const copy_len = @min(dest.len - used, remaining);
+        std.mem.copyForwards(u8, dest[used .. used + copy_len], source[data_offset.* .. data_offset.* + copy_len]);
+        data_offset.* += copy_len;
+        used += copy_len;
+    }
+    return used;
+}
+
+fn fillTlsEntropy(entropy: *[tls.Client.Options.entropy_len]u8) !void {
+    if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86_64) return error.UnsupportedPlatform;
+
+    var route_seed_bytes = [_]u8{
+        route_state.local_ip[0],
+        route_state.local_ip[1],
+        route_state.local_ip[2],
+        route_state.local_ip[3],
+        route_state.last_next_hop[0],
+        route_state.last_next_hop[1],
+        route_state.last_next_hop[2],
+        route_state.last_next_hop[3],
+    };
+    var seed = readTimestampCounter() ^
+        std.mem.readInt(u64, &route_seed_bytes, .little) ^
+        (@as(u64, next_tcp_local_port) << 16) ^
+        (@as(u64, route_cache_insert_index) << 32);
+
+    var offset: usize = 0;
+    while (offset < entropy.len) : (offset += @sizeOf(u64)) {
+        const mixed = splitMix64(&seed);
+        std.mem.writeInt(u64, entropy[offset..][0..@sizeOf(u64)], mixed ^ readTimestampCounter(), .little);
+    }
+}
+
+fn splitMix64(seed: *u64) u64 {
+    seed.* +%= 0x9E37_79B9_7F4A_7C15;
+    var z = seed.*;
+    z = (z ^ (z >> 30)) *% 0xBF58_476D_1CE4_E5B9;
+    z = (z ^ (z >> 27)) *% 0x94D0_49BB_1331_11EB;
+    return z ^ (z >> 31);
+}
+
+fn readTimestampCounter() u64 {
+    var low: u32 = 0;
+    var high: u32 = 0;
+    asm volatile ("rdtsc"
+        : [low] "={eax}" (low),
+          [high] "={edx}" (high),
+        :
+        : "memory");
+    return (@as(u64, high) << 32) | low;
+}
 
 fn postFreestanding(
     allocator: std.mem.Allocator,
@@ -474,9 +780,20 @@ fn postFreestandingWithHeaders(
     headers: anytype,
 ) !Response {
     const parsed = try parsePostUrl(url);
-    if (parsed.scheme != .http) return error.UnsupportedScheme;
     if (!route_state.configured or ipv4IsZero(route_state.local_ip)) return error.RouteUnconfigured;
 
+    return switch (parsed.scheme) {
+        .http => postFreestandingHttpWithParsedHeaders(allocator, parsed, payload, headers),
+        .https => postFreestandingHttpsWithParsedHeaders(allocator, parsed, payload, headers),
+    };
+}
+
+fn postFreestandingHttpWithParsedHeaders(
+    allocator: std.mem.Allocator,
+    parsed: ParsedPostUrl,
+    payload: []const u8,
+    headers: anytype,
+) !Response {
     const destination_ip = try resolveHostIpv4(parsed.host);
     const destination_mac = try resolveNextHopMac(destination_ip);
     const local_port = allocateTcpLocalPort();
@@ -497,6 +814,9 @@ fn postFreestandingWithHeaders(
         if (client.pollRetransmit(poll_tick)) |retry_syn| {
             try sendTcpOutbound(destination_mac, route_state.local_ip, destination_ip, client, retry_syn);
         }
+    }
+    if (client.congestion_window < max_tcp_segment_payload_len) {
+        client.congestion_window = max_tcp_segment_payload_len;
     }
 
     const request_packet = try client.buildPayloadWithTimeout(request_bytes, poll_tick, post_retransmit_ticks);
@@ -526,7 +846,7 @@ fn postFreestandingWithHeaders(
                 try client.acceptAck(view);
                 continue;
             }
-            if (view.flags == (tcp.flag_ack | tcp.flag_psh) and view.payload.len != 0) {
+            if ((view.flags & tcp.flag_ack) != 0 and view.payload.len != 0 and (view.flags & ~(tcp.flag_ack | tcp.flag_psh)) == 0) {
                 try client.acceptPayload(view);
                 try response_bytes.appendSlice(allocator, view.payload);
                 const ack = try client.buildAck();
@@ -546,6 +866,93 @@ fn postFreestandingWithHeaders(
     return .{
         .status_code = response_meta.status_code,
         .body = try allocator.dupe(u8, response_bytes.items[response_meta.body_offset..]),
+        .latency_ms = if (builtin.os.tag == .freestanding) 0 else time_util.nowMs() - started_ms,
+    };
+}
+
+fn postFreestandingHttpsWithParsedHeaders(
+    allocator: std.mem.Allocator,
+    parsed: ParsedPostUrl,
+    payload: []const u8,
+    headers: anytype,
+) !Response {
+    const destination_ip = try resolveHostIpv4(parsed.host);
+    const destination_mac = try resolveNextHopMac(destination_ip);
+    const local_port = allocateTcpLocalPort();
+    const request_bytes = try buildHttpPostRequest(allocator, parsed, payload, headers);
+    defer allocator.free(request_bytes);
+
+    var client = tcp.Session.initClient(local_port, parsed.port, 0x0C20_0000 +% @as(u32, local_port), 4096);
+    const started_ms: i64 = if (builtin.os.tag == .freestanding) 0 else time_util.nowMs();
+    const syn = try client.buildSynWithTimeout(0, post_retransmit_ticks);
+    try sendTcpOutbound(destination_mac, route_state.local_ip, destination_ip, client, syn);
+
+    var poll_tick: u64 = 0;
+    while (true) : (poll_tick += 1) {
+        if (poll_tick >= post_poll_limit) return error.Timeout;
+
+        if (try handlePostHandshakePacket(destination_mac, destination_ip, &client)) break;
+        if (client.pollRetransmit(poll_tick)) |retry_syn| {
+            try sendTcpOutbound(destination_mac, route_state.local_ip, destination_ip, client, retry_syn);
+        }
+    }
+    if (client.congestion_window < max_tcp_segment_payload_len) {
+        client.congestion_window = max_tcp_segment_payload_len;
+    }
+
+    var transport_reader_buffer: [tls_wire_buffer_len]u8 = undefined;
+    var transport_writer_buffer: [tls_wire_buffer_len]u8 = undefined;
+    var tls_reader_buffer: [tls_wire_buffer_len]u8 = undefined;
+    var tls_writer_buffer: [tls_wire_buffer_len]u8 = undefined;
+    var entropy: [tls.Client.Options.entropy_len]u8 = undefined;
+    try fillTlsEntropy(&entropy);
+
+    var transport = TlsTcpTransport.init(
+        &client,
+        destination_mac,
+        route_state.local_ip,
+        destination_ip,
+        &transport_reader_buffer,
+        &transport_writer_buffer,
+    );
+    var tls_alert: tls.Alert = undefined;
+    var tls_client = tls.Client.init(
+        &transport.reader,
+        &transport.writer,
+        .{
+            .host = .no_verification,
+            .ca = .no_verification,
+            .read_buffer = &tls_reader_buffer,
+            .write_buffer = &tls_writer_buffer,
+            .entropy = &entropy,
+            .realtime_now_seconds = 0,
+            .allow_truncation_attacks = true,
+            .alert = &tls_alert,
+        },
+    ) catch |err| switch (err) {
+        error.ReadFailed => return transport.read_err orelse err,
+        error.WriteFailed => return transport.write_err orelse err,
+        else => return err,
+    };
+
+    tls_client.writer.writeAll(request_bytes) catch |err| switch (err) {
+        error.WriteFailed => return transport.write_err orelse err,
+    };
+    tls_client.writer.flush() catch |err| switch (err) {
+        error.WriteFailed => return transport.write_err orelse err,
+    };
+
+    var response_body: std.Io.Writer.Allocating = .init(allocator);
+    defer response_body.deinit();
+    _ = tls_client.reader.streamRemaining(&response_body.writer) catch |err| switch (err) {
+        error.ReadFailed => return transport.read_err orelse err,
+        error.WriteFailed => return transport.write_err orelse err,
+    };
+
+    const response_meta = try parseHttpResponseMeta(response_body.written());
+    return .{
+        .status_code = response_meta.status_code,
+        .body = try allocator.dupe(u8, response_body.written()[response_meta.body_offset..]),
         .latency_ms = if (builtin.os.tag == .freestanding) 0 else time_util.nowMs() - started_ms,
     };
 }
@@ -2972,7 +3379,7 @@ const PostHarness = struct {
             return;
         }
 
-        if (packet.flags == (tcp.flag_ack | tcp.flag_psh) and packet.payload.len != 0) {
+        if ((packet.flags & tcp.flag_ack) != 0 and packet.payload.len != 0 and (packet.flags & ~(tcp.flag_ack | tcp.flag_psh)) == 0) {
             try self.server.acceptPayload(packet);
             if (self.request_len + packet.payload.len > self.request_storage.len) return error.ResponseTooLarge;
             std.mem.copyForwards(u8, self.request_storage[self.request_len .. self.request_len + packet.payload.len], packet.payload);
@@ -3070,10 +3477,21 @@ fn postHarnessHook(frame: []const u8) void {
     }
 }
 
-test "baremetal net pal freestanding post rejects unsupported https scheme" {
+test "baremetal net pal parses https urls with default port 443" {
+    const parsed = try parsePostUrl("https://api.telegram.org/bottest/sendMessage");
+    try std.testing.expectEqual(.https, parsed.scheme);
+    try std.testing.expectEqualStrings("api.telegram.org", parsed.host);
+    try std.testing.expectEqual(@as(u16, 443), parsed.port);
+    try std.testing.expectEqualStrings("/bottest/sendMessage", parsed.path);
+}
+
+test "baremetal net pal freestanding https post requires route configuration" {
+    clearRouteState();
+    defer clearRouteState();
+
     try std.testing.expectError(
-        error.UnsupportedScheme,
-        postFreestanding(std.testing.allocator, "https://api.telegram.org/bottest/sendMessage", "{}", &.{}),
+        error.RouteUnconfigured,
+        postFreestanding(std.testing.allocator, "https://10.0.2.2:8443/fs55/live-https", "{}", &.{}),
     );
 }
 

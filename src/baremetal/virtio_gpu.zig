@@ -155,6 +155,7 @@ pub const ProbeResult = struct {
     manufacturer_id: u16,
     product_code: u16,
     serial_number: u32,
+    capability_flags: u16,
     edid_length: u16,
 };
 
@@ -359,7 +360,7 @@ pub fn probeDisplay() ProbeError!ProbeResult {
     const edid_size = @min(edid_response.size, @as(u32, display_output.max_edid_bytes));
     if (edid_size < edid.block_len) return error.InvalidEdidResponse;
 
-    const parsed = edid.parse(edid_response.edid[0..edid.block_len]) catch return error.InvalidEdid;
+    const parsed = edid.parse(edid_response.edid[0..edid_size]) catch return error.InvalidEdid;
     return .{
         .vendor_id = device.vendor_id,
         .device_id = device.device_id,
@@ -377,6 +378,7 @@ pub fn probeDisplay() ProbeError!ProbeResult {
         .manufacturer_id = parsed.manufacturer_id,
         .product_code = parsed.product_code,
         .serial_number = parsed.serial_number,
+        .capability_flags = parsed.capability_flags,
         .edid_length = @intCast(edid_size),
     };
 }
@@ -406,6 +408,7 @@ pub fn probeAndPublish() ProbeError!ProbeResult {
         .manufacturer_id = result.manufacturer_id,
         .product_code = result.product_code,
         .serial_number = result.serial_number,
+        .capability_flags = result.capability_flags,
         .edid = edid_response.edid[0..edid_len],
     });
     return result;
