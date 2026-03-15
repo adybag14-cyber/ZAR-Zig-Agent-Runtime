@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory = $true)]
     [string] $Version,
-    [string] $Repo = "adybag14-cyber/openclaw-zig-port",
+    [string] $Repo = "adybag14-cyber/ZAR-Zig-Agent-Runtime",
     [string] $ZigExePath = "",
     [switch] $Publish,
     [switch] $IncludeArm64

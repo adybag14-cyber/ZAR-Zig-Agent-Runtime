@@ -29,7 +29,7 @@ function Get-GitHubHeaders {
 
     $headers = @{
         Accept = "application/vnd.github+json"
-        "User-Agent" = "openclaw-zig-port/zig-github-mirror-release-check"
+        "User-Agent" = "ZAR-Zig-Agent-Runtime/zig-github-mirror-release-check"
     }
 
     if (-not [string]::IsNullOrWhiteSpace($Token)) {

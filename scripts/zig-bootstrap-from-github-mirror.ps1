@@ -26,7 +26,7 @@ function Get-GitHubHeaders {
 
     $headers = @{
         Accept = "application/vnd.github+json"
-        "User-Agent" = "openclaw-zig-port/zig-bootstrap-from-github-mirror"
+        "User-Agent" = "ZAR-Zig-Agent-Runtime/zig-bootstrap-from-github-mirror"
     }
     if (-not [string]::IsNullOrWhiteSpace($Token)) {
         $headers.Authorization = "Bearer $Token"

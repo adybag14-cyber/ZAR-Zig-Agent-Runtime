@@ -29,7 +29,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ApiHeaders = @{
-    "User-Agent" = "openclaw-zig-port-parity"
+    "User-Agent" = "ZAR-Zig-Agent-Runtime-parity"
     "Accept" = "application/vnd.github+json"
 }
 if ([string]::IsNullOrWhiteSpace($GitHubToken)) {
