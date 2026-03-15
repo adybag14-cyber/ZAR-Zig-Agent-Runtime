@@ -12,9 +12,9 @@ Full documentation for the OpenClaw Zig runtime port.
   - Union baseline: `141/141` (`MISSING_IN_ZIG=0`)
   - Gateway events union baseline: `19/19` (`UNION_EVENTS_MISSING_IN_ZIG=0`)
 - Latest upstream release snapshot (docs drift gate reference):
-  - Original OpenClaw baseline (`v2026.3.13-1`): `100/100`
-  - Original OpenClaw beta baseline (`v2026.3.13-beta.1`): `100/100`
-  - Union baseline: `141/141` (`MISSING_IN_ZIG=0`)
+  - Original OpenClaw baseline (`v2026.3.11`): `99/99`
+  - Original OpenClaw beta baseline (`v2026.3.11-beta.1`): `99/99`
+  - Union baseline: `140/140` (`MISSING_IN_ZIG=0`)
 - Latest local validation: `290/290` main tests + `245/245` bare-metal host tests passing
 - Latest published edge release tag: `v0.2.0-zig-edge.28`
 - Toolchain lane: Codeberg `master` is canonical; `adybag14-cyber/zig` provides rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
