@@ -208,7 +208,7 @@ Full-stack replacement execution reference:
     - browser-session auth, browser completion success, and Telegram command/reply proofs are green locally
     - FS2 strict closure is now reached locally: provider/session auth, browser completion, direct-provider completion, Telegram reply-loop, Telegram webhook ingress, and Telegram bot-send delivery all have dedicated proofs
   - Release/package lane status (2026-03-06):
-  - GitHub prerelease `v0.2.0-zig-edge.28` is live with desktop/android/bare-metal artifacts, parity reports, manifest, SBOM, provenance, npm tarball, wheel, and sdist.
+  - GitHub prerelease `v0.2.0-zig-edge.29` is live with desktop/android/bare-metal artifacts, parity reports, manifest, SBOM, provenance, npm tarball, wheel, and sdist.
   - release evidence now also includes `release-status.json` + `release-status.md` so every edge cut carries a frozen workflow-status + registry-status snapshot in addition to package preflight evidence.
   - Zig toolchain evidence is now mirror-aware:
     - `scripts/zig-github-mirror-release-check.ps1` snapshots the `adybag14-cyber/zig` release target commitish, Windows asset URL, and SHA256 digest.
@@ -222,13 +222,13 @@ Full-stack replacement execution reference:
     - freestanding bare-metal smoke/probe validation and `build-baremetal-asset` are pinned to the known-good Linux build `0.16.0-dev.2736+3b515fbed`.
     - reason: current upstream Linux `master` can segfault on `zig build baremetal -Doptimize=ReleaseFast` even though the pinned Linux `0.16.0-dev.2736+3b515fbed` bare-metal lane validates cleanly.
   - `uvx` fallback from the tagged Git repo was validated locally:
-    - `uvx --from "git+https://github.com/adybag14-cyber/openclaw-zig-port@v0.2.0-zig-edge.28#subdirectory=python/openclaw-zig-rpc-client" openclaw-zig-rpc --help`
-  - npm public publish remains externally blocked by npm scope/package permission on npmjs; GitHub Packages fallback remains available.
+    - `uvx --from "git+https://github.com/adybag14-cyber/openclaw-zig-port@v0.2.0-zig-edge.29#subdirectory=python/openclaw-zig-rpc-client" openclaw-zig-rpc --help`
+  - npm public publish remains externally blocked by npm scope/package permission on npmjs; the edge.29 tarball is attached to the GitHub prerelease and the GitHub Packages fallback path ran successfully.
   - `scripts/package-registry-status.ps1` now uses the resolved default npm/PyPI package names when called with only `-ReleaseTag`, so local release diagnostics correctly report public-registry 404 state instead of silently skipping those checks.
-  - PyPI public publish remains externally blocked by missing trusted-publisher mapping, but the workflow now emits the confirmed OIDC claim shape:
+  - PyPI public publish remains externally blocked by missing trusted-publisher mapping, but the workflow now emits the confirmed OIDC claim shape for the branch release lane:
     - `sub=repo:adybag14-cyber/openclaw-zig-port:environment:pypi`
-    - `workflow_ref=adybag14-cyber/openclaw-zig-port/.github/workflows/python-release.yml@refs/heads/main`
-    - `ref=refs/heads/main`
+    - `workflow_ref=adybag14-cyber/openclaw-zig-port/.github/workflows/python-release.yml@refs/heads/fs55-ethernet-integration`
+    - `ref=refs/heads/fs55-ethernet-integration`
   - FS1 runtime persistence posture slice shipped:
     - `security.audit` now emits `runtime.state_path.in_memory` when state is empty or memory-backed.
     - `doctor` now exposes `runtime.state_path` and `security.policy_bundle` checks with explicit persisted-vs-memory detail.

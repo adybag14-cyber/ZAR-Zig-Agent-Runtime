@@ -16,7 +16,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - Original OpenClaw beta baseline (`v2026.3.11-beta.1`): `99/99` covered
   - Union baseline: `140/140` covered (`MISSING_IN_ZIG=0`)
 - Latest local validation: `zig build test --summary all` -> main `292/292` + bare-metal host `253/253` passing
-- Latest published edge release tag: `v0.2.0-zig-edge.28`
+- Latest published edge release tag: `v0.2.0-zig-edge.29`
 - Toolchain policy: Codeberg `master` is canonical; `adybag14-cyber/zig` publishes rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
 - CI policy: keep hosted build/test/parity/docs on Zig `master`, but pin the freestanding bare-metal compile/probe lane to the known-good Linux build `0.16.0-dev.2736+3b515fbed` until the upstream Linux `master` compiler crash on `zig build baremetal -Doptimize=ReleaseFast` is resolved.
 - Recent FS1 progress (2026-03-06):
