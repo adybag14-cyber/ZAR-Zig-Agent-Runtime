@@ -314,6 +314,14 @@ pub const BaremetalFramebufferState = extern struct {
     reserved1: [2]u8,
     fg_color: u32,
     bg_color: u32,
+    display_vendor_id: u16,
+    display_device_id: u16,
+    display_pci_bus: u8,
+    display_pci_device: u8,
+    display_pci_function: u8,
+    supported_mode_count: u8,
+    current_mode_index: u8,
+    reserved2: [3]u8,
 };
 
 pub const BaremetalStorageState = extern struct {

@@ -26,6 +26,22 @@ $expectedCellWidth = 8
 $expectedCellHeight = 16
 $expectedFgColor = 0x00FFFFFF
 $expectedBgColor = 0x00000000
+$expectedDisplayVendorId = 0x1234
+$expectedSupportedModeCount = 5
+
+if ($ModeWidth -eq 640 -and $ModeHeight -eq 400) {
+    $expectedModeIndex = 0
+} elseif ($ModeWidth -eq 800 -and $ModeHeight -eq 600) {
+    $expectedModeIndex = 1
+} elseif ($ModeWidth -eq 1024 -and $ModeHeight -eq 768) {
+    $expectedModeIndex = 2
+} elseif ($ModeWidth -eq 1280 -and $ModeHeight -eq 720) {
+    $expectedModeIndex = 3
+} elseif ($ModeWidth -eq 1280 -and $ModeHeight -eq 1024) {
+    $expectedModeIndex = 4
+} else {
+    throw "Unsupported framebuffer probe mode: ${ModeWidth}x${ModeHeight}"
+}
 
 $stateMagicOffset = 0
 $stateApiVersionOffset = 4
@@ -46,6 +62,13 @@ $stateCellWidthOffset = 48
 $stateCellHeightOffset = 49
 $stateFgColorOffset = 52
 $stateBgColorOffset = 56
+$stateDisplayVendorOffset = 60
+$stateDisplayDeviceOffset = 62
+$stateDisplayPciBusOffset = 64
+$stateDisplayPciDeviceOffset = 65
+$stateDisplayPciFunctionOffset = 66
+$stateSupportedModeCountOffset = 67
+$stateCurrentModeIndexOffset = 68
 
 $pixel0OffsetBytes = 0
 $pixelOOffsetBytes = (((1 * $expectedWidth) + 3) * 4)
@@ -283,6 +306,13 @@ commands
     printf "FRAMEBUFFER_CELL_HEIGHT=%u\n", *(unsigned char*)(__FRAMEBUFFER_STATE_ADDR__ + __CELL_HEIGHT_OFFSET__)
     printf "FRAMEBUFFER_FG_COLOR=%u\n", *(unsigned int*)(__FRAMEBUFFER_STATE_ADDR__ + __FG_COLOR_OFFSET__)
     printf "FRAMEBUFFER_BG_COLOR=%u\n", *(unsigned int*)(__FRAMEBUFFER_STATE_ADDR__ + __BG_COLOR_OFFSET__)
+    printf "FRAMEBUFFER_DISPLAY_VENDOR=%u\n", *(unsigned short*)(__FRAMEBUFFER_STATE_ADDR__ + __DISPLAY_VENDOR_OFFSET__)
+    printf "FRAMEBUFFER_DISPLAY_DEVICE=%u\n", *(unsigned short*)(__FRAMEBUFFER_STATE_ADDR__ + __DISPLAY_DEVICE_OFFSET__)
+    printf "FRAMEBUFFER_DISPLAY_PCI_BUS=%u\n", *(unsigned char*)(__FRAMEBUFFER_STATE_ADDR__ + __DISPLAY_PCI_BUS_OFFSET__)
+    printf "FRAMEBUFFER_DISPLAY_PCI_DEVICE=%u\n", *(unsigned char*)(__FRAMEBUFFER_STATE_ADDR__ + __DISPLAY_PCI_DEVICE_OFFSET__)
+    printf "FRAMEBUFFER_DISPLAY_PCI_FUNCTION=%u\n", *(unsigned char*)(__FRAMEBUFFER_STATE_ADDR__ + __DISPLAY_PCI_FUNCTION_OFFSET__)
+    printf "FRAMEBUFFER_SUPPORTED_MODE_COUNT=%u\n", *(unsigned char*)(__FRAMEBUFFER_STATE_ADDR__ + __SUPPORTED_MODE_COUNT_OFFSET__)
+    printf "FRAMEBUFFER_CURRENT_MODE_INDEX=%u\n", *(unsigned char*)(__FRAMEBUFFER_STATE_ADDR__ + __CURRENT_MODE_INDEX_OFFSET__)
     printf "FRAMEBUFFER_PIXEL0=%u\n", *(unsigned int*)($fb + __PIXEL0_OFFSET__)
     printf "FRAMEBUFFER_PIXEL_O=%u\n", *(unsigned int*)($fb + __PIXEL_O_OFFSET__)
     printf "FRAMEBUFFER_PIXEL_K=%u\n", *(unsigned int*)($fb + __PIXEL_K_OFFSET__)
@@ -318,6 +348,13 @@ $gdbScriptContent = $gdbTemplate `
     -replace '__CELL_HEIGHT_OFFSET__', $stateCellHeightOffset `
     -replace '__FG_COLOR_OFFSET__', $stateFgColorOffset `
     -replace '__BG_COLOR_OFFSET__', $stateBgColorOffset `
+    -replace '__DISPLAY_VENDOR_OFFSET__', $stateDisplayVendorOffset `
+    -replace '__DISPLAY_DEVICE_OFFSET__', $stateDisplayDeviceOffset `
+    -replace '__DISPLAY_PCI_BUS_OFFSET__', $stateDisplayPciBusOffset `
+    -replace '__DISPLAY_PCI_DEVICE_OFFSET__', $stateDisplayPciDeviceOffset `
+    -replace '__DISPLAY_PCI_FUNCTION_OFFSET__', $stateDisplayPciFunctionOffset `
+    -replace '__SUPPORTED_MODE_COUNT_OFFSET__', $stateSupportedModeCountOffset `
+    -replace '__CURRENT_MODE_INDEX_OFFSET__', $stateCurrentModeIndexOffset `
     -replace '__PIXEL0_OFFSET__', $pixel0OffsetBytes `
     -replace '__PIXEL_O_OFFSET__', $pixelOOffsetBytes `
     -replace '__PIXEL_K_OFFSET__', $pixelKOffsetBytes
@@ -383,6 +420,13 @@ $cellWidth = Extract-IntValue -Text $out -Name 'FRAMEBUFFER_CELL_WIDTH'
 $cellHeight = Extract-IntValue -Text $out -Name 'FRAMEBUFFER_CELL_HEIGHT'
 $fgColor = Extract-IntValue -Text $out -Name 'FRAMEBUFFER_FG_COLOR'
 $bgColor = Extract-IntValue -Text $out -Name 'FRAMEBUFFER_BG_COLOR'
+$displayVendor = Extract-IntValue -Text $out -Name 'FRAMEBUFFER_DISPLAY_VENDOR'
+$displayDevice = Extract-IntValue -Text $out -Name 'FRAMEBUFFER_DISPLAY_DEVICE'
+$displayPciBus = Extract-IntValue -Text $out -Name 'FRAMEBUFFER_DISPLAY_PCI_BUS'
+$displayPciDevice = Extract-IntValue -Text $out -Name 'FRAMEBUFFER_DISPLAY_PCI_DEVICE'
+$displayPciFunction = Extract-IntValue -Text $out -Name 'FRAMEBUFFER_DISPLAY_PCI_FUNCTION'
+$supportedModeCount = Extract-IntValue -Text $out -Name 'FRAMEBUFFER_SUPPORTED_MODE_COUNT'
+$currentModeIndex = Extract-IntValue -Text $out -Name 'FRAMEBUFFER_CURRENT_MODE_INDEX'
 $pixel0 = Extract-IntValue -Text $out -Name 'FRAMEBUFFER_PIXEL0'
 $pixelO = Extract-IntValue -Text $out -Name 'FRAMEBUFFER_PIXEL_O'
 $pixelK = Extract-IntValue -Text $out -Name 'FRAMEBUFFER_PIXEL_K'
@@ -415,6 +459,13 @@ Write-Output "BAREMETAL_QEMU_FRAMEBUFFER_CONSOLE_PROBE_CELL_WIDTH=$cellWidth"
 Write-Output "BAREMETAL_QEMU_FRAMEBUFFER_CONSOLE_PROBE_CELL_HEIGHT=$cellHeight"
 Write-Output "BAREMETAL_QEMU_FRAMEBUFFER_CONSOLE_PROBE_FG_COLOR=$fgColor"
 Write-Output "BAREMETAL_QEMU_FRAMEBUFFER_CONSOLE_PROBE_BG_COLOR=$bgColor"
+Write-Output "BAREMETAL_QEMU_FRAMEBUFFER_CONSOLE_PROBE_DISPLAY_VENDOR=$displayVendor"
+Write-Output "BAREMETAL_QEMU_FRAMEBUFFER_CONSOLE_PROBE_DISPLAY_DEVICE=$displayDevice"
+Write-Output "BAREMETAL_QEMU_FRAMEBUFFER_CONSOLE_PROBE_DISPLAY_PCI_BUS=$displayPciBus"
+Write-Output "BAREMETAL_QEMU_FRAMEBUFFER_CONSOLE_PROBE_DISPLAY_PCI_DEVICE=$displayPciDevice"
+Write-Output "BAREMETAL_QEMU_FRAMEBUFFER_CONSOLE_PROBE_DISPLAY_PCI_FUNCTION=$displayPciFunction"
+Write-Output "BAREMETAL_QEMU_FRAMEBUFFER_CONSOLE_PROBE_SUPPORTED_MODE_COUNT=$supportedModeCount"
+Write-Output "BAREMETAL_QEMU_FRAMEBUFFER_CONSOLE_PROBE_CURRENT_MODE_INDEX=$currentModeIndex"
 Write-Output "BAREMETAL_QEMU_FRAMEBUFFER_CONSOLE_PROBE_PIXEL0=$pixel0"
 Write-Output "BAREMETAL_QEMU_FRAMEBUFFER_CONSOLE_PROBE_PIXEL_O=$pixelO"
 Write-Output "BAREMETAL_QEMU_FRAMEBUFFER_CONSOLE_PROBE_PIXEL_K=$pixelK"
@@ -441,6 +492,13 @@ $pass = (
     $cellHeight -eq $expectedCellHeight -and
     $fgColor -eq $expectedFgColor -and
     $bgColor -eq $expectedBgColor -and
+    $displayVendor -eq $expectedDisplayVendorId -and
+    ($displayDevice -eq 0x1110 -or $displayDevice -eq 0x1111) -and
+    $displayPciBus -ge 0 -and
+    $displayPciDevice -ge 0 -and
+    $displayPciFunction -eq 0 -and
+    $supportedModeCount -eq $expectedSupportedModeCount -and
+    $currentModeIndex -eq $expectedModeIndex -and
     $pixel0 -eq $expectedBgColor -and
     $pixelO -eq $expectedFgColor -and
     $pixelK -eq $expectedFgColor

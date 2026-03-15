@@ -14,11 +14,11 @@ Full-stack replacement execution reference:
   - framebuffer/console strict closure is now reached locally.
   - real linear-framebuffer path shipped in `src/baremetal/framebuffer_console.zig`:
     - Bochs/QEMU BGA mode programming
-    - bounded `640x400x32bpp`, `800x600x32bpp`, and `1024x768x32bpp` framebuffer layouts
+    - bounded `640x400x32bpp`, `800x600x32bpp`, `1024x768x32bpp`, `1280x720x32bpp`, and `1280x1024x32bpp` framebuffer layouts
     - glyph rendering into the hardware-backed MMIO surface
-  - PCI display BAR discovery shipped in `src/baremetal/pci.zig` and the PAL surface is exposed in `src/pal/framebuffer.zig`, with bounded mode switching exported through `oc_framebuffer_set_mode`.
-  - hosted/host regressions now prove framebuffer state, glyph pixel updates, bounded mode switching, and preservation of the last valid mode on unsupported requests.
-  - live QEMU+GDB proof `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1` reads back real MMIO banner pixels from the hardware-backed framebuffer BAR over the freestanding PVH artifact at both `640x400` and `1024x768`.
+  - structured PCI display-adapter discovery shipped in `src/baremetal/pci.zig` and the PAL surface is exposed in `src/pal/framebuffer.zig`, with bounded mode switching plus supported-mode enumeration exported through `oc_framebuffer_set_mode`, `oc_framebuffer_supported_mode_count`, `oc_framebuffer_supported_mode_width`, and `oc_framebuffer_supported_mode_height`.
+  - hosted/host regressions now prove framebuffer state, adapter metadata, supported-mode enumeration, glyph pixel updates, bounded mode switching, and preservation of the last valid mode on unsupported requests.
+  - live QEMU+GDB proof `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1` reads back real MMIO banner pixels plus exported adapter metadata from the hardware-backed framebuffer BAR over the freestanding PVH artifact at `640x400`, `1024x768`, and `1280x720`.
   - HDMI/DisplayPort/EDID connector-specific output paths are still future depth and are not claimed by the current branch.
   - keyboard/mouse strict closure is now reached locally.
   - real PS/2 controller path shipped in `src/baremetal/ps2_input.zig`:

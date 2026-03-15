@@ -138,15 +138,16 @@ Current local source-of-truth evidence:
   - runtime startup banner writes `OK`
   - raw VGA memory at `0xB8000` reads back `O` and `K`
 - a real linear-framebuffer path now exists beyond VGA text mode:
-  - `src/baremetal/framebuffer_console.zig` programs Bochs/QEMU BGA linear framebuffer modes and renders glyphs into bounded `640x400x32bpp`, `800x600x32bpp`, and `1024x768x32bpp` surfaces
-  - `src/baremetal/pci.zig` discovers the display adapter BAR and enables decode on the selected PCI display function
-  - `src/pal/framebuffer.zig` exposes the framebuffer path through the PAL surface
-  - `src/baremetal_main.zig` exports framebuffer state/pixel access plus bounded mode switching through the bare-metal ABI
-- host regressions now prove the framebuffer export surface updates host-backed framebuffer state, glyph pixels, and preserves the last valid mode on unsupported requests
+  - `src/baremetal/framebuffer_console.zig` programs Bochs/QEMU BGA linear framebuffer modes and renders glyphs into bounded `640x400x32bpp`, `800x600x32bpp`, `1024x768x32bpp`, `1280x720x32bpp`, and `1280x1024x32bpp` surfaces
+  - `src/baremetal/pci.zig` discovers the selected PCI display adapter as structured metadata, exposes its framebuffer BAR, and enables decode on that PCI display function
+  - `src/pal/framebuffer.zig` exposes the framebuffer path plus the supported-mode table through the PAL surface
+  - `src/baremetal_main.zig` exports framebuffer state/pixel access, bounded mode switching, and supported-mode table queries through the bare-metal ABI
+- host regressions now prove the framebuffer export surface updates host-backed framebuffer state, glyph pixels, supported-mode enumeration, high-resolution mode switching, and preservation of the last valid mode on unsupported requests
 - a live bare-metal PVH/QEMU proof now passes:
   - `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1`
-  - exported framebuffer state has `magic=framebuffer_magic`, `api_version=2`, and now proves both `640x400` (`cols=80`, `rows=25`) and `1024x768` (`cols=128`, `rows=48`) surfaces over the same BGA path
+  - exported framebuffer state has `magic=framebuffer_magic`, `api_version=2`, and now proves `640x400` (`cols=80`, `rows=25`), `1024x768` (`cols=128`, `rows=48`), and `1280x720` (`cols=160`, `rows=45`) surfaces over the same BGA path
   - runtime reports `backend=linear_framebuffer`
+  - runtime now also reports the selected display adapter vendor/device and PCI location plus the supported-mode count/current mode index through the exported framebuffer state
   - the startup banner writes `OK`
   - actual MMIO framebuffer pixels read back `bg`, `O`, and `K` from the hardware-backed framebuffer BAR
 - current real source-of-truth display support is bounded Bochs/QEMU BGA mode-setting only

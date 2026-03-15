@@ -793,6 +793,18 @@ pub export fn oc_framebuffer_set_mode(width: u16, height: u16) i16 {
     return abi.result_ok;
 }
 
+pub export fn oc_framebuffer_supported_mode_count() u16 {
+    return framebuffer_console.supportedModeCount();
+}
+
+pub export fn oc_framebuffer_supported_mode_width(index: u16) u16 {
+    return framebuffer_console.supportedModeWidth(index);
+}
+
+pub export fn oc_framebuffer_supported_mode_height(index: u16) u16 {
+    return framebuffer_console.supportedModeHeight(index);
+}
+
 pub export fn oc_framebuffer_pixel(index: u32) u32 {
     return framebuffer_console.pixel(index);
 }
@@ -12316,6 +12328,9 @@ test "baremetal framebuffer export surface updates host-backed framebuffer state
     try std.testing.expectEqual(@as(u16, abi.api_version), framebuffer.api_version);
     try std.testing.expectEqual(@as(u8, abi.console_backend_linear_framebuffer), framebuffer.backend);
     try std.testing.expectEqual(@as(u8, 0), framebuffer.hardware_backed);
+    try std.testing.expectEqual(@as(u16, 5), oc_framebuffer_supported_mode_count());
+    try std.testing.expectEqual(@as(u8, 5), framebuffer.supported_mode_count);
+    try std.testing.expectEqual(@as(u8, 0), framebuffer.current_mode_index);
     try std.testing.expectEqual(@as(u16, 640), framebuffer.width);
     try std.testing.expectEqual(@as(u16, 400), framebuffer.height);
     try std.testing.expectEqual(@as(u16, 80), framebuffer.cols);
@@ -12347,15 +12362,24 @@ test "baremetal framebuffer export surface supports bounded mode switching" {
     resetBaremetalRuntimeForTest();
 
     try std.testing.expectEqual(@as(u8, 0), oc_framebuffer_init());
-    try std.testing.expectEqual(abi.result_ok, oc_framebuffer_set_mode(1024, 768));
+    try std.testing.expectEqual(@as(u16, 640), oc_framebuffer_supported_mode_width(0));
+    try std.testing.expectEqual(@as(u16, 400), oc_framebuffer_supported_mode_height(0));
+    try std.testing.expectEqual(@as(u16, 1280), oc_framebuffer_supported_mode_width(3));
+    try std.testing.expectEqual(@as(u16, 720), oc_framebuffer_supported_mode_height(3));
+    try std.testing.expectEqual(@as(u16, 1280), oc_framebuffer_supported_mode_width(4));
+    try std.testing.expectEqual(@as(u16, 1024), oc_framebuffer_supported_mode_height(4));
+    try std.testing.expectEqual(@as(u16, 0), oc_framebuffer_supported_mode_width(99));
+    try std.testing.expectEqual(@as(u16, 0), oc_framebuffer_supported_mode_height(99));
+    try std.testing.expectEqual(abi.result_ok, oc_framebuffer_set_mode(1280, 720));
 
     const framebuffer = oc_framebuffer_state_ptr();
-    try std.testing.expectEqual(@as(u16, 1024), framebuffer.width);
-    try std.testing.expectEqual(@as(u16, 768), framebuffer.height);
-    try std.testing.expectEqual(@as(u16, 128), framebuffer.cols);
-    try std.testing.expectEqual(@as(u16, 48), framebuffer.rows);
-    try std.testing.expectEqual(@as(u32, 4096), framebuffer.pitch);
-    try std.testing.expectEqual(@as(u32, 1024 * 768 * 4), framebuffer.framebuffer_bytes);
+    try std.testing.expectEqual(@as(u16, 1280), framebuffer.width);
+    try std.testing.expectEqual(@as(u16, 720), framebuffer.height);
+    try std.testing.expectEqual(@as(u16, 160), framebuffer.cols);
+    try std.testing.expectEqual(@as(u16, 45), framebuffer.rows);
+    try std.testing.expectEqual(@as(u32, 5120), framebuffer.pitch);
+    try std.testing.expectEqual(@as(u32, 1280 * 720 * 4), framebuffer.framebuffer_bytes);
+    try std.testing.expectEqual(@as(u8, 3), framebuffer.current_mode_index);
 
     oc_framebuffer_putc('H');
     oc_framebuffer_putc('I');
@@ -12373,9 +12397,15 @@ test "baremetal framebuffer export surface supports bounded mode switching" {
 
     try std.testing.expect(h_has_ink);
     try std.testing.expect(i_has_ink);
+    try std.testing.expectEqual(abi.result_ok, oc_framebuffer_set_mode(1280, 1024));
+    try std.testing.expectEqual(@as(u16, 1280), framebuffer.width);
+    try std.testing.expectEqual(@as(u16, 1024), framebuffer.height);
+    try std.testing.expectEqual(@as(u16, 160), framebuffer.cols);
+    try std.testing.expectEqual(@as(u16, 64), framebuffer.rows);
+    try std.testing.expectEqual(@as(u8, 4), framebuffer.current_mode_index);
     try std.testing.expectEqual(abi.result_not_supported, oc_framebuffer_set_mode(1920, 1080));
-    try std.testing.expectEqual(@as(u16, 1024), framebuffer.width);
-    try std.testing.expectEqual(@as(u16, 768), framebuffer.height);
+    try std.testing.expectEqual(@as(u16, 1280), framebuffer.width);
+    try std.testing.expectEqual(@as(u16, 1024), framebuffer.height);
 }
 
 test "baremetal ethernet export surface initializes mock rtl8139 and loops a frame" {

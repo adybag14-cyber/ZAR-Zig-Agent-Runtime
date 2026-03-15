@@ -16,9 +16,11 @@ pub const supported_modes = [_]Mode{
     default_mode,
     .{ .width = 800, .height = 600 },
     .{ .width = 1024, .height = 768 },
+    .{ .width = 1280, .height = 720 },
+    .{ .width = 1280, .height = 1024 },
 };
-pub const max_width: usize = 1024;
-pub const max_height: usize = 768;
+pub const max_width: usize = 1280;
+pub const max_height: usize = 1024;
 pub const max_cols: usize = max_width / cell_width;
 pub const max_rows: usize = max_height / cell_height;
 const pixel_count: usize = max_width * max_height;
@@ -84,6 +86,15 @@ fn modeByDimensions(width: u16, height: u16) ?Mode {
         if (mode.width == width and mode.height == height) return mode;
     }
     return null;
+}
+
+fn modeIndex(mode: Mode) u8 {
+    for (supported_modes, 0..) |supported, index| {
+        if (supported.width == mode.width and supported.height == mode.height) {
+            return @intCast(index);
+        }
+    }
+    return 0;
 }
 
 fn hardwareBacked() bool {
@@ -161,12 +172,20 @@ fn initState(mode: Mode) void {
         .reserved1 = .{ 0, 0 },
         .fg_color = fg_color,
         .bg_color = bg_color,
+        .display_vendor_id = 0,
+        .display_device_id = 0,
+        .display_pci_bus = 0,
+        .display_pci_device = 0,
+        .display_pci_function = 0,
+        .supported_mode_count = @intCast(supported_modes.len),
+        .current_mode_index = modeIndex(mode),
+        .reserved2 = .{ 0, 0, 0 },
     };
 }
 
 fn initHardwareMode(mode: Mode) bool {
     if (!hardwareBacked()) return false;
-    const framebuffer_addr = pci.discoverDisplayFramebufferBar() orelse return false;
+    const display = pci.discoverDisplayDevice() orelse return false;
 
     const version = bgaReadReg(bga_reg_id);
     if ((version & 0xFFF0) != 0xB0C0) return false;
@@ -181,7 +200,12 @@ fn initHardwareMode(mode: Mode) bool {
     bgaWriteReg(bga_reg_x_offset, 0);
     bgaWriteReg(bga_reg_y_offset, 0);
     bgaWriteReg(bga_reg_enable, bga_enable_flag | bga_linear_framebuffer_flag);
-    state.framebuffer_addr = framebuffer_addr;
+    state.framebuffer_addr = display.framebuffer_bar;
+    state.display_vendor_id = display.vendor_id;
+    state.display_device_id = display.device_id;
+    state.display_pci_bus = display.location.bus;
+    state.display_pci_device = display.location.device;
+    state.display_pci_function = display.location.function;
     return true;
 }
 
@@ -362,6 +386,22 @@ pub fn setMode(width: u16, height: u16) error{UnsupportedMode}!void {
     if (!initMode(width, height)) return error.UnsupportedMode;
 }
 
+pub fn supportedModeCount() u16 {
+    return @intCast(supported_modes.len);
+}
+
+pub fn supportedModeWidth(index: u16) u16 {
+    const idx: usize = @intCast(index);
+    if (idx >= supported_modes.len) return 0;
+    return supported_modes[idx].width;
+}
+
+pub fn supportedModeHeight(index: u16) u16 {
+    const idx: usize = @intCast(index);
+    if (idx >= supported_modes.len) return 0;
+    return supported_modes[idx].height;
+}
+
 pub fn clear() void {
     @memset(&cells, ' ');
     cursor_row = 0;
@@ -468,17 +508,61 @@ test "framebuffer console supports bounded mode switching" {
     resetForTest();
     _ = init();
 
-    try setMode(1024, 768);
+    try std.testing.expectEqual(@as(u16, 5), supportedModeCount());
+    try std.testing.expectEqual(@as(u16, 640), supportedModeWidth(0));
+    try std.testing.expectEqual(@as(u16, 400), supportedModeHeight(0));
+    try std.testing.expectEqual(@as(u16, 1280), supportedModeWidth(3));
+    try std.testing.expectEqual(@as(u16, 720), supportedModeHeight(3));
+    try std.testing.expectEqual(@as(u16, 1280), supportedModeWidth(4));
+    try std.testing.expectEqual(@as(u16, 1024), supportedModeHeight(4));
+    try std.testing.expectEqual(@as(u16, 0), supportedModeWidth(9));
+    try std.testing.expectEqual(@as(u16, 0), supportedModeHeight(9));
+
+    try setMode(1280, 720);
     const fb = statePtr();
-    try std.testing.expectEqual(@as(u16, 1024), fb.width);
-    try std.testing.expectEqual(@as(u16, 768), fb.height);
-    try std.testing.expectEqual(@as(u16, 128), fb.cols);
-    try std.testing.expectEqual(@as(u16, 48), fb.rows);
-    try std.testing.expectEqual(@as(u32, 4096), fb.pitch);
-    try std.testing.expectEqual(@as(u32, 1024 * 768 * 4), fb.framebuffer_bytes);
+    try std.testing.expectEqual(@as(u16, 1280), fb.width);
+    try std.testing.expectEqual(@as(u16, 720), fb.height);
+    try std.testing.expectEqual(@as(u16, 160), fb.cols);
+    try std.testing.expectEqual(@as(u16, 45), fb.rows);
+    try std.testing.expectEqual(@as(u32, 5120), fb.pitch);
+    try std.testing.expectEqual(@as(u32, 1280 * 720 * 4), fb.framebuffer_bytes);
+    try std.testing.expectEqual(@as(u8, 5), fb.supported_mode_count);
+    try std.testing.expectEqual(@as(u8, 3), fb.current_mode_index);
 
     write("HI");
     try std.testing.expect(cellHasInk(0, 0));
     try std.testing.expect(cellHasInk(1, 0));
+
+    try setMode(1280, 1024);
+    try std.testing.expectEqual(@as(u16, 1280), fb.width);
+    try std.testing.expectEqual(@as(u16, 1024), fb.height);
+    try std.testing.expectEqual(@as(u16, 160), fb.cols);
+    try std.testing.expectEqual(@as(u16, 64), fb.rows);
+    try std.testing.expectEqual(@as(u32, 5120), fb.pitch);
+    try std.testing.expectEqual(@as(u32, 1280 * 1024 * 4), fb.framebuffer_bytes);
+    try std.testing.expectEqual(@as(u8, 4), fb.current_mode_index);
+
     try std.testing.expectError(error.UnsupportedMode, setMode(1920, 1080));
+    try std.testing.expectEqual(@as(u16, 1280), fb.width);
+    try std.testing.expectEqual(@as(u16, 1024), fb.height);
+}
+
+test "framebuffer console records discovered display adapter metadata on hardware init path" {
+    resetForTest();
+    pci.testSetConfig32(0, 1, 0, 0x00, 0x1111_1234);
+    pci.testSetConfig32(0, 1, 0, 0x04, 0x0000_0000);
+    pci.testSetConfig32(0, 1, 0, 0x08, 0x0300_0000);
+    pci.testSetConfig32(0, 1, 0, 0x0C, 0x0000_0000);
+    pci.testSetConfig32(0, 1, 0, 0x10, 0xFD00_0000);
+
+    _ = init();
+    const fb = statePtr();
+    try std.testing.expectEqual(@as(u16, 0), fb.display_vendor_id);
+    try std.testing.expectEqual(@as(u16, 0), fb.display_device_id);
+
+    if (builtin.is_test) {
+        const display = pci.discoverDisplayDevice() orelse return error.TestUnexpectedResult;
+        try std.testing.expectEqual(@as(u16, 0x1234), display.vendor_id);
+        try std.testing.expectEqual(@as(u16, 0x1111), display.device_id);
+    }
 }

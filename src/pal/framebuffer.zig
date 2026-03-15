@@ -39,6 +39,18 @@ pub fn setMode(width: u16, height: u16) error{UnsupportedMode}!void {
     try framebuffer_console.setMode(width, height);
 }
 
+pub fn supportedModeCount() u16 {
+    return framebuffer_console.supportedModeCount();
+}
+
+pub fn supportedModeWidth(index: u16) u16 {
+    return framebuffer_console.supportedModeWidth(index);
+}
+
+pub fn supportedModeHeight(index: u16) u16 {
+    return framebuffer_console.supportedModeHeight(index);
+}
+
 pub fn resetForTest() void {
     framebuffer_console.resetForTest();
 }
