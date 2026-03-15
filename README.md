@@ -82,8 +82,9 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
     - `src/pal/net.zig` now exposes `configureIpv4Route`, `configureIpv4RouteFromDhcp`, `resolveNextHop`, `learnArpPacket`, and `sendUdpPacketRouted`
     - hosted regressions prove DHCP-driven route configuration, gateway ARP learning, routed off-subnet UDP delivery, and direct-subnet gateway bypass
     - `scripts/baremetal-qemu-rtl8139-gateway-probe-check.ps1` now proves live ARP-reply learning, ARP-cache population, gateway next-hop selection, direct-subnet bypass, and routed UDP delivery over the freestanding PVH artifact
+  - bounded sender-side TCP congestion behavior is now also locally strict-closed:
+    - `src/protocol/tcp.zig`, `src/pal/net.zig`, `src/baremetal_main.zig`, and `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1` now prove chunk-path congestion-window growth after ACK, multi-chunk in-flight expansion after that growth, and payload-timeout collapse/recovery over the real RTL8139 path
   - deeper networking depth remains open above the FS5.5 closure bar:
-      - sliding-window and congestion-control behavior beyond the current bounded zero-window reopen + sequential chunk-and-ACK session model
       - higher-level service/runtime layers beyond the current bounded typed batch file/package seam on the bare-metal TCP path
       - TLS-backed `https://` delivery on the freestanding PAL network path
   - path-based filesystem usage is now locally strict-closed:

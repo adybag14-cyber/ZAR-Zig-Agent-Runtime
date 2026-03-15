@@ -1863,7 +1863,7 @@ test "baremetal net pal accepts cumulative ack after two in-flight chunks throug
     const destination_mac = macAddress();
 
     var client = tcp.Session.initClient(4321, 443, 0x0102_0304, 4096);
-    var server = tcp.Session.initServer(443, 4321, 0xA0B0_C0D0, 8);
+    var server = tcp.Session.initServer(443, 4321, 0xA0B0_C0D0, 16);
 
     const syn = try client.buildSyn();
     _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client.local_port, client.remote_port, syn.sequence_number, syn.acknowledgment_number, syn.flags, syn.window_size, syn.payload);
@@ -1911,6 +1911,8 @@ test "baremetal net pal accepts cumulative ack after two in-flight chunks throug
         .payload = ack_packet.payload[0..ack_packet.payload_len],
     });
 
+    try std.testing.expectEqual(tcp.initial_congestion_window_bytes, client.congestionWindowBytes());
+
     const first_chunk = try client.buildPayloadChunk("ABCD");
     _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client.local_port, client.remote_port, first_chunk.sequence_number, first_chunk.acknowledgment_number, first_chunk.flags, first_chunk.window_size, first_chunk.payload);
     const first_packet = (try pollTcpPacketStrict()).?;
@@ -1927,6 +1929,24 @@ test "baremetal net pal accepts cumulative ack after two in-flight chunks throug
         .urgent_pointer = first_packet.urgent_pointer,
         .payload = first_packet.payload[0..first_packet.payload_len],
     });
+    try std.testing.expectError(error.WindowExceeded, client.buildPayloadChunk("EFGH"));
+
+    const first_payload_ack = try server.buildAck();
+    _ = try sendTcpPacket(destination_mac, server_ip, client_ip, server.local_port, server.remote_port, first_payload_ack.sequence_number, first_payload_ack.acknowledgment_number, first_payload_ack.flags, first_payload_ack.window_size, first_payload_ack.payload);
+    const first_payload_ack_packet = (try pollTcpPacketStrict()).?;
+    try client.acceptAck(.{
+        .source_port = first_payload_ack_packet.source_port,
+        .destination_port = first_payload_ack_packet.destination_port,
+        .sequence_number = first_payload_ack_packet.sequence_number,
+        .acknowledgment_number = first_payload_ack_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = first_payload_ack_packet.flags,
+        .window_size = first_payload_ack_packet.window_size,
+        .checksum_value = first_payload_ack_packet.checksum_value,
+        .urgent_pointer = first_payload_ack_packet.urgent_pointer,
+        .payload = first_payload_ack_packet.payload[0..first_payload_ack_packet.payload_len],
+    });
+    try std.testing.expectEqual(@as(u16, 8), client.congestionWindowBytes());
 
     const second_chunk = try client.buildPayloadChunk("EFGH");
     _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client.local_port, client.remote_port, second_chunk.sequence_number, second_chunk.acknowledgment_number, second_chunk.flags, second_chunk.window_size, second_chunk.payload);
@@ -1943,6 +1963,23 @@ test "baremetal net pal accepts cumulative ack after two in-flight chunks throug
         .checksum_value = second_packet.checksum_value,
         .urgent_pointer = second_packet.urgent_pointer,
         .payload = second_packet.payload[0..second_packet.payload_len],
+    });
+
+    const third_chunk = try client.buildPayloadChunk("IJKL");
+    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client.local_port, client.remote_port, third_chunk.sequence_number, third_chunk.acknowledgment_number, third_chunk.flags, third_chunk.window_size, third_chunk.payload);
+    const third_packet = (try pollTcpPacketStrict()).?;
+    try std.testing.expectEqualStrings("IJKL", third_packet.payload[0..third_packet.payload_len]);
+    try server.acceptPayload(.{
+        .source_port = third_packet.source_port,
+        .destination_port = third_packet.destination_port,
+        .sequence_number = third_packet.sequence_number,
+        .acknowledgment_number = third_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = third_packet.flags,
+        .window_size = third_packet.window_size,
+        .checksum_value = third_packet.checksum_value,
+        .urgent_pointer = third_packet.urgent_pointer,
+        .payload = third_packet.payload[0..third_packet.payload_len],
     });
 
     try std.testing.expectEqual(@as(u32, 8), client.bytesInFlight());
@@ -1965,9 +2002,109 @@ test "baremetal net pal accepts cumulative ack after two in-flight chunks throug
     });
 
     try std.testing.expectEqual(@as(u32, 0), client.bytesInFlight());
-    try std.testing.expectEqual(@as(u32, 0x0102_0305 + 8), client.send_next);
-    try std.testing.expectEqual(@as(u32, 0x0102_0305 + 8), client.send_unacked);
-    try std.testing.expectEqual(@as(u32, 0x0102_0305 + 8), server.recv_next);
+    try std.testing.expectEqual(@as(u32, 0x0102_0305 + 12), client.send_next);
+    try std.testing.expectEqual(@as(u32, 0x0102_0305 + 12), client.send_unacked);
+    try std.testing.expectEqual(@as(u32, 0x0102_0305 + 12), server.recv_next);
+    try std.testing.expectEqual(@as(u16, 16), client.congestionWindowBytes());
+}
+
+test "baremetal net pal collapses congestion window after dropped payload retransmit through rtl8139 mock device" {
+    rtl8139.testEnableMockDevice();
+    defer rtl8139.testDisableMockDevice();
+
+    try std.testing.expect(initDevice());
+    const client_ip = [4]u8{ 192, 168, 56, 10 };
+    const server_ip = [4]u8{ 192, 168, 56, 1 };
+    const destination_mac = macAddress();
+
+    var client = tcp.Session.initClient(4321, 443, 0x0102_0304, 4096);
+    var server = tcp.Session.initServer(443, 4321, 0xA0B0_C0D0, 16);
+
+    const syn = try client.buildSyn();
+    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client.local_port, client.remote_port, syn.sequence_number, syn.acknowledgment_number, syn.flags, syn.window_size, syn.payload);
+    const syn_packet = (try pollTcpPacketStrict()).?;
+    const syn_ack = try server.acceptSyn(.{
+        .source_port = syn_packet.source_port,
+        .destination_port = syn_packet.destination_port,
+        .sequence_number = syn_packet.sequence_number,
+        .acknowledgment_number = syn_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = syn_packet.flags,
+        .window_size = syn_packet.window_size,
+        .checksum_value = syn_packet.checksum_value,
+        .urgent_pointer = syn_packet.urgent_pointer,
+        .payload = syn_packet.payload[0..syn_packet.payload_len],
+    });
+
+    _ = try sendTcpPacket(destination_mac, server_ip, client_ip, server.local_port, server.remote_port, syn_ack.sequence_number, syn_ack.acknowledgment_number, syn_ack.flags, syn_ack.window_size, syn_ack.payload);
+    const syn_ack_packet = (try pollTcpPacketStrict()).?;
+    const ack = try client.acceptSynAck(.{
+        .source_port = syn_ack_packet.source_port,
+        .destination_port = syn_ack_packet.destination_port,
+        .sequence_number = syn_ack_packet.sequence_number,
+        .acknowledgment_number = syn_ack_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = syn_ack_packet.flags,
+        .window_size = syn_ack_packet.window_size,
+        .checksum_value = syn_ack_packet.checksum_value,
+        .urgent_pointer = syn_ack_packet.urgent_pointer,
+        .payload = syn_ack_packet.payload[0..syn_ack_packet.payload_len],
+    });
+
+    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client.local_port, client.remote_port, ack.sequence_number, ack.acknowledgment_number, ack.flags, ack.window_size, ack.payload);
+    const ack_packet = (try pollTcpPacketStrict()).?;
+    try server.acceptAck(.{
+        .source_port = ack_packet.source_port,
+        .destination_port = ack_packet.destination_port,
+        .sequence_number = ack_packet.sequence_number,
+        .acknowledgment_number = ack_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = ack_packet.flags,
+        .window_size = ack_packet.window_size,
+        .checksum_value = ack_packet.checksum_value,
+        .urgent_pointer = ack_packet.urgent_pointer,
+        .payload = ack_packet.payload[0..ack_packet.payload_len],
+    });
+
+    const warmup_chunk = try client.buildPayloadChunk("ABCD");
+    _ = try sendTcpPacket(destination_mac, client_ip, server_ip, client.local_port, client.remote_port, warmup_chunk.sequence_number, warmup_chunk.acknowledgment_number, warmup_chunk.flags, warmup_chunk.window_size, warmup_chunk.payload);
+    const warmup_packet = (try pollTcpPacketStrict()).?;
+    try server.acceptPayload(.{
+        .source_port = warmup_packet.source_port,
+        .destination_port = warmup_packet.destination_port,
+        .sequence_number = warmup_packet.sequence_number,
+        .acknowledgment_number = warmup_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = warmup_packet.flags,
+        .window_size = warmup_packet.window_size,
+        .checksum_value = warmup_packet.checksum_value,
+        .urgent_pointer = warmup_packet.urgent_pointer,
+        .payload = warmup_packet.payload[0..warmup_packet.payload_len],
+    });
+
+    const warmup_ack = try server.buildAck();
+    _ = try sendTcpPacket(destination_mac, server_ip, client_ip, server.local_port, server.remote_port, warmup_ack.sequence_number, warmup_ack.acknowledgment_number, warmup_ack.flags, warmup_ack.window_size, warmup_ack.payload);
+    const warmup_ack_packet = (try pollTcpPacketStrict()).?;
+    try client.acceptAck(.{
+        .source_port = warmup_ack_packet.source_port,
+        .destination_port = warmup_ack_packet.destination_port,
+        .sequence_number = warmup_ack_packet.sequence_number,
+        .acknowledgment_number = warmup_ack_packet.acknowledgment_number,
+        .data_offset_bytes = tcp.header_len,
+        .flags = warmup_ack_packet.flags,
+        .window_size = warmup_ack_packet.window_size,
+        .checksum_value = warmup_ack_packet.checksum_value,
+        .urgent_pointer = warmup_ack_packet.urgent_pointer,
+        .payload = warmup_ack_packet.payload[0..warmup_ack_packet.payload_len],
+    });
+    try std.testing.expectEqual(@as(u16, 8), client.congestionWindowBytes());
+
+    _ = try client.buildPayloadWithTimeout("WXYZ", 100, 5);
+    try std.testing.expectEqual(@as(?tcp.Outbound, null), client.pollRetransmit(104));
+    const retry = client.pollRetransmit(105) orelse unreachable;
+    try std.testing.expectEqualStrings("WXYZ", retry.payload);
+    try std.testing.expectEqual(tcp.initial_congestion_window_bytes, client.congestionWindowBytes());
+    try std.testing.expectEqual(@as(u16, 4), client.slowStartThresholdBytes());
 }
 
 test "baremetal net pal retransmits dropped fins and completes tcp teardown through rtl8139 mock device" {

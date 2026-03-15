@@ -152,6 +152,8 @@ pub const FlowKey = struct {
     }
 };
 
+pub const initial_congestion_window_bytes: u16 = 4;
+
 pub const Session = struct {
     role: Role,
     state: State,
@@ -162,6 +164,8 @@ pub const Session = struct {
     recv_next: u32 = 0,
     local_window: u16,
     remote_window: u16 = 0,
+    congestion_window: u16 = initial_congestion_window_bytes,
+    slow_start_threshold: u16 = initial_congestion_window_bytes,
     retransmit: RetransmitState = .{},
 
     pub fn initClient(local_port: u16, remote_port: u16, initial_sequence_number: u32, window_size: u16) Session {
@@ -173,6 +177,8 @@ pub const Session = struct {
             .send_unacked = initial_sequence_number,
             .send_next = initial_sequence_number,
             .local_window = window_size,
+            .congestion_window = initial_congestion_window_bytes,
+            .slow_start_threshold = initialSlowStartThreshold(window_size),
         };
     }
 
@@ -185,11 +191,21 @@ pub const Session = struct {
             .send_unacked = initial_sequence_number,
             .send_next = initial_sequence_number,
             .local_window = window_size,
+            .congestion_window = initial_congestion_window_bytes,
+            .slow_start_threshold = initialSlowStartThreshold(window_size),
         };
     }
 
     pub fn bytesInFlight(self: Session) u32 {
         return self.send_next -% self.send_unacked;
+    }
+
+    pub fn congestionWindowBytes(self: Session) u16 {
+        return self.congestion_window;
+    }
+
+    pub fn slowStartThresholdBytes(self: Session) u16 {
+        return self.slow_start_threshold;
     }
 
     pub fn headerFor(self: Session, outbound: Outbound) Header {
@@ -250,6 +266,9 @@ pub const Session = struct {
         if (now_tick < self.retransmit.deadline_tick) return null;
         if (self.retransmit.fire_recorded and self.retransmit.last_fire_tick == now_tick) return null;
 
+        if (self.retransmit.kind == .payload) {
+            self.collapseCongestionWindow();
+        }
         self.retransmit.attempts +%= 1;
         self.retransmit.last_fire_tick = now_tick;
         self.retransmit.fire_recorded = true;
@@ -376,7 +395,7 @@ pub const Session = struct {
     pub fn buildPayloadChunk(self: *Session, payload: []const u8) Error!Outbound {
         if (self.state != .established) return error.InvalidState;
         if (payload.len == 0) return error.EmptyPayload;
-        const available_window = self.availableRemoteWindow();
+        const available_window = self.availableChunkWindow();
         if (available_window == 0) return error.WindowExceeded;
 
         const chunk_len: usize = @min(payload.len, available_window);
@@ -413,11 +432,19 @@ pub const Session = struct {
         return @as(usize, self.remote_window - @as(u16, @intCast(in_flight)));
     }
 
+    fn availableChunkWindow(self: Session) usize {
+        const in_flight = self.bytesInFlight();
+        const effective_window = @min(self.remote_window, self.congestion_window);
+        if (in_flight >= effective_window) return 0;
+        return @as(usize, effective_window - @as(u16, @intCast(in_flight)));
+    }
+
     fn acceptEstablishedAck(self: *Session, acknowledgment_number: u32) Error!void {
         const acknowledged_bytes = acknowledgment_number -% self.send_unacked;
         const bytes_in_flight = self.send_next -% self.send_unacked;
         if (acknowledged_bytes > bytes_in_flight) return error.AcknowledgmentMismatch;
         self.send_unacked = acknowledgment_number;
+        self.growCongestionWindow(acknowledged_bytes);
     }
 
     pub fn acceptFin(self: *Session, packet: Packet) Error!Outbound {
@@ -477,6 +504,26 @@ pub const Session = struct {
 
     fn clearRetransmit(self: *Session) void {
         self.retransmit = .{};
+    }
+
+    fn growCongestionWindow(self: *Session, acknowledged_bytes: u32) void {
+        if (acknowledged_bytes == 0) return;
+
+        const max_window = initialSlowStartThreshold(self.local_window);
+        var next_window: u32 = self.congestion_window;
+        if (self.congestion_window < self.slow_start_threshold) {
+            next_window +%= acknowledged_bytes;
+        } else {
+            next_window +%= 1;
+        }
+        if (next_window > max_window) next_window = max_window;
+        self.congestion_window = @as(u16, @intCast(next_window));
+    }
+
+    fn collapseCongestionWindow(self: *Session) void {
+        const halved_window = @max(initial_congestion_window_bytes, @as(u16, self.congestion_window / 2));
+        self.slow_start_threshold = halved_window;
+        self.congestion_window = initial_congestion_window_bytes;
     }
 };
 
@@ -662,6 +709,10 @@ pub fn checksum(segment: []const u8, source_ip: [4]u8, destination_ip: [4]u8) u1
 fn addTicksSaturating(base: u64, delta: u64) u64 {
     const sum, const overflowed = @addWithOverflow(base, delta);
     return if (overflowed != 0) std.math.maxInt(u64) else sum;
+}
+
+fn initialSlowStartThreshold(window_size: u16) u16 {
+    return @max(initial_congestion_window_bytes, window_size);
 }
 
 fn writeU16Be(bytes: []u8, value: u16) void {
@@ -1345,7 +1396,60 @@ test "tcp session allows multiple in-flight chunks within remote window and adva
     const server_ip = [4]u8{ 192, 168, 56, 1 };
 
     var client = Session.initClient(4321, 443, 0x0102_0304, 4096);
-    var server = Session.initServer(443, 4321, 0xA0B0_C0D0, 8);
+    var server = Session.initServer(443, 4321, 0xA0B0_C0D0, 16);
+
+    var buffer: [header_len + 32]u8 = undefined;
+
+    const syn = try client.buildSyn();
+    const syn_packet = try testDecodeOutbound(client, syn, client_ip, server_ip, buffer[0..]);
+    const syn_ack = try server.acceptSyn(syn_packet);
+    const syn_ack_packet = try testDecodeOutbound(server, syn_ack, server_ip, client_ip, buffer[0..]);
+    const ack = try client.acceptSynAck(syn_ack_packet);
+    const ack_packet = try testDecodeOutbound(client, ack, client_ip, server_ip, buffer[0..]);
+    try server.acceptAck(ack_packet);
+
+    try std.testing.expectEqual(initial_congestion_window_bytes, client.congestionWindowBytes());
+
+    const first_chunk = try client.buildPayloadChunk("ABCD");
+    try std.testing.expectEqualStrings("ABCD", first_chunk.payload);
+    const first_packet = try testDecodeOutbound(client, first_chunk, client_ip, server_ip, buffer[0..]);
+    try server.acceptPayload(first_packet);
+    try std.testing.expectError(error.WindowExceeded, client.buildPayloadChunk("EFGH"));
+
+    const first_payload_ack = try server.buildAck();
+    const first_payload_ack_packet = try testDecodeOutbound(server, first_payload_ack, server_ip, client_ip, buffer[0..]);
+    try client.acceptAck(first_payload_ack_packet);
+    try std.testing.expectEqual(@as(u16, 8), client.congestionWindowBytes());
+
+    const second_chunk = try client.buildPayloadChunk("EFGH");
+    try std.testing.expectEqualStrings("EFGH", second_chunk.payload);
+    const second_packet = try testDecodeOutbound(client, second_chunk, client_ip, server_ip, buffer[0..]);
+    try server.acceptPayload(second_packet);
+
+    const third_chunk = try client.buildPayloadChunk("IJKL");
+    try std.testing.expectEqualStrings("IJKL", third_chunk.payload);
+    const third_packet = try testDecodeOutbound(client, third_chunk, client_ip, server_ip, buffer[0..]);
+    try server.acceptPayload(third_packet);
+
+    try std.testing.expectEqual(@as(u32, 8), client.bytesInFlight());
+    try std.testing.expectError(error.WindowExceeded, client.buildPayloadChunk("I"));
+
+    const payload_ack = try server.buildAck();
+    const payload_ack_packet = try testDecodeOutbound(server, payload_ack, server_ip, client_ip, buffer[0..]);
+    try client.acceptAck(payload_ack_packet);
+
+    try std.testing.expectEqual(@as(u32, 0), client.bytesInFlight());
+    try std.testing.expectEqual(@as(u32, 0x0102_0305 + 12), client.send_unacked);
+    try std.testing.expectEqual(@as(u32, 0x0102_0305 + 12), client.send_next);
+    try std.testing.expectEqual(@as(u16, 16), client.congestionWindowBytes());
+}
+
+test "tcp session collapses congestion window after payload retransmit timeout" {
+    const client_ip = [4]u8{ 192, 168, 56, 10 };
+    const server_ip = [4]u8{ 192, 168, 56, 1 };
+
+    var client = Session.initClient(4321, 443, 0x0102_0304, 4096);
+    var server = Session.initServer(443, 4321, 0xA0B0_C0D0, 16);
 
     var buffer: [header_len + 32]u8 = undefined;
 
@@ -1358,25 +1462,22 @@ test "tcp session allows multiple in-flight chunks within remote window and adva
     try server.acceptAck(ack_packet);
 
     const first_chunk = try client.buildPayloadChunk("ABCD");
-    try std.testing.expectEqualStrings("ABCD", first_chunk.payload);
     const first_packet = try testDecodeOutbound(client, first_chunk, client_ip, server_ip, buffer[0..]);
     try server.acceptPayload(first_packet);
 
-    const second_chunk = try client.buildPayloadChunk("EFGH");
-    try std.testing.expectEqualStrings("EFGH", second_chunk.payload);
-    const second_packet = try testDecodeOutbound(client, second_chunk, client_ip, server_ip, buffer[0..]);
-    try server.acceptPayload(second_packet);
+    const first_payload_ack = try server.buildAck();
+    const first_payload_ack_packet = try testDecodeOutbound(server, first_payload_ack, server_ip, client_ip, buffer[0..]);
+    try client.acceptAck(first_payload_ack_packet);
+    try std.testing.expectEqual(@as(u16, 8), client.congestionWindowBytes());
 
-    try std.testing.expectEqual(@as(u32, 8), client.bytesInFlight());
-    try std.testing.expectError(error.WindowExceeded, client.buildPayloadChunk("I"));
+    _ = try client.buildPayloadWithTimeout("WXYZ", 100, 5);
+    try std.testing.expectEqual(@as(?Outbound, null), client.pollRetransmit(104));
 
-    const payload_ack = try server.buildAck();
-    const payload_ack_packet = try testDecodeOutbound(server, payload_ack, server_ip, client_ip, buffer[0..]);
-    try client.acceptAck(payload_ack_packet);
-
-    try std.testing.expectEqual(@as(u32, 0), client.bytesInFlight());
-    try std.testing.expectEqual(@as(u32, 0x0102_0305 + 8), client.send_unacked);
-    try std.testing.expectEqual(@as(u32, 0x0102_0305 + 8), client.send_next);
+    const retry = client.pollRetransmit(105).?;
+    try std.testing.expectEqualStrings("WXYZ", retry.payload);
+    try std.testing.expectEqual(@as(u16, initial_congestion_window_bytes), client.congestionWindowBytes());
+    try std.testing.expectEqual(@as(u16, 4), client.slowStartThresholdBytes());
+    try std.testing.expectEqual(@as(?Outbound, null), client.pollRetransmit(105));
 }
 
 fn testDecodeOutbound(
