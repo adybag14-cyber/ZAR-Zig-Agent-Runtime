@@ -17,11 +17,13 @@
 - `scripts/edge-wasm-lifecycle-smoke-check.ps1` and `scripts/edge-finetune-lifecycle-smoke-check.ps1` are now part of the strict hosted CI/release lane.
 - `FS5.5` hardware-driver closure is now reached locally through `docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md`.
 - framebuffer/console is now locally strict-closed in `FS5.5`:
-  - `src/baremetal/framebuffer_console.zig` programs a real Bochs/QEMU BGA linear framebuffer surface with bounded mode support for `640x400`, `800x600`, and `1024x768`
+  - `src/baremetal/framebuffer_console.zig` programs a real Bochs/QEMU BGA linear framebuffer surface with bounded mode support for `640x400`, `800x600`, `1024x768`, `1280x720`, and `1280x1024`
   - `src/baremetal/pci.zig` discovers the display BAR and enables decode on the selected PCI function
-  - `src/pal/framebuffer.zig` exposes the framebuffer surface through the bare-metal PAL and the bare-metal ABI now supports bounded mode switching through `oc_framebuffer_set_mode`
-  - `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1` proves live MMIO banner pixels over the freestanding PVH image at both `640x400` and `1024x768`
-  - real HDMI/DisplayPort/EDID connector-specific output paths are still future depth and are not claimed by this branch
+  - `src/baremetal/edid.zig`, `src/baremetal/display_output.zig`, and `src/baremetal/virtio_gpu.zig` now add the first real EDID-backed controller-capability path over `virtio-gpu-pci`
+  - `src/pal/framebuffer.zig` exposes the framebuffer surface, supported-mode table, and exported display-output state through the bare-metal PAL
+  - `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1` proves live MMIO banner pixels over the freestanding PVH image at `640x400`, `1024x768`, and `1280x720`
+  - `scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1` proves live `virtio-gpu-pci` EDID/controller capability export over the freestanding PVH image
+  - real HDMI/DisplayPort connector-specific scanout paths are still future depth and are not claimed by this branch
 - keyboard/mouse is now locally strict-closed in `FS5.5`:
   - `src/baremetal/ps2_input.zig` now has a real x86 port-I/O backed PS/2 controller path
   - `scripts/baremetal-qemu-ps2-input-probe-check.ps1` plus its wrapper probes are the live bare-metal proof for IRQ-driven keyboard/mouse updates

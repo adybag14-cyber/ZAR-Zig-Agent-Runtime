@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const abi = @import("abi.zig");
 const pci = @import("pci.zig");
+const display_output = @import("display_output.zig");
 
 pub const Mode = struct {
     width: u16,
@@ -358,6 +359,17 @@ fn initCommon(mode: Mode, clear_on_init: bool) bool {
     @memset(&host_pixels, 0);
     state.hardware_backed = if (initHardwareMode(mode)) 1 else 0;
     state.framebuffer_addr = if (state.hardware_backed != 0) state.framebuffer_addr else @intFromPtr(&host_pixels[0]);
+    display_output.updateFromBga(.{
+        .vendor_id = state.display_vendor_id,
+        .device_id = state.display_device_id,
+        .pci_bus = state.display_pci_bus,
+        .pci_device = state.display_pci_device,
+        .pci_function = state.display_pci_function,
+        .hardware_backed = state.hardware_backed != 0,
+        .connected = state.hardware_backed != 0,
+        .width = state.width,
+        .height = state.height,
+    });
     if (clear_on_init) clear();
     return state.hardware_backed != 0;
 }
@@ -462,6 +474,7 @@ pub fn pixelAt(x: u32, y: u32) u32 {
 pub fn resetForTest() void {
     initState(default_mode);
     pci.testResetForTest();
+    display_output.resetForTest();
     @memset(&host_pixels, 0);
     @memset(&cells, ' ');
     cursor_row = 0;

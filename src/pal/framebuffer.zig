@@ -1,7 +1,9 @@
 const abi = @import("../baremetal/abi.zig");
+const display_output = @import("../baremetal/display_output.zig");
 const framebuffer_console = @import("../baremetal/framebuffer_console.zig");
 
 pub const State = abi.BaremetalFramebufferState;
+pub const DisplayOutputState = abi.BaremetalDisplayOutputState;
 
 pub fn init() bool {
     return framebuffer_console.init();
@@ -25,6 +27,14 @@ pub fn write(text: []const u8) void {
 
 pub fn statePtr() *const State {
     return framebuffer_console.statePtr();
+}
+
+pub fn displayOutputStatePtr() *const DisplayOutputState {
+    return display_output.statePtr();
+}
+
+pub fn displayOutputEdidByte(index: u16) u8 {
+    return display_output.edidByte(index);
 }
 
 pub fn pixel(index: u32) u32 {
@@ -52,5 +62,6 @@ pub fn supportedModeHeight(index: u16) u16 {
 }
 
 pub fn resetForTest() void {
+    display_output.resetForTest();
     framebuffer_console.resetForTest();
 }
