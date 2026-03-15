@@ -87,6 +87,8 @@ const build_options = if (builtin.is_test)
         pub const qemu_smoke: bool = false;
         pub const console_probe_banner: bool = false;
         pub const framebuffer_probe_banner: bool = false;
+        pub const framebuffer_probe_width: u16 = 0;
+        pub const framebuffer_probe_height: u16 = 0;
         pub const ata_storage_probe: bool = false;
         pub const rtl8139_probe: bool = false;
         pub const rtl8139_arp_probe: bool = false;
@@ -103,6 +105,8 @@ else
 const qemu_smoke_enabled: bool = build_options.qemu_smoke;
 const console_probe_banner_enabled: bool = build_options.console_probe_banner;
 const framebuffer_probe_banner_enabled: bool = build_options.framebuffer_probe_banner;
+const framebuffer_probe_width: u16 = if (@hasDecl(build_options, "framebuffer_probe_width")) build_options.framebuffer_probe_width else 0;
+const framebuffer_probe_height: u16 = if (@hasDecl(build_options, "framebuffer_probe_height")) build_options.framebuffer_probe_height else 0;
 const ata_storage_probe_enabled: bool = build_options.ata_storage_probe;
 const rtl8139_probe_enabled: bool = build_options.rtl8139_probe;
 const rtl8139_arp_probe_enabled: bool = build_options.rtl8139_arp_probe;
@@ -736,6 +740,11 @@ pub export fn oc_framebuffer_clear() void {
 
 pub export fn oc_framebuffer_putc(byte: u8) void {
     framebuffer_console.putByte(byte);
+}
+
+pub export fn oc_framebuffer_set_mode(width: u16, height: u16) i16 {
+    framebuffer_console.setMode(width, height) catch return abi.result_not_supported;
+    return abi.result_ok;
 }
 
 pub export fn oc_framebuffer_pixel(index: u32) u32 {
@@ -1537,7 +1546,13 @@ fn baremetalStart() callconv(.c) noreturn {
     }
     vga_text_console.init();
     if (framebuffer_probe_banner_enabled) {
-        _ = framebuffer_console.initForProbe();
+        if (framebuffer_probe_width != 0 and framebuffer_probe_height != 0) {
+            if (!framebuffer_console.initForProbeMode(framebuffer_probe_width, framebuffer_probe_height)) {
+                _ = framebuffer_console.initForProbe();
+            }
+        } else {
+            _ = framebuffer_console.initForProbe();
+        }
     } else {
         _ = framebuffer_console.init();
     }
@@ -11604,6 +11619,41 @@ test "baremetal framebuffer export surface updates host-backed framebuffer state
     try std.testing.expect(o_has_ink);
     try std.testing.expect(k_has_ink);
     try std.testing.expectEqual(@as(u32, 0), oc_framebuffer_pixel_at(0, 0));
+}
+
+test "baremetal framebuffer export surface supports bounded mode switching" {
+    resetBaremetalRuntimeForTest();
+
+    try std.testing.expectEqual(@as(u8, 0), oc_framebuffer_init());
+    try std.testing.expectEqual(abi.result_ok, oc_framebuffer_set_mode(1024, 768));
+
+    const framebuffer = oc_framebuffer_state_ptr();
+    try std.testing.expectEqual(@as(u16, 1024), framebuffer.width);
+    try std.testing.expectEqual(@as(u16, 768), framebuffer.height);
+    try std.testing.expectEqual(@as(u16, 128), framebuffer.cols);
+    try std.testing.expectEqual(@as(u16, 48), framebuffer.rows);
+    try std.testing.expectEqual(@as(u32, 4096), framebuffer.pitch);
+    try std.testing.expectEqual(@as(u32, 1024 * 768 * 4), framebuffer.framebuffer_bytes);
+
+    oc_framebuffer_putc('H');
+    oc_framebuffer_putc('I');
+
+    var h_has_ink = false;
+    var i_has_ink = false;
+    var py: u32 = 0;
+    while (py < 16) : (py += 1) {
+        var px: u32 = 0;
+        while (px < 8) : (px += 1) {
+            if (oc_framebuffer_pixel_at(px, py) != 0) h_has_ink = true;
+            if (oc_framebuffer_pixel_at(8 + px, py) != 0) i_has_ink = true;
+        }
+    }
+
+    try std.testing.expect(h_has_ink);
+    try std.testing.expect(i_has_ink);
+    try std.testing.expectEqual(abi.result_not_supported, oc_framebuffer_set_mode(1920, 1080));
+    try std.testing.expectEqual(@as(u16, 1024), framebuffer.width);
+    try std.testing.expectEqual(@as(u16, 768), framebuffer.height);
 }
 
 test "baremetal ethernet export surface initializes mock rtl8139 and loops a frame" {

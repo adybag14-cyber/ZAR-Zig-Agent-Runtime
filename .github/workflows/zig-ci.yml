@@ -201,6 +201,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-framebuffer-console-probe-check.ps1
 
+      - name: Bare-metal QEMU framebuffer console hires probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-framebuffer-console-probe-check.ps1 -ModeWidth 1024 -ModeHeight 768
+
       - name: Bare-metal QEMU mailbox header validation probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-mailbox-header-validation-probe-check.ps1

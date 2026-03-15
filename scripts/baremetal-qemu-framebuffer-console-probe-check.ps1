@@ -1,7 +1,9 @@
 param(
     [switch] $SkipBuild,
     [int] $TimeoutSeconds = 30,
-    [int] $GdbPort = 0
+    [int] $GdbPort = 0,
+    [int] $ModeWidth = 640,
+    [int] $ModeHeight = 400
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,12 +15,12 @@ $runStamp = [DateTime]::UtcNow.ToString("yyyyMMddHHmmssfff")
 $framebufferMagic = 0x4f434642
 $apiVersion = 2
 $consoleBackendFramebuffer = 2
-$expectedWidth = 640
-$expectedHeight = 400
-$expectedCols = 80
-$expectedRows = 25
-$expectedPitch = 2560
-$expectedFramebufferBytes = 1024000
+$expectedWidth = $ModeWidth
+$expectedHeight = $ModeHeight
+$expectedCols = [int]($ModeWidth / 8)
+$expectedRows = [int]($ModeHeight / 16)
+$expectedPitch = $ModeWidth * 4
+$expectedFramebufferBytes = $ModeWidth * $ModeHeight * 4
 $expectedBytesPerPixel = 4
 $expectedCellWidth = 8
 $expectedCellHeight = 16
@@ -202,7 +204,18 @@ if (-not $SkipBuild) {
 pub const qemu_smoke: bool = false;
 pub const console_probe_banner: bool = false;
 pub const framebuffer_probe_banner: bool = true;
+pub const framebuffer_probe_width: u16 = $ModeWidth;
+pub const framebuffer_probe_height: u16 = $ModeHeight;
 pub const ata_storage_probe: bool = false;
+pub const rtl8139_probe: bool = false;
+pub const rtl8139_arp_probe: bool = false;
+pub const rtl8139_ipv4_probe: bool = false;
+pub const rtl8139_udp_probe: bool = false;
+pub const rtl8139_tcp_probe: bool = false;
+pub const rtl8139_dhcp_probe: bool = false;
+pub const rtl8139_dns_probe: bool = false;
+pub const tool_exec_probe: bool = false;
+pub const rtl8139_gateway_probe: bool = false;
 "@ | Set-Content -Path $optionsPath -Encoding Ascii
 
     & $zig build-obj -fno-strip -fsingle-threaded -ODebug -target x86_64-freestanding-none -mcpu baseline --dep build_options "-Mroot=$repo\src\baremetal_main.zig" "-Mbuild_options=$optionsPath" --cache-dir "$zigLocalCacheDir" --global-cache-dir "$zigGlobalCacheDir" --name "openclaw-zig-baremetal-main-framebuffer-console-probe" "-femit-bin=$mainObj"
