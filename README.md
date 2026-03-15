@@ -15,7 +15,7 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - Original OpenClaw baseline (`v2026.3.11`): `99/99` covered
   - Original OpenClaw beta baseline (`v2026.3.11-beta.1`): `99/99` covered
   - Union baseline: `140/140` covered (`MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> main `292/292` + bare-metal host `253/253` passing
+- Latest local validation: `zig build test --summary all` -> main `292/292` + bare-metal host `255/255` passing
 - Latest published edge release tag: `v0.2.0-zig-edge.29`
 - Toolchain policy: Codeberg `master` is canonical; `adybag14-cyber/zig` publishes rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
 - CI policy: keep hosted build/test/parity/docs on Zig `master`, but pin the freestanding bare-metal compile/probe lane to the known-good Linux build `0.16.0-dev.2736+3b515fbed` until the upstream Linux `master` compiler crash on `zig build baremetal -Doptimize=ReleaseFast` is resolved.
@@ -49,6 +49,8 @@ Zig runtime port of OpenClaw with parity-first delivery, deterministic validatio
   - shared storage backend routing is now live through `src/baremetal/storage_backend.zig`
 - `src/baremetal/ata_pio_disk.zig` now provides a real ATA PIO path with `IDENTIFY`, `READ`, `WRITE`, `FLUSH`, bounded multi-partition MBR/GPT discovery plus selection/export, first-partition MBR mounting, and protective-MBR GPT partition mounting
   - PAL storage and bare-metal tool-layout now route through the backend facade instead of talking directly to the RAM disk
+  - bare-metal storage exports now also expose logical base-LBA plus bounded partition count/info/select over that same partition-mounted ATA view
+  - partition selection now invalidates stale tool-layout/filesystem state and the bare-metal seam now exposes explicit `oc_tool_layout_format` plus `oc_filesystem_format` control on the selected partition
 - `scripts/baremetal-qemu-ata-storage-probe-check.ps1` now proves live ATA-backed raw block mutation + readback plus ATA-backed tool-layout and filesystem persistence against the freestanding PVH artifact on top of a real MBR-partitioned disk image, including secondary-partition export/selection and physical readback behind the mounted logical partition view
 - `src/baremetal/disk_installer.zig` now seeds a canonical persisted install layout on the active backend (`/boot`, `/system`, `/runtime/install`, bootstrap package)
 - `scripts/baremetal-qemu-ata-gpt-installer-probe-check.ps1` now proves the freestanding PVH artifact mounts a protective-MBR GPT partition, writes through the logical mounted view, seeds the installer layout, and runs the persisted bootstrap package from disk

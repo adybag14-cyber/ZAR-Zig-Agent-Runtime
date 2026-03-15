@@ -224,6 +224,12 @@ Current local source-of-truth evidence:
   - protective-MBR GPT header parsing plus first usable GPT partition mount with the same logical LBA translation model
   - hosted mock-device support for deterministic regression coverage
 - `src/pal/storage.zig` now routes through the backend facade instead of directly through the RAM disk
+- `src/pal/storage.zig` now also exports the mounted-view storage seam directly:
+  - logical base LBA
+  - bounded partition count
+  - bounded partition info
+  - explicit partition selection
+- partition selection now invalidates the mounted tool-layout and filesystem state so the next init/format lands on the newly selected partition instead of stale state
 - `src/baremetal/tool_layout.zig` now routes through the backend facade instead of directly through the RAM disk
 - `src/baremetal/disk_installer.zig` now seeds a canonical persisted install layout on the active backend:
   - `/boot/loader.cfg`
@@ -234,15 +240,25 @@ Current local source-of-truth evidence:
   - the storage facade prefers ATA PIO when a device is present
   - ATA PIO mock-device mount and identify-backed capacity detection
   - multi-partition export plus explicit selection for both MBR and GPT mock layouts
+  - PAL/export-surface logical base-LBA, partition count/info, and partition selection on the same mounted ATA view
+  - partition selection invalidates stale tool-layout/filesystem state and allows explicit re-format/re-init on the newly selected partition
+  - per-partition tool-layout and filesystem persistence survives switching between primary and secondary MBR partitions
   - first-partition MBR mounting with logical base-LBA translation
   - protective-MBR GPT partition discovery with mounted logical base-LBA translation
   - ATA PIO mock-device read/write/flush behavior
-- bare-metal exports now report ATA PIO as the active backend when a device is present
+- bare-metal exports now report ATA PIO as the active backend when a device is present and expose the same partition-mounted storage seam through:
+  - `oc_storage_logical_base_lba`
+  - `oc_storage_partition_count`
+  - `oc_storage_selected_partition_index`
+  - `oc_storage_partition_info`
+  - `oc_storage_select_partition`
 - the live freestanding/QEMU ATA proof is now strict-closed through:
   - `scripts/baremetal-qemu-ata-storage-probe-check.ps1`
   - a real MBR-partitioned raw image attached to the freestanding PVH artifact
   - raw ATA-backed block mutation + readback at physical-on-disk LBAs behind the mounted logical partition view
   - secondary-partition export/selection plus physical readback behind that mounted logical partition view
+  - secondary-partition tool-layout formatting + payload persistence through the rebind-safe exported seam
+  - secondary-partition filesystem formatting + persisted superblock through the rebind-safe exported seam
   - tool-layout persistence through the ATA-backed shared storage facade on that partition-mounted view
   - path-based filesystem persistence through the ATA-backed shared storage facade on that partition-mounted view
   - `scripts/baremetal-qemu-ata-gpt-installer-probe-check.ps1`

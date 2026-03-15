@@ -31,6 +31,7 @@ const BaremetalConsoleState = abi.BaremetalConsoleState;
 const BaremetalFramebufferState = abi.BaremetalFramebufferState;
 const BaremetalEthernetState = abi.BaremetalEthernetState;
 const BaremetalStorageState = abi.BaremetalStorageState;
+const BaremetalStoragePartitionInfo = abi.BaremetalStoragePartitionInfo;
 const BaremetalToolLayoutState = abi.BaremetalToolLayoutState;
 const BaremetalToolSlot = abi.BaremetalToolSlot;
 const BaremetalFilesystemState = abi.BaremetalFilesystemState;
@@ -137,10 +138,12 @@ const ata_probe_secondary_raw_seed: u8 = 0x53;
 const ata_probe_tool_slot_id: u32 = 1;
 const ata_probe_tool_slot_byte_len: u32 = 600;
 const ata_probe_tool_slot_seed: u8 = 0x30;
+const ata_probe_secondary_tool_slot_seed: u8 = 0x60;
 const ata_probe_tool_slot_expected_lba: u32 = tool_layout.slot_data_lba + (@as(u32, ata_probe_tool_slot_id) * @as(u32, tool_layout.slot_block_capacity));
 const ata_probe_filesystem_dir = "/runtime/state";
 const ata_probe_filesystem_path = "/runtime/state/ata.json";
 const ata_probe_filesystem_payload = "{\"disk\":\"ata\"}";
+const ata_probe_secondary_filesystem_payload = "{\"disk\":\"ata-secondary\"}";
 const ata_gpt_probe_partition_start_lba: u32 = 2048;
 const ata_gpt_probe_partition_sector_count: u32 = 8192;
 const ata_gpt_probe_raw_lba: u32 = 48;
@@ -157,10 +160,12 @@ const AtaStorageProbeError = error{
     SecondaryRawPatternWriteFailed,
     SecondaryRawPatternReadbackFailed,
     ToolLayoutInitFailed,
+    ToolLayoutFormatFailed,
     ToolLayoutWriteFailed,
     ToolLayoutReadbackFailed,
     ToolLayoutReloadFailed,
     FilesystemInitFailed,
+    FilesystemFormatFailed,
     FilesystemDirCreateFailed,
     FilesystemWriteFailed,
     FilesystemReadbackFailed,
@@ -855,6 +860,34 @@ pub export fn oc_storage_state_ptr() *const BaremetalStorageState {
     return storage_backend.statePtr();
 }
 
+pub export fn oc_storage_logical_base_lba() u32 {
+    return storage_backend.logicalBaseLba();
+}
+
+pub export fn oc_storage_partition_count() u32 {
+    return storage_backend.partitionCount();
+}
+
+pub export fn oc_storage_selected_partition_index() i16 {
+    const index = storage_backend.selectedPartitionIndex() orelse return -1;
+    return @as(i16, index);
+}
+
+pub export fn oc_storage_partition_info(index: u32) BaremetalStoragePartitionInfo {
+    if (index > std.math.maxInt(u8)) {
+        return std.mem.zeroes(BaremetalStoragePartitionInfo);
+    }
+    const info = storage_backend.partitionInfo(@as(u8, @intCast(index))) orelse {
+        return std.mem.zeroes(BaremetalStoragePartitionInfo);
+    };
+    return .{
+        .scheme = @intFromEnum(info.scheme),
+        .reserved0 = .{ 0, 0, 0 },
+        .start_lba = info.start_lba,
+        .sector_count = info.sector_count,
+    };
+}
+
 pub export fn oc_storage_init() void {
     storage_backend.init();
 }
@@ -887,12 +920,25 @@ pub export fn oc_storage_write_pattern(lba: u32, block_count: u32, seed: u8) i16
     return abi.result_ok;
 }
 
+pub export fn oc_storage_select_partition(index: u32) i16 {
+    if (index > std.math.maxInt(u8)) return abi.result_invalid_argument;
+    storage_backend.selectPartition(@as(u8, @intCast(index))) catch |err| return mapStorageError(err);
+    tool_layout.invalidateForBackendChange();
+    filesystem.invalidateForBackendChange();
+    return abi.result_ok;
+}
+
 pub export fn oc_tool_layout_state_ptr() *const BaremetalToolLayoutState {
     return tool_layout.statePtr();
 }
 
 pub export fn oc_tool_layout_init() i16 {
     tool_layout.init() catch |err| return mapStorageError(err);
+    return abi.result_ok;
+}
+
+pub export fn oc_tool_layout_format() i16 {
+    tool_layout.format() catch |err| return mapStorageError(err);
     return abi.result_ok;
 }
 
@@ -926,6 +972,11 @@ pub export fn oc_filesystem_entry(index: u32) BaremetalFilesystemEntry {
 
 pub export fn oc_filesystem_init() i16 {
     filesystem.init() catch |err| return mapStorageError(err);
+    return abi.result_ok;
+}
+
+pub export fn oc_filesystem_format() i16 {
+    filesystem.formatActiveBackend() catch |err| return mapStorageError(err);
     return abi.result_ok;
 }
 
@@ -1674,18 +1725,18 @@ fn runAtaStorageProbe() AtaStorageProbeError!void {
     if (storage.block_count <= ata_probe_raw_lba + ata_probe_raw_block_count) {
         return error.AtaCapacityTooSmall;
     }
-    if (ata_pio_disk.logicalBaseLba() != ata_probe_partition_start_lba) {
+    if (oc_storage_logical_base_lba() != ata_probe_partition_start_lba) {
         return error.PartitionMountMismatch;
     }
-    if (storage_backend.partitionCount() != 2) {
+    if (oc_storage_partition_count() != 2 or oc_storage_selected_partition_index() != 0) {
         return error.PartitionExportMismatch;
     }
-    const primary_partition = storage_backend.partitionInfo(0) orelse return error.PartitionExportMismatch;
-    const secondary_partition = storage_backend.partitionInfo(1) orelse return error.PartitionExportMismatch;
-    if (primary_partition.scheme != .mbr or
+    const primary_partition = oc_storage_partition_info(0);
+    const secondary_partition = oc_storage_partition_info(1);
+    if (primary_partition.scheme != @intFromEnum(ata_pio_disk.PartitionScheme.mbr) or
         primary_partition.start_lba != ata_probe_partition_start_lba or
         primary_partition.sector_count != ata_probe_partition_sector_count or
-        secondary_partition.scheme != .mbr or
+        secondary_partition.scheme != @intFromEnum(ata_pio_disk.PartitionScheme.mbr) or
         secondary_partition.start_lba != ata_probe_secondary_partition_start_lba or
         secondary_partition.sector_count != ata_probe_secondary_partition_sector_count)
     {
@@ -1705,8 +1756,11 @@ fn runAtaStorageProbe() AtaStorageProbeError!void {
         return error.RawPatternReadbackFailed;
     }
 
-    storage_backend.selectPartition(1) catch return error.PartitionExportMismatch;
-    if (storage_backend.logicalBaseLba() != ata_probe_secondary_partition_start_lba or
+    if (oc_storage_select_partition(1) != abi.result_ok) {
+        return error.PartitionExportMismatch;
+    }
+    if (oc_storage_logical_base_lba() != ata_probe_secondary_partition_start_lba or
+        oc_storage_selected_partition_index() != 1 or
         storage_backend.statePtr().block_count != ata_probe_secondary_partition_sector_count)
     {
         return error.PartitionExportMismatch;
@@ -1723,37 +1777,36 @@ fn runAtaStorageProbe() AtaStorageProbeError!void {
         return error.SecondaryRawPatternReadbackFailed;
     }
 
-    storage_backend.selectPartition(0) catch return error.PartitionExportMismatch;
-    if (storage_backend.logicalBaseLba() != ata_probe_partition_start_lba or
+    if (oc_storage_select_partition(0) != abi.result_ok) {
+        return error.PartitionExportMismatch;
+    }
+    if (oc_storage_logical_base_lba() != ata_probe_partition_start_lba or
+        oc_storage_selected_partition_index() != 0 or
         storage_backend.statePtr().block_count != ata_probe_partition_sector_count)
     {
         return error.PartitionExportMismatch;
     }
 
-    tool_layout.resetForTest();
-    tool_layout.init() catch return error.ToolLayoutInitFailed;
-    tool_layout.writePattern(ata_probe_tool_slot_id, ata_probe_tool_slot_byte_len, ata_probe_tool_slot_seed, status.ticks) catch return error.ToolLayoutWriteFailed;
-    const slot = tool_layout.slot(ata_probe_tool_slot_id);
-    if (slot.start_lba != ata_probe_tool_slot_expected_lba or
-        tool_layout.readToolByte(ata_probe_tool_slot_id, 0) != ata_probe_tool_slot_seed or
-        tool_layout.readToolByte(ata_probe_tool_slot_id, 1) != ata_probe_tool_slot_seed +% 1 or
-        tool_layout.readToolByte(ata_probe_tool_slot_id, 512) != ata_probe_tool_slot_seed or
-        storage_backend.readByte(slot.start_lba, 0) != ata_probe_tool_slot_seed)
+    if (oc_tool_layout_init() != abi.result_ok) {
+        return error.ToolLayoutInitFailed;
+    }
+    if (oc_tool_slot_write_pattern(ata_probe_tool_slot_id, ata_probe_tool_slot_byte_len, ata_probe_tool_slot_seed) != abi.result_ok) {
+        return error.ToolLayoutWriteFailed;
+    }
+    const primary_slot = oc_tool_layout_slot(ata_probe_tool_slot_id);
+    if (primary_slot.start_lba != ata_probe_tool_slot_expected_lba or
+        oc_tool_slot_byte(ata_probe_tool_slot_id, 0) != ata_probe_tool_slot_seed or
+        oc_tool_slot_byte(ata_probe_tool_slot_id, 1) != ata_probe_tool_slot_seed +% 1 or
+        oc_tool_slot_byte(ata_probe_tool_slot_id, 512) != ata_probe_tool_slot_seed or
+        storage_backend.readByte(primary_slot.start_lba, 0) != ata_probe_tool_slot_seed)
     {
         return error.ToolLayoutReadbackFailed;
     }
 
-    tool_layout.resetForTest();
-    tool_layout.init() catch return error.ToolLayoutReloadFailed;
-    if (tool_layout.readToolByte(ata_probe_tool_slot_id, 0) != ata_probe_tool_slot_seed or
-        tool_layout.readToolByte(ata_probe_tool_slot_id, 512) != ata_probe_tool_slot_seed)
-    {
-        return error.ToolLayoutReloadFailed;
+    if (oc_filesystem_init() != abi.result_ok) {
+        return error.FilesystemInitFailed;
     }
-
-    filesystem.resetForTest();
-    filesystem.init() catch return error.FilesystemInitFailed;
-    if (filesystem.statePtr().active_backend != abi.storage_backend_ata_pio) {
+    if (oc_filesystem_state_ptr().active_backend != abi.storage_backend_ata_pio) {
         return error.FilesystemInitFailed;
     }
     filesystem.createDirPath(ata_probe_filesystem_dir) catch return error.FilesystemDirCreateFailed;
@@ -1762,11 +1815,98 @@ fn runAtaStorageProbe() AtaStorageProbeError!void {
         return error.FilesystemReadbackFailed;
     }
 
-    filesystem.resetForTest();
-    filesystem.init() catch return error.FilesystemReloadFailed;
-    if (filesystem.statePtr().active_backend != abi.storage_backend_ata_pio or
+    if (oc_storage_select_partition(1) != abi.result_ok) {
+        return error.PartitionExportMismatch;
+    }
+    if (oc_storage_logical_base_lba() != ata_probe_secondary_partition_start_lba or
+        oc_storage_selected_partition_index() != 1 or
+        storage_backend.statePtr().block_count != ata_probe_secondary_partition_sector_count)
+    {
+        return error.PartitionExportMismatch;
+    }
+    if (oc_tool_layout_state_ptr().formatted != 0 or
+        oc_filesystem_state_ptr().formatted != 0 or
+        oc_filesystem_state_ptr().mounted != 0)
+    {
+        return error.ToolLayoutReloadFailed;
+    }
+
+    if (oc_tool_layout_format() != abi.result_ok) {
+        return error.ToolLayoutFormatFailed;
+    }
+    if (oc_tool_slot_write_pattern(ata_probe_tool_slot_id, ata_probe_tool_slot_byte_len, ata_probe_secondary_tool_slot_seed) != abi.result_ok) {
+        return error.ToolLayoutWriteFailed;
+    }
+    const secondary_slot = oc_tool_layout_slot(ata_probe_tool_slot_id);
+    if (secondary_slot.start_lba != ata_probe_tool_slot_expected_lba or
+        oc_tool_slot_byte(ata_probe_tool_slot_id, 0) != ata_probe_secondary_tool_slot_seed or
+        oc_tool_slot_byte(ata_probe_tool_slot_id, 512) != ata_probe_secondary_tool_slot_seed or
+        storage_backend.readByte(secondary_slot.start_lba, 0) != ata_probe_secondary_tool_slot_seed)
+    {
+        return error.ToolLayoutReadbackFailed;
+    }
+
+    if (oc_filesystem_format() != abi.result_ok) {
+        return error.FilesystemFormatFailed;
+    }
+    if (oc_filesystem_state_ptr().active_backend != abi.storage_backend_ata_pio) {
+        return error.FilesystemFormatFailed;
+    }
+    filesystem.createDirPath(ata_probe_filesystem_dir) catch return error.FilesystemDirCreateFailed;
+    filesystem.writeFile(ata_probe_filesystem_path, ata_probe_secondary_filesystem_payload, status.ticks) catch return error.FilesystemWriteFailed;
+    if (!probeFilesystemContent(ata_probe_filesystem_path, ata_probe_secondary_filesystem_payload)) {
+        return error.FilesystemReadbackFailed;
+    }
+
+    if (oc_storage_select_partition(0) != abi.result_ok) {
+        return error.PartitionExportMismatch;
+    }
+    if (oc_tool_layout_init() != abi.result_ok) {
+        return error.ToolLayoutReloadFailed;
+    }
+    if (oc_tool_slot_byte(ata_probe_tool_slot_id, 0) != ata_probe_tool_slot_seed or
+        oc_tool_slot_byte(ata_probe_tool_slot_id, 512) != ata_probe_tool_slot_seed)
+    {
+        return error.ToolLayoutReloadFailed;
+    }
+
+    if (oc_filesystem_init() != abi.result_ok) {
+        return error.FilesystemReloadFailed;
+    }
+    if (oc_filesystem_state_ptr().active_backend != abi.storage_backend_ata_pio or
         !probeFilesystemContent(ata_probe_filesystem_path, ata_probe_filesystem_payload))
     {
+        return error.FilesystemReloadFailed;
+    }
+
+    if (oc_storage_select_partition(1) != abi.result_ok) {
+        return error.PartitionExportMismatch;
+    }
+    if (oc_tool_layout_init() != abi.result_ok) {
+        return error.ToolLayoutReloadFailed;
+    }
+    if (oc_tool_slot_byte(ata_probe_tool_slot_id, 0) != ata_probe_secondary_tool_slot_seed or
+        oc_tool_slot_byte(ata_probe_tool_slot_id, 512) != ata_probe_secondary_tool_slot_seed)
+    {
+        return error.ToolLayoutReloadFailed;
+    }
+
+    if (oc_filesystem_init() != abi.result_ok) {
+        return error.FilesystemReloadFailed;
+    }
+    if (oc_filesystem_state_ptr().active_backend != abi.storage_backend_ata_pio or
+        !probeFilesystemContent(ata_probe_filesystem_path, ata_probe_secondary_filesystem_payload))
+    {
+        return error.FilesystemReloadFailed;
+    }
+
+    if (oc_storage_select_partition(0) != abi.result_ok) {
+        return error.PartitionExportMismatch;
+    }
+    if (oc_tool_layout_init() != abi.result_ok) {
+        return error.ToolLayoutReloadFailed;
+    }
+    if (oc_filesystem_init() != abi.result_ok) {
         return error.FilesystemReloadFailed;
     }
 }
@@ -4026,14 +4166,16 @@ fn ataStorageProbeFailureCode(err: AtaStorageProbeError) u8 {
         error.SecondaryRawPatternWriteFailed => 0x48,
         error.SecondaryRawPatternReadbackFailed => 0x49,
         error.ToolLayoutInitFailed => 0x4A,
-        error.ToolLayoutWriteFailed => 0x4B,
-        error.ToolLayoutReadbackFailed => 0x4C,
-        error.ToolLayoutReloadFailed => 0x4D,
-        error.FilesystemInitFailed => 0x4E,
-        error.FilesystemDirCreateFailed => 0x4F,
-        error.FilesystemWriteFailed => 0x50,
-        error.FilesystemReadbackFailed => 0x51,
-        error.FilesystemReloadFailed => 0x52,
+        error.ToolLayoutFormatFailed => 0x4B,
+        error.ToolLayoutWriteFailed => 0x4C,
+        error.ToolLayoutReadbackFailed => 0x4D,
+        error.ToolLayoutReloadFailed => 0x4E,
+        error.FilesystemInitFailed => 0x4F,
+        error.FilesystemFormatFailed => 0x50,
+        error.FilesystemDirCreateFailed => 0x51,
+        error.FilesystemWriteFailed => 0x52,
+        error.FilesystemReadbackFailed => 0x53,
+        error.FilesystemReloadFailed => 0x54,
     };
 }
 
@@ -12277,6 +12419,10 @@ test "baremetal storage export surface persists block writes and flush state" {
     try std.testing.expectEqual(@as(u8, 1), storage.mounted);
     try std.testing.expectEqual(@as(u32, storage_backend.block_size), storage.block_size);
     try std.testing.expectEqual(@as(u32, storage_backend.block_count), storage.block_count);
+    try std.testing.expectEqual(@as(u32, 0), oc_storage_logical_base_lba());
+    try std.testing.expectEqual(@as(u32, 0), oc_storage_partition_count());
+    try std.testing.expectEqual(@as(i16, -1), oc_storage_selected_partition_index());
+    try std.testing.expectEqual(std.mem.zeroes(BaremetalStoragePartitionInfo), oc_storage_partition_info(0));
 
     try std.testing.expectEqual(@as(i16, abi.result_ok), oc_storage_write_pattern(4, 2, 0x41));
     try std.testing.expectEqual(@as(u32, 2), storage.write_ops);
@@ -12312,12 +12458,99 @@ test "baremetal storage exports report ata pio backend when a device is availabl
     try std.testing.expectEqual(@as(u8, abi.storage_backend_ata_pio), storage.backend);
     try std.testing.expectEqual(@as(u8, 1), storage.mounted);
     try std.testing.expectEqual(@as(u32, ata_probe_partition_sector_count), storage.block_count);
-    try std.testing.expectEqual(ata_probe_partition_start_lba, ata_pio_disk.logicalBaseLba());
+    try std.testing.expectEqual(ata_probe_partition_start_lba, oc_storage_logical_base_lba());
+    try std.testing.expectEqual(@as(u32, 1), oc_storage_partition_count());
+    try std.testing.expectEqual(@as(i16, 0), oc_storage_selected_partition_index());
+    const expected_partition: BaremetalStoragePartitionInfo = .{
+        .scheme = @intFromEnum(ata_pio_disk.PartitionScheme.mbr),
+        .reserved0 = .{ 0, 0, 0 },
+        .start_lba = ata_probe_partition_start_lba,
+        .sector_count = ata_probe_partition_sector_count,
+    };
+    try std.testing.expectEqual(expected_partition, oc_storage_partition_info(0));
 
     try std.testing.expectEqual(@as(i16, abi.result_ok), oc_storage_write_pattern(6, 1, 0x55));
     try std.testing.expectEqual(@as(u8, 0x55), oc_storage_read_byte(6, 0));
     try std.testing.expectEqual(@as(u8, 0x55), ata_pio_disk.testReadMockByteRaw(ata_probe_partition_start_lba + 6, 0));
     try std.testing.expectEqual(@as(i16, abi.result_ok), oc_storage_flush());
+}
+
+test "baremetal storage export surface enumerates and selects ata partitions" {
+    resetBaremetalRuntimeForTest();
+    ata_pio_disk.testEnableMockDevice(16384);
+    ata_pio_disk.testInstallMockMbrPartition(ata_probe_partition_start_lba, ata_probe_partition_sector_count, 0x83);
+    ata_pio_disk.testInstallMockMbrPartitionAt(1, ata_probe_secondary_partition_start_lba, ata_probe_secondary_partition_sector_count, 0x83);
+    defer ata_pio_disk.testDisableMockDevice();
+
+    oc_storage_init();
+
+    try std.testing.expectEqual(@as(u32, 2), oc_storage_partition_count());
+    try std.testing.expectEqual(@as(i16, 0), oc_storage_selected_partition_index());
+    try std.testing.expectEqual(ata_probe_partition_start_lba, oc_storage_logical_base_lba());
+    const expected_primary: BaremetalStoragePartitionInfo = .{
+        .scheme = @intFromEnum(ata_pio_disk.PartitionScheme.mbr),
+        .reserved0 = .{ 0, 0, 0 },
+        .start_lba = ata_probe_partition_start_lba,
+        .sector_count = ata_probe_partition_sector_count,
+    };
+    const expected_secondary: BaremetalStoragePartitionInfo = .{
+        .scheme = @intFromEnum(ata_pio_disk.PartitionScheme.mbr),
+        .reserved0 = .{ 0, 0, 0 },
+        .start_lba = ata_probe_secondary_partition_start_lba,
+        .sector_count = ata_probe_secondary_partition_sector_count,
+    };
+    try std.testing.expectEqual(expected_primary, oc_storage_partition_info(0));
+    try std.testing.expectEqual(expected_secondary, oc_storage_partition_info(1));
+    try std.testing.expectEqual(std.mem.zeroes(BaremetalStoragePartitionInfo), oc_storage_partition_info(2));
+
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_storage_select_partition(1));
+    try std.testing.expectEqual(@as(i16, 1), oc_storage_selected_partition_index());
+    try std.testing.expectEqual(ata_probe_secondary_partition_start_lba, oc_storage_logical_base_lba());
+    try std.testing.expectEqual(@as(u32, ata_probe_secondary_partition_sector_count), oc_storage_state_ptr().block_count);
+
+    try std.testing.expectEqual(@as(i16, abi.result_invalid_argument), oc_storage_select_partition(9));
+}
+
+test "baremetal storage partition selection rebinds tool layout and filesystem surfaces" {
+    resetBaremetalRuntimeForTest();
+    ata_pio_disk.testEnableMockDevice(16384);
+    ata_pio_disk.testInstallMockMbrPartition(ata_probe_partition_start_lba, ata_probe_partition_sector_count, 0x83);
+    ata_pio_disk.testInstallMockMbrPartitionAt(1, ata_probe_secondary_partition_start_lba, ata_probe_secondary_partition_sector_count, 0x83);
+    defer ata_pio_disk.testDisableMockDevice();
+
+    oc_storage_init();
+
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_tool_layout_init());
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_tool_slot_write_pattern(ata_probe_tool_slot_id, ata_probe_tool_slot_byte_len, ata_probe_tool_slot_seed));
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_filesystem_init());
+    try filesystem.createDirPath(ata_probe_filesystem_dir);
+    try filesystem.writeFile(ata_probe_filesystem_path, ata_probe_filesystem_payload, 77);
+    try std.testing.expect(probeFilesystemContent(ata_probe_filesystem_path, ata_probe_filesystem_payload));
+
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_storage_select_partition(1));
+    try std.testing.expectEqual(@as(i16, 1), oc_storage_selected_partition_index());
+    try std.testing.expectEqual(@as(u8, 0), oc_tool_layout_state_ptr().formatted);
+    try std.testing.expectEqual(@as(u8, 0), oc_filesystem_state_ptr().formatted);
+    try std.testing.expectEqual(@as(u8, 0), oc_filesystem_state_ptr().mounted);
+
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_tool_layout_format());
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_tool_slot_write_pattern(ata_probe_tool_slot_id, ata_probe_tool_slot_byte_len, ata_probe_secondary_tool_slot_seed));
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_filesystem_format());
+    try filesystem.createDirPath(ata_probe_filesystem_dir);
+    try filesystem.writeFile(ata_probe_filesystem_path, ata_probe_secondary_filesystem_payload, 88);
+    try std.testing.expect(probeFilesystemContent(ata_probe_filesystem_path, ata_probe_secondary_filesystem_payload));
+
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_storage_select_partition(0));
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_tool_layout_init());
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_filesystem_init());
+    try std.testing.expectEqual(@as(u8, ata_probe_tool_slot_seed), oc_tool_slot_byte(ata_probe_tool_slot_id, 0));
+    try std.testing.expect(probeFilesystemContent(ata_probe_filesystem_path, ata_probe_filesystem_payload));
+
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_storage_select_partition(1));
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_tool_layout_init());
+    try std.testing.expectEqual(@as(i16, abi.result_ok), oc_filesystem_init());
+    try std.testing.expectEqual(@as(u8, ata_probe_secondary_tool_slot_seed), oc_tool_slot_byte(ata_probe_tool_slot_id, 0));
+    try std.testing.expect(probeFilesystemContent(ata_probe_filesystem_path, ata_probe_secondary_filesystem_payload));
 }
 
 test "baremetal tool layout persists patterned tool slot payloads on ram disk" {
@@ -12429,8 +12662,23 @@ test "baremetal ata storage probe validates raw, tool layout, and filesystem per
 
     const storage = oc_storage_state_ptr();
     try std.testing.expectEqual(@as(u8, abi.storage_backend_ata_pio), storage.backend);
-    try std.testing.expectEqual(ata_probe_partition_start_lba, ata_pio_disk.logicalBaseLba());
-    try std.testing.expectEqual(@as(u8, 2), storage_backend.partitionCount());
+    try std.testing.expectEqual(ata_probe_partition_start_lba, oc_storage_logical_base_lba());
+    try std.testing.expectEqual(@as(u32, 2), oc_storage_partition_count());
+    try std.testing.expectEqual(@as(i16, 0), oc_storage_selected_partition_index());
+    const expected_primary: BaremetalStoragePartitionInfo = .{
+        .scheme = @intFromEnum(ata_pio_disk.PartitionScheme.mbr),
+        .reserved0 = .{ 0, 0, 0 },
+        .start_lba = ata_probe_partition_start_lba,
+        .sector_count = ata_probe_partition_sector_count,
+    };
+    const expected_secondary: BaremetalStoragePartitionInfo = .{
+        .scheme = @intFromEnum(ata_pio_disk.PartitionScheme.mbr),
+        .reserved0 = .{ 0, 0, 0 },
+        .start_lba = ata_probe_secondary_partition_start_lba,
+        .sector_count = ata_probe_secondary_partition_sector_count,
+    };
+    try std.testing.expectEqual(expected_primary, oc_storage_partition_info(0));
+    try std.testing.expectEqual(expected_secondary, oc_storage_partition_info(1));
     try std.testing.expectEqual(@as(u8, 0x41), oc_storage_read_byte(ata_probe_raw_lba, 0));
     try std.testing.expectEqual(@as(u8, 0x42), oc_storage_read_byte(ata_probe_raw_lba, 1));
     try std.testing.expectEqual(@as(u8, 0x41), oc_storage_read_byte(ata_probe_raw_lba + 1, 0));
