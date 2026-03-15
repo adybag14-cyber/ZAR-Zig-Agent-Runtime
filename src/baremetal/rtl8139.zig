@@ -61,7 +61,6 @@ const tsd_tun: u32 = 0x4000_0000;
 const tsd_carrier_lost: u32 = 0x8000_0000;
 
 const tcr_mxdma_unlimited: u32 = 7 << 8;
-const tcr_loopback_internal: u32 = 3 << 17;
 const tcr_ifg96: u32 = 3 << 24;
 
 const rcr_aap: u32 = 1 << 0;
@@ -109,6 +108,7 @@ fn defaultState() abi.BaremetalEthernetState {
 
 var state: abi.BaremetalEthernetState = defaultState();
 var tx_buffers: [tx_descriptor_count][tx_buffer_capacity]u8 align(16) = [_][tx_buffer_capacity]u8{[_]u8{0} ** tx_buffer_capacity} ** tx_descriptor_count;
+var tx_snapshot: [tx_buffer_capacity]u8 = [_]u8{0} ** tx_buffer_capacity;
 var rx_ring: [rx_ring_allocation_bytes]u8 align(16) = [_]u8{0} ** rx_ring_allocation_bytes;
 var rx_snapshot: [rx_snapshot_capacity]u8 = [_]u8{0} ** rx_snapshot_capacity;
 var mock_enabled: bool = false;
@@ -123,6 +123,7 @@ var probe_pending_rx_status: u32 = 0;
 pub fn resetForTest() void {
     resetState();
     @memset(&tx_buffers, [_]u8{0} ** tx_buffer_capacity);
+    @memset(&tx_snapshot, 0);
     @memset(&rx_ring, 0);
     @memset(&rx_snapshot, 0);
     mock_enabled = false;
@@ -193,7 +194,7 @@ pub fn initDetailed() InitError!void {
     state.irq_line = nic.irq_line;
     state.io_base = nic.io_base;
     state.hardware_backed = 1;
-    state.loopback_enabled = 1;
+    state.loopback_enabled = 0;
 
     powerUp(nic.io_base);
     if (!softReset(nic.io_base)) {
@@ -218,9 +219,9 @@ pub fn initDetailed() InitError!void {
 
     // Re-acknowledge any latched status after the engine transitions to RE|TE.
     write16(nic.io_base + reg_isr, isr_all_known);
-    // Reassert the intended loopback-friendly config after enable so the
-    // runtime path is not relying on pre-enable register state.
-    write32(nic.io_base + reg_tcr, tcr_mxdma_unlimited | tcr_ifg96 | tcr_loopback_internal);
+    // Reassert the intended external datapath config after enable so the
+    // runtime path does not silently rely on pre-enable register state.
+    write32(nic.io_base + reg_tcr, tcr_mxdma_unlimited | tcr_ifg96);
     write32(nic.io_base + reg_rcr, rcr_aap | rcr_apm | rcr_ab | rcr_wrap | rcr_mxdma_unlimited | rcr_rblen_8k);
 
     state.initialized = 1;
@@ -251,6 +252,7 @@ pub fn sendFrame(frame: []const u8) Error!void {
     const tx_buf = tx_buffers[tx_slot][0..send_len];
     @memset(tx_buf, 0);
     std.mem.copyForwards(u8, tx_buf[0..frame.len], frame);
+    std.mem.copyForwards(u8, tx_snapshot[0..send_len], tx_buf[0..send_len]);
 
     if (probe_send_hook) |hook| {
         hook(tx_buf[0..send_len]);
@@ -349,6 +351,11 @@ pub fn rxByte(index: u32) u8 {
     return rx_snapshot[index];
 }
 
+pub fn txByte(index: u32) u8 {
+    if (index >= state.last_tx_len or index >= tx_buffer_capacity) return 0;
+    return tx_snapshot[index];
+}
+
 pub fn debugProducerOffset() u16 {
     if (state.initialized == 0) return 0;
     if (mockAvailable()) return @as(u16, @intCast(state.rx_consumer_offset & 0xFFFF));
@@ -439,7 +446,7 @@ fn programBuffers(io_base: u16) bool {
     write16(io_base + reg_capr, 0xFFF0);
     write16(io_base + reg_imr, 0);
     write16(io_base + reg_isr, isr_all_known);
-    write32(io_base + reg_tcr, tcr_mxdma_unlimited | tcr_ifg96 | tcr_loopback_internal);
+    write32(io_base + reg_tcr, tcr_mxdma_unlimited | tcr_ifg96);
     write32(io_base + reg_rcr, rcr_aap | rcr_apm | rcr_ab | rcr_wrap | rcr_mxdma_unlimited | rcr_rblen_8k);
     return true;
 }

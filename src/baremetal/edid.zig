@@ -1,7 +1,13 @@
 const std = @import("std");
+const abi = @import("abi.zig");
 
 pub const block_len: usize = 128;
 pub const max_name_len: usize = 13;
+const cea_extension_tag: u8 = 0x02;
+const displayid_extension_tag: u8 = 0x70;
+const cea_tag_audio: u8 = 1;
+const cea_tag_vendor: u8 = 3;
+const hdmi_vendor_oui = [_]u8{ 0x03, 0x0C, 0x00 };
 
 pub const Timing = struct {
     pixel_clock_khz: u32,
@@ -25,6 +31,7 @@ pub const ParsedEdid = struct {
     physical_width_mm: u16,
     physical_height_mm: u16,
     extension_count: u8,
+    capability_flags: u16,
     preferred_timing: ?Timing,
     display_name_len: u8,
     display_name: [max_name_len]u8,
@@ -97,6 +104,52 @@ fn parseDisplayName(block: []const u8) ?struct { len: u8, value: [max_name_len]u
     };
 }
 
+fn parseCeaExtension(block: []const u8, flags: *u16) void {
+    if (block.len < block_len) return;
+    flags.* |= abi.display_capability_cea_extension;
+    if ((block[3] & 0x40) != 0) flags.* |= abi.display_capability_basic_audio;
+
+    const dtd_offset = if (block[2] >= 4 and block[2] <= 127) @as(usize, block[2]) else block_len - 1;
+    var offset: usize = 4;
+    while (offset < dtd_offset and offset < block_len - 1) {
+        const header = block[offset];
+        const tag = (header >> 5) & 0x07;
+        const length = @as(usize, header & 0x1F);
+        offset += 1;
+        if (offset + length > dtd_offset or offset + length > block_len - 1) break;
+        const payload = block[offset .. offset + length];
+        if (tag == cea_tag_audio and payload.len > 0) {
+            flags.* |= abi.display_capability_basic_audio;
+        } else if (tag == cea_tag_vendor and payload.len >= hdmi_vendor_oui.len and std.mem.eql(u8, payload[0..hdmi_vendor_oui.len], &hdmi_vendor_oui)) {
+            flags.* |= abi.display_capability_hdmi_vendor_data;
+        }
+        offset += length;
+    }
+}
+
+fn parseExtensionBlocks(raw: []const u8, parsed: *ParsedEdid) ParseError!void {
+    const declared_extensions: usize = parsed.extension_count;
+    if (declared_extensions == 0) return;
+    const required_len = block_len * (declared_extensions + 1);
+    if (raw.len < required_len) return error.InvalidLength;
+
+    var extension_index: usize = 0;
+    while (extension_index < declared_extensions) : (extension_index += 1) {
+        const block_start = block_len * (extension_index + 1);
+        const block = raw[block_start .. block_start + block_len];
+
+        var checksum: u8 = 0;
+        for (block) |byte| checksum +%= byte;
+        if (checksum != 0) return error.InvalidChecksum;
+
+        switch (block[0]) {
+            cea_extension_tag => parseCeaExtension(block, &parsed.capability_flags),
+            displayid_extension_tag => parsed.capability_flags |= abi.display_capability_displayid_extension,
+            else => {},
+        }
+    }
+}
+
 pub fn parse(raw: []const u8) ParseError!ParsedEdid {
     if (raw.len < block_len) return error.InvalidLength;
     if (!std.mem.eql(u8, raw[0..edid_header.len], &edid_header)) return error.InvalidHeader;
@@ -119,16 +172,20 @@ pub fn parse(raw: []const u8) ParseError!ParsedEdid {
         .physical_width_mm = @as(u16, raw[21]) * 10,
         .physical_height_mm = @as(u16, raw[22]) * 10,
         .extension_count = raw[126],
+        .capability_flags = 0,
         .preferred_timing = null,
         .display_name_len = 0,
         .display_name = [_]u8{0} ** max_name_len,
     };
+
+    if (parsed.input_digital) parsed.capability_flags |= abi.display_capability_digital_input;
 
     var descriptor_offset: usize = 54;
     while (descriptor_offset + 18 <= block_len) : (descriptor_offset += 18) {
         const descriptor = raw[descriptor_offset .. descriptor_offset + 18];
         if (parsed.preferred_timing == null) {
             parsed.preferred_timing = parseDetailedTiming(descriptor);
+            if (parsed.preferred_timing != null) parsed.capability_flags |= abi.display_capability_preferred_timing;
         }
         if (parsed.display_name_len == 0) {
             if (parseDisplayName(descriptor)) |name| {
@@ -137,6 +194,8 @@ pub fn parse(raw: []const u8) ParseError!ParsedEdid {
             }
         }
     }
+
+    try parseExtensionBlocks(raw, &parsed);
 
     return parsed;
 }
@@ -200,6 +259,42 @@ fn sampleEdid() [block_len]u8 {
     return bytes;
 }
 
+fn sampleEdidWithCeaExtension() [block_len * 2]u8 {
+    var bytes: [block_len * 2]u8 = [_]u8{0} ** (block_len * 2);
+    const base = sampleEdid();
+    std.mem.copyForwards(u8, bytes[0..block_len], &base);
+    bytes[126] = 1;
+    finalizeChecksum(bytes[0..block_len]);
+
+    const extension = bytes[block_len .. block_len * 2];
+    extension[0] = cea_extension_tag;
+    extension[1] = 0x03;
+    extension[2] = 8;
+    extension[3] = 0x40;
+    extension[4] = 0x63;
+    extension[5] = hdmi_vendor_oui[0];
+    extension[6] = hdmi_vendor_oui[1];
+    extension[7] = hdmi_vendor_oui[2];
+    finalizeChecksum(extension);
+    return bytes;
+}
+
+fn sampleEdidWithDisplayIdExtension() [block_len * 2]u8 {
+    var bytes: [block_len * 2]u8 = [_]u8{0} ** (block_len * 2);
+    const base = sampleEdid();
+    std.mem.copyForwards(u8, bytes[0..block_len], &base);
+    bytes[126] = 1;
+    finalizeChecksum(bytes[0..block_len]);
+
+    const extension = bytes[block_len .. block_len * 2];
+    extension[0] = displayid_extension_tag;
+    extension[1] = 0x20;
+    extension[2] = 0x00;
+    extension[3] = 0x00;
+    finalizeChecksum(extension);
+    return bytes;
+}
+
 test "edid parser decodes preferred timing and display name" {
     const parsed = try parse(&sampleEdid());
     try std.testing.expectEqual(encodeManufacturer('Q', 'E', 'M'), parsed.manufacturer_id);
@@ -214,7 +309,22 @@ test "edid parser decodes preferred timing and display name" {
     try std.testing.expectEqual(@as(u16, 720), preferred.v_active);
     try std.testing.expectEqual(@as(u32, 74250), preferred.pixel_clock_khz);
     try std.testing.expect(preferred.refresh_hz >= 60);
+    try std.testing.expectEqual(@as(u16, abi.display_capability_digital_input | abi.display_capability_preferred_timing), parsed.capability_flags);
     try std.testing.expectEqualStrings("QEMU-EDID", parsed.display_name[0..parsed.display_name_len]);
+}
+
+test "edid parser decodes cea capability flags" {
+    const parsed = try parse(&sampleEdidWithCeaExtension());
+    try std.testing.expectEqual(@as(u8, 1), parsed.extension_count);
+    try std.testing.expect((parsed.capability_flags & abi.display_capability_cea_extension) != 0);
+    try std.testing.expect((parsed.capability_flags & abi.display_capability_basic_audio) != 0);
+    try std.testing.expect((parsed.capability_flags & abi.display_capability_hdmi_vendor_data) != 0);
+}
+
+test "edid parser decodes displayid capability flags" {
+    const parsed = try parse(&sampleEdidWithDisplayIdExtension());
+    try std.testing.expectEqual(@as(u8, 1), parsed.extension_count);
+    try std.testing.expect((parsed.capability_flags & abi.display_capability_displayid_extension) != 0);
 }
 
 test "edid parser rejects invalid checksum" {

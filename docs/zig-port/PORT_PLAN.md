@@ -1927,3 +1927,9 @@ Full-stack replacement execution reference:
   - `scripts/telegram-webhook-receive-smoke-check.ps1` proves strict ingress success and outbound reply delivery against the configurable Telegram Bot API endpoint path.
   - `scripts/telegram-bot-send-delivery-smoke-check.ps1` proves strict outbound delivery, typing pulses, chunk/message accounting, and payload capture against the configurable Telegram Bot API endpoint path.
   - all FS2 strict proofs are now enforced in `zig-ci` and `release-preview`, so the hosted phase can advance beyond FS2 from the local source-of-truth baseline.
+- FS5.5 service/display/runtime depth slice (current head):
+  - `src/protocol/tcp.zig` now accepts valid partial cumulative ACK advancement on both pure ACK packets and payload-carrying packets while preserving retransmit clear semantics once all in-flight payload is acknowledged.
+  - `src/baremetal/rtl8139.zig` keeps the real hardware datapath on the corrected external-send path while the broad live TCP probe in `src/baremetal_main.zig` now installs a probe-only send hook to preserve deterministic loopback proofing without reverting the real RTL8139 datapath fix.
+  - `src/baremetal/tool_service.zig` now extends the typed TCP service seam with `EXEC`, returning structured `exit=... stdout_len=... stderr_len=...` payloads on top of `tool_exec.runCapture(...)`.
+  - `src/baremetal/edid.zig`, `src/baremetal/display_output.zig`, `src/baremetal/virtio_gpu.zig`, and `scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1` now export and prove EDID-derived display capability flags over the live `virtio-gpu-pci` controller path.
+  - `src/pal/net.zig` now contains an experimental freestanding `https://` path on top of the RTL8139/TCP seam, but live TLS-backed HTTPS remains open and is not yet claimed as strict-closed.

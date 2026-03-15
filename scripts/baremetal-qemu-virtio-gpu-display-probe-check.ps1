@@ -21,6 +21,8 @@ $expectedDeviceId = 0x1050
 $expectedWidth = 1280
 $expectedHeight = 800
 $expectedMinEdidLength = 128
+$expectedCapabilityDigital = 0x0001
+$expectedCapabilityPreferredTiming = 0x0002
 
 $stateMagicOffset = 0
 $stateApiVersionOffset = 4
@@ -47,6 +49,7 @@ $stateManufacturerIdOffset = 34
 $stateProductCodeOffset = 36
 $stateSerialNumberOffset = 40
 $stateEdidLengthOffset = 44
+$stateCapabilityFlagsOffset = 46
 
 function Resolve-ZigExecutable {
     $default = "C:\Users\Ady\Documents\toolchains\zig-master\current\zig.exe"
@@ -281,6 +284,7 @@ commands
   printf "DISPLAY_PRODUCT_CODE=%u\n", *(unsigned short*)(__DISPLAY_STATE_ADDR__ + __PRODUCT_CODE_OFFSET__)
   printf "DISPLAY_SERIAL_NUMBER=%u\n", *(unsigned int*)(__DISPLAY_STATE_ADDR__ + __SERIAL_NUMBER_OFFSET__)
   printf "DISPLAY_EDID_LENGTH=%u\n", *(unsigned short*)(__DISPLAY_STATE_ADDR__ + __EDID_LENGTH_OFFSET__)
+  printf "DISPLAY_CAPABILITY_FLAGS=%u\n", *(unsigned short*)(__DISPLAY_STATE_ADDR__ + __CAPABILITY_FLAGS_OFFSET__)
   printf "DISPLAY_EDID_0=%u\n", *(unsigned char*)(__EDID_BYTES_ADDR__ + 0)
   printf "DISPLAY_EDID_1=%u\n", *(unsigned char*)(__EDID_BYTES_ADDR__ + 1)
   printf "DISPLAY_EDID_2=%u\n", *(unsigned char*)(__EDID_BYTES_ADDR__ + 2)
@@ -324,7 +328,8 @@ $gdbScriptContent = $gdbTemplate `
     -replace '__MANUFACTURER_ID_OFFSET__', $stateManufacturerIdOffset `
     -replace '__PRODUCT_CODE_OFFSET__', $stateProductCodeOffset `
     -replace '__SERIAL_NUMBER_OFFSET__', $stateSerialNumberOffset `
-    -replace '__EDID_LENGTH_OFFSET__', $stateEdidLengthOffset
+    -replace '__EDID_LENGTH_OFFSET__', $stateEdidLengthOffset `
+    -replace '__CAPABILITY_FLAGS_OFFSET__', $stateCapabilityFlagsOffset
 $gdbScriptContent | Set-Content -Path $gdbScript -Encoding Ascii
 
 $qemuProcess = $null
@@ -396,6 +401,7 @@ $manufacturerId = Extract-IntValue -Text $out -Name 'DISPLAY_MANUFACTURER_ID'
 $productCode = Extract-IntValue -Text $out -Name 'DISPLAY_PRODUCT_CODE'
 $serialNumber = Extract-IntValue -Text $out -Name 'DISPLAY_SERIAL_NUMBER'
 $edidLength = Extract-IntValue -Text $out -Name 'DISPLAY_EDID_LENGTH'
+$capabilityFlags = Extract-IntValue -Text $out -Name 'DISPLAY_CAPABILITY_FLAGS'
 $edid0 = Extract-IntValue -Text $out -Name 'DISPLAY_EDID_0'
 $edid1 = Extract-IntValue -Text $out -Name 'DISPLAY_EDID_1'
 $edid2 = Extract-IntValue -Text $out -Name 'DISPLAY_EDID_2'
@@ -467,6 +473,8 @@ $pass = (
     $manufacturerId -gt 0 -and
     $productCode -gt 0 -and
     $edidLength -ge $expectedMinEdidLength -and
+    ($capabilityFlags -band $expectedCapabilityDigital) -ne 0 -and
+    ($capabilityFlags -band $expectedCapabilityPreferredTiming) -ne 0 -and
     $edid0 -eq 0 -and
     $edid1 -eq 255 -and
     $edid2 -eq 255 -and

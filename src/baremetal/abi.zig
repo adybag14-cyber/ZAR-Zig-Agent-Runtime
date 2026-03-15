@@ -232,6 +232,12 @@ pub const display_connector_virtual: u8 = 1;
 pub const display_connector_displayport: u8 = 2;
 pub const display_connector_hdmi: u8 = 3;
 pub const display_connector_embedded_displayport: u8 = 4;
+pub const display_capability_digital_input: u16 = 1 << 0;
+pub const display_capability_preferred_timing: u16 = 1 << 1;
+pub const display_capability_cea_extension: u16 = 1 << 2;
+pub const display_capability_displayid_extension: u16 = 1 << 3;
+pub const display_capability_hdmi_vendor_data: u16 = 1 << 4;
+pub const display_capability_basic_audio: u16 = 1 << 5;
 pub const ethernet_backend_none: u8 = 0;
 pub const ethernet_backend_rtl8139: u8 = 1;
 pub const storage_backend_ram_disk: u8 = 1;
@@ -363,7 +369,7 @@ pub const BaremetalDisplayOutputState = extern struct {
     product_code: u16,
     serial_number: u32,
     edid_length: u16,
-    reserved1: u16,
+    capability_flags: u16,
 };
 
 pub const BaremetalStorageState = extern struct {

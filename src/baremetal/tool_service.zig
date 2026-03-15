@@ -16,6 +16,7 @@ pub const FramedCommandRequest = struct {
 
 pub const RequestOp = enum {
     command,
+    execute,
     get,
     put,
     stat,
@@ -33,6 +34,7 @@ pub const FramedRequest = struct {
     request_id: u32,
     operation: union(RequestOp) {
         command: []const u8,
+        execute: []const u8,
         get: []const u8,
         put: PutRequest,
         stat: []const u8,
@@ -220,6 +222,21 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         };
     }
 
+    if (std.ascii.eqlIgnoreCase(op_part.token, "EXEC")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            const consumed_len = prefix_len + newline_index.? + 1;
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .execute = op_part.rest } },
+                .consumed_len = consumed_len,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .execute = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
     if (std.ascii.eqlIgnoreCase(op_part.token, "GET")) {
         if (op_part.rest.len == 0) return error.InvalidFrame;
         if (newline_index != null) {
@@ -327,6 +344,7 @@ fn handleFramedPayload(
 ) Error![]u8 {
     return switch (framed.operation) {
         .command => |command| try handleCommandRequest(allocator, command, stdout_limit, stderr_limit, payload_limit),
+        .execute => |command| try handleExecRequest(allocator, command, stdout_limit, stderr_limit, payload_limit),
         .get => |path| try handleGetRequest(allocator, path, payload_limit),
         .put => |put_request| try handlePutRequest(allocator, put_request.path, put_request.body, payload_limit),
         .stat => |path| try handleStatRequest(allocator, path, payload_limit),
@@ -364,6 +382,40 @@ fn handleGetRequest(allocator: std.mem.Allocator, path: []const u8, payload_limi
     return filesystem.readFileAlloc(allocator, path, payload_limit) catch |err| {
         return formatOperationError(allocator, "GET", err, payload_limit);
     };
+}
+
+fn handleExecRequest(
+    allocator: std.mem.Allocator,
+    command: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    var result = try tool_exec.runCapture(allocator, command, stdout_limit, stderr_limit);
+    defer result.deinit(allocator);
+
+    var response: std.ArrayList(u8) = .empty;
+    errdefer response.deinit(allocator);
+
+    const header = try std.fmt.allocPrint(
+        allocator,
+        "exit={d} stdout_len={d} stderr_len={d}\nstdout:\n",
+        .{ result.exit_code, result.stdout.len, result.stderr.len },
+    );
+    defer allocator.free(header);
+    try response.appendSlice(allocator, header);
+    try response.appendSlice(allocator, result.stdout);
+    if (result.stdout.len == 0 or result.stdout[result.stdout.len - 1] != '\n') {
+        try response.append(allocator, '\n');
+    }
+    try response.appendSlice(allocator, "stderr:\n");
+    try response.appendSlice(allocator, result.stderr);
+    if (result.stderr.len == 0 or result.stderr[result.stderr.len - 1] != '\n') {
+        try response.append(allocator, '\n');
+    }
+
+    if (response.items.len > payload_limit) return error.ResponseTooLarge;
+    return response.toOwnedSlice(allocator);
 }
 
 fn handlePutRequest(allocator: std.mem.Allocator, path: []const u8, body: []const u8, payload_limit: usize) Error![]u8 {
@@ -499,6 +551,12 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
+    const exec = try parseFramedRequest("REQ 12 EXEC echo tcp-service-ok");
+    switch (exec.operation) {
+        .execute => |command| try std.testing.expectEqualStrings("echo tcp-service-ok", command),
+        else => return error.InvalidFrame,
+    }
+
     const stat = try parseFramedRequest("REQ 13 STAT /tools/cache/tool.txt");
     switch (stat.operation) {
         .stat => |path| try std.testing.expectEqualStrings("/tools/cache/tool.txt", path),
@@ -565,6 +623,23 @@ test "baremetal tool service returns framed responses for failing commands" {
     try std.testing.expect(std.mem.startsWith(u8, response, "RESP 9 "));
     try std.testing.expect(std.mem.indexOf(u8, response, "ERR exit=127\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, response, "unknown command") != null);
+}
+
+test "baremetal tool service returns structured exec responses" {
+    const response = try handleFramedRequest(std.testing.allocator, "REQ 10 EXEC echo tcp-service-ok", 256, 256, 256);
+    defer std.testing.allocator.free(response);
+
+    try std.testing.expect(std.mem.startsWith(u8, response, "RESP 10 "));
+    try std.testing.expect(std.mem.indexOf(u8, response, "exit=0 stdout_len=15 stderr_len=0\nstdout:\ntcp-service-ok\nstderr:\n") != null);
+}
+
+test "baremetal tool service returns structured exec stderr for failures" {
+    const response = try handleFramedRequest(std.testing.allocator, "REQ 11 EXEC missing-command", 256, 256, 512);
+    defer std.testing.allocator.free(response);
+
+    try std.testing.expect(std.mem.startsWith(u8, response, "RESP 11 "));
+    try std.testing.expect(std.mem.indexOf(u8, response, "exit=127") != null);
+    try std.testing.expect(std.mem.indexOf(u8, response, "stderr:\nunknown command") != null);
 }
 
 test "baremetal tool service handles framed filesystem requests" {

@@ -34,6 +34,7 @@ pub const VirtioGpuUpdate = struct {
     manufacturer_id: u16,
     product_code: u16,
     serial_number: u32,
+    capability_flags: u16,
     edid: []const u8,
 };
 
@@ -68,7 +69,7 @@ fn initState() void {
         .product_code = 0,
         .serial_number = 0,
         .edid_length = 0,
-        .reserved1 = 0,
+        .capability_flags = 0,
     };
 }
 
@@ -131,6 +132,7 @@ pub fn updateFromVirtioGpu(update: VirtioGpuUpdate) void {
     state.manufacturer_id = update.manufacturer_id;
     state.product_code = update.product_code;
     state.serial_number = update.serial_number;
+    state.capability_flags = update.capability_flags;
 
     const edid_len = @min(update.edid.len, edid_bytes.len);
     @memset(&edid_bytes, 0);
@@ -185,11 +187,13 @@ test "display output state copies virtio gpu edid payload" {
         .manufacturer_id = 0x1234,
         .product_code = 0x5678,
         .serial_number = 0xCAFEBABE,
+        .capability_flags = abi.display_capability_digital_input | abi.display_capability_preferred_timing,
         .edid = &edid,
     });
     const output = statePtr();
     try std.testing.expectEqual(@as(u8, abi.display_backend_virtio_gpu), output.backend);
     try std.testing.expectEqual(@as(u8, abi.display_controller_virtio_gpu), output.controller);
     try std.testing.expectEqual(@as(u16, 4), output.edid_length);
+    try std.testing.expectEqual(@as(u16, abi.display_capability_digital_input | abi.display_capability_preferred_timing), output.capability_flags);
     try std.testing.expectEqual(@as(u8, 0xFF), edidByte(1));
 }

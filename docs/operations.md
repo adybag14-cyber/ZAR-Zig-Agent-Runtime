@@ -19,7 +19,7 @@
 - framebuffer/console is now locally strict-closed in `FS5.5`:
   - `src/baremetal/framebuffer_console.zig` programs a real Bochs/QEMU BGA linear framebuffer surface with bounded mode support for `640x400`, `800x600`, `1024x768`, `1280x720`, and `1280x1024`
   - `src/baremetal/pci.zig` discovers the display BAR and enables decode on the selected PCI function
-  - `src/baremetal/edid.zig`, `src/baremetal/display_output.zig`, and `src/baremetal/virtio_gpu.zig` now add the first real EDID-backed controller-capability path over `virtio-gpu-pci`
+- `src/baremetal/edid.zig`, `src/baremetal/display_output.zig`, and `src/baremetal/virtio_gpu.zig` now add the first real EDID-backed controller-capability path over `virtio-gpu-pci`, including exported digital-input, preferred-timing, CEA, DisplayID, HDMI-vendor-data, and basic-audio flags when present
   - `src/pal/framebuffer.zig` exposes the framebuffer surface, supported-mode table, and exported display-output state through the bare-metal PAL
   - `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1` proves live MMIO banner pixels over the freestanding PVH image at `640x400`, `1024x768`, and `1280x720`
   - `scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1` proves live `virtio-gpu-pci` EDID/controller capability export over the freestanding PVH image
@@ -46,13 +46,13 @@
   - `src/protocol/ipv4.zig` implements IPv4 framing plus checksum validation
   - `src/protocol/udp.zig` implements UDP framing plus pseudo-header checksum validation
   - `src/protocol/tcp.zig` now implements a real strict TCP framing/checksum slice plus a minimal client/server handshake, payload-exchange, and bounded four-way teardown state machine with client-side SYN retransmission, established-payload retransmission, bounded FIN retransmission/timeout recovery during teardown, a bounded multi-flow session table, bounded cumulative-ACK advancement across multiple in-flight payload chunks, strict remote-window enforcement for bounded sequential payload chunking, and zero-window blocking until a pure ACK reopens the remote window
-  - `src/pal/net.zig` now also exposes `sendTcpPacket` / `pollTcpPacketStrictInto`, explicit DNS server configuration, and a real freestanding bounded `http://` POST path on top of the RTL8139/TCP stack
+  - `src/pal/net.zig` now also exposes `sendTcpPacket` / `pollTcpPacketStrictInto`, explicit DNS server configuration, a real freestanding bounded `http://` POST path on top of the RTL8139/TCP stack, and an experimental freestanding `https://` path that is not yet strict-closed
   - `src/pal/net.zig` host regressions now also prove two TCP flows can handshake, exchange payloads, and teardown independently through the mock RTL8139 path
-  - that same PAL surface now also proves hostname resolution through DNS, ARP resolution, TCP connect, HTTP request framing, and HTTP response parsing for freestanding plain HTTP; `https://` remains explicitly unsupported until TLS exists
+  - that same PAL surface now also proves hostname resolution through DNS, ARP resolution, TCP connect, HTTP request framing, and HTTP response parsing for freestanding plain HTTP; the freestanding `https://` path is now experimental in code but does not yet have a green live proof
   - `scripts/baremetal-qemu-rtl8139-http-post-probe-check.ps1` now proves the freestanding PAL `http://` POST path live over RTL8139 with DNS, TCP, HTTP, and allocator-owned response buffering
-  - `src/baremetal/tool_service.zig` now exposes a bounded framed request/response shim on top of the bare-metal tool substrate for the TCP path, with typed `CMD`, `GET`, `PUT`, `STAT`, `PKG`, `PKGLIST`, and `PKGRUN` requests plus bounded batched request parsing/execution on one flow
-  - host/module validation now also proves typed TCP file-service and package-service behavior on top of the bare-metal filesystem, including `PUT`, `GET`, `STAT`, `PKG`, `PKGLIST`, `PKGRUN`, persisted `run-script`, canonical `run-package`, and mixed typed batch handling with concatenated framed responses through that service seam
-  - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1`, and `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1` prove live ARP, IPv4, UDP, and TCP handshake/payload exchange plus bounded four-way close over the freestanding PVH image, including dropped-first-SYN recovery, dropped-first-payload recovery, dropped-first-FIN recovery on both close sides, bounded two-flow session isolation, zero-window block/reopen behavior, bounded sequential payload chunking, framed multi-request command-service exchange, bounded typed batch request multiplexing on one TCP flow, typed TCP `PUT` upload with direct filesystem readback, typed `PKG` / `PKGLIST` / `PKGRUN` package-service exchange, canonical `/packages/<name>/bin/main.oc` readback, and package output readback over the attached disk-backed bare-metal path
+  - `src/baremetal/tool_service.zig` now exposes a bounded framed request/response shim on top of the bare-metal tool substrate for the TCP path, with typed `CMD`, `EXEC`, `GET`, `PUT`, `STAT`, `PKG`, `PKGLIST`, and `PKGRUN` requests plus bounded batched request parsing/execution on one flow
+  - host/module validation now also proves typed TCP file-service and package-service behavior on top of the bare-metal filesystem, including structured `EXEC` exit/stdout/stderr responses, `PUT`, `GET`, `STAT`, `PKG`, `PKGLIST`, `PKGRUN`, persisted `run-script`, canonical `run-package`, and mixed typed batch handling with concatenated framed responses through that service seam
+  - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1`, and `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1` prove live ARP, IPv4, UDP, and TCP handshake/payload exchange plus bounded four-way close over the freestanding PVH image, including dropped-first-SYN recovery, dropped-first-payload recovery, dropped-first-FIN recovery on both close sides, bounded two-flow session isolation, zero-window block/reopen behavior, bounded sequential payload chunking, bounded cumulative-ACK advancement across in-flight payload chunks, framed multi-request command-service exchange, typed `EXEC` exchange, bounded typed batch request multiplexing on one TCP flow, typed TCP `PUT` upload with direct filesystem readback, typed `PKG` / `PKGLIST` / `PKGRUN` package-service exchange, canonical `/packages/<name>/bin/main.oc` readback, and package output readback over the attached disk-backed bare-metal path
 - DHCP framing/decode is now also proven on the real RTL8139 path:
   - `src/protocol/dhcp.zig` provides strict DHCP discover encode/decode
   - `src/pal/net.zig` exposes DHCP send/poll helpers for the hosted/mock path
@@ -68,8 +68,8 @@
   - `scripts/baremetal-qemu-rtl8139-gateway-probe-check.ps1` proves live ARP-reply learning, ARP-cache population, gateway next-hop selection, direct-subnet bypass, and routed UDP delivery over the freestanding PVH image
 - deeper networking depth remains future work above the FS5.5 closure bar:
   - sliding-window and congestion-control behavior beyond the current bounded zero-window reopen + sequential chunk-and-ACK session model
-  - higher-level service/runtime layers beyond the current bounded typed batch file/package seam on the bare-metal TCP path
-  - TLS-backed `https://` delivery on the freestanding PAL network path
+  - higher-level service/runtime layers beyond the current bounded typed batch + `EXEC` file/package seam on the bare-metal TCP path
+  - live TLS-backed `https://` delivery on the freestanding PAL network path
 - filesystem usage is now also on a real shared-backend path in `FS5.5`:
   - `src/baremetal/filesystem.zig` implements path-based directory creation plus file read/write/stat
   - `src/pal/fs.zig` routes the freestanding PAL filesystem surface through that layer
@@ -78,7 +78,7 @@
   - `src/baremetal/tool_exec.zig` provides the builtin command substrate used by the bare-metal PAL instead of a hosted-process stub, including persisted `run-script` execution and canonical `run-package`
   - `src/pal/proc.zig` now exposes the explicit freestanding capture path
   - `src/baremetal/package_store.zig` provides the canonical persisted package layout under `/packages/<name>/...`
-  - `src/baremetal/tool_service.zig` provides the bounded typed request/response service shim used by the TCP proof
+  - `src/baremetal/tool_service.zig` provides the bounded typed request/response service shim used by the TCP proof, including structured `EXEC` responses on top of the freestanding tool-exec substrate
   - `scripts/baremetal-qemu-tool-exec-probe-check.ps1` proves `help`, `mkdir`, `write-file`, `cat`, `stat`, `run-script`, direct filesystem readback, persisted script readback after filesystem reset/re-init, and `echo` over the freestanding PVH image with attached disk media
   - hosted/module validation also proves ATA-backed package persistence plus `run-package`, `PKG`, `PKGLIST`, and `PKGRUN`
 - `scripts/package-registry-status.ps1` now performs default npmjs/PyPI visibility checks even when invoked with only `-ReleaseTag`, so local package diagnostics no longer silently skip unresolved public-registry state.
