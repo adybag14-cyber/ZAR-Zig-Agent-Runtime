@@ -114,8 +114,11 @@ var rx_snapshot: [rx_snapshot_capacity]u8 = [_]u8{0} ** rx_snapshot_capacity;
 var mock_enabled: bool = false;
 var mock_pending_rx_len: u32 = 0;
 var mock_pending_rx_status: u32 = 0;
-const TestSendHook = *const fn (frame: []const u8) void;
-var mock_send_hook: ?TestSendHook = null;
+const SendHook = *const fn (frame: []const u8) void;
+var mock_send_hook: ?SendHook = null;
+var probe_send_hook: ?SendHook = null;
+var probe_pending_rx_len: u32 = 0;
+var probe_pending_rx_status: u32 = 0;
 
 pub fn resetForTest() void {
     resetState();
@@ -126,6 +129,9 @@ pub fn resetForTest() void {
     mock_pending_rx_len = 0;
     mock_pending_rx_status = 0;
     mock_send_hook = null;
+    probe_send_hook = null;
+    probe_pending_rx_len = 0;
+    probe_pending_rx_status = 0;
 }
 
 pub fn testEnableMockDevice() void {
@@ -139,9 +145,20 @@ pub fn testDisableMockDevice() void {
     resetForTest();
 }
 
-pub fn testInstallMockSendHook(hook: ?TestSendHook) void {
+pub fn testInstallMockSendHook(hook: ?SendHook) void {
     if (!builtin.is_test) return;
     mock_send_hook = hook;
+}
+
+pub fn installProbeSendHook(hook: ?SendHook) void {
+    probe_send_hook = hook;
+}
+
+pub fn injectProbeReceive(frame: []const u8) void {
+    const rx_len: usize = @min(frame.len, rx_snapshot_capacity);
+    std.mem.copyForwards(u8, rx_snapshot[0..rx_len], frame[0..rx_len]);
+    probe_pending_rx_len = @as(u32, @intCast(rx_len));
+    probe_pending_rx_status = isr_rok;
 }
 
 pub fn statePtr() *const abi.BaremetalEthernetState {
@@ -235,6 +252,10 @@ pub fn sendFrame(frame: []const u8) Error!void {
     @memset(tx_buf, 0);
     std.mem.copyForwards(u8, tx_buf[0..frame.len], frame);
 
+    if (probe_send_hook) |hook| {
+        hook(tx_buf[0..send_len]);
+    }
+
     if (mockAvailable()) {
         if (mock_send_hook) |hook| {
             hook(tx_buf[0..send_len]);
@@ -267,6 +288,15 @@ pub fn sendFrame(frame: []const u8) Error!void {
 
 pub fn pollReceive() Error!u32 {
     if (state.initialized == 0 and !init()) return error.NotAvailable;
+
+    if (probe_pending_rx_len != 0) {
+        state.last_rx_len = probe_pending_rx_len;
+        state.last_rx_status = probe_pending_rx_status;
+        state.rx_packets +%= 1;
+        probe_pending_rx_len = 0;
+        probe_pending_rx_status = 0;
+        return state.last_rx_len;
+    }
 
     if (mockAvailable()) {
         if (mock_pending_rx_len == 0) return 0;

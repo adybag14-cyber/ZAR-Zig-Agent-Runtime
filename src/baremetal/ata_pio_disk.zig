@@ -50,12 +50,31 @@ const gpt_header_lba: u32 = 1;
 const gpt_signature = [_]u8{ 'E', 'F', 'I', ' ', 'P', 'A', 'R', 'T' };
 const gpt_header_min_size: u32 = 92;
 const gpt_partition_entry_min_size: u32 = 128;
+pub const max_partitions: usize = 8;
+
+pub const PartitionScheme = enum(u8) {
+    mbr = 1,
+    gpt = 2,
+};
+
+pub const PartitionInfo = struct {
+    scheme: PartitionScheme,
+    start_lba: u32,
+    sector_count: u32,
+};
 
 var state: abi.BaremetalStorageState = undefined;
 var probe_completed: bool = false;
 var probe_saw_device: bool = false;
 var raw_block_count: u32 = 0;
 var mounted_lba_base: u32 = 0;
+var discovered_partitions: [max_partitions]PartitionInfo = [_]PartitionInfo{.{
+    .scheme = .mbr,
+    .start_lba = 0,
+    .sector_count = 0,
+}} ** max_partitions;
+var discovered_partition_count: u8 = 0;
+var selected_partition_index: u8 = std.math.maxInt(u8);
 
 const MockDevice = struct {
     enabled: bool = false,
@@ -103,6 +122,24 @@ pub fn statePtr() *const abi.BaremetalStorageState {
 
 pub fn logicalBaseLba() u32 {
     return mounted_lba_base;
+}
+
+pub fn partitionCount() u8 {
+    return discovered_partition_count;
+}
+
+pub fn selectedPartitionIndex() ?u8 {
+    return if (selected_partition_index == std.math.maxInt(u8)) null else selected_partition_index;
+}
+
+pub fn partitionInfo(index: u8) ?PartitionInfo {
+    if (index >= discovered_partition_count) return null;
+    return discovered_partitions[index];
+}
+
+pub fn selectPartition(index: u8) Error!void {
+    if (index >= discovered_partition_count) return error.OutOfRange;
+    applySelectedPartition(index);
 }
 
 pub fn readBlocks(lba: u32, out: []u8) Error!void {
@@ -191,18 +228,27 @@ pub fn testDisableMockDevice() void {
 }
 
 pub fn testInstallMockMbrPartition(start_lba: u32, sector_count: u32, partition_type: u8) void {
+    testInstallMockMbrPartitionAt(0, start_lba, sector_count, partition_type);
+}
+
+pub fn testInstallMockMbrPartitionAt(entry_index: u8, start_lba: u32, sector_count: u32, partition_type: u8) void {
     if (!builtin.is_test or !mock_device.enabled) return;
+    std.debug.assert(entry_index < mbr_partition_count);
     std.debug.assert(start_lba > 0);
     std.debug.assert(sector_count > 0);
     std.debug.assert(@as(u64, start_lba) + sector_count <= mock_device.sector_count);
 
-    @memset(mock_device.data[0..block_size], 0);
-    const entry = mock_device.data[mbr_partition_table_offset .. mbr_partition_table_offset + mbr_partition_entry_len];
+    if (mock_device.data[mbr_signature_offset] != mbr_signature_low or mock_device.data[mbr_signature_offset + 1] != mbr_signature_high) {
+        @memset(mock_device.data[0..block_size], 0);
+        mock_device.data[mbr_signature_offset] = mbr_signature_low;
+        mock_device.data[mbr_signature_offset + 1] = mbr_signature_high;
+    }
+    const offset = mbr_partition_table_offset + (@as(usize, entry_index) * mbr_partition_entry_len);
+    const entry = mock_device.data[offset .. offset + mbr_partition_entry_len];
+    @memset(entry, 0);
     entry[4] = partition_type;
     writeLeU32(entry[8..12], start_lba);
     writeLeU32(entry[12..16], sector_count);
-    mock_device.data[mbr_signature_offset] = mbr_signature_low;
-    mock_device.data[mbr_signature_offset + 1] = mbr_signature_high;
 }
 
 pub fn testInstallMockProtectiveGptPartition(start_lba: u32, sector_count: u32) void {
@@ -242,6 +288,25 @@ pub fn testInstallMockProtectiveGptPartition(start_lba: u32, sector_count: u32) 
     writeLeU64(partition_entry[40..48], @as(u64, start_lba) + sector_count - 1);
 }
 
+pub fn testInstallMockGptPartitionAt(entry_index: u32, start_lba: u32, sector_count: u32) void {
+    if (!builtin.is_test or !mock_device.enabled) return;
+    std.debug.assert(entry_index < 4);
+    std.debug.assert(start_lba >= 34);
+    std.debug.assert(sector_count > 0);
+    std.debug.assert(@as(u64, start_lba) + sector_count <= mock_device.sector_count);
+
+    const entry_offset = (2 * block_size) + (@as(usize, @intCast(entry_index)) * gpt_partition_entry_min_size);
+    const partition_entry = mock_device.data[entry_offset .. entry_offset + gpt_partition_entry_min_size];
+    @memset(partition_entry, 0);
+    const type_guid = [_]u8{ 0xAF, 0x3D, 0xC6, 0x0F, 0x83, 0x84, 0x72, 0x47, 0x8E, 0x79, 0x3D, 0x69, 0xD8, 0x47, 0x7D, 0xE4 };
+    var unique_guid = [_]u8{ 0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF };
+    unique_guid[0] +%= @as(u8, @intCast(entry_index));
+    @memcpy(partition_entry[0..16], type_guid[0..]);
+    @memcpy(partition_entry[16..32], unique_guid[0..]);
+    writeLeU64(partition_entry[32..40], start_lba);
+    writeLeU64(partition_entry[40..48], @as(u64, start_lba) + sector_count - 1);
+}
+
 pub fn testReadMockByteRaw(lba: u32, offset: u32) u8 {
     if (!builtin.is_test or !mock_device.enabled) return 0;
     if (lba >= mock_device.sector_count or offset >= block_size) return 0;
@@ -269,6 +334,7 @@ fn resetState() void {
     };
     raw_block_count = 0;
     mounted_lba_base = 0;
+    clearDiscoveredPartitions();
 }
 
 fn hardwareBacked() bool {
@@ -334,16 +400,18 @@ fn mountWholeDisk(block_count_value: u32) void {
     mounted_lba_base = 0;
     state.block_count = block_count_value;
     state.mounted = 1;
+    clearDiscoveredPartitions();
 }
 
 fn mountPartitionedView(sector0: []const u8, block_count_value: u32) void {
     raw_block_count = block_count_value;
-    if (mountFirstMbrPartition(sector0, block_count_value)) return;
-    if (hasProtectiveMbrPartition(sector0) and mountFirstGptPartition(block_count_value)) return;
+    clearDiscoveredPartitions();
+    if (discoverMbrPartitions(sector0, block_count_value)) return;
+    if (hasProtectiveMbrPartition(sector0) and discoverGptPartitions(block_count_value)) return;
     mountWholeDisk(block_count_value);
 }
 
-fn mountFirstMbrPartition(sector0: []const u8, block_count_value: u32) bool {
+fn discoverMbrPartitions(sector0: []const u8, block_count_value: u32) bool {
     if (sector0.len < block_size) return false;
     if (sector0[mbr_signature_offset] != mbr_signature_low or sector0[mbr_signature_offset + 1] != mbr_signature_high) {
         return false;
@@ -359,13 +427,11 @@ fn mountFirstMbrPartition(sector0: []const u8, block_count_value: u32) bool {
         if (partition_type == 0 or partition_type == mbr_partition_type_protective_gpt) continue;
         if (start_lba == 0 or sector_count == 0) continue;
         if (@as(u64, start_lba) + sector_count > block_count_value) continue;
-
-        mounted_lba_base = start_lba;
-        state.block_count = sector_count;
-        state.mounted = 1;
-        return true;
+        recordDiscoveredPartition(.mbr, start_lba, sector_count);
     }
-    return false;
+    if (discovered_partition_count == 0) return false;
+    applySelectedPartition(0);
+    return true;
 }
 
 fn hasProtectiveMbrPartition(sector0: []const u8) bool {
@@ -380,7 +446,7 @@ fn hasProtectiveMbrPartition(sector0: []const u8) bool {
     return false;
 }
 
-fn mountFirstGptPartition(block_count_value: u32) bool {
+fn discoverGptPartitions(block_count_value: u32) bool {
     var header_block = [_]u8{0} ** block_size;
     readPhysicalSector(gpt_header_lba, header_block[0..]) catch return false;
     if (!std.mem.eql(u8, header_block[0..gpt_signature.len], gpt_signature[0..])) return false;
@@ -423,13 +489,40 @@ fn mountFirstGptPartition(block_count_value: u32) bool {
         const sector_count = (end_lba - start_lba) + 1;
         if (start_lba > std.math.maxInt(u32) or sector_count > std.math.maxInt(u32)) continue;
 
-        mounted_lba_base = @as(u32, @intCast(start_lba));
-        state.block_count = @as(u32, @intCast(sector_count));
-        state.mounted = 1;
-        return true;
+        recordDiscoveredPartition(.gpt, @as(u32, @intCast(start_lba)), @as(u32, @intCast(sector_count)));
     }
 
-    return false;
+    if (discovered_partition_count == 0) return false;
+    applySelectedPartition(0);
+    return true;
+}
+
+fn clearDiscoveredPartitions() void {
+    @memset(&discovered_partitions, .{
+        .scheme = .mbr,
+        .start_lba = 0,
+        .sector_count = 0,
+    });
+    discovered_partition_count = 0;
+    selected_partition_index = std.math.maxInt(u8);
+}
+
+fn recordDiscoveredPartition(scheme: PartitionScheme, start_lba: u32, sector_count: u32) void {
+    if (discovered_partition_count >= max_partitions) return;
+    discovered_partitions[discovered_partition_count] = .{
+        .scheme = scheme,
+        .start_lba = start_lba,
+        .sector_count = sector_count,
+    };
+    discovered_partition_count += 1;
+}
+
+fn applySelectedPartition(index: u8) void {
+    const partition = discovered_partitions[index];
+    mounted_lba_base = partition.start_lba;
+    state.block_count = partition.sector_count;
+    state.mounted = 1;
+    selected_partition_index = index;
 }
 
 fn readLeU32(bytes: []const u8) u32 {
@@ -670,6 +763,43 @@ test "ata pio mock device mounts first MBR partition as logical disk" {
     try std.testing.expectEqual(@as(u8, payload[1]), testReadMockByteRaw(2054, 1));
 }
 
+test "ata pio mock device enumerates and selects multiple MBR partitions" {
+    testEnableMockDevice(16384);
+    defer testDisableMockDevice();
+    testInstallMockMbrPartition(2048, 4096, 0x83);
+    testInstallMockMbrPartitionAt(1, 8192, 2048, 0x83);
+
+    init();
+
+    try std.testing.expectEqual(@as(u8, 2), partitionCount());
+    try std.testing.expectEqual(@as(u8, 0), selectedPartitionIndex().?);
+    const partition0 = partitionInfo(0).?;
+    const partition1 = partitionInfo(1).?;
+    try std.testing.expectEqual(PartitionScheme.mbr, partition0.scheme);
+    try std.testing.expectEqual(@as(u32, 2048), partition0.start_lba);
+    try std.testing.expectEqual(@as(u32, 4096), partition0.sector_count);
+    try std.testing.expectEqual(@as(u32, 8192), partition1.start_lba);
+    try std.testing.expectEqual(@as(u32, 2048), partition1.sector_count);
+
+    try selectPartition(1);
+    try std.testing.expectEqual(@as(u8, 1), selectedPartitionIndex().?);
+    try std.testing.expectEqual(@as(u32, 8192), logicalBaseLba());
+    try std.testing.expectEqual(@as(u32, 2048), statePtr().block_count);
+
+    var payload = [_]u8{0} ** block_size;
+    for (&payload, 0..) |*byte, idx| {
+        byte.* = @as(u8, @truncate(0x68 + idx));
+    }
+    try writeBlocks(3, payload[0..]);
+    try std.testing.expectEqual(@as(u8, 0), testReadMockByteRaw(2048 + 3, 0));
+    try std.testing.expectEqual(@as(u8, payload[0]), testReadMockByteRaw(8192 + 3, 0));
+    try std.testing.expectEqual(@as(u8, payload[1]), testReadMockByteRaw(8192 + 3, 1));
+
+    try selectPartition(0);
+    try std.testing.expectEqual(@as(u8, 0), selectedPartitionIndex().?);
+    try std.testing.expectEqual(@as(u32, 2048), logicalBaseLba());
+}
+
 test "ata pio mock device mounts first GPT partition as logical disk" {
     testEnableMockDevice(16384);
     defer testDisableMockDevice();
@@ -692,4 +822,36 @@ test "ata pio mock device mounts first GPT partition as logical disk" {
     try std.testing.expectEqual(@as(u8, 0), testReadMockByteRaw(8, 0));
     try std.testing.expectEqual(@as(u8, payload[0]), testReadMockByteRaw(2056, 0));
     try std.testing.expectEqual(@as(u8, payload[1]), testReadMockByteRaw(2056, 1));
+}
+
+test "ata pio mock device enumerates and selects multiple GPT partitions" {
+    testEnableMockDevice(16384);
+    defer testDisableMockDevice();
+    testInstallMockProtectiveGptPartition(2048, 8192);
+    testInstallMockGptPartitionAt(1, 12288, 2048);
+
+    init();
+
+    try std.testing.expectEqual(@as(u8, 2), partitionCount());
+    const partition0 = partitionInfo(0).?;
+    const partition1 = partitionInfo(1).?;
+    try std.testing.expectEqual(PartitionScheme.gpt, partition0.scheme);
+    try std.testing.expectEqual(PartitionScheme.gpt, partition1.scheme);
+    try std.testing.expectEqual(@as(u32, 2048), partition0.start_lba);
+    try std.testing.expectEqual(@as(u32, 8192), partition0.sector_count);
+    try std.testing.expectEqual(@as(u32, 12288), partition1.start_lba);
+    try std.testing.expectEqual(@as(u32, 2048), partition1.sector_count);
+
+    try selectPartition(1);
+    try std.testing.expectEqual(@as(u32, 12288), logicalBaseLba());
+    try std.testing.expectEqual(@as(u32, 2048), statePtr().block_count);
+
+    var payload = [_]u8{0} ** block_size;
+    for (&payload, 0..) |*byte, idx| {
+        byte.* = @as(u8, @truncate(0x78 + idx));
+    }
+    try writeBlocks(4, payload[0..]);
+    try std.testing.expectEqual(@as(u8, 0), testReadMockByteRaw(2048 + 4, 0));
+    try std.testing.expectEqual(@as(u8, payload[0]), testReadMockByteRaw(12288 + 4, 0));
+    try std.testing.expectEqual(@as(u8, payload[1]), testReadMockByteRaw(12288 + 4, 1));
 }

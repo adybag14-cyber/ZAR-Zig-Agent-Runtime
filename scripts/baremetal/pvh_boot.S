@@ -134,5 +134,7 @@ stack32_top:
 
 .balign 16
 stack64:
-    .skip 16384
+    # The freestanding PAL path now carries DNS + TCP + HTTP + service framing.
+    # Keep the boot/runtime stack comfortably above the page-table scratch area.
+    .skip 131072
 stack64_top:
