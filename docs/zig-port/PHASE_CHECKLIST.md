@@ -5,7 +5,7 @@ Historical note: milestone validation counts below are preserved as captured at 
 Latest edge release: `v0.2.0-zig-edge.29` is published with binaries, parity evidence, SBOM/provenance, npm tarball, wheel, and sdist attached.
 Registry status:
 - npm public publish still requires npm-side scope/package permission or `NPM_TOKEN`; GitHub release asset + GitHub Packages fallback are available now.
-- PyPI public publish still requires a matching trusted publisher or `PYPI_API_TOKEN`; workflow claim shape is now confirmed as `repo:adybag14-cyber/openclaw-zig-port:environment:pypi`.
+- PyPI public publish still requires a matching trusted publisher or `PYPI_API_TOKEN`; workflow claim shape is now confirmed as `repo:adybag14-cyber/ZAR-Zig-Agent-Runtime:environment:pypi`.
 - `scripts/package-registry-status.ps1` now checks public npmjs/PyPI visibility correctly even when called with only `-ReleaseTag`, so local release diagnostics no longer silently skip the unresolved registry state.
 - release evidence now also includes `release-status.json` + `release-status.md`, which snapshot package visibility plus the latest `zig-ci` / `docs-pages` / `release-preview` / `npm-release` / `python-release` workflow state for the target tag.
 - `FS5.5` framebuffer/console strict closure is now reached locally: `src/baremetal/framebuffer_console.zig` programs a real Bochs/QEMU BGA linear-framebuffer path with bounded mode support for `640x400`, `800x600`, and `1024x768`, `src/baremetal/pci.zig` discovers the display BAR and enables decode on the selected PCI display function, `src/pal/framebuffer.zig` exposes the surface through the PAL, host regressions in `src/baremetal/framebuffer_console.zig` and `src/baremetal_main.zig` prove framebuffer state plus glyph pixel updates and bounded mode switching, and the live QEMU+GDB proof `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1` now reads back real MMIO banner pixels from the hardware-backed framebuffer BAR over the freestanding PVH artifact at both `640x400` and `1024x768`; HDMI/DisplayPort/EDID output paths remain future depth and are not claimed here.
@@ -1214,7 +1214,7 @@ Phase 6 progress notes:
   - `openclaw-zig-v0.1.0-zig-preview.1-x86_64-macos.zip`
   - `SHA256SUMS.txt`
 - [x] GitHub release published: `v0.1.0-zig-preview.1`
-  - https://github.com/adybag14-cyber/openclaw-zig-port/releases/tag/v0.1.0-zig-preview.1
+  - https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases/tag/v0.1.0-zig-preview.1
 - [x] Cross-target note: `aarch64-linux` and `aarch64-macos` failed on local Zig `0.16.0-dev.2703+0a412853a` Windows toolchain with compiler exit code `5`; release matrix kept to passing `x86_64` targets.
 - [x] Dispatcher coverage guard: registry-wide test asserts every method in `registry.supported_methods` resolves in dispatcher (prevents method-set drift regressions).
 - [x] Added CI pipeline (`.github/workflows/zig-ci.yml`) for build/test gates and cross-target release build attempts on Zig master.
