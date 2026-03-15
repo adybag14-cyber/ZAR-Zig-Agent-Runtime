@@ -17,9 +17,11 @@ Full-stack replacement execution reference:
     - bounded `640x400x32bpp`, `800x600x32bpp`, `1024x768x32bpp`, `1280x720x32bpp`, and `1280x1024x32bpp` framebuffer layouts
     - glyph rendering into the hardware-backed MMIO surface
   - structured PCI display-adapter discovery shipped in `src/baremetal/pci.zig` and the PAL surface is exposed in `src/pal/framebuffer.zig`, with bounded mode switching plus supported-mode enumeration exported through `oc_framebuffer_set_mode`, `oc_framebuffer_supported_mode_count`, `oc_framebuffer_supported_mode_width`, and `oc_framebuffer_supported_mode_height`.
-  - hosted/host regressions now prove framebuffer state, adapter metadata, supported-mode enumeration, glyph pixel updates, bounded mode switching, and preservation of the last valid mode on unsupported requests.
+  - `src/baremetal/edid.zig`, `src/baremetal/display_output.zig`, and `src/baremetal/virtio_gpu.zig` now add the first real EDID-backed controller-capability path over `virtio-gpu-pci`, with exported display-output state and EDID bytes routed through `src/pal/framebuffer.zig` and the bare-metal ABI.
+  - hosted/host regressions now prove framebuffer state, display-output state, adapter metadata, supported-mode enumeration, glyph pixel updates, bounded mode switching, and preservation of the last valid mode on unsupported requests.
   - live QEMU+GDB proof `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1` reads back real MMIO banner pixels plus exported adapter metadata from the hardware-backed framebuffer BAR over the freestanding PVH artifact at `640x400`, `1024x768`, and `1280x720`.
-  - HDMI/DisplayPort/EDID connector-specific output paths are still future depth and are not claimed by the current branch.
+  - live QEMU+GDB proof `scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1` reads back real `virtio-gpu-pci` EDID/controller capability state, including scanout geometry, physical size, manufacturer/product IDs, and EDID bytes.
+  - real HDMI/DisplayPort connector-specific scanout paths are still future depth and are not claimed by the current branch.
   - keyboard/mouse strict closure is now reached locally.
   - real PS/2 controller path shipped in `src/baremetal/ps2_input.zig`:
     - x86 port-I/O backed controller data/status/command access (`0x60` / `0x64`)

@@ -142,6 +142,11 @@ Current local source-of-truth evidence:
   - `src/baremetal/pci.zig` discovers the selected PCI display adapter as structured metadata, exposes its framebuffer BAR, and enables decode on that PCI display function
   - `src/pal/framebuffer.zig` exposes the framebuffer path plus the supported-mode table through the PAL surface
   - `src/baremetal_main.zig` exports framebuffer state/pixel access, bounded mode switching, and supported-mode table queries through the bare-metal ABI
+- a real EDID-backed display capability path now exists beyond the rendered BGA console:
+  - `src/baremetal/edid.zig` provides bounded EDID header/checksum/timing/name parsing
+  - `src/baremetal/display_output.zig` provides the exported display-output ABI surface plus EDID byte export
+  - `src/baremetal/virtio_gpu.zig` probes the first real controller-specific path, `virtio-gpu-pci`, through modern virtio PCI capabilities plus `GET_DISPLAY_INFO` and `GET_EDID`
+  - `src/pal/framebuffer.zig` now also exposes the display-output state and EDID byte surface through the PAL seam
 - host regressions now prove the framebuffer export surface updates host-backed framebuffer state, glyph pixels, supported-mode enumeration, high-resolution mode switching, and preservation of the last valid mode on unsupported requests
 - a live bare-metal PVH/QEMU proof now passes:
   - `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1`
@@ -150,8 +155,12 @@ Current local source-of-truth evidence:
   - runtime now also reports the selected display adapter vendor/device and PCI location plus the supported-mode count/current mode index through the exported framebuffer state
   - the startup banner writes `OK`
   - actual MMIO framebuffer pixels read back `bg`, `O`, and `K` from the hardware-backed framebuffer BAR
-- current real source-of-truth display support is bounded Bochs/QEMU BGA mode-setting only
-- HDMI/DisplayPort/EDID/controller-specific output paths are not yet implemented and are not claimed by this branch
+- a second live bare-metal PVH/QEMU proof now passes:
+  - `scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1`
+  - exported display-output state has `magic=display_output_magic`, `api_version=2`, `backend=virtio_gpu`, `controller=virtio_gpu`, `connector=virtual`, and a real EDID header over `virtio-gpu-pci,edid=on`
+  - runtime now also reports the selected virtio-gpu PCI vendor/device, PCI location, active scanout, current mode, preferred mode, physical dimensions, manufacturer/product IDs, and exported EDID byte surface
+- current real source-of-truth rendered display support is still bounded Bochs/QEMU BGA mode-setting only
+- real HDMI/DisplayPort connector-specific scanout paths are not yet implemented and are not claimed by this branch
 
 ### Keyboard / Mouse
 

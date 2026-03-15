@@ -4,6 +4,8 @@ const abi = @import("baremetal/abi.zig");
 const ata_pio_disk = @import("baremetal/ata_pio_disk.zig");
 const disk_installer = @import("baremetal/disk_installer.zig");
 const x86_bootstrap = @import("baremetal/x86_bootstrap.zig");
+const display_output = @import("baremetal/display_output.zig");
+const virtio_gpu = @import("baremetal/virtio_gpu.zig");
 const framebuffer_console = @import("baremetal/framebuffer_console.zig");
 const vga_text_console = @import("baremetal/vga_text_console.zig");
 const rtl8139 = @import("baremetal/rtl8139.zig");
@@ -29,6 +31,7 @@ const BaremetalKernelInfo = abi.BaremetalKernelInfo;
 const BaremetalBootDiagnostics = abi.BaremetalBootDiagnostics;
 const BaremetalConsoleState = abi.BaremetalConsoleState;
 const BaremetalFramebufferState = abi.BaremetalFramebufferState;
+const BaremetalDisplayOutputState = abi.BaremetalDisplayOutputState;
 const BaremetalEthernetState = abi.BaremetalEthernetState;
 const BaremetalStorageState = abi.BaremetalStorageState;
 const BaremetalStoragePartitionInfo = abi.BaremetalStoragePartitionInfo;
@@ -86,6 +89,7 @@ const qemu_tool_exec_probe_ok_code: u8 = 0x3D;
 const qemu_rtl8139_gateway_probe_ok_code: u8 = 0x3E;
 const qemu_rtl8139_http_post_probe_ok_code: u8 = 0x3F;
 const qemu_ata_gpt_installer_probe_ok_code: u8 = 0x40;
+const qemu_virtio_gpu_display_probe_ok_code: u8 = 0x41;
 const build_options = if (builtin.is_test)
     struct {
         pub const qemu_smoke: bool = false;
@@ -105,6 +109,7 @@ const build_options = if (builtin.is_test)
         pub const tool_exec_probe: bool = false;
         pub const rtl8139_gateway_probe: bool = false;
         pub const ata_gpt_installer_probe: bool = false;
+        pub const virtio_gpu_display_probe: bool = false;
     }
 else
     @import("build_options");
@@ -125,6 +130,7 @@ const rtl8139_http_post_probe_enabled: bool = if (@hasDecl(build_options, "rtl81
 const tool_exec_probe_enabled: bool = build_options.tool_exec_probe;
 const rtl8139_gateway_probe_enabled: bool = build_options.rtl8139_gateway_probe;
 const ata_gpt_installer_probe_enabled: bool = if (@hasDecl(build_options, "ata_gpt_installer_probe")) build_options.ata_gpt_installer_probe else false;
+const virtio_gpu_display_probe_enabled: bool = if (@hasDecl(build_options, "virtio_gpu_display_probe")) build_options.virtio_gpu_display_probe else false;
 
 const ata_probe_raw_lba: u32 = 300;
 const ata_probe_raw_block_count: u32 = 2;
@@ -522,6 +528,40 @@ const ToolExecProbeError = error{
     FilesystemReadbackMismatch,
 };
 
+const VirtioGpuDisplayProbeError = error{
+    UnsupportedPlatform,
+    DeviceNotFound,
+    MissingCapabilities,
+    MissingVersion1,
+    MissingEdidFeature,
+    FeaturesRejected,
+    QueueUnavailable,
+    QueueTooSmall,
+    RequestTimedOut,
+    InvalidDisplayInfoResponse,
+    InvalidEdidResponse,
+    NoConnectedScanout,
+    InvalidEdid,
+    StateMagicMismatch,
+    BackendMismatch,
+    ControllerMismatch,
+    ConnectorMismatch,
+    HardwareBackedMismatch,
+    ConnectedMismatch,
+    EdidPresenceMismatch,
+    VendorMismatch,
+    DeviceMismatch,
+    ActiveScanoutMismatch,
+    CurrentModeMismatch,
+    PreferredModeMismatch,
+    PhysicalSizeMismatch,
+    ManufacturerMismatch,
+    ProductMismatch,
+    SerialMismatch,
+    EdidLengthMismatch,
+    EdidHeaderMismatch,
+};
+
 const Multiboot2Header = extern struct {
     magic: u32,
     architecture: u32,
@@ -811,6 +851,14 @@ pub export fn oc_framebuffer_pixel(index: u32) u32 {
 
 pub export fn oc_framebuffer_pixel_at(x: u32, y: u32) u32 {
     return framebuffer_console.pixelAt(x, y);
+}
+
+pub export fn oc_display_output_state_ptr() *const BaremetalDisplayOutputState {
+    return display_output.statePtr();
+}
+
+pub export fn oc_display_output_edid_byte(index: u16) u8 {
+    return display_output.edidByte(index);
 }
 
 pub export fn oc_keyboard_state_ptr() *const BaremetalKeyboardState {
@@ -1670,6 +1718,10 @@ fn baremetalStart() callconv(.c) noreturn {
     if (ata_gpt_installer_probe_enabled) {
         runAtaGptInstallerProbe() catch |err| qemuExit(ataGptInstallerProbeFailureCode(err));
         qemuExit(qemu_ata_gpt_installer_probe_ok_code);
+    }
+    if (virtio_gpu_display_probe_enabled) {
+        runVirtioGpuDisplayProbe() catch |err| qemuExit(virtioGpuDisplayProbeFailureCode(err));
+        qemuExit(qemu_virtio_gpu_display_probe_ok_code);
     }
     if (rtl8139_probe_enabled) {
         runRtl8139Probe() catch |err| qemuExit(rtl8139ProbeFailureCode(err));
@@ -4136,6 +4188,42 @@ fn toolExecProbeFailureCode(err: ToolExecProbeError) u8 {
     };
 }
 
+fn virtioGpuDisplayProbeFailureCode(err: VirtioGpuDisplayProbeError) u8 {
+    return switch (err) {
+        error.UnsupportedPlatform => 0x42,
+        error.DeviceNotFound => 0x43,
+        error.MissingCapabilities => 0x44,
+        error.MissingVersion1 => 0x45,
+        error.MissingEdidFeature => 0x46,
+        error.FeaturesRejected => 0x47,
+        error.QueueUnavailable => 0x48,
+        error.QueueTooSmall => 0x49,
+        error.RequestTimedOut => 0x4A,
+        error.InvalidDisplayInfoResponse => 0x4B,
+        error.InvalidEdidResponse => 0x4C,
+        error.NoConnectedScanout => 0x4D,
+        error.InvalidEdid => 0x4E,
+        error.StateMagicMismatch => 0x4F,
+        error.BackendMismatch => 0x50,
+        error.ControllerMismatch => 0x51,
+        error.ConnectorMismatch => 0x52,
+        error.HardwareBackedMismatch => 0x53,
+        error.ConnectedMismatch => 0x54,
+        error.EdidPresenceMismatch => 0x55,
+        error.VendorMismatch => 0x56,
+        error.DeviceMismatch => 0x57,
+        error.ActiveScanoutMismatch => 0x58,
+        error.CurrentModeMismatch => 0x59,
+        error.PreferredModeMismatch => 0x5A,
+        error.PhysicalSizeMismatch => 0x5B,
+        error.ManufacturerMismatch => 0x5C,
+        error.ProductMismatch => 0x5D,
+        error.SerialMismatch => 0x5E,
+        error.EdidLengthMismatch => 0x5F,
+        error.EdidHeaderMismatch => 0x60,
+    };
+}
+
 fn probeFilesystemContent(path: []const u8, expected: []const u8) bool {
     var scratch: [256]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&scratch);
@@ -4243,6 +4331,49 @@ fn runToolExecProbe() ToolExecProbeError!void {
     if (pal_proc.termExitCode(echo.term) != 0) return error.EchoExitCodeFailed;
     if (!std.mem.eql(u8, echo.stdout, "tool-exec-ok\n")) return error.EchoOutputMismatch;
     if (echo.stderr.len != 0) return error.UnexpectedStderr;
+}
+
+fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
+    resetBaremetalRuntimeForTest();
+    const result = virtio_gpu.probeAndPublish() catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.DeviceNotFound => return error.DeviceNotFound,
+        error.MissingCapabilities => return error.MissingCapabilities,
+        error.MissingVersion1 => return error.MissingVersion1,
+        error.MissingEdidFeature => return error.MissingEdidFeature,
+        error.FeaturesRejected => return error.FeaturesRejected,
+        error.QueueUnavailable => return error.QueueUnavailable,
+        error.QueueTooSmall => return error.QueueTooSmall,
+        error.RequestTimedOut => return error.RequestTimedOut,
+        error.InvalidDisplayInfoResponse => return error.InvalidDisplayInfoResponse,
+        error.InvalidEdidResponse => return error.InvalidEdidResponse,
+        error.NoConnectedScanout => return error.NoConnectedScanout,
+        error.InvalidEdid => return error.InvalidEdid,
+    };
+
+    const output = oc_display_output_state_ptr();
+    if (output.magic != abi.display_output_magic or output.api_version != abi.api_version) return error.StateMagicMismatch;
+    if (output.backend != abi.display_backend_virtio_gpu) return error.BackendMismatch;
+    if (output.controller != abi.display_controller_virtio_gpu) return error.ControllerMismatch;
+    if (output.connector_type != abi.display_connector_virtual) return error.ConnectorMismatch;
+    if (output.hardware_backed != 1) return error.HardwareBackedMismatch;
+    if (output.connected != 1) return error.ConnectedMismatch;
+    if (output.edid_present != 1) return error.EdidPresenceMismatch;
+    if (output.vendor_id != result.vendor_id) return error.VendorMismatch;
+    if (output.device_id != result.device_id) return error.DeviceMismatch;
+    if (output.active_scanout != result.active_scanout or output.scanout_count < 1) return error.ActiveScanoutMismatch;
+    if (output.current_width != result.current_width or output.current_height != result.current_height) return error.CurrentModeMismatch;
+    if (output.preferred_width != result.preferred_width or output.preferred_height != result.preferred_height) return error.PreferredModeMismatch;
+    if (output.physical_width_mm != result.physical_width_mm or output.physical_height_mm != result.physical_height_mm) return error.PhysicalSizeMismatch;
+    if (output.manufacturer_id != result.manufacturer_id) return error.ManufacturerMismatch;
+    if (output.product_code != result.product_code) return error.ProductMismatch;
+    if (output.serial_number != result.serial_number) return error.SerialMismatch;
+    if (output.edid_length < 128) return error.EdidLengthMismatch;
+
+    const edid_header = [_]u8{ 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00 };
+    for (edid_header, 0..) |expected, index| {
+        if (oc_display_output_edid_byte(@intCast(index)) != expected) return error.EdidHeaderMismatch;
+    }
 }
 
 fn ataStorageProbeFailureCode(err: AtaStorageProbeError) u8 {
@@ -5739,6 +5870,7 @@ fn resetBaremetalRuntimeForTest() void {
     oc_syscall_reset();
     oc_timer_reset();
     oc_wake_queue_clear();
+    display_output.resetForTest();
     framebuffer_console.resetForTest();
     vga_text_console.resetForTest();
     rtl8139.resetForTest();
@@ -12406,6 +12538,34 @@ test "baremetal framebuffer export surface supports bounded mode switching" {
     try std.testing.expectEqual(abi.result_not_supported, oc_framebuffer_set_mode(1920, 1080));
     try std.testing.expectEqual(@as(u16, 1280), framebuffer.width);
     try std.testing.expectEqual(@as(u16, 1024), framebuffer.height);
+}
+
+test "baremetal display output export surface mirrors bounded bga framebuffer state" {
+    resetBaremetalRuntimeForTest();
+
+    try std.testing.expectEqual(@as(u8, 0), oc_framebuffer_init());
+    var output = oc_display_output_state_ptr();
+    try std.testing.expectEqual(@as(u32, abi.display_output_magic), output.magic);
+    try std.testing.expectEqual(@as(u16, abi.api_version), output.api_version);
+    try std.testing.expectEqual(@as(u8, abi.display_backend_bga), output.backend);
+    try std.testing.expectEqual(@as(u8, abi.display_controller_bochs_bga), output.controller);
+    try std.testing.expectEqual(@as(u8, abi.display_connector_virtual), output.connector_type);
+    try std.testing.expectEqual(@as(u8, 0), output.hardware_backed);
+    try std.testing.expectEqual(@as(u8, 0), output.connected);
+    try std.testing.expectEqual(@as(u16, 640), output.current_width);
+    try std.testing.expectEqual(@as(u16, 400), output.current_height);
+    try std.testing.expectEqual(@as(u16, 640), output.preferred_width);
+    try std.testing.expectEqual(@as(u16, 400), output.preferred_height);
+    try std.testing.expectEqual(@as(u16, 0), output.edid_length);
+    try std.testing.expectEqual(@as(u8, 0), oc_display_output_edid_byte(0));
+
+    try std.testing.expectEqual(abi.result_ok, oc_framebuffer_set_mode(1280, 720));
+    output = oc_display_output_state_ptr();
+    try std.testing.expectEqual(@as(u16, 1280), output.current_width);
+    try std.testing.expectEqual(@as(u16, 720), output.current_height);
+    try std.testing.expectEqual(@as(u16, 1280), output.preferred_width);
+    try std.testing.expectEqual(@as(u16, 720), output.preferred_height);
+    try std.testing.expectEqual(@as(u8, 0), oc_display_output_edid_byte(127));
 }
 
 test "baremetal ethernet export surface initializes mock rtl8139 and loops a frame" {

@@ -41,8 +41,10 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
   - `src/baremetal/framebuffer_console.zig` now contains a real Bochs/QEMU BGA linear-framebuffer console path with bounded mode support for `640x400`, `800x600`, `1024x768`, `1280x720`, and `1280x1024`
   - `src/baremetal/pci.zig` now discovers the selected PCI display function as structured adapter metadata, exposes the framebuffer BAR, and enables decode on that device
   - `src/pal/framebuffer.zig` exposes the framebuffer path through the bare-metal PAL and the bare-metal ABI now supports bounded mode switching plus supported-mode table export through `oc_framebuffer_set_mode`, `oc_framebuffer_supported_mode_count`, `oc_framebuffer_supported_mode_width`, and `oc_framebuffer_supported_mode_height`
+  - `src/baremetal/edid.zig`, `src/baremetal/display_output.zig`, and `src/baremetal/virtio_gpu.zig` now provide EDID-backed display capability export for the first real controller-specific path, `virtio-gpu-pci`
   - `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1` now proves live MMIO banner pixels plus exported adapter metadata against the freestanding PVH artifact at `640x400`, `1024x768`, and `1280x720`
-  - real HDMI/DisplayPort/EDID connector-specific output paths are still future depth and are not claimed by this branch
+  - `scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1` now proves live `virtio-gpu-pci` EDID/controller capability export over QEMU with `edid=on`
+  - real HDMI/DisplayPort connector-specific scanout paths are still future depth and are not claimed by this branch
   - keyboard/mouse is now strict-closed in [`docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md`](docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md)
   - `src/baremetal/ps2_input.zig` now contains a real x86 port-I/O backed PS/2 controller path
   - `scripts/baremetal-qemu-ps2-input-probe-check.ps1` proves IRQ-driven keyboard/mouse state updates against the freestanding PVH artifact

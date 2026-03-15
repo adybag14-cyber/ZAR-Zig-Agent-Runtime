@@ -6,6 +6,7 @@ pub const kernel_info_magic: u32 = 0x4f434b49; // "OCKI"
 pub const boot_diag_magic: u32 = 0x4f434244; // "OCBD"
 pub const console_magic: u32 = 0x4f43434e; // "OCCN"
 pub const framebuffer_magic: u32 = 0x4f434642; // "OCFB"
+pub const display_output_magic: u32 = 0x4f43444f; // "OCDO"
 pub const storage_magic: u32 = 0x4f435354; // "OCST"
 pub const ethernet_magic: u32 = 0x4f434554; // "OCET"
 pub const tool_layout_magic: u32 = 0x4f43544c; // "OCTL"
@@ -220,6 +221,17 @@ pub const interrupt_mask_profile_custom: u8 = 255;
 pub const console_backend_host_buffer: u8 = 0;
 pub const console_backend_vga_text: u8 = 1;
 pub const console_backend_linear_framebuffer: u8 = 2;
+pub const display_backend_none: u8 = 0;
+pub const display_backend_bga: u8 = 1;
+pub const display_backend_virtio_gpu: u8 = 2;
+pub const display_controller_none: u8 = 0;
+pub const display_controller_bochs_bga: u8 = 1;
+pub const display_controller_virtio_gpu: u8 = 2;
+pub const display_connector_none: u8 = 0;
+pub const display_connector_virtual: u8 = 1;
+pub const display_connector_displayport: u8 = 2;
+pub const display_connector_hdmi: u8 = 3;
+pub const display_connector_embedded_displayport: u8 = 4;
 pub const ethernet_backend_none: u8 = 0;
 pub const ethernet_backend_rtl8139: u8 = 1;
 pub const storage_backend_ram_disk: u8 = 1;
@@ -322,6 +334,36 @@ pub const BaremetalFramebufferState = extern struct {
     supported_mode_count: u8,
     current_mode_index: u8,
     reserved2: [3]u8,
+};
+
+pub const BaremetalDisplayOutputState = extern struct {
+    magic: u32,
+    api_version: u16,
+    backend: u8,
+    controller: u8,
+    connector_type: u8,
+    hardware_backed: u8,
+    connected: u8,
+    edid_present: u8,
+    scanout_count: u8,
+    active_scanout: u8,
+    pci_bus: u8,
+    pci_device: u8,
+    pci_function: u8,
+    reserved0: u8,
+    vendor_id: u16,
+    device_id: u16,
+    current_width: u16,
+    current_height: u16,
+    preferred_width: u16,
+    preferred_height: u16,
+    physical_width_mm: u16,
+    physical_height_mm: u16,
+    manufacturer_id: u16,
+    product_code: u16,
+    serial_number: u32,
+    edid_length: u16,
+    reserved1: u16,
 };
 
 pub const BaremetalStorageState = extern struct {

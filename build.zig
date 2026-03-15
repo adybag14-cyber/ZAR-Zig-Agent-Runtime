@@ -8,6 +8,7 @@ pub fn build(b: *std.Build) void {
     const baremetal_framebuffer_probe_banner = b.option(bool, "baremetal-framebuffer-probe-banner", "Enable the bare-metal linear framebuffer probe banner in the freestanding image") orelse false;
     const baremetal_ata_storage_probe = b.option(bool, "baremetal-ata-storage-probe", "Enable the ATA-backed storage validation path in the freestanding image") orelse false;
     const baremetal_ata_gpt_installer_probe = b.option(bool, "baremetal-ata-gpt-installer-probe", "Enable the GPT-backed ATA installer validation path in the freestanding image") orelse false;
+    const baremetal_virtio_gpu_display_probe = b.option(bool, "baremetal-virtio-gpu-display-probe", "Enable the virtio-gpu EDID/display capability validation path in the freestanding image") orelse false;
     const baremetal_rtl8139_probe = b.option(bool, "baremetal-rtl8139-probe", "Enable the RTL8139 Ethernet validation path in the freestanding image") orelse false;
     const baremetal_rtl8139_arp_probe = b.option(bool, "baremetal-rtl8139-arp-probe", "Enable the RTL8139 ARP validation path in the freestanding image") orelse false;
     const baremetal_rtl8139_ipv4_probe = b.option(bool, "baremetal-rtl8139-ipv4-probe", "Enable the RTL8139 IPv4 validation path in the freestanding image") orelse false;
@@ -97,6 +98,7 @@ pub fn build(b: *std.Build) void {
     baremetal_options.addOption(bool, "framebuffer_probe_banner", baremetal_framebuffer_probe_banner);
     baremetal_options.addOption(bool, "ata_storage_probe", baremetal_ata_storage_probe);
     baremetal_options.addOption(bool, "ata_gpt_installer_probe", baremetal_ata_gpt_installer_probe);
+    baremetal_options.addOption(bool, "virtio_gpu_display_probe", baremetal_virtio_gpu_display_probe);
     baremetal_options.addOption(bool, "rtl8139_probe", baremetal_rtl8139_probe);
     baremetal_options.addOption(bool, "rtl8139_arp_probe", baremetal_rtl8139_arp_probe);
     baremetal_options.addOption(bool, "rtl8139_ipv4_probe", baremetal_rtl8139_ipv4_probe);
