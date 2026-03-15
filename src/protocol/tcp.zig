@@ -303,7 +303,14 @@ pub const Session = struct {
     pub fn acceptSynAck(self: *Session, packet: Packet) Error!Outbound {
         if (self.role != .client or self.state != .syn_sent) return error.InvalidState;
         try self.validatePorts(packet);
-        if (packet.flags != (flag_syn | flag_ack) or packet.payload.len != 0) return error.UnexpectedFlags;
+        const required_flags = flag_syn | flag_ack;
+        const forbidden_flags = flag_fin | flag_rst | flag_psh | flag_urg;
+        if ((packet.flags & required_flags) != required_flags or
+            (packet.flags & forbidden_flags) != 0 or
+            packet.payload.len != 0)
+        {
+            return error.UnexpectedFlags;
+        }
         if (packet.acknowledgment_number != self.send_next) return error.AcknowledgmentMismatch;
 
         self.recv_next = packet.sequence_number +% 1;
@@ -673,7 +680,6 @@ pub fn decode(packet: []const u8, source_ip: [4]u8, destination_ip: [4]u8) Error
 
     const data_offset_words = packet[12] >> 4;
     if (data_offset_words < header_words_no_options) return error.InvalidDataOffset;
-    if (data_offset_words != header_words_no_options) return error.UnsupportedOptions;
 
     const actual_header_len = @as(usize, data_offset_words) * 4;
     if (packet.len < actual_header_len) return error.PacketTooShort;
@@ -813,7 +819,7 @@ test "tcp rejects invalid data offset" {
     try std.testing.expectError(error.InvalidDataOffset, decode(segment[0..], source_ip, destination_ip));
 }
 
-test "tcp rejects unsupported options in strict slice" {
+test "tcp decodes option-bearing header and preserves payload slice" {
     const source_ip = [4]u8{ 192, 168, 56, 10 };
     const destination_ip = [4]u8{ 192, 168, 56, 1 };
     const payload = "DATA";
@@ -830,7 +836,10 @@ test "tcp rejects unsupported options in strict slice" {
     segment[12] = 0x60;
     writeU16Be(segment[16..18], 0);
     writeU16Be(segment[16..18], checksum(segment[0..], source_ip, destination_ip));
-    try std.testing.expectError(error.UnsupportedOptions, decode(segment[0..], source_ip, destination_ip));
+    const decoded = try decode(segment[0..], source_ip, destination_ip);
+    try std.testing.expectEqual(@as(usize, header_len + 4), decoded.data_offset_bytes);
+    try std.testing.expectEqual(flag_ack, decoded.flags);
+    try std.testing.expectEqualSlices(u8, payload, decoded.payload);
 }
 
 test "tcp session completes handshake and payload exchange" {
@@ -893,6 +902,28 @@ test "tcp session rejects synack with mismatched acknowledgment number" {
     const syn_ack_packet = try decode(syn_ack_segment[0..syn_ack_len], server_ip, client_ip);
 
     try std.testing.expectError(error.AcknowledgmentMismatch, client.acceptSynAck(syn_ack_packet));
+}
+
+test "tcp session accepts synack with explicit ecn bits" {
+    var client = Session.initClient(4321, 443, 0x0102_0304, 4096);
+    _ = try client.buildSyn();
+
+    const ack = try client.acceptSynAck(.{
+        .source_port = 443,
+        .destination_port = 4321,
+        .sequence_number = 0xA0B0_C0D0,
+        .acknowledgment_number = client.send_next,
+        .data_offset_bytes = header_len,
+        .flags = flag_syn | flag_ack | flag_ece | flag_cwr,
+        .window_size = 8192,
+        .checksum_value = 0,
+        .urgent_pointer = 0,
+        .payload = "",
+    });
+
+    try std.testing.expectEqual(flag_ack, ack.flags);
+    try std.testing.expectEqual(@as(u32, 0xA0B0_C0D1), ack.acknowledgment_number);
+    try std.testing.expectEqual(State.established, client.state);
 }
 
 test "tcp session retransmits client syn after timeout and clears timer on synack" {

@@ -413,6 +413,35 @@ const Rtl8139TcpProbeError = error{
     HttpsPostEntropyFailed,
     HttpsPostReadFailed,
     HttpsPostWriteFailed,
+    HttpsPostTcpUnexpectedFlags,
+    HttpsPostTcpSequenceMismatch,
+    HttpsPostTcpAckMismatch,
+    HttpsPostTcpWindowExceeded,
+    HttpsPostTlsMessageTooLong,
+    HttpsPostTlsTargetTooSmall,
+    HttpsPostTlsBufferTooSmall,
+    HttpsPostTlsNegativeIntoUnsigned,
+    HttpsPostTlsInvalidSignature,
+    HttpsPostTlsUnexpectedMessage,
+    HttpsPostTlsIllegalParameter,
+    HttpsPostTlsDecryptFailure,
+    HttpsPostTlsRecordOverflow,
+    HttpsPostTlsBadRecordMac,
+    HttpsPostTlsDecryptError,
+    HttpsPostTlsConnectionTruncated,
+    HttpsPostTlsDecodeError,
+    HttpsPostTlsAtServerHello,
+    HttpsPostTlsAtEncryptedExtensions,
+    HttpsPostTlsAtCertificate,
+    HttpsPostTlsAtTrustChainEstablished,
+    HttpsPostTlsAtCertificateVerify,
+    HttpsPostTlsAtServerFinishedVerified,
+    HttpsPostTlsBeforeClientFinished,
+    HttpsPostTlsAfterClientFinished,
+    HttpsPostTlsAfterInit,
+    HttpsPostTlsNoWriterFlush,
+    HttpsPostTlsNoPayloadEmit,
+    HttpsPostTlsWindowBlockedBeforeEmit,
     HttpsPostLastTxNotIpv4,
     HttpsPostLastTxIpv4DecodeFailed,
     HttpsPostLastTxNotTcp,
@@ -3934,7 +3963,30 @@ fn runRtl8139HttpsPostProbe() Rtl8139TcpProbeError!void {
     ) catch |err| {
         const any_err: anyerror = err;
         const err_name = @errorName(any_err);
+        const tls_stage = pal_net.lastHttpsTlsInitStage();
+        const tls_transport_debug = pal_net.lastHttpsTlsTransportDebug().*;
         if (any_err == error.Timeout) {
+            switch (tls_stage) {
+                .server_hello_received => return error.HttpsPostTlsAtServerHello,
+                .encrypted_extensions_received => return error.HttpsPostTlsAtEncryptedExtensions,
+                .certificate_received => return error.HttpsPostTlsAtCertificate,
+                .trust_chain_established => return error.HttpsPostTlsAtTrustChainEstablished,
+                .certificate_verify_received => return error.HttpsPostTlsAtCertificateVerify,
+                .server_finished_verified => return error.HttpsPostTlsAtServerFinishedVerified,
+                .client_finished_flushed => return error.HttpsPostTlsAfterClientFinished,
+                .init_complete => return error.HttpsPostTlsAfterInit,
+                else => {},
+            }
+            if (tls_transport_debug.flush_calls == 0 and tls_transport_debug.drain_calls == 0 and tls_transport_debug.write_all_calls == 0) {
+                return error.HttpsPostTlsNoWriterFlush;
+            }
+            if (tls_transport_debug.sent_segments == 0) {
+                const effective_window = @min(tls_transport_debug.last_remote_window, tls_transport_debug.last_congestion_window);
+                if (tls_transport_debug.wait_writable_calls != 0 and tls_transport_debug.last_bytes_in_flight >= effective_window) {
+                    return error.HttpsPostTlsWindowBlockedBeforeEmit;
+                }
+                return error.HttpsPostTlsNoPayloadEmit;
+            }
             if (eth.tx_packets <= tx_packets_before_http) return error.HttpsPostNoTxProgress;
             if (eth.rx_packets <= rx_packets_before_http) {
                 return classifyLastTransmittedTcpProbeFrame(.{ 10, 0, 2, 2 }, 8443);
@@ -3957,6 +4009,34 @@ fn runRtl8139HttpsPostProbe() Rtl8139TcpProbeError!void {
         if (any_err == error.InsufficientEntropy) return error.HttpsPostEntropyFailed;
         if (any_err == error.ReadFailed) return error.HttpsPostReadFailed;
         if (any_err == error.WriteFailed) return error.HttpsPostWriteFailed;
+        if (any_err == error.UnexpectedFlags) return error.HttpsPostTcpUnexpectedFlags;
+        if (any_err == error.SequenceMismatch) return error.HttpsPostTcpSequenceMismatch;
+        if (any_err == error.AcknowledgmentMismatch) return error.HttpsPostTcpAckMismatch;
+        if (any_err == error.WindowExceeded) return error.HttpsPostTcpWindowExceeded;
+        if (any_err == error.MessageTooLong) return error.HttpsPostTlsMessageTooLong;
+        if (any_err == error.TargetTooSmall) return error.HttpsPostTlsTargetTooSmall;
+        if (any_err == error.BufferTooSmall) return error.HttpsPostTlsBufferTooSmall;
+        if (any_err == error.NegativeIntoUnsigned) return error.HttpsPostTlsNegativeIntoUnsigned;
+        if (any_err == error.InvalidSignature) return error.HttpsPostTlsInvalidSignature;
+        if (any_err == error.TlsUnexpectedMessage) return error.HttpsPostTlsUnexpectedMessage;
+        if (any_err == error.TlsIllegalParameter) return error.HttpsPostTlsIllegalParameter;
+        if (any_err == error.TlsDecryptFailure) return error.HttpsPostTlsDecryptFailure;
+        if (any_err == error.TlsRecordOverflow) return error.HttpsPostTlsRecordOverflow;
+        if (any_err == error.TlsBadRecordMac) return error.HttpsPostTlsBadRecordMac;
+        if (any_err == error.TlsDecryptError) return error.HttpsPostTlsDecryptError;
+        if (any_err == error.TlsConnectionTruncated) return error.HttpsPostTlsConnectionTruncated;
+        if (any_err == error.TlsDecodeError) return error.HttpsPostTlsDecodeError;
+        switch (tls_stage) {
+            .server_hello_received => return error.HttpsPostTlsAtServerHello,
+            .encrypted_extensions_received => return error.HttpsPostTlsAtEncryptedExtensions,
+            .certificate_received => return error.HttpsPostTlsAtCertificate,
+            .trust_chain_established => return error.HttpsPostTlsAtTrustChainEstablished,
+            .certificate_verify_received => return error.HttpsPostTlsAtCertificateVerify,
+            .server_finished_verified => return error.HttpsPostTlsAtServerFinishedVerified,
+            .client_finished_flushed => return error.HttpsPostTlsAfterClientFinished,
+            .init_complete => return error.HttpsPostTlsAfterInit,
+            else => {},
+        }
         if (std.mem.startsWith(u8, err_name, "Tls") or
             std.mem.startsWith(u8, err_name, "Certificate"))
         {
@@ -4037,13 +4117,42 @@ fn rtl8139TcpProbeFailureCode(err: Rtl8139TcpProbeError) u8 {
         error.HttpsPostEntropyFailed => 0x95,
         error.HttpsPostReadFailed => 0x96,
         error.HttpsPostWriteFailed => 0x97,
-        error.HttpsPostLastTxNotIpv4 => 0x98,
-        error.HttpsPostLastTxIpv4DecodeFailed => 0x99,
-        error.HttpsPostLastTxNotTcp => 0x9A,
-        error.HttpsPostLastTxTcpDecodeFailed => 0x9B,
-        error.HttpsPostLastTxDestinationMismatch => 0x9C,
-        error.HttpsPostLastTxPortsMismatch => 0x9D,
-        error.HttpsPostLastTxFlagsMismatch => 0x9E,
+        error.HttpsPostTcpUnexpectedFlags => 0x98,
+        error.HttpsPostTcpSequenceMismatch => 0x99,
+        error.HttpsPostTcpAckMismatch => 0x9A,
+        error.HttpsPostTcpWindowExceeded => 0x9B,
+        error.HttpsPostTlsMessageTooLong => 0x9C,
+        error.HttpsPostTlsTargetTooSmall => 0x9D,
+        error.HttpsPostTlsBufferTooSmall => 0x9E,
+        error.HttpsPostTlsNegativeIntoUnsigned => 0x9F,
+        error.HttpsPostTlsInvalidSignature => 0xA0,
+        error.HttpsPostTlsUnexpectedMessage => 0xA1,
+        error.HttpsPostTlsIllegalParameter => 0xA2,
+        error.HttpsPostTlsDecryptFailure => 0xA3,
+        error.HttpsPostTlsRecordOverflow => 0xA4,
+        error.HttpsPostTlsBadRecordMac => 0xA5,
+        error.HttpsPostTlsDecryptError => 0xA6,
+        error.HttpsPostTlsConnectionTruncated => 0xA7,
+        error.HttpsPostTlsDecodeError => 0xA8,
+        error.HttpsPostTlsAtServerHello => 0xA9,
+        error.HttpsPostTlsAtEncryptedExtensions => 0xAA,
+        error.HttpsPostTlsAtCertificate => 0xAB,
+        error.HttpsPostTlsAtTrustChainEstablished => 0xAC,
+        error.HttpsPostTlsAtCertificateVerify => 0xAD,
+        error.HttpsPostTlsAtServerFinishedVerified => 0xAE,
+        error.HttpsPostTlsBeforeClientFinished => 0xAF,
+        error.HttpsPostTlsAfterClientFinished => 0xB0,
+        error.HttpsPostTlsAfterInit => 0xB1,
+        error.HttpsPostTlsNoWriterFlush => 0xB2,
+        error.HttpsPostTlsNoPayloadEmit => 0xB3,
+        error.HttpsPostTlsWindowBlockedBeforeEmit => 0xB4,
+        error.HttpsPostLastTxNotIpv4 => 0xB5,
+        error.HttpsPostLastTxIpv4DecodeFailed => 0xB6,
+        error.HttpsPostLastTxNotTcp => 0xB7,
+        error.HttpsPostLastTxTcpDecodeFailed => 0xB8,
+        error.HttpsPostLastTxDestinationMismatch => 0xB9,
+        error.HttpsPostLastTxPortsMismatch => 0xBA,
+        error.HttpsPostLastTxFlagsMismatch => 0xBB,
     };
 }
 

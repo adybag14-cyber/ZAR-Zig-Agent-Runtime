@@ -11,6 +11,7 @@ const ipv4 = @import("../protocol/ipv4.zig");
 const tcp = @import("../protocol/tcp.zig");
 const udp = @import("../protocol/udp.zig");
 const tls = std.crypto.tls;
+const tls_client_light = @import("tls_client_light.zig");
 
 pub const Response = struct {
     status_code: u16,
@@ -457,15 +458,64 @@ const HttpResponseMeta = struct {
     body_offset: usize,
 };
 
-const post_poll_limit: usize = 4096;
+const post_poll_limit: usize = 65536;
 const post_retransmit_ticks: u64 = 32;
-const tls_wire_buffer_len: usize = tls.Client.min_buffer_len;
+const freestanding_poll_pause_iterations: usize = 2048;
+const tls_wire_buffer_len: usize = tls_client_light.Client.min_buffer_len;
+pub const HttpsTlsInitStage = tls_client_light.DebugInitStage;
+
+const TlsTcpTransportScratch = struct {
+    pending_payload: [tls_wire_buffer_len]u8 = undefined,
+    packet_storage: TcpPacket = undefined,
+    write_chunk: [max_tcp_segment_payload_len]u8 = undefined,
+};
+
+const HttpsTlsScratch = struct {
+    transport_reader_buffer: [tls_wire_buffer_len]u8 = undefined,
+    transport_writer_buffer: [tls_wire_buffer_len]u8 = undefined,
+    tls_reader_buffer: [tls_wire_buffer_len]u8 = undefined,
+    tls_writer_buffer: [tls_wire_buffer_len]u8 = undefined,
+    entropy: [tls_client_light.Client.Options.entropy_len]u8 = undefined,
+    transport: TlsTcpTransportScratch = .{},
+};
+
+var https_tls_scratch: HttpsTlsScratch = .{};
+var last_https_tls_init_stage: HttpsTlsInitStage = .not_started;
+
+pub const HttpsTlsTransportDebug = struct {
+    drain_calls: u32 = 0,
+    flush_calls: u32 = 0,
+    write_all_calls: u32 = 0,
+    wait_writable_calls: u32 = 0,
+    sent_segments: u32 = 0,
+    sent_payload_bytes: usize = 0,
+    last_segment_len: usize = 0,
+    last_segment_flags: u16 = 0,
+    last_remote_window: u16 = 0,
+    last_congestion_window: u16 = 0,
+    last_bytes_in_flight: u32 = 0,
+};
+
+var https_tls_transport_debug: HttpsTlsTransportDebug = .{};
+
+pub fn lastHttpsTlsInitStage() HttpsTlsInitStage {
+    return last_https_tls_init_stage;
+}
+
+pub fn lastHttpsTlsTransportDebug() *const HttpsTlsTransportDebug {
+    return &https_tls_transport_debug;
+}
+
+fn resetHttpsTlsTransportDebug() void {
+    https_tls_transport_debug = .{};
+}
 
 const TlsTcpTransport = struct {
     session: *tcp.Session,
     destination_mac: [ethernet.mac_len]u8,
     source_ip: [4]u8,
     destination_ip: [4]u8,
+    scratch: *TlsTcpTransportScratch,
     reader: std.Io.Reader,
     writer: std.Io.Writer,
     read_err: ?anyerror = null,
@@ -473,8 +523,6 @@ const TlsTcpTransport = struct {
     received_close_notify: bool = false,
     pending_len: usize = 0,
     pending_offset: usize = 0,
-    pending_payload: [max_tcp_payload_len]u8 = undefined,
-    packet_storage: TcpPacket = undefined,
     read_budget: usize = post_poll_limit,
     write_budget: usize = post_poll_limit,
 
@@ -483,6 +531,7 @@ const TlsTcpTransport = struct {
         destination_mac: [ethernet.mac_len]u8,
         source_ip: [4]u8,
         destination_ip: [4]u8,
+        scratch: *TlsTcpTransportScratch,
         read_buffer: []u8,
         write_buffer: []u8,
     ) TlsTcpTransport {
@@ -491,6 +540,7 @@ const TlsTcpTransport = struct {
             .destination_mac = destination_mac,
             .source_ip = source_ip,
             .destination_ip = destination_ip,
+            .scratch = scratch,
             .reader = .{
                 .vtable = &.{
                     .stream = streamReader,
@@ -521,13 +571,18 @@ const TlsTcpTransport = struct {
     fn readVecReader(io_r: *std.Io.Reader, data: [][]u8) std.Io.Reader.Error!usize {
         const self: *TlsTcpTransport = @alignCast(@fieldParentPtr("reader", io_r));
         var iovecs_buffer: [8][]u8 = undefined;
-        const dest_n, _ = try io_r.writableVector(&iovecs_buffer, data);
+        const dest_n, const data_size = try io_r.writableVector(&iovecs_buffer, data);
         const dest = iovecs_buffer[0..dest_n];
+        std.debug.assert(dest[0].len > 0);
         const n = self.readInto(dest) catch |err| {
             self.read_err = err;
             return error.ReadFailed;
         };
         if (n == 0) return error.EndOfStream;
+        if (n > data_size) {
+            io_r.end += n - data_size;
+            return data_size;
+        }
         return n;
     }
 
@@ -540,14 +595,35 @@ const TlsTcpTransport = struct {
 
         var written: usize = 0;
         for (dest) |chunk| {
-            if (self.pending_offset == self.pending_len or chunk.len == 0) break;
+            if (self.pending_offset == self.pending_len) break;
+            if (chunk.len == 0) continue;
             const remaining = self.pending_len - self.pending_offset;
             const copy_len = @min(chunk.len, remaining);
-            std.mem.copyForwards(u8, chunk[0..copy_len], self.pending_payload[self.pending_offset .. self.pending_offset + copy_len]);
+            std.mem.copyForwards(u8, chunk[0..copy_len], self.scratch.pending_payload[self.pending_offset .. self.pending_offset + copy_len]);
             self.pending_offset += copy_len;
             written += copy_len;
         }
         return written;
+    }
+
+    fn compactPending(self: *TlsTcpTransport) void {
+        if (self.pending_offset == 0) return;
+        if (self.pending_offset >= self.pending_len) {
+            self.pending_offset = 0;
+            self.pending_len = 0;
+            return;
+        }
+        const unread_len = self.pending_len - self.pending_offset;
+        std.mem.copyForwards(u8, self.scratch.pending_payload[0..unread_len], self.scratch.pending_payload[self.pending_offset..self.pending_len]);
+        self.pending_offset = 0;
+        self.pending_len = unread_len;
+    }
+
+    fn appendPendingPayload(self: *TlsTcpTransport, payload: []const u8) !void {
+        self.compactPending();
+        if (self.pending_len + payload.len > self.scratch.pending_payload.len) return error.BufferTooSmall;
+        std.mem.copyForwards(u8, self.scratch.pending_payload[self.pending_len .. self.pending_len + payload.len], payload);
+        self.pending_len += payload.len;
     }
 
     fn fillPendingPayload(self: *TlsTcpTransport) !bool {
@@ -555,14 +631,32 @@ const TlsTcpTransport = struct {
         while (attempts < self.read_budget) : (attempts += 1) {
             if (self.received_close_notify) return false;
 
-            const received = pollTcpPacketStrictInto(&self.packet_storage) catch |err| switch (err) {
+            const received = pollTcpPacketStrictInto(&self.scratch.packet_storage) catch |err| switch (err) {
                 error.NotIpv4, error.NotTcp => false,
                 else => return err,
             };
-            if (!received) continue;
-            if (!tcpPacketMatchesFlow(self.packet_storage, self.destination_ip, self.source_ip, self.session.remote_port, self.session.local_port)) continue;
+            if (!received) {
+                pollIdlePause();
+                continue;
+            }
+            if (!tcpPacketMatchesFlow(self.scratch.packet_storage, self.destination_ip, self.source_ip, self.session.remote_port, self.session.local_port)) continue;
 
-            const view = tcpPacketView(&self.packet_storage);
+            const view = tcpPacketView(&self.scratch.packet_storage);
+            if ((view.flags & tcp.flag_fin) != 0 and view.payload.len != 0) {
+                var payload_view = view;
+                payload_view.flags &= ~tcp.flag_fin;
+                try self.session.acceptPayload(payload_view);
+                try self.appendPendingPayload(payload_view.payload);
+
+                var fin_view = view;
+                fin_view.sequence_number +%= @as(u32, @intCast(view.payload.len));
+                fin_view.flags = tcp.flag_fin | tcp.flag_ack;
+                fin_view.payload = "";
+                const ack = try self.session.acceptFin(fin_view);
+                try sendTcpOutbound(self.destination_mac, self.source_ip, self.destination_ip, self.session.*, ack);
+                self.received_close_notify = true;
+                return true;
+            }
             if ((view.flags & tcp.flag_fin) != 0) {
                 const ack = try self.session.acceptFin(view);
                 try sendTcpOutbound(self.destination_mac, self.source_ip, self.destination_ip, self.session.*, ack);
@@ -573,12 +667,8 @@ const TlsTcpTransport = struct {
                 try self.session.acceptAck(view);
                 continue;
             }
-            if (view.payload.len > self.pending_payload.len) return error.BufferTooSmall;
-
             try self.session.acceptPayload(view);
-            std.mem.copyForwards(u8, self.pending_payload[0..view.payload.len], view.payload);
-            self.pending_offset = 0;
-            self.pending_len = view.payload.len;
+            try self.appendPendingPayload(view.payload);
             const ack = try self.session.buildAck();
             try sendTcpOutbound(self.destination_mac, self.source_ip, self.destination_ip, self.session.*, ack);
             return true;
@@ -588,19 +678,21 @@ const TlsTcpTransport = struct {
 
     fn drainWriter(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
         const self: *TlsTcpTransport = @alignCast(@fieldParentPtr("writer", io_w));
-        const buffered = io_w.buffered();
         const consumed = std.Io.Writer.countSplat(data, splat);
-        self.writeAll(buffered, data, splat) catch |err| {
+        https_tls_transport_debug.drain_calls +%= 1;
+        self.writeAll(io_w.buffered(), data, splat) catch |err| {
             self.write_err = err;
             return error.WriteFailed;
         };
-        return io_w.consume(consumed);
+        io_w.end = 0;
+        return consumed;
     }
 
     fn flushWriter(io_w: *std.Io.Writer) std.Io.Writer.Error!void {
         const self: *TlsTcpTransport = @alignCast(@fieldParentPtr("writer", io_w));
         const buffered = io_w.buffered();
         if (buffered.len == 0) return;
+        https_tls_transport_debug.flush_calls +%= 1;
         self.writeAll(buffered, &.{}, 1) catch |err| {
             self.write_err = err;
             return error.WriteFailed;
@@ -609,19 +701,23 @@ const TlsTcpTransport = struct {
     }
 
     fn writeAll(self: *TlsTcpTransport, prefix: []const u8, data: []const []const u8, splat: usize) !void {
-        var temp: [max_tcp_payload_len]u8 = undefined;
+        const temp = self.scratch.write_chunk[0..];
         var prefix_offset: usize = 0;
         var data_index: usize = 0;
         var data_offset: usize = 0;
         var splat_remaining: usize = if (data.len == 0) 0 else splat;
+        https_tls_transport_debug.write_all_calls +%= 1;
 
         while (true) {
-            const filled = fillWriteChunk(prefix, &prefix_offset, data, &data_index, &data_offset, &splat_remaining, &temp);
+            const filled = fillWriteChunk(prefix, &prefix_offset, data, &data_index, &data_offset, &splat_remaining, temp);
             if (filled == 0) break;
 
             var payload = temp[0..filled];
             while (payload.len != 0) {
                 const segment = payload[0..@min(payload.len, max_tcp_segment_payload_len)];
+                https_tls_transport_debug.last_remote_window = self.session.remote_window;
+                https_tls_transport_debug.last_congestion_window = self.session.congestionWindowBytes();
+                https_tls_transport_debug.last_bytes_in_flight = self.session.bytesInFlight();
                 const outbound = self.session.buildPayloadChunk(segment) catch |err| switch (err) {
                     error.WindowExceeded => {
                         try self.waitUntilWritable();
@@ -629,6 +725,10 @@ const TlsTcpTransport = struct {
                     },
                     else => return err,
                 };
+                https_tls_transport_debug.sent_segments +%= 1;
+                https_tls_transport_debug.sent_payload_bytes +%= outbound.payload.len;
+                https_tls_transport_debug.last_segment_len = outbound.payload.len;
+                https_tls_transport_debug.last_segment_flags = outbound.flags;
                 try sendTcpOutbound(self.destination_mac, self.source_ip, self.destination_ip, self.session.*, outbound);
                 payload = payload[outbound.payload.len..];
             }
@@ -637,18 +737,25 @@ const TlsTcpTransport = struct {
 
     fn waitUntilWritable(self: *TlsTcpTransport) !void {
         var attempts: usize = 0;
+        https_tls_transport_debug.wait_writable_calls +%= 1;
         while (attempts < self.write_budget) : (attempts += 1) {
             const effective_window = @min(self.session.remote_window, self.session.congestionWindowBytes());
+            https_tls_transport_debug.last_remote_window = self.session.remote_window;
+            https_tls_transport_debug.last_congestion_window = self.session.congestionWindowBytes();
+            https_tls_transport_debug.last_bytes_in_flight = self.session.bytesInFlight();
             if (self.session.bytesInFlight() < effective_window) return;
 
-            const received = pollTcpPacketStrictInto(&self.packet_storage) catch |err| switch (err) {
+            const received = pollTcpPacketStrictInto(&self.scratch.packet_storage) catch |err| switch (err) {
                 error.NotIpv4, error.NotTcp => false,
                 else => return err,
             };
-            if (!received) continue;
-            if (!tcpPacketMatchesFlow(self.packet_storage, self.destination_ip, self.source_ip, self.session.remote_port, self.session.local_port)) continue;
+            if (!received) {
+                pollIdlePause();
+                continue;
+            }
+            if (!tcpPacketMatchesFlow(self.scratch.packet_storage, self.destination_ip, self.source_ip, self.session.remote_port, self.session.local_port)) continue;
 
-            const view = tcpPacketView(&self.packet_storage);
+            const view = tcpPacketView(&self.scratch.packet_storage);
             if ((view.flags & tcp.flag_fin) != 0) {
                 const ack = try self.session.acceptFin(view);
                 try sendTcpOutbound(self.destination_mac, self.source_ip, self.destination_ip, self.session.*, ack);
@@ -659,15 +766,10 @@ const TlsTcpTransport = struct {
                 try self.session.acceptAck(view);
                 continue;
             }
-            if (view.payload.len > self.pending_payload.len) return error.BufferTooSmall;
-
             try self.session.acceptPayload(view);
-            std.mem.copyForwards(u8, self.pending_payload[0..view.payload.len], view.payload);
-            self.pending_offset = 0;
-            self.pending_len = view.payload.len;
+            try self.appendPendingPayload(view.payload);
             const ack = try self.session.buildAck();
             try sendTcpOutbound(self.destination_mac, self.source_ip, self.destination_ip, self.session.*, ack);
-            return;
         }
         return error.Timeout;
     }
@@ -720,7 +822,7 @@ fn fillWriteChunk(
     return used;
 }
 
-fn fillTlsEntropy(entropy: *[tls.Client.Options.entropy_len]u8) !void {
+fn fillTlsEntropy(entropy: *[tls_client_light.Client.Options.entropy_len]u8) !void {
     if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86_64) return error.UnsupportedPlatform;
 
     var route_seed_bytes = [_]u8{
@@ -762,6 +864,20 @@ fn readTimestampCounter() u64 {
         :
         : "memory");
     return (@as(u64, high) << 32) | low;
+}
+
+fn pollIdlePause() void {
+    if (builtin.os.tag != .freestanding) return;
+    var iterations: usize = 0;
+    while (iterations < freestanding_poll_pause_iterations) : (iterations += 1) {
+        if (builtin.cpu.arch == .x86_64) {
+            asm volatile ("pause" ::: "memory");
+        } else if (builtin.cpu.arch == .aarch64) {
+            asm volatile ("yield" ::: "memory");
+        } else {
+            std.atomic.spinLoopHint();
+        }
+    }
 }
 
 fn postFreestanding(
@@ -876,6 +992,8 @@ fn postFreestandingHttpsWithParsedHeaders(
     payload: []const u8,
     headers: anytype,
 ) !Response {
+    last_https_tls_init_stage = .not_started;
+    resetHttpsTlsTransportDebug();
     const destination_ip = try resolveHostIpv4(parsed.host);
     const destination_mac = try resolveNextHopMac(destination_ip);
     const local_port = allocateTcpLocalPort();
@@ -900,45 +1018,49 @@ fn postFreestandingHttpsWithParsedHeaders(
         client.congestion_window = max_tcp_segment_payload_len;
     }
 
-    var transport_reader_buffer: [tls_wire_buffer_len]u8 = undefined;
-    var transport_writer_buffer: [tls_wire_buffer_len]u8 = undefined;
-    var tls_reader_buffer: [tls_wire_buffer_len]u8 = undefined;
-    var tls_writer_buffer: [tls_wire_buffer_len]u8 = undefined;
-    var entropy: [tls.Client.Options.entropy_len]u8 = undefined;
-    try fillTlsEntropy(&entropy);
+    const scratch = &https_tls_scratch;
+    try fillTlsEntropy(&scratch.entropy);
 
     var transport = TlsTcpTransport.init(
         &client,
         destination_mac,
         route_state.local_ip,
         destination_ip,
-        &transport_reader_buffer,
-        &transport_writer_buffer,
+        &scratch.transport,
+        &scratch.transport_reader_buffer,
+        &scratch.transport_writer_buffer,
     );
     var tls_alert: tls.Alert = undefined;
-    var tls_client = tls.Client.init(
+    var tls_client = tls_client_light.Client.init(
         &transport.reader,
         &transport.writer,
         .{
             .host = .no_verification,
             .ca = .no_verification,
-            .read_buffer = &tls_reader_buffer,
-            .write_buffer = &tls_writer_buffer,
-            .entropy = &entropy,
+            .read_buffer = &scratch.tls_reader_buffer,
+            .write_buffer = &scratch.tls_writer_buffer,
+            .entropy = &scratch.entropy,
             .realtime_now_seconds = 0,
             .allow_truncation_attacks = true,
             .alert = &tls_alert,
         },
-    ) catch |err| switch (err) {
-        error.ReadFailed => return transport.read_err orelse err,
-        error.WriteFailed => return transport.write_err orelse err,
-        else => return err,
+    ) catch |err| {
+        last_https_tls_init_stage = tls_client_light.debug_last_init_stage;
+        return switch (err) {
+            error.ReadFailed => transport.read_err orelse err,
+            error.WriteFailed => transport.write_err orelse err,
+            else => err,
+        };
     };
+    last_https_tls_init_stage = tls_client_light.debug_last_init_stage;
 
     tls_client.writer.writeAll(request_bytes) catch |err| switch (err) {
         error.WriteFailed => return transport.write_err orelse err,
     };
     tls_client.writer.flush() catch |err| switch (err) {
+        error.WriteFailed => return transport.write_err orelse err,
+    };
+    transport.writer.flush() catch |err| switch (err) {
         error.WriteFailed => return transport.write_err orelse err,
     };
 
@@ -3470,11 +3592,19 @@ const PostHarness = struct {
 };
 
 var post_harness_instance: ?*PostHarness = null;
+var tls_test_last_frame_len: usize = 0;
+var tls_test_last_frame: [max_frame_len]u8 = undefined;
 
 fn postHarnessHook(frame: []const u8) void {
     if (post_harness_instance) |harness| {
         harness.handleOutgoingFrame(frame) catch @panic("post harness failure");
     }
+}
+
+fn tlsTestCaptureHook(frame: []const u8) void {
+    const copy_len = @min(frame.len, tls_test_last_frame.len);
+    std.mem.copyForwards(u8, tls_test_last_frame[0..copy_len], frame[0..copy_len]);
+    tls_test_last_frame_len = copy_len;
 }
 
 test "baremetal net pal parses https urls with default port 443" {
@@ -3493,6 +3623,82 @@ test "baremetal net pal freestanding https post requires route configuration" {
         error.RouteUnconfigured,
         postFreestanding(std.testing.allocator, "https://10.0.2.2:8443/fs55/live-https", "{}", &.{}),
     );
+}
+
+test "baremetal net pal tls client init emits client hello through rtl8139 mock device" {
+    rtl8139.testEnableMockDevice();
+    defer rtl8139.testDisableMockDevice();
+    rtl8139.testInstallMockSendHook(tlsTestCaptureHook);
+    defer rtl8139.testInstallMockSendHook(null);
+    tls_test_last_frame_len = 0;
+
+    try std.testing.expect(initDevice());
+
+    const client_ip = [4]u8{ 10, 0, 2, 15 };
+    const server_ip = [4]u8{ 10, 0, 2, 2 };
+    const destination_mac = macAddress();
+
+    var client = tcp.Session.initClient(49152, 8443, 0x0C21_5A00, 4096);
+    _ = try client.buildSyn();
+    _ = try client.acceptSynAck(.{
+        .source_port = 8443,
+        .destination_port = 49152,
+        .sequence_number = 1,
+        .acknowledgment_number = client.send_next,
+        .data_offset_bytes = tcp.header_len + 4,
+        .flags = tcp.flag_syn | tcp.flag_ack,
+        .window_size = 65535,
+        .checksum_value = 0,
+        .urgent_pointer = 0,
+        .payload = "",
+    });
+    client.congestion_window = max_tcp_segment_payload_len;
+
+    var transport_reader_buffer: [tls_wire_buffer_len]u8 = undefined;
+    var transport_writer_buffer: [tls_wire_buffer_len]u8 = undefined;
+    var tls_reader_buffer: [tls_wire_buffer_len]u8 = undefined;
+    var tls_writer_buffer: [tls_wire_buffer_len]u8 = undefined;
+    var entropy: [tls_client_light.Client.Options.entropy_len]u8 = undefined;
+    var transport_scratch: TlsTcpTransportScratch = .{};
+    for (&entropy, 0..) |*byte, idx| byte.* = @as(u8, @truncate(idx + 1));
+
+    var input = std.Io.Reader.fixed(&.{});
+    input.buffer = &transport_reader_buffer;
+    input.seek = 0;
+    input.end = 0;
+    var transport = TlsTcpTransport.init(
+        &client,
+        destination_mac,
+        client_ip,
+        server_ip,
+        &transport_scratch,
+        &transport_reader_buffer,
+        &transport_writer_buffer,
+    );
+
+    _ = tls_client_light.Client.init(
+        &input,
+        &transport.writer,
+        .{
+            .host = .no_verification,
+            .ca = .no_verification,
+            .read_buffer = &tls_reader_buffer,
+            .write_buffer = &tls_writer_buffer,
+            .entropy = &entropy,
+            .realtime_now_seconds = 0,
+            .allow_truncation_attacks = true,
+        },
+    ) catch {};
+
+    try std.testing.expect(tls_test_last_frame_len != 0);
+    rtl8139.injectProbeReceive(tls_test_last_frame[0..tls_test_last_frame_len]);
+    const packet = (try pollTcpPacketStrict()).?;
+    try std.testing.expectEqual(@as(u16, client.local_port), packet.source_port);
+    try std.testing.expectEqual(@as(u16, client.remote_port), packet.destination_port);
+    try std.testing.expect((packet.flags & tcp.flag_ack) != 0);
+    try std.testing.expect(packet.payload_len >= 5);
+    try std.testing.expectEqual(@as(u8, 0x16), packet.payload[0]);
+    try std.testing.expectEqual(@as(u8, 0x03), packet.payload[1]);
 }
 
 test "baremetal net pal freestanding post resolves dns and exchanges plain http through rtl8139 mock device" {

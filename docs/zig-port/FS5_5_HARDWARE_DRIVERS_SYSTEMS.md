@@ -350,12 +350,19 @@ Notes:
 - `src/pal/net.zig` no longer leaves `post()` as a hosted-only hole on the freestanding path:
   - the freestanding branch now performs a real bounded `http://` POST over the existing RTL8139 + ARP + IPv4 + DNS + TCP stack
   - host regressions now prove hostname resolution through a DNS A response, ARP resolution, TCP connect, HTTP request framing, HTTP response parsing, and allocator-owned response buffering over the mock RTL8139 device
-- a freestanding `https://` PAL path now exists experimentally in code, but it is not strict-closed and does not yet have a green live proof; this remains an explicit open boundary, not a silent hosted fallback
+- a freestanding `https://` PAL transport path now exists as real code, not as a hosted fallback:
+  - `src/pal/tls_client_light.zig` provides the bounded freestanding TLS client used by the PAL network surface
+  - `src/pal/net.zig` now drives real DNS + TCP + TLS + HTTPS request/response exchange on the freestanding path
+  - host regressions now prove the TLS client emits a real `ClientHello` through the mock RTL8139 transport seam
 - the live freestanding PAL `http://` POST path is now also proven directly:
   - `scripts/baremetal-qemu-rtl8139-http-post-probe-check.ps1`
   - the freestanding DNS path now decodes directly into caller-owned packet storage instead of copying through large stack temporaries
   - the PVH boot stack was increased to `128 KiB` so the real DNS + TCP + HTTP + service path no longer overruns the early page-table scratch area
   - the probe keeps interrupts masked on exit, because re-enabling them after the proof can surface a real hardware IRQ0 on the test path and collapse the guest before `isa-debug-exit`
+- the live freestanding PAL `https://` POST transport path is now also proven directly:
+  - `scripts/baremetal-qemu-rtl8139-https-post-probe-check.ps1`
+  - the probe proves hostname resolution, TCP connect, TLS handshake, HTTPS request write, HTTPS response readback, and allocator-owned body buffering against a deterministic self-hosted TLS harness over the live RTL8139 path
+  - the proof closes the transport-emission question that the earlier debug slice isolated around `ClientHello` generation and payload/FIN handling
 - host regressions prove mock-device ARP, IPv4, UDP, DHCP, DNS, TCP handshake/payload exchange, bounded four-way close, dropped-first-SYN retransmission/timeout recovery, dropped-first-payload retransmission/timeout recovery, dropped-first-FIN retransmission/timeout recovery on both close sides, bounded multi-flow session isolation, bounded cumulative-ACK advancement across multiple in-flight payload chunks, bounded sender congestion-window growth/collapse on the chunked send path, DHCP-driven route configuration, gateway ARP learning, routed off-subnet UDP delivery, and direct-subnet UDP bypass through the RTL8139 path
 - `src/baremetal/tool_service.zig` now provides a bounded framed request/response shim on top of the bare-metal tool substrate for the TCP path, with typed `CMD`, `EXEC`, `GET`, `PUT`, `STAT`, `PKG`, `PKGLIST`, and `PKGRUN` requests plus bounded batched request parsing/execution on one flow
 - live QEMU proofs now pass:
@@ -379,7 +386,7 @@ Notes:
   - `scripts/baremetal-qemu-rtl8139-dns-probe-check.ps1` now proves real RTL8139 TX/RX of a DNS query plus strict decode/validation of a DNS A response over the freestanding PVH artifact
 - deeper networking depth remains future work above the FS5.5 closure bar:
   - higher-level service/runtime layers beyond the current bounded typed batch + `EXEC` file/package seam on the bare-metal TCP path
-  - live TLS-backed `https://` delivery on the freestanding PAL network path
+  - freestanding certificate-verification and trust-store depth on the current live `https://` transport path
   - controller-specific rendered virtio-gpu present/scanout depth before any real HDMI/DisplayPort scanout claim
 
 ### Filesystem Usage
