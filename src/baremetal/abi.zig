@@ -334,6 +334,13 @@ pub const BaremetalStorageState = extern struct {
     bytes_written: u64,
 };
 
+pub const BaremetalStoragePartitionInfo = extern struct {
+    scheme: u8,
+    reserved0: [3]u8,
+    start_lba: u32,
+    sector_count: u32,
+};
+
 pub const BaremetalEthernetState = extern struct {
     magic: u32,
     api_version: u16,
@@ -794,6 +801,7 @@ test "baremetal kernel info size contract stays stable" {
     try std.testing.expectEqual(@as(usize, 48), @sizeOf(BaremetalBootDiagnostics));
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalConsoleState));
     try std.testing.expectEqual(@as(usize, 56), @sizeOf(BaremetalStorageState));
+    try std.testing.expectEqual(@as(usize, 12), @sizeOf(BaremetalStoragePartitionInfo));
     try std.testing.expectEqual(@as(usize, 76), @sizeOf(BaremetalEthernetState));
     try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalToolLayoutState));
     try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalToolSlot));

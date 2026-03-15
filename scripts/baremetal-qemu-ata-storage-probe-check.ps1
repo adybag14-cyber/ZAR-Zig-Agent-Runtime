@@ -21,6 +21,7 @@ $secondaryRawProbeLba = 12
 $secondaryRawProbeSeed = 0x53
 $toolSlotLba = 34
 $toolSlotSeed = 0x30
+$secondaryToolSlotSeed = 0x60
 $filesystemSuperblockLba = 130
 $toolLayoutMagic = 0x4f43544c
 $filesystemMagic = 0x4f434653
@@ -386,7 +387,9 @@ $imageBytes = [System.IO.File]::ReadAllBytes($diskImage)
 $rawProbePhysicalLba = $partitionStartLba + $rawProbeLba
 $secondaryRawProbePhysicalLba = $secondaryPartitionStartLba + $secondaryRawProbeLba
 $toolSlotPhysicalLba = $partitionStartLba + $toolSlotLba
+$secondaryToolSlotPhysicalLba = $secondaryPartitionStartLba + $toolSlotLba
 $filesystemSuperblockPhysicalLba = $partitionStartLba + $filesystemSuperblockLba
+$secondaryFilesystemSuperblockPhysicalLba = $secondaryPartitionStartLba + $filesystemSuperblockLba
 $rawByte0 = Read-ImageByte -Bytes $imageBytes -Lba $rawProbePhysicalLba -Offset 0
 $rawByte1 = Read-ImageByte -Bytes $imageBytes -Lba $rawProbePhysicalLba -Offset 1
 $rawNextBlockByte0 = Read-ImageByte -Bytes $imageBytes -Lba ($rawProbePhysicalLba + 1) -Offset 0
@@ -395,8 +398,13 @@ $secondaryRawByte1 = Read-ImageByte -Bytes $imageBytes -Lba $secondaryRawProbePh
 $toolByte0 = Read-ImageByte -Bytes $imageBytes -Lba $toolSlotPhysicalLba -Offset 0
 $toolByte1 = Read-ImageByte -Bytes $imageBytes -Lba $toolSlotPhysicalLba -Offset 1
 $toolByte512 = Read-ImageByte -Bytes $imageBytes -Lba ($toolSlotPhysicalLba + 1) -Offset 0
+$secondaryToolByte0 = Read-ImageByte -Bytes $imageBytes -Lba $secondaryToolSlotPhysicalLba -Offset 0
+$secondaryToolByte1 = Read-ImageByte -Bytes $imageBytes -Lba $secondaryToolSlotPhysicalLba -Offset 1
+$secondaryToolByte512 = Read-ImageByte -Bytes $imageBytes -Lba ($secondaryToolSlotPhysicalLba + 1) -Offset 0
 $toolMagic = Read-ImageU32LE -Bytes $imageBytes -Lba $partitionStartLba
+$secondaryToolMagic = Read-ImageU32LE -Bytes $imageBytes -Lba $secondaryPartitionStartLba
 $fsMagic = Read-ImageU32LE -Bytes $imageBytes -Lba $filesystemSuperblockPhysicalLba
+$secondaryFsMagic = Read-ImageU32LE -Bytes $imageBytes -Lba $secondaryFilesystemSuperblockPhysicalLba
 
 if ($rawByte0 -ne $rawProbeSeed -or $rawByte1 -ne ($rawProbeSeed + 1) -or $rawNextBlockByte0 -ne $rawProbeSeed) {
     throw "Host-side ATA raw readback did not match the expected pattern."
@@ -407,11 +415,20 @@ if ($secondaryRawByte0 -ne $secondaryRawProbeSeed -or $secondaryRawByte1 -ne ($s
 if ($toolByte0 -ne $toolSlotSeed -or $toolByte1 -ne ($toolSlotSeed + 1) -or $toolByte512 -ne $toolSlotSeed) {
     throw "Host-side tool slot payload did not match the expected persisted pattern."
 }
+if ($secondaryToolByte0 -ne $secondaryToolSlotSeed -or $secondaryToolByte1 -ne ($secondaryToolSlotSeed + 1) -or $secondaryToolByte512 -ne $secondaryToolSlotSeed) {
+    throw "Host-side secondary-partition tool slot payload did not match the expected persisted pattern."
+}
 if ($toolMagic -ne $toolLayoutMagic) {
     throw ("Tool-layout superblock magic mismatch. Expected 0x{0:X8}, got 0x{1:X8}." -f $toolLayoutMagic, $toolMagic)
 }
+if ($secondaryToolMagic -ne $toolLayoutMagic) {
+    throw ("Secondary tool-layout superblock magic mismatch. Expected 0x{0:X8}, got 0x{1:X8}." -f $toolLayoutMagic, $secondaryToolMagic)
+}
 if ($fsMagic -ne $filesystemMagic) {
     throw ("Filesystem superblock magic mismatch. Expected 0x{0:X8}, got 0x{1:X8}." -f $filesystemMagic, $fsMagic)
+}
+if ($secondaryFsMagic -ne $filesystemMagic) {
+    throw ("Secondary filesystem superblock magic mismatch. Expected 0x{0:X8}, got 0x{1:X8}." -f $filesystemMagic, $secondaryFsMagic)
 }
 
 Write-Output "BAREMETAL_QEMU_AVAILABLE=True"
@@ -430,5 +447,10 @@ Write-Output "BAREMETAL_ATA_SECONDARY_RAW_LBA12_BYTE1=$secondaryRawByte1"
 Write-Output "BAREMETAL_ATA_TOOL_SLOT_BYTE0=$toolByte0"
 Write-Output "BAREMETAL_ATA_TOOL_SLOT_BYTE1=$toolByte1"
 Write-Output "BAREMETAL_ATA_TOOL_SLOT_BYTE512=$toolByte512"
+Write-Output "BAREMETAL_ATA_SECONDARY_TOOL_SLOT_BYTE0=$secondaryToolByte0"
+Write-Output "BAREMETAL_ATA_SECONDARY_TOOL_SLOT_BYTE1=$secondaryToolByte1"
+Write-Output "BAREMETAL_ATA_SECONDARY_TOOL_SLOT_BYTE512=$secondaryToolByte512"
 Write-Output ("BAREMETAL_ATA_TOOL_LAYOUT_MAGIC=0x{0:X8}" -f $toolMagic)
 Write-Output ("BAREMETAL_ATA_FILESYSTEM_MAGIC=0x{0:X8}" -f $fsMagic)
+Write-Output ("BAREMETAL_ATA_SECONDARY_TOOL_LAYOUT_MAGIC=0x{0:X8}" -f $secondaryToolMagic)
+Write-Output ("BAREMETAL_ATA_SECONDARY_FILESYSTEM_MAGIC=0x{0:X8}" -f $secondaryFsMagic)

@@ -47,6 +47,10 @@ pub fn resetForTest() void {
     @memset(&slots, std.mem.zeroes(abi.BaremetalToolSlot));
 }
 
+pub fn invalidateForBackendChange() void {
+    resetForTest();
+}
+
 pub fn init() Error!void {
     storage_backend.init();
     if (try loadExisting()) return;

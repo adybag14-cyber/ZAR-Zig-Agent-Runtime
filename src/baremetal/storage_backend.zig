@@ -50,6 +50,13 @@ pub fn logicalBaseLba() u32 {
     };
 }
 
+pub fn selectedPartitionIndex() ?u8 {
+    return switch (active_backend) {
+        .ram_disk => null,
+        .ata_pio => ata_pio_disk.selectedPartitionIndex(),
+    };
+}
+
 pub fn partitionCount() u8 {
     return switch (active_backend) {
         .ram_disk => 0,
@@ -164,9 +171,11 @@ test "storage backend facade exports and selects ata partitions" {
     try std.testing.expectEqual(@as(u8, abi.storage_backend_ata_pio), activeBackend());
     try std.testing.expectEqual(@as(u8, 2), partitionCount());
     try std.testing.expectEqual(@as(u32, 2048), logicalBaseLba());
+    try std.testing.expectEqual(@as(?u8, 0), selectedPartitionIndex());
     try std.testing.expectEqual(@as(u32, 8192), partitionInfo(1).?.start_lba);
     try selectPartition(1);
     try std.testing.expectEqual(@as(u32, 8192), logicalBaseLba());
+    try std.testing.expectEqual(@as(?u8, 1), selectedPartitionIndex());
 
     var payload = [_]u8{0} ** block_size;
     payload[0] = 0x44;

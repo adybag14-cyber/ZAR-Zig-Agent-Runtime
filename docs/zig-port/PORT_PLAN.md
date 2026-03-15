@@ -39,16 +39,23 @@ Full-stack replacement execution reference:
     - real ATA PIO path shipped in `src/baremetal/ata_pio_disk.zig`
     - ATA PIO currently supports `IDENTIFY`, sector `READ`, sector `WRITE`, `CACHE FLUSH`, bounded multi-partition MBR/GPT discovery/export, first-usable-MBR-partition mounting, and protective-MBR GPT partition mounting with logical LBA translation
     - PAL storage and bare-metal tool layout now route through the backend facade
+    - PAL storage now also exports logical base-LBA plus bounded partition count/info/select on the mounted storage view
+    - partition selection now invalidates stale tool-layout/filesystem state, and the bare-metal export seam now exposes explicit `oc_tool_layout_format` plus `oc_filesystem_format` control on the selected partition
     - hosted and host validation now proves:
       - ATA-backed backend selection
       - identify-backed capacity detection
       - bounded multi-partition MBR/GPT export plus explicit selection
+      - direct `oc_storage_*` export coverage for logical base-LBA plus partition count/info/select
+      - rebind-safe tool-layout/filesystem invalidation after partition switches
+      - per-partition tool-layout/filesystem persistence after switching between primary and secondary MBR partitions
       - first-partition MBR mount and logical base-LBA translation
       - protective-MBR GPT mount and logical base-LBA translation
       - ATA mock-device read/write/flush behavior
       - ATA-backed bare-metal export reporting
       - live QEMU ATA-backed mutation + readback against a real MBR-partitioned raw image
       - secondary-partition raw mutation/readback through the exported partition-selection surface
+      - live QEMU secondary-partition tool-layout formatting + payload persistence
+      - live QEMU secondary-partition filesystem formatting + persisted superblock
       - ATA-backed tool-layout persistence through the mounted partition view
       - ATA-backed filesystem persistence through the mounted partition view
       - canonical persisted install-layout seeding through `src/baremetal/disk_installer.zig`

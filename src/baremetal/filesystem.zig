@@ -70,9 +70,18 @@ pub fn resetForTest() void {
     @memset(&entries, std.mem.zeroes(abi.BaremetalFilesystemEntry));
 }
 
+pub fn invalidateForBackendChange() void {
+    resetForTest();
+}
+
 pub fn init() Error!void {
     storage_backend.init();
     if (try loadExisting()) return;
+    try format();
+}
+
+pub fn formatActiveBackend() Error!void {
+    storage_backend.init();
     try format();
 }
 
