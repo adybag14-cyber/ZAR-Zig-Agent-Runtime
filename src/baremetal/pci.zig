@@ -19,6 +19,15 @@ pub const Rtl8139Device = struct {
     irq_line: u8,
 };
 
+pub const DisplayDevice = struct {
+    location: DeviceLocation,
+    framebuffer_bar: u64,
+    vendor_id: u16,
+    device_id: u16,
+    class_code: u8,
+    subclass: u8,
+};
+
 const MockEntry = struct {
     bus: u8,
     device: u8,
@@ -203,11 +212,11 @@ fn firstIoBar(bus: u8, device: u8, function: u8) ?u16 {
     return null;
 }
 
-pub fn discoverDisplayFramebufferBar() ?u64 {
+pub fn discoverDisplayDevice() ?DisplayDevice {
     if (!hardwareBacked() and !(builtin.is_test and mock_enabled)) return null;
 
-    var preferred: ?u64 = null;
-    var fallback: ?u64 = null;
+    var preferred: ?DisplayDevice = null;
+    var fallback: ?DisplayDevice = null;
 
     var bus: usize = 0;
     while (bus < max_bus_count) : (bus += 1) {
@@ -236,17 +245,30 @@ pub fn discoverDisplayFramebufferBar() ?u64 {
                 const bar = firstFramebufferMemoryBar(bus_id, device_id0, function_id) orelse continue;
                 const device_word = deviceId(bus_id, device_id0, function_id);
                 const sub = subclass(bus_id, device_id0, function_id);
+                const display: DisplayDevice = .{
+                    .location = location,
+                    .framebuffer_bar = bar,
+                    .vendor_id = vendor,
+                    .device_id = device_word,
+                    .class_code = classCode(bus_id, device_id0, function_id),
+                    .subclass = sub,
+                };
 
                 if (vendor == 0x1234 and (device_word == 0x1111 or device_word == 0x1110)) {
-                    return bar;
+                    return display;
                 }
-                if (preferred == null and sub == 0x00) preferred = bar;
-                if (fallback == null) fallback = bar;
+                if (preferred == null and sub == 0x00) preferred = display;
+                if (fallback == null) fallback = display;
             }
         }
     }
 
     return preferred orelse fallback;
+}
+
+pub fn discoverDisplayFramebufferBar() ?u64 {
+    const display = discoverDisplayDevice() orelse return null;
+    return display.framebuffer_bar;
 }
 
 pub fn discoverRtl8139() ?Rtl8139Device {
@@ -312,8 +334,13 @@ test "pci display scan finds bochs-style framebuffer bar and enables decode" {
     testSetConfig32(0, 1, 0, 0x0C, 0x0000_0000);
     testSetConfig32(0, 1, 0, 0x10, 0xFD00_0000);
 
-    const bar = discoverDisplayFramebufferBar() orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqual(@as(u64, 0xFD00_0000), bar);
+    const display = discoverDisplayDevice() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u64, 0xFD00_0000), display.framebuffer_bar);
+    try std.testing.expectEqual(@as(u16, 0x1234), display.vendor_id);
+    try std.testing.expectEqual(@as(u16, 0x1111), display.device_id);
+    try std.testing.expectEqual(@as(u8, 0), display.location.bus);
+    try std.testing.expectEqual(@as(u8, 1), display.location.device);
+    try std.testing.expectEqual(@as(u8, 0), display.location.function);
     try std.testing.expectEqual(@as(u16, 0x3), readConfig16(0, 1, 0, 0x04) & 0x3);
 }
 
