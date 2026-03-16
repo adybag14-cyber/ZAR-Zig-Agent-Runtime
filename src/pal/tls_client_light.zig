@@ -103,6 +103,8 @@ pub const Options = struct {
         /// This provides no authorization guarantees, as anyone can create a
         /// self-signed certificate.
         self_signed,
+        /// Verify that the server certificate exactly matches an explicit pinned DER leaf certificate.
+        pinned_der: []const u8,
         /// Verify that the server certificate is authorized by a given ca bundle.
         bundle: Certificate.Bundle,
     },
@@ -135,7 +137,7 @@ pub const Options = struct {
     pub const entropy_len = 240;
 };
 
-const InitError = error{
+pub const InitError = error{
     WriteFailed,
     ReadFailed,
     InsufficientEntropy,
@@ -199,6 +201,12 @@ pub const DebugInitStage = enum(u8) {
 };
 
 pub var debug_last_init_stage: DebugInitStage = .not_started;
+pub var debug_last_certificate_error: ?InitError = null;
+
+fn rememberCertificateError(err: InitError) InitError {
+    debug_last_certificate_error = err;
+    return err;
+}
 
 /// Initiates a TLS handshake and establishes a TLSv1.2 or TLSv1.3 session.
 ///
@@ -208,6 +216,7 @@ pub var debug_last_init_stage: DebugInitStage = .not_started;
 pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client {
     assert(input.buffer.len >= min_buffer_len);
     debug_last_init_stage = .not_started;
+    debug_last_certificate_error = null;
     const host = switch (options.host) {
         .no_verification => "",
         .explicit => |host| host,
@@ -677,14 +686,14 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                                 // Verify the host on the first certificate.
                                 switch (options.host) {
                                     .no_verification => {},
-                                    .explicit => try subject.verifyHostName(host),
+                                    .explicit => subject.verifyHostName(host) catch |err| return rememberCertificateError(err),
                                 }
 
                                 // Keep track of the public key for the
                                 // certificate_verify message later.
-                                try main_cert_pub_key.init(subject.pub_key_algo, subject.pubKey());
+                                main_cert_pub_key.init(subject.pub_key_algo, subject.pubKey()) catch |err| return rememberCertificateError(err);
                             } else {
-                                try prev_cert.verify(subject, now_sec);
+                                prev_cert.verify(subject, now_sec) catch |err| return rememberCertificateError(err);
                             }
 
                             switch (options.ca) {
@@ -694,7 +703,15 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                                     break :cert;
                                 },
                                 .self_signed => {
-                                    try subject.verify(subject, now_sec);
+                                    subject.verify(subject, now_sec) catch |err| return rememberCertificateError(err);
+                                    debug_last_init_stage = .trust_chain_established;
+                                    handshake_state = .trust_chain_established;
+                                    break :cert;
+                                },
+                                .pinned_der => |der_bytes| {
+                                    const subject_der = certd.buf[certd.idx .. certd.idx + cert_size];
+                                    if (!mem.eql(u8, der_bytes, subject_der)) return rememberCertificateError(error.CertificateIssuerMismatch);
+                                    subject.verify(subject, now_sec) catch |err| return rememberCertificateError(err);
                                     debug_last_init_stage = .trust_chain_established;
                                     handshake_state = .trust_chain_established;
                                     break :cert;
@@ -705,7 +722,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                                     break :cert;
                                 } else |err| switch (err) {
                                     error.CertificateIssuerNotFound => {},
-                                    else => |e| return e,
+                                    else => |e| return rememberCertificateError(e),
                                 },
                             }
 

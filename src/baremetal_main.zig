@@ -433,6 +433,13 @@ const Rtl8139TcpProbeError = error{
     HttpsPostTlsAtServerHello,
     HttpsPostTlsAtEncryptedExtensions,
     HttpsPostTlsAtCertificate,
+    HttpsPostTlsCertificateHostMismatch,
+    HttpsPostTlsCertificateIssuerMismatch,
+    HttpsPostTlsCertificateSignatureInvalid,
+    HttpsPostTlsCertificateExpired,
+    HttpsPostTlsCertificateNotYetValid,
+    HttpsPostTlsCertificatePublicKeyInvalid,
+    HttpsPostTlsCertificateTimeInvalid,
     HttpsPostTlsAtTrustChainEstablished,
     HttpsPostTlsAtCertificateVerify,
     HttpsPostTlsAtServerFinishedVerified,
@@ -591,6 +598,8 @@ const VirtioGpuDisplayProbeError = error{
     InvalidEdidResponse,
     NoConnectedScanout,
     InvalidEdid,
+    InvalidControlResponse,
+    FramebufferTooLarge,
     StateMagicMismatch,
     BackendMismatch,
     ControllerMismatch,
@@ -610,6 +619,8 @@ const VirtioGpuDisplayProbeError = error{
     EdidLengthMismatch,
     EdidHeaderMismatch,
     CapabilityFlagsMismatch,
+    PresentStatsMismatch,
+    RenderedPixelMismatch,
 };
 
 const Multiboot2Header = extern struct {
@@ -3205,6 +3216,8 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const package_list_request = "REQ 32 PKGLIST";
     const package_list_expected = "RESP 32 5\ndemo\n";
     const package_run_request = "REQ 33 PKGRUN demo";
+    const install_request = "REQ 34 INSTALL";
+    const manifest_request = "REQ 35 MANIFEST";
     const package_script_body = "mkdir /pkg/out\nwrite-file /pkg/out/result.txt pkg-service-data\necho pkg-service-ok";
     const package_output_path = "/pkg/out/result.txt";
     const package_output_expected = "pkg-service-data";
@@ -3232,6 +3245,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     var server_b = tcp_protocol.Session.initServer(flow_b.remote_port, flow_b.local_port, 0xB0C0_D0E0, 6144);
     const scratch = &rtl8139_tcp_probe_scratch;
     var probe_tick: u64 = 0;
+    var manifest_buf: [192]u8 = undefined;
     var service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const service_request_put = std.fmt.bufPrint(&scratch.service_request_put_buffer, "REQ 4 PUT {s} {d}\n{s}", .{
         service_script_path,
@@ -3763,6 +3777,92 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     if (batch_service_response_offset != batch_service_response.len) return error.PayloadMismatch;
     if (batch_service_response_chunks < 2) return error.CounterMismatch;
 
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const install_request_payload = client_b.buildPayload(install_request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, install_request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, install_request_payload);
+    server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const install_response = tool_service.handleFramedRequest(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        512,
+        256,
+        512,
+    ) catch return error.ToolServiceFailed;
+    if (!std.mem.startsWith(u8, install_response, "RESP 34 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, install_response, disk_installer.install_manifest_path) == null) return error.ToolServiceResponseMismatch;
+
+    var install_response_offset: usize = 0;
+    while (install_response_offset < install_response.len) {
+        const install_reply_chunk = server_b.buildPayloadChunk(install_response[install_response_offset..]) catch |err| return mapTcpSessionProbeError(err);
+        const expected_install_chunk = install_response[install_response_offset .. install_response_offset + install_reply_chunk.payload.len];
+        _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, install_reply_chunk);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, install_reply_chunk);
+        if (!std.mem.eql(u8, install_reply_chunk.payload, expected_install_chunk)) return error.PayloadMismatch;
+        const mapped_b_install_reply_chunk = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+        if (mapped_b_install_reply_chunk != client_b) return error.SessionStateMismatch;
+        mapped_b_install_reply_chunk.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+        install_response_offset += install_reply_chunk.payload.len;
+
+        const install_reply_chunk_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+        _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, install_reply_chunk_ack);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, install_reply_chunk_ack);
+        server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    }
+    if (install_response_offset != install_response.len) return error.PayloadMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const manifest_request_payload = client_b.buildPayload(manifest_request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, manifest_request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, manifest_request_payload);
+    server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const manifest_response = tool_service.handleFramedRequest(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        512,
+        256,
+        512,
+    ) catch return error.ToolServiceFailed;
+    const expected_manifest = disk_installer.installManifestForCurrentBackend(manifest_buf[0..]) catch return error.ToolServiceFailed;
+    const expected_manifest_response = std.fmt.bufPrint(&scratch.package_install_request_buffer, "RESP 35 {d}\n{s}", .{
+        expected_manifest.len,
+        expected_manifest,
+    }) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, manifest_response, expected_manifest_response)) return error.ToolServiceResponseMismatch;
+
+    var manifest_response_offset: usize = 0;
+    while (manifest_response_offset < manifest_response.len) {
+        const manifest_reply_chunk = server_b.buildPayloadChunk(manifest_response[manifest_response_offset..]) catch |err| return mapTcpSessionProbeError(err);
+        const expected_manifest_chunk = manifest_response[manifest_response_offset .. manifest_response_offset + manifest_reply_chunk.payload.len];
+        _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, manifest_reply_chunk);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, manifest_reply_chunk);
+        if (!std.mem.eql(u8, manifest_reply_chunk.payload, expected_manifest_chunk)) return error.PayloadMismatch;
+        const mapped_b_manifest_reply_chunk = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+        if (mapped_b_manifest_reply_chunk != client_b) return error.SessionStateMismatch;
+        mapped_b_manifest_reply_chunk.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+        manifest_response_offset += manifest_reply_chunk.payload.len;
+
+        const manifest_reply_chunk_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+        _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, manifest_reply_chunk_ack);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, manifest_reply_chunk_ack);
+        server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    }
+    if (manifest_response_offset != manifest_response.len) return error.PayloadMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const installed_loader = filesystem.readFileAlloc(service_fba.allocator(), disk_installer.loader_cfg_path, 160) catch return error.ToolServiceFailed;
+    if (std.mem.indexOf(u8, installed_loader, "default=bootstrap") == null) return error.ToolServiceResponseMismatch;
+
     const client_fin_a = client_a.buildFinWithTimeout(probe_tick, retransmit_interval_ticks) catch |err| return mapTcpSessionProbeError(err);
     if (!client_a.retransmit.armed() or client_a.retransmit.kind != .fin) return error.RetransmitMissing;
     if (client_a.pollRetransmit(probe_tick + retransmit_interval_ticks - 1) != null) return error.RetransmitTooEarly;
@@ -3947,6 +4047,8 @@ fn runRtl8139HttpsPostProbe() Rtl8139TcpProbeError!void {
     pal_net.clearRouteState();
     defer pal_net.clearRouteState();
     pal_net.configureIpv4Route(.{ 10, 0, 2, 15 }, .{ 255, 255, 255, 0 }, null);
+    pal_net.configureHttpsProbeTrust();
+    defer pal_net.clearHttpsPinnedTrust();
 
     const tx_packets_before_http = eth.tx_packets;
     const rx_packets_before_http = eth.rx_packets;
@@ -3964,6 +4066,7 @@ fn runRtl8139HttpsPostProbe() Rtl8139TcpProbeError!void {
         const any_err: anyerror = err;
         const err_name = @errorName(any_err);
         const tls_stage = pal_net.lastHttpsTlsInitStage();
+        const tls_certificate_error = pal_net.lastHttpsTlsCertificateError();
         const tls_transport_debug = pal_net.lastHttpsTlsTransportDebug().*;
         if (any_err == error.Timeout) {
             switch (tls_stage) {
@@ -4026,6 +4129,24 @@ fn runRtl8139HttpsPostProbe() Rtl8139TcpProbeError!void {
         if (any_err == error.TlsDecryptError) return error.HttpsPostTlsDecryptError;
         if (any_err == error.TlsConnectionTruncated) return error.HttpsPostTlsConnectionTruncated;
         if (any_err == error.TlsDecodeError) return error.HttpsPostTlsDecodeError;
+        if (tls_stage == .certificate_received) {
+            if (tls_certificate_error) |cert_err| {
+                switch (cert_err) {
+                    error.CertificateHostMismatch => return error.HttpsPostTlsCertificateHostMismatch,
+                    error.CertificateIssuerMismatch => return error.HttpsPostTlsCertificateIssuerMismatch,
+                    error.CertificateSignatureInvalid,
+                    error.CertificateSignatureInvalidLength,
+                    error.SignatureVerificationFailed,
+                    error.InvalidSignature,
+                    => return error.HttpsPostTlsCertificateSignatureInvalid,
+                    error.CertificateExpired => return error.HttpsPostTlsCertificateExpired,
+                    error.CertificateNotYetValid => return error.HttpsPostTlsCertificateNotYetValid,
+                    error.CertificatePublicKeyInvalid => return error.HttpsPostTlsCertificatePublicKeyInvalid,
+                    error.CertificateTimeInvalid => return error.HttpsPostTlsCertificateTimeInvalid,
+                    else => {},
+                }
+            }
+        }
         switch (tls_stage) {
             .server_hello_received => return error.HttpsPostTlsAtServerHello,
             .encrypted_extensions_received => return error.HttpsPostTlsAtEncryptedExtensions,
@@ -4137,22 +4258,29 @@ fn rtl8139TcpProbeFailureCode(err: Rtl8139TcpProbeError) u8 {
         error.HttpsPostTlsAtServerHello => 0xA9,
         error.HttpsPostTlsAtEncryptedExtensions => 0xAA,
         error.HttpsPostTlsAtCertificate => 0xAB,
-        error.HttpsPostTlsAtTrustChainEstablished => 0xAC,
-        error.HttpsPostTlsAtCertificateVerify => 0xAD,
-        error.HttpsPostTlsAtServerFinishedVerified => 0xAE,
-        error.HttpsPostTlsBeforeClientFinished => 0xAF,
-        error.HttpsPostTlsAfterClientFinished => 0xB0,
-        error.HttpsPostTlsAfterInit => 0xB1,
-        error.HttpsPostTlsNoWriterFlush => 0xB2,
-        error.HttpsPostTlsNoPayloadEmit => 0xB3,
-        error.HttpsPostTlsWindowBlockedBeforeEmit => 0xB4,
-        error.HttpsPostLastTxNotIpv4 => 0xB5,
-        error.HttpsPostLastTxIpv4DecodeFailed => 0xB6,
-        error.HttpsPostLastTxNotTcp => 0xB7,
-        error.HttpsPostLastTxTcpDecodeFailed => 0xB8,
-        error.HttpsPostLastTxDestinationMismatch => 0xB9,
-        error.HttpsPostLastTxPortsMismatch => 0xBA,
-        error.HttpsPostLastTxFlagsMismatch => 0xBB,
+        error.HttpsPostTlsCertificateHostMismatch => 0xAC,
+        error.HttpsPostTlsCertificateIssuerMismatch => 0xAD,
+        error.HttpsPostTlsCertificateSignatureInvalid => 0xAE,
+        error.HttpsPostTlsCertificateExpired => 0xAF,
+        error.HttpsPostTlsCertificateNotYetValid => 0xB0,
+        error.HttpsPostTlsCertificatePublicKeyInvalid => 0xB1,
+        error.HttpsPostTlsCertificateTimeInvalid => 0xB2,
+        error.HttpsPostTlsAtTrustChainEstablished => 0xB3,
+        error.HttpsPostTlsAtCertificateVerify => 0xB4,
+        error.HttpsPostTlsAtServerFinishedVerified => 0xB5,
+        error.HttpsPostTlsBeforeClientFinished => 0xB6,
+        error.HttpsPostTlsAfterClientFinished => 0xB7,
+        error.HttpsPostTlsAfterInit => 0xB8,
+        error.HttpsPostTlsNoWriterFlush => 0xB9,
+        error.HttpsPostTlsNoPayloadEmit => 0xBA,
+        error.HttpsPostTlsWindowBlockedBeforeEmit => 0xBB,
+        error.HttpsPostLastTxNotIpv4 => 0xBC,
+        error.HttpsPostLastTxIpv4DecodeFailed => 0xBD,
+        error.HttpsPostLastTxNotTcp => 0xBE,
+        error.HttpsPostLastTxTcpDecodeFailed => 0xBF,
+        error.HttpsPostLastTxDestinationMismatch => 0xC0,
+        error.HttpsPostLastTxPortsMismatch => 0xC1,
+        error.HttpsPostLastTxFlagsMismatch => 0xC2,
     };
 }
 
@@ -4523,25 +4651,29 @@ fn virtioGpuDisplayProbeFailureCode(err: VirtioGpuDisplayProbeError) u8 {
         error.InvalidEdidResponse => 0x4C,
         error.NoConnectedScanout => 0x4D,
         error.InvalidEdid => 0x4E,
-        error.StateMagicMismatch => 0x4F,
-        error.BackendMismatch => 0x50,
-        error.ControllerMismatch => 0x51,
-        error.ConnectorMismatch => 0x52,
-        error.HardwareBackedMismatch => 0x53,
-        error.ConnectedMismatch => 0x54,
-        error.EdidPresenceMismatch => 0x55,
-        error.VendorMismatch => 0x56,
-        error.DeviceMismatch => 0x57,
-        error.ActiveScanoutMismatch => 0x58,
-        error.CurrentModeMismatch => 0x59,
-        error.PreferredModeMismatch => 0x5A,
-        error.PhysicalSizeMismatch => 0x5B,
-        error.ManufacturerMismatch => 0x5C,
-        error.ProductMismatch => 0x5D,
-        error.SerialMismatch => 0x5E,
-        error.EdidLengthMismatch => 0x5F,
-        error.EdidHeaderMismatch => 0x60,
-        error.CapabilityFlagsMismatch => 0x61,
+        error.InvalidControlResponse => 0x4F,
+        error.FramebufferTooLarge => 0x50,
+        error.StateMagicMismatch => 0x51,
+        error.BackendMismatch => 0x52,
+        error.ControllerMismatch => 0x53,
+        error.ConnectorMismatch => 0x54,
+        error.HardwareBackedMismatch => 0x55,
+        error.ConnectedMismatch => 0x56,
+        error.EdidPresenceMismatch => 0x57,
+        error.VendorMismatch => 0x58,
+        error.DeviceMismatch => 0x59,
+        error.ActiveScanoutMismatch => 0x5A,
+        error.CurrentModeMismatch => 0x5B,
+        error.PreferredModeMismatch => 0x5C,
+        error.PhysicalSizeMismatch => 0x5D,
+        error.ManufacturerMismatch => 0x5E,
+        error.ProductMismatch => 0x5F,
+        error.SerialMismatch => 0x60,
+        error.EdidLengthMismatch => 0x61,
+        error.EdidHeaderMismatch => 0x62,
+        error.CapabilityFlagsMismatch => 0x63,
+        error.PresentStatsMismatch => 0x64,
+        error.RenderedPixelMismatch => 0x65,
     };
 }
 
@@ -4656,7 +4788,7 @@ fn runToolExecProbe() ToolExecProbeError!void {
 
 fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
     resetBaremetalRuntimeForTest();
-    const result = virtio_gpu.probeAndPublish() catch |err| switch (err) {
+    const result = virtio_gpu.probeAndPresentPattern() catch |err| switch (err) {
         error.UnsupportedPlatform => return error.UnsupportedPlatform,
         error.DeviceNotFound => return error.DeviceNotFound,
         error.MissingCapabilities => return error.MissingCapabilities,
@@ -4670,9 +4802,12 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
         error.InvalidEdidResponse => return error.InvalidEdidResponse,
         error.NoConnectedScanout => return error.NoConnectedScanout,
         error.InvalidEdid => return error.InvalidEdid,
+        error.InvalidControlResponse => return error.InvalidControlResponse,
+        error.FramebufferTooLarge => return error.FramebufferTooLarge,
     };
 
     const output = oc_display_output_state_ptr();
+    const present_stats = virtio_gpu.lastPresentStats();
     if (output.magic != abi.display_output_magic or output.api_version != abi.api_version) return error.StateMagicMismatch;
     if (output.backend != abi.display_backend_virtio_gpu) return error.BackendMismatch;
     if (output.controller != abi.display_controller_virtio_gpu) return error.ControllerMismatch;
@@ -4693,6 +4828,17 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
     if (output.capability_flags != result.capability_flags) return error.CapabilityFlagsMismatch;
     if ((output.capability_flags & abi.display_capability_digital_input) == 0) return error.CapabilityFlagsMismatch;
     if ((output.capability_flags & abi.display_capability_preferred_timing) == 0) return error.CapabilityFlagsMismatch;
+    if (present_stats.resource_create_count == 0 or
+        present_stats.attach_backing_count == 0 or
+        present_stats.scanout_set_count == 0 or
+        present_stats.transfer_count == 0 or
+        present_stats.flush_count == 0 or
+        present_stats.width != result.current_width or
+        present_stats.height != result.current_height)
+    {
+        return error.PresentStatsMismatch;
+    }
+    if (virtio_gpu.scanoutPixel(0, 0) == 0 or virtio_gpu.scanoutPixel(8, 8) == 0) return error.RenderedPixelMismatch;
 
     const edid_header = [_]u8{ 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00 };
     for (edid_header, 0..) |expected, index| {

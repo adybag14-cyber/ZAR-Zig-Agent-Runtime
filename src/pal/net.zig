@@ -462,6 +462,8 @@ const post_poll_limit: usize = 65536;
 const post_retransmit_ticks: u64 = 32;
 const freestanding_poll_pause_iterations: usize = 2048;
 const tls_wire_buffer_len: usize = tls_client_light.Client.min_buffer_len;
+const max_https_pinned_cert_der_len: usize = 2048;
+const https_probe_cert_der = @embedFile("testdata/rtl8139-https-probe-cert.der");
 pub const HttpsTlsInitStage = tls_client_light.DebugInitStage;
 
 const TlsTcpTransportScratch = struct {
@@ -481,6 +483,14 @@ const HttpsTlsScratch = struct {
 
 var https_tls_scratch: HttpsTlsScratch = .{};
 var last_https_tls_init_stage: HttpsTlsInitStage = .not_started;
+const HttpsPinnedTrust = struct {
+    enabled: bool = false,
+    cert_len: usize = 0,
+    cert_der: [max_https_pinned_cert_der_len]u8 = [_]u8{0} ** max_https_pinned_cert_der_len,
+    realtime_now_seconds: i64 = 0,
+};
+
+var https_pinned_trust: HttpsPinnedTrust = .{};
 
 pub const HttpsTlsTransportDebug = struct {
     drain_calls: u32 = 0,
@@ -502,8 +512,36 @@ pub fn lastHttpsTlsInitStage() HttpsTlsInitStage {
     return last_https_tls_init_stage;
 }
 
+pub fn lastHttpsTlsCertificateError() ?tls_client_light.InitError {
+    return tls_client_light.debug_last_certificate_error;
+}
+
 pub fn lastHttpsTlsTransportDebug() *const HttpsTlsTransportDebug {
     return &https_tls_transport_debug;
+}
+
+pub fn configureHttpsPinnedTrust(cert_der: []const u8, realtime_now_seconds: i64) error{CertificateTooLarge}!void {
+    if (cert_der.len > https_pinned_trust.cert_der.len) return error.CertificateTooLarge;
+    @memset(&https_pinned_trust.cert_der, 0);
+    if (cert_der.len > 0) {
+        std.mem.copyForwards(u8, https_pinned_trust.cert_der[0..cert_der.len], cert_der);
+    }
+    https_pinned_trust.enabled = cert_der.len != 0;
+    https_pinned_trust.cert_len = cert_der.len;
+    https_pinned_trust.realtime_now_seconds = realtime_now_seconds;
+}
+
+pub fn configureHttpsProbeTrust() void {
+    // Keep the probe deterministic while staying well inside the committed
+    // certificate validity window.
+    configureHttpsPinnedTrust(https_probe_cert_der, 1_700_000_000) catch unreachable;
+}
+
+pub fn clearHttpsPinnedTrust() void {
+    https_pinned_trust.enabled = false;
+    https_pinned_trust.cert_len = 0;
+    https_pinned_trust.realtime_now_seconds = 0;
+    @memset(&https_pinned_trust.cert_der, 0);
 }
 
 fn resetHttpsTlsTransportDebug() void {
@@ -1018,6 +1056,8 @@ fn postFreestandingHttpsWithParsedHeaders(
         client.congestion_window = max_tcp_segment_payload_len;
     }
 
+    const use_pinned_https_trust = https_pinned_trust.enabled and https_pinned_trust.cert_len != 0;
+
     const scratch = &https_tls_scratch;
     try fillTlsEntropy(&scratch.entropy);
 
@@ -1035,12 +1075,18 @@ fn postFreestandingHttpsWithParsedHeaders(
         &transport.reader,
         &transport.writer,
         .{
-            .host = .no_verification,
-            .ca = .no_verification,
+            .host = if (use_pinned_https_trust)
+                .{ .explicit = parsed.host }
+            else
+                .no_verification,
+            .ca = if (use_pinned_https_trust)
+                .{ .pinned_der = https_pinned_trust.cert_der[0..https_pinned_trust.cert_len] }
+            else
+                .no_verification,
             .read_buffer = &scratch.tls_reader_buffer,
             .write_buffer = &scratch.tls_writer_buffer,
             .entropy = &scratch.entropy,
-            .realtime_now_seconds = 0,
+            .realtime_now_seconds = if (use_pinned_https_trust) https_pinned_trust.realtime_now_seconds else 0,
             .allow_truncation_attacks = true,
             .alert = &tls_alert,
         },
