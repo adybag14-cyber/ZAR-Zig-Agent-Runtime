@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
 const builtin = @import("builtin");
 const abi = @import("abi.zig");
@@ -12,6 +13,7 @@ const cursor_data_port: u16 = 0x3D5;
 
 var state: abi.BaremetalConsoleState = undefined;
 var host_cells: [cell_count]u16 = [_]u16{0} ** cell_count;
+var initialized: bool = false;
 
 fn isHardwareBacked() bool {
     return builtin.os.tag == .freestanding and builtin.cpu.arch == .x86_64;
@@ -64,6 +66,10 @@ fn writeCursor() void {
     writePort(cursor_data_port, @intCast(cursor & 0xFF));
     writePort(cursor_index_port, 0x0E);
     writePort(cursor_data_port, @intCast((cursor >> 8) & 0xFF));
+}
+
+fn ensureInitialized() void {
+    if (!initialized) init();
 }
 
 fn resetState() void {
@@ -125,10 +131,12 @@ fn lineFeed() void {
 pub fn init() void {
     resetState();
     fillScreen(blankCell());
+    initialized = true;
     writeCursor();
 }
 
 pub fn clear() void {
+    ensureInitialized();
     fillScreen(blankCell());
     state.cursor_row = 0;
     state.cursor_col = 0;
@@ -137,6 +145,7 @@ pub fn clear() void {
 }
 
 pub fn putByte(byte: u8) void {
+    ensureInitialized();
     switch (byte) {
         '\r' => {
             state.cursor_col = 0;
@@ -168,14 +177,17 @@ pub fn putByte(byte: u8) void {
 }
 
 pub fn write(text: []const u8) void {
+    ensureInitialized();
     for (text) |byte| putByte(byte);
 }
 
 pub fn statePtr() *const abi.BaremetalConsoleState {
+    ensureInitialized();
     return &state;
 }
 
 pub fn cell(index: u32) u16 {
+    ensureInitialized();
     const idx: usize = @intCast(index);
     if (idx >= cell_count) return 0;
     return getCell(idx);
