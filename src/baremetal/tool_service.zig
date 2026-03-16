@@ -21,10 +21,12 @@ pub const RequestOp = enum {
     get,
     put,
     stat,
+    list,
     install,
     manifest,
     package_install,
     package_list,
+    package_info,
     package_run,
 };
 
@@ -41,10 +43,12 @@ pub const FramedRequest = struct {
         get: []const u8,
         put: PutRequest,
         stat: []const u8,
+        list: []const u8,
         install: void,
         manifest: void,
         package_install: PutRequest,
         package_list: void,
+        package_info: []const u8,
         package_run: []const u8,
     },
 };
@@ -272,6 +276,21 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         };
     }
 
+    if (std.ascii.eqlIgnoreCase(op_part.token, "LIST")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            const consumed_len = prefix_len + newline_index.? + 1;
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .list = op_part.rest } },
+                .consumed_len = consumed_len,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .list = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
     if (std.ascii.eqlIgnoreCase(op_part.token, "INSTALL")) {
         if (op_part.rest.len != 0) return error.InvalidFrame;
         if (newline_index != null) {
@@ -324,6 +343,20 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         }
         return .{
             .framed = .{ .request_id = request_id, .operation = .{ .package_run = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "PKGINFO")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .package_info = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .package_info = op_part.rest } },
             .consumed_len = request.len,
         };
     }
@@ -381,10 +414,12 @@ fn handleFramedPayload(
         .get => |path| try handleGetRequest(allocator, path, payload_limit),
         .put => |put_request| try handlePutRequest(allocator, put_request.path, put_request.body, payload_limit),
         .stat => |path| try handleStatRequest(allocator, path, payload_limit),
+        .list => |path| try handleListRequest(allocator, path, payload_limit),
         .install => try handleInstallRequest(allocator, payload_limit),
         .manifest => try handleManifestRequest(allocator, payload_limit),
         .package_install => |package_request| try handlePackageInstallRequest(allocator, package_request.path, package_request.body, payload_limit),
         .package_list => try handlePackageListRequest(allocator, payload_limit),
+        .package_info => |package_name| try handlePackageInfoRequest(allocator, package_name, payload_limit),
         .package_run => |package_name| try handlePackageRunRequest(allocator, package_name, stdout_limit, stderr_limit, payload_limit),
     };
 }
@@ -482,6 +517,12 @@ fn handleStatRequest(allocator: std.mem.Allocator, path: []const u8, payload_lim
     return response;
 }
 
+fn handleListRequest(allocator: std.mem.Allocator, path: []const u8, payload_limit: usize) Error![]u8 {
+    return filesystem.listDirectoryAlloc(allocator, path, payload_limit) catch |err| {
+        return formatOperationError(allocator, "LIST", err, payload_limit);
+    };
+}
+
 fn handleInstallRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
     disk_installer.installDefaultLayout(1) catch |err| {
         return formatOperationError(allocator, "INSTALL", err, payload_limit);
@@ -524,6 +565,12 @@ fn handlePackageInstallRequest(
 fn handlePackageListRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
     return package_store.listPackagesAlloc(allocator, payload_limit) catch |err| {
         return formatOperationError(allocator, "PKGLIST", err, payload_limit);
+    };
+}
+
+fn handlePackageInfoRequest(allocator: std.mem.Allocator, package_name: []const u8, payload_limit: usize) Error![]u8 {
+    return package_store.manifestAlloc(allocator, package_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "PKGINFO", err, payload_limit);
     };
 }
 
@@ -617,7 +664,13 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
-    const pkg = try parseFramedRequest("REQ 14 PKG demo 4\nedge");
+    const list = try parseFramedRequest("REQ 14 LIST /tools/cache");
+    switch (list.operation) {
+        .list => |path| try std.testing.expectEqualStrings("/tools/cache", path),
+        else => return error.InvalidFrame,
+    }
+
+    const pkg = try parseFramedRequest("REQ 15 PKG demo 4\nedge");
     switch (pkg.operation) {
         .package_install => |payload| {
             try std.testing.expectEqualStrings("demo", payload.path);
@@ -626,25 +679,31 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
-    const pkg_list = try parseFramedRequest("REQ 15 PKGLIST");
+    const pkg_list = try parseFramedRequest("REQ 16 PKGLIST");
     switch (pkg_list.operation) {
         .package_list => {},
         else => return error.InvalidFrame,
     }
 
-    const pkg_run = try parseFramedRequest("REQ 16 PKGRUN demo");
+    const pkg_info = try parseFramedRequest("REQ 17 PKGINFO demo");
+    switch (pkg_info.operation) {
+        .package_info => |package_name| try std.testing.expectEqualStrings("demo", package_name),
+        else => return error.InvalidFrame,
+    }
+
+    const pkg_run = try parseFramedRequest("REQ 18 PKGRUN demo");
     switch (pkg_run.operation) {
         .package_run => |package_name| try std.testing.expectEqualStrings("demo", package_name),
         else => return error.InvalidFrame,
     }
 
-    const install = try parseFramedRequest("REQ 17 INSTALL");
+    const install = try parseFramedRequest("REQ 19 INSTALL");
     switch (install.operation) {
         .install => {},
         else => return error.InvalidFrame,
     }
 
-    const manifest = try parseFramedRequest("REQ 18 MANIFEST");
+    const manifest = try parseFramedRequest("REQ 20 MANIFEST");
     switch (manifest.operation) {
         .manifest => {},
         else => return error.InvalidFrame,
@@ -722,6 +781,10 @@ test "baremetal tool service handles framed filesystem requests" {
     const stat_response = try handleFramedRequest(std.testing.allocator, "REQ 13 STAT /tools/cache/tool.txt", 256, 256, 256);
     defer std.testing.allocator.free(stat_response);
     try std.testing.expectEqualStrings("RESP 13 44\npath=/tools/cache/tool.txt kind=file size=4\n", stat_response);
+
+    const list_response = try handleFramedRequest(std.testing.allocator, "REQ 14 LIST /tools/cache", 256, 256, 256);
+    defer std.testing.allocator.free(list_response);
+    try std.testing.expectEqualStrings("RESP 14 16\nfile tool.txt 4\n", list_response);
 }
 
 test "baremetal tool service uploads and runs persisted scripts" {
@@ -763,14 +826,24 @@ test "baremetal tool service installs lists and runs persisted packages" {
     defer std.testing.allocator.free(list_response);
     try std.testing.expectEqualStrings("RESP 32 5\ndemo\n", list_response);
 
-    const run_response = try handleFramedRequest(std.testing.allocator, "REQ 33 PKGRUN demo", 512, 256, 512);
+    const info_response = try handleFramedRequest(std.testing.allocator, "REQ 33 PKGINFO demo", 512, 256, 512);
+    defer std.testing.allocator.free(info_response);
+    try std.testing.expect(std.mem.startsWith(u8, info_response, "RESP 33 "));
+    try std.testing.expect(std.mem.indexOf(u8, info_response, "name=demo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_response, "root=/packages/demo") != null);
+
+    const run_response = try handleFramedRequest(std.testing.allocator, "REQ 34 PKGRUN demo", 512, 256, 512);
     defer std.testing.allocator.free(run_response);
-    try std.testing.expect(std.mem.startsWith(u8, run_response, "RESP 33 "));
+    try std.testing.expect(std.mem.startsWith(u8, run_response, "RESP 34 "));
     try std.testing.expect(std.mem.indexOf(u8, run_response, "pkg-service-ok\n") != null);
 
     const readback = try filesystem.readFileAlloc(std.testing.allocator, "/pkg/out/result.txt", 64);
     defer std.testing.allocator.free(readback);
     try std.testing.expectEqualStrings("pkg-service-data", readback);
+
+    const package_dir_response = try handleFramedRequest(std.testing.allocator, "REQ 35 LIST /packages/demo", 512, 256, 512);
+    defer std.testing.allocator.free(package_dir_response);
+    try std.testing.expectEqualStrings("RESP 35 17\ndir bin\ndir meta\n", package_dir_response);
 }
 
 test "baremetal tool service installs default runtime layout and returns manifest" {
@@ -820,7 +893,7 @@ test "baremetal tool service handles batched package requests" {
     defer std.testing.allocator.free(install_request);
     const batch_request = try std.mem.concat(std.testing.allocator, u8, &.{
         install_request,
-        "\nREQ 32 PKGLIST\nREQ 33 PKGRUN demo",
+        "\nREQ 32 PKGLIST\nREQ 33 PKGINFO demo\nREQ 34 PKGRUN demo",
     });
     defer std.testing.allocator.free(batch_request);
     const batch_response = try handleFramedRequestBatch(std.testing.allocator, batch_request, 512, 256, 512);
@@ -830,9 +903,11 @@ test "baremetal tool service handles batched package requests" {
     defer std.testing.allocator.free(expected_install);
     const expected_list = try handleFramedRequest(std.testing.allocator, "REQ 32 PKGLIST", 512, 256, 512);
     defer std.testing.allocator.free(expected_list);
-    const expected_run = try handleFramedRequest(std.testing.allocator, "REQ 33 PKGRUN demo", 512, 256, 512);
+    const expected_info = try handleFramedRequest(std.testing.allocator, "REQ 33 PKGINFO demo", 512, 256, 512);
+    defer std.testing.allocator.free(expected_info);
+    const expected_run = try handleFramedRequest(std.testing.allocator, "REQ 34 PKGRUN demo", 512, 256, 512);
     defer std.testing.allocator.free(expected_run);
-    const expected = try std.mem.concat(std.testing.allocator, u8, &.{ expected_install, expected_list, expected_run });
+    const expected = try std.mem.concat(std.testing.allocator, u8, &.{ expected_install, expected_list, expected_info, expected_run });
     defer std.testing.allocator.free(expected);
 
     try std.testing.expectEqualStrings(expected, batch_response);

@@ -37,6 +37,7 @@ pub const Error = storage_backend.Error || std.mem.Allocator.Error || error{
     NotDirectory,
     IsDirectory,
     NoSpace,
+    ResponseTooLarge,
     CorruptFilesystem,
 };
 
@@ -184,6 +185,73 @@ pub fn readFileAlloc(allocator: std.mem.Allocator, path: []const u8, max_bytes: 
 
     state.read_count +%= 1;
     return buffer;
+}
+
+const DirectoryChild = struct {
+    name: [max_path_len]u8 = undefined,
+    name_len: usize,
+    kind: u8,
+    size: u32,
+};
+
+pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_bytes: usize) Error![]u8 {
+    try init();
+    const normalized = try normalizePath(path);
+    const full = normalized.slice();
+
+    if (!std.mem.eql(u8, full, "/")) {
+        const entry_index = findEntryIndex(full) orelse return error.FileNotFound;
+        if (entries[entry_index].kind != abi.filesystem_kind_directory) return error.NotDirectory;
+    }
+
+    var children: [max_entries]DirectoryChild = undefined;
+    var child_count: usize = 0;
+
+    for (entries) |record| {
+        if (record.kind == 0) continue;
+        const record_path = record.path[0..record.path_len];
+        const child_name = directChildName(full, record_path) orelse continue;
+
+        var existing_index: ?usize = null;
+        for (children[0..child_count], 0..) |existing, index| {
+            if (existing.name_len != child_name.len) continue;
+            if (std.mem.eql(u8, existing.name[0..existing.name_len], child_name)) {
+                existing_index = index;
+                break;
+            }
+        }
+
+        if (existing_index) |index| {
+            if (record.kind == abi.filesystem_kind_directory) {
+                children[index].kind = abi.filesystem_kind_directory;
+                children[index].size = 0;
+            }
+            continue;
+        }
+
+        children[child_count] = .{
+            .name_len = child_name.len,
+            .kind = record.kind,
+            .size = if (record.kind == abi.filesystem_kind_file) record.byte_len else 0,
+        };
+        @memcpy(children[child_count].name[0..child_name.len], child_name);
+        child_count += 1;
+    }
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    for (children[0..child_count]) |child| {
+        const line = if (child.kind == abi.filesystem_kind_directory)
+            try std.fmt.allocPrint(allocator, "dir {s}\n", .{child.name[0..child.name_len]})
+        else
+            try std.fmt.allocPrint(allocator, "file {s} {d}\n", .{ child.name[0..child.name_len], child.size });
+        defer allocator.free(line);
+        if (out.items.len + line.len > max_bytes) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, line);
+    }
+
+    return out.toOwnedSlice(allocator);
 }
 
 pub const SimpleStat = struct {
@@ -505,6 +573,25 @@ fn parentSlice(path: []const u8) []const u8 {
     return "/";
 }
 
+fn directChildName(parent: []const u8, candidate: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, parent, "/")) {
+        if (candidate.len <= 1 or candidate[0] != '/') return null;
+        const rest = candidate[1..];
+        const end_index = std.mem.indexOfScalar(u8, rest, '/') orelse rest.len;
+        if (end_index == 0) return null;
+        return rest[0..end_index];
+    }
+
+    if (!std.mem.startsWith(u8, candidate, parent)) return null;
+    if (candidate.len <= parent.len or candidate[parent.len] != '/') return null;
+
+    const rest = candidate[parent.len + 1 ..];
+    if (rest.len == 0) return null;
+    const end_index = std.mem.indexOfScalar(u8, rest, '/') orelse rest.len;
+    if (end_index == 0) return null;
+    return rest[0..end_index];
+}
+
 test "filesystem persists path-based files on the ram disk" {
     storage_backend.resetForTest();
     resetForTest();
@@ -551,4 +638,31 @@ test "filesystem persists path-based files on the ata backend" {
     const stat = try statNoFollow("/tools/cache/tool.txt");
     try std.testing.expectEqual(@as(std.Io.File.Kind, .file), stat.kind);
     try std.testing.expectEqual(@as(u64, 4), stat.size);
+}
+
+test "filesystem lists direct child entries only" {
+    storage_backend.resetForTest();
+    resetForTest();
+    try init();
+
+    try createDirPath("/packages/demo/bin");
+    try createDirPath("/packages/demo/meta");
+    try writeFile("/packages/demo/bin/main.oc", "edge", 7);
+    try writeFile("/packages/demo/meta/package.txt", "meta", 7);
+
+    const root_listing = try listDirectoryAlloc(std.testing.allocator, "/", 64);
+    defer std.testing.allocator.free(root_listing);
+    try std.testing.expectEqualStrings("dir packages\n", root_listing);
+
+    const packages_listing = try listDirectoryAlloc(std.testing.allocator, "/packages", 64);
+    defer std.testing.allocator.free(packages_listing);
+    try std.testing.expectEqualStrings("dir demo\n", packages_listing);
+
+    const demo_listing = try listDirectoryAlloc(std.testing.allocator, "/packages/demo", 64);
+    defer std.testing.allocator.free(demo_listing);
+    try std.testing.expectEqualStrings("dir bin\ndir meta\n", demo_listing);
+
+    const bin_listing = try listDirectoryAlloc(std.testing.allocator, "/packages/demo/bin", 64);
+    defer std.testing.allocator.free(bin_listing);
+    try std.testing.expectEqualStrings("file main.oc 4\n", bin_listing);
 }

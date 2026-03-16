@@ -128,7 +128,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, run-script, run-package");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, run-script, run-package");
         return;
     }
 
@@ -226,6 +226,48 @@ fn execute(
             else => "unknown",
         };
         try stdout_buffer.appendFmt("path={s} kind={s} size={d}\n", .{ arg.arg, kind, stat.size });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "ls")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "ls <path>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: ls <path>");
+            return;
+        }
+        const listing = filesystem.listDirectoryAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("ls failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(listing);
+        try stdout_buffer.appendSlice(listing);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "package-info")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-info <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-info <name>");
+            return;
+        }
+        const manifest = package_store.manifestAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("package-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(manifest);
+        try stdout_buffer.appendSlice(manifest);
         return;
     }
 
@@ -456,4 +498,24 @@ test "baremetal tool exec runs packages from the canonical package layout" {
     const content = try filesystem.readFileAlloc(std.testing.allocator, "/pkg/out/data.txt", 64);
     defer std.testing.allocator.free(content);
     try std.testing.expectEqualStrings("package-data", content);
+}
+
+test "baremetal tool exec lists directories and reads package metadata" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    vga_text_console.resetForTest();
+
+    try package_store.installScriptPackage("demo", "echo package-ok", 0);
+
+    var list_result = try runCapture(std.testing.allocator, "ls /packages", 256, 256);
+    defer list_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), list_result.exit_code);
+    try std.testing.expectEqualStrings("dir demo\n", list_result.stdout);
+
+    var info_result = try runCapture(std.testing.allocator, "package-info demo", 256, 256);
+    defer info_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), info_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "name=demo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "root=/packages/demo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "script_bytes=15") != null);
 }
