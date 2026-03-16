@@ -46,6 +46,8 @@ pub const RequestOp = enum {
     app_info,
     app_state,
     app_history,
+    app_stdout,
+    app_stderr,
     app_trust,
     app_connector,
     app_run,
@@ -118,6 +120,8 @@ pub const FramedRequest = struct {
         app_info: []const u8,
         app_state: []const u8,
         app_history: []const u8,
+        app_stdout: []const u8,
+        app_stderr: []const u8,
         app_trust: NamedValueRequest,
         app_connector: NamedValueRequest,
         app_run: []const u8,
@@ -592,6 +596,34 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         };
     }
 
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPSTDOUT")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .app_stdout = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .app_stdout = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPSTDERR")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .app_stderr = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .app_stderr = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
     if (std.ascii.eqlIgnoreCase(op_part.token, "APPTRUST")) {
         const package_name_part = try splitFirstToken(op_part.rest);
         const trust_name_part = try splitFirstToken(package_name_part.rest);
@@ -892,6 +924,8 @@ fn handleFramedPayload(
         .app_info => |package_name| try handleAppInfoRequest(allocator, package_name, payload_limit),
         .app_state => |package_name| try handleAppStateRequest(allocator, package_name, payload_limit),
         .app_history => |package_name| try handleAppHistoryRequest(allocator, package_name, payload_limit),
+        .app_stdout => |package_name| try handleAppStdoutRequest(allocator, package_name, payload_limit),
+        .app_stderr => |package_name| try handleAppStderrRequest(allocator, package_name, payload_limit),
         .app_trust => |app_request| try handleAppTrustRequest(allocator, app_request.package_name, app_request.value, payload_limit),
         .app_connector => |app_request| try handleAppConnectorRequest(allocator, app_request.package_name, app_request.value, payload_limit),
         .app_run => |package_name| try handleAppRunRequest(allocator, package_name, stdout_limit, stderr_limit, payload_limit),
@@ -1161,6 +1195,18 @@ fn handleAppStateRequest(allocator: std.mem.Allocator, package_name: []const u8,
 fn handleAppHistoryRequest(allocator: std.mem.Allocator, package_name: []const u8, payload_limit: usize) Error![]u8 {
     return app_runtime.historyAlloc(allocator, package_name, payload_limit) catch |err| {
         return formatOperationError(allocator, "APPHISTORY", err, payload_limit);
+    };
+}
+
+fn handleAppStdoutRequest(allocator: std.mem.Allocator, package_name: []const u8, payload_limit: usize) Error![]u8 {
+    return app_runtime.stdoutAlloc(allocator, package_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "APPSTDOUT", err, payload_limit);
+    };
+}
+
+fn handleAppStderrRequest(allocator: std.mem.Allocator, package_name: []const u8, payload_limit: usize) Error![]u8 {
+    return app_runtime.stderrAlloc(allocator, package_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "APPSTDERR", err, payload_limit);
     };
 }
 
@@ -1624,7 +1670,19 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
-    const app_trust = try parseFramedRequest("REQ 37 APPTRUST demo fs55-root");
+    const app_stdout = try parseFramedRequest("REQ 37 APPSTDOUT demo");
+    switch (app_stdout.operation) {
+        .app_stdout => |package_name| try std.testing.expectEqualStrings("demo", package_name),
+        else => return error.InvalidFrame,
+    }
+
+    const app_stderr = try parseFramedRequest("REQ 38 APPSTDERR demo");
+    switch (app_stderr.operation) {
+        .app_stderr => |package_name| try std.testing.expectEqualStrings("demo", package_name),
+        else => return error.InvalidFrame,
+    }
+
+    const app_trust = try parseFramedRequest("REQ 39 APPTRUST demo fs55-root");
     switch (app_trust.operation) {
         .app_trust => |payload| {
             try std.testing.expectEqualStrings("demo", payload.package_name);
@@ -1633,7 +1691,7 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
-    const app_connector = try parseFramedRequest("REQ 38 APPCONNECTOR demo virtual");
+    const app_connector = try parseFramedRequest("REQ 40 APPCONNECTOR demo virtual");
     switch (app_connector.operation) {
         .app_connector => |payload| {
             try std.testing.expectEqualStrings("demo", payload.package_name);
@@ -1642,13 +1700,13 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
-    const app_run = try parseFramedRequest("REQ 39 APPRUN demo");
+    const app_run = try parseFramedRequest("REQ 41 APPRUN demo");
     switch (app_run.operation) {
         .app_run => |package_name| try std.testing.expectEqualStrings("demo", package_name),
         else => return error.InvalidFrame,
     }
 
-    const app_delete = try parseFramedRequest("REQ 40 APPDELETE demo");
+    const app_delete = try parseFramedRequest("REQ 42 APPDELETE demo");
     switch (app_delete.operation) {
         .app_delete => |package_name| try std.testing.expectEqualStrings("demo", package_name),
         else => return error.InvalidFrame,
@@ -1966,6 +2024,8 @@ test "baremetal tool service configures and runs app lifecycle requests" {
     try std.testing.expect(std.mem.indexOf(u8, app_info_response, "connector=virtual") != null);
     try std.testing.expect(std.mem.indexOf(u8, app_info_response, "trust_bundle=fs55-root") != null);
     try std.testing.expect(std.mem.indexOf(u8, app_info_response, "state_path=/runtime/apps/demo/last_run.txt") != null);
+    try std.testing.expect(std.mem.indexOf(u8, app_info_response, "stdout_path=/runtime/apps/demo/stdout.log") != null);
+    try std.testing.expect(std.mem.indexOf(u8, app_info_response, "stderr_path=/runtime/apps/demo/stderr.log") != null);
 
     const app_run_response = try handleFramedRequest(std.testing.allocator, "REQ 55 APPRUN demo", 512, 256, 512);
     defer std.testing.allocator.free(app_run_response);
@@ -1985,6 +2045,14 @@ test "baremetal tool service configures and runs app lifecycle requests" {
     try std.testing.expect(std.mem.startsWith(u8, app_history_response, "RESP 57 "));
     try std.testing.expect(std.mem.indexOf(u8, app_history_response, "name=demo") != null);
     try std.testing.expect(std.mem.indexOf(u8, app_history_response, "trust_bundle=fs55-root") != null);
+
+    const app_stdout_response = try handleFramedRequest(std.testing.allocator, "REQ 58 APPSTDOUT demo", 512, 256, 512);
+    defer std.testing.allocator.free(app_stdout_response);
+    try std.testing.expectEqualStrings("RESP 58 67\ncreated /pkg/out\nwrote 16 bytes to /pkg/out/app.txt\napp-service-ok\n", app_stdout_response);
+
+    const app_stderr_response = try handleFramedRequest(std.testing.allocator, "REQ 59 APPSTDERR demo", 512, 256, 512);
+    defer std.testing.allocator.free(app_stderr_response);
+    try std.testing.expectEqualStrings("RESP 59 0\n", app_stderr_response);
 }
 
 test "baremetal tool service uninstalls packages and clears app state" {
@@ -2017,9 +2085,17 @@ test "baremetal tool service uninstalls packages and clears app state" {
     defer std.testing.allocator.free(app_history_missing);
     try std.testing.expectEqualStrings("RESP 76 35\nERR APPHISTORY: AppHistoryNotFound\n", app_history_missing);
 
-    const package_list_response = try handleFramedRequest(std.testing.allocator, "REQ 77 PKGLIST", 512, 256, 512);
+    const app_stdout_missing = try handleFramedRequest(std.testing.allocator, "REQ 77 APPSTDOUT demo", 512, 256, 512);
+    defer std.testing.allocator.free(app_stdout_missing);
+    try std.testing.expectEqualStrings("RESP 77 33\nERR APPSTDOUT: AppStdoutNotFound\n", app_stdout_missing);
+
+    const app_stderr_missing = try handleFramedRequest(std.testing.allocator, "REQ 78 APPSTDERR demo", 512, 256, 512);
+    defer std.testing.allocator.free(app_stderr_missing);
+    try std.testing.expectEqualStrings("RESP 78 33\nERR APPSTDERR: AppStderrNotFound\n", app_stderr_missing);
+
+    const package_list_response = try handleFramedRequest(std.testing.allocator, "REQ 79 PKGLIST", 512, 256, 512);
     defer std.testing.allocator.free(package_list_response);
-    try std.testing.expectEqualStrings("RESP 77 0\n", package_list_response);
+    try std.testing.expectEqualStrings("RESP 79 0\n", package_list_response);
 
     try std.testing.expectError(error.FileNotFound, filesystem.statSummary("/packages/demo"));
     try std.testing.expectError(error.FileNotFound, filesystem.statSummary("/packages/alias-demo"));
