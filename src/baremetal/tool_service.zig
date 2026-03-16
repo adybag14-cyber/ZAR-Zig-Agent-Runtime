@@ -1,6 +1,9 @@
 const std = @import("std");
+const abi = @import("abi.zig");
 const disk_installer = @import("disk_installer.zig");
+const display_output = @import("display_output.zig");
 const filesystem = @import("filesystem.zig");
+const framebuffer_console = @import("framebuffer_console.zig");
 const package_store = @import("package_store.zig");
 const storage_backend = @import("storage_backend.zig");
 const trust_store = @import("trust_store.zig");
@@ -31,6 +34,11 @@ pub const RequestOp = enum {
     package_list,
     package_info,
     package_run,
+    package_asset_put,
+    package_asset_list,
+    package_asset_get,
+    display_info,
+    display_modes,
     trust_install,
     trust_list,
     trust_info,
@@ -41,6 +49,17 @@ pub const RequestOp = enum {
 
 pub const PutRequest = struct {
     path: []const u8,
+    body: []const u8,
+};
+
+pub const PackagePathRequest = struct {
+    package_name: []const u8,
+    relative_path: []const u8,
+};
+
+pub const PackagePutRequest = struct {
+    package_name: []const u8,
+    relative_path: []const u8,
     body: []const u8,
 };
 
@@ -59,6 +78,11 @@ pub const FramedRequest = struct {
         package_list: void,
         package_info: []const u8,
         package_run: []const u8,
+        package_asset_put: PackagePutRequest,
+        package_asset_list: []const u8,
+        package_asset_get: PackagePathRequest,
+        display_info: void,
+        display_modes: void,
         trust_install: PutRequest,
         trust_list: void,
         trust_info: []const u8,
@@ -376,6 +400,75 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         };
     }
 
+    if (std.ascii.eqlIgnoreCase(op_part.token, "PKGLS")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .package_asset_list = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .package_asset_list = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "PKGGET")) {
+        const name_part = try splitFirstToken(op_part.rest);
+        if (name_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{
+                    .request_id = request_id,
+                    .operation = .{ .package_asset_get = .{
+                        .package_name = name_part.token,
+                        .relative_path = name_part.rest,
+                    } },
+                },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{
+                .request_id = request_id,
+                .operation = .{ .package_asset_get = .{
+                    .package_name = name_part.token,
+                    .relative_path = name_part.rest,
+                } },
+            },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYINFO")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .display_info = {} } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .display_info = {} } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYMODES")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .display_modes = {} } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .display_modes = {} } },
+            .consumed_len = request.len,
+        };
+    }
+
     if (std.ascii.eqlIgnoreCase(op_part.token, "TRUSTLIST")) {
         if (op_part.rest.len != 0) return error.InvalidFrame;
         if (newline_index != null) {
@@ -443,6 +536,29 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         return .{
             .framed = .{ .request_id = request_id, .operation = .{ .trust_delete = op_part.rest } },
             .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "PKGPUT")) {
+        const name_part = try splitFirstToken(op_part.rest);
+        const path_part = try splitFirstToken(name_part.rest);
+        const length_part = try splitFirstToken(path_part.rest);
+        if (length_part.rest.len != 0) return error.InvalidFrame;
+        const body_len = std.fmt.parseUnsigned(usize, length_part.token, 10) catch return error.InvalidFrame;
+        const body_start = newline_index orelse return error.InvalidFrame;
+        const payload_start = body_start + 1;
+        if (trimmed.len < payload_start + body_len) return error.InvalidFrame;
+        const body_payload = trimmed[payload_start .. payload_start + body_len];
+        return .{
+            .framed = .{
+                .request_id = request_id,
+                .operation = .{ .package_asset_put = .{
+                    .package_name = name_part.token,
+                    .relative_path = path_part.token,
+                    .body = body_payload,
+                } },
+            },
+            .consumed_len = prefix_len + payload_start + body_len,
         };
     }
 
@@ -518,6 +634,11 @@ fn handleFramedPayload(
         .package_list => try handlePackageListRequest(allocator, payload_limit),
         .package_info => |package_name| try handlePackageInfoRequest(allocator, package_name, payload_limit),
         .package_run => |package_name| try handlePackageRunRequest(allocator, package_name, stdout_limit, stderr_limit, payload_limit),
+        .package_asset_put => |asset_request| try handlePackageAssetPutRequest(allocator, asset_request.package_name, asset_request.relative_path, asset_request.body, payload_limit),
+        .package_asset_list => |package_name| try handlePackageAssetListRequest(allocator, package_name, payload_limit),
+        .package_asset_get => |asset_request| try handlePackageAssetGetRequest(allocator, asset_request.package_name, asset_request.relative_path, payload_limit),
+        .display_info => try handleDisplayInfoRequest(allocator, payload_limit),
+        .display_modes => try handleDisplayModesRequest(allocator, payload_limit),
         .trust_install => |trust_request| try handleTrustInstallRequest(allocator, trust_request.path, trust_request.body, payload_limit),
         .trust_list => try handleTrustListRequest(allocator, payload_limit),
         .trust_info => |trust_name| try handleTrustInfoRequest(allocator, trust_name, payload_limit),
@@ -677,6 +798,44 @@ fn handlePackageInfoRequest(allocator: std.mem.Allocator, package_name: []const 
     };
 }
 
+fn handlePackageAssetPutRequest(
+    allocator: std.mem.Allocator,
+    package_name: []const u8,
+    relative_path: []const u8,
+    body: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    package_store.installPackageAsset(package_name, relative_path, body, 0) catch |err| {
+        return formatOperationError(allocator, "PKGPUT", err, payload_limit);
+    };
+
+    var asset_buf: [filesystem.max_path_len]u8 = undefined;
+    const asset_path = package_store.assetPath(package_name, relative_path, &asset_buf) catch |err| {
+        return formatOperationError(allocator, "PKGPUT", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "ASSET {s} -> {s}\n", .{ package_name, asset_path });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handlePackageAssetListRequest(allocator: std.mem.Allocator, package_name: []const u8, payload_limit: usize) Error![]u8 {
+    return package_store.listPackageAssetsAlloc(allocator, package_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "PKGLS", err, payload_limit);
+    };
+}
+
+fn handlePackageAssetGetRequest(
+    allocator: std.mem.Allocator,
+    package_name: []const u8,
+    relative_path: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return package_store.readPackageAssetAlloc(allocator, package_name, relative_path, payload_limit) catch |err| {
+        return formatOperationError(allocator, "PKGGET", err, payload_limit);
+    };
+}
+
 fn handlePackageRunRequest(
     allocator: std.mem.Allocator,
     package_name: []const u8,
@@ -707,6 +866,52 @@ fn handleTrustInstallRequest(
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
+}
+
+fn handleDisplayInfoRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    _ = framebuffer_console.init();
+    const output = display_output.statePtr();
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "backend={s} controller={s} connector={s} connected={d} hardware_backed={d} current={d}x{d} preferred={d}x{d} scanouts={d} active={d} capabilities=0x{x}\n",
+        .{
+            displayBackendName(output.backend),
+            displayControllerName(output.controller),
+            displayConnectorName(output.connector_type),
+            output.connected,
+            output.hardware_backed,
+            output.current_width,
+            output.current_height,
+            output.preferred_width,
+            output.preferred_height,
+            output.scanout_count,
+            output.active_scanout,
+            output.capability_flags,
+        },
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleDisplayModesRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    _ = framebuffer_console.init();
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    var index: u16 = 0;
+    while (index < framebuffer_console.supportedModeCount()) : (index += 1) {
+        const line = try std.fmt.allocPrint(
+            allocator,
+            "mode {d} {d}x{d}\n",
+            .{ index, framebuffer_console.supportedModeWidth(index), framebuffer_console.supportedModeHeight(index) },
+        );
+        defer allocator.free(line);
+        if (out.items.len + line.len > payload_limit) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, line);
+    }
+
+    return out.toOwnedSlice(allocator);
 }
 
 fn handleTrustListRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
@@ -745,6 +950,32 @@ fn handleTrustDeleteRequest(allocator: std.mem.Allocator, trust_name: []const u8
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
+}
+
+fn displayBackendName(value: u8) []const u8 {
+    return switch (value) {
+        abi.display_backend_bga => "bga",
+        abi.display_backend_virtio_gpu => "virtio-gpu",
+        else => "none",
+    };
+}
+
+fn displayControllerName(value: u8) []const u8 {
+    return switch (value) {
+        abi.display_controller_bochs_bga => "bochs-bga",
+        abi.display_controller_virtio_gpu => "virtio-gpu",
+        else => "none",
+    };
+}
+
+fn displayConnectorName(value: u8) []const u8 {
+    return switch (value) {
+        abi.display_connector_displayport => "displayport",
+        abi.display_connector_hdmi => "hdmi",
+        abi.display_connector_embedded_displayport => "embedded-displayport",
+        abi.display_connector_virtual => "virtual",
+        else => "none",
+    };
 }
 
 fn resetPersistentStateForTest() void {
@@ -864,7 +1095,44 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
-    const trust_put = try parseFramedRequest("REQ 19 TRUSTPUT fs55-root 4\nedge");
+    const pkg_put = try parseFramedRequest("REQ 19 PKGPUT demo config/app.json 4\nedge");
+    switch (pkg_put.operation) {
+        .package_asset_put => |payload| {
+            try std.testing.expectEqualStrings("demo", payload.package_name);
+            try std.testing.expectEqualStrings("config/app.json", payload.relative_path);
+            try std.testing.expectEqualStrings("edge", payload.body);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const pkg_ls = try parseFramedRequest("REQ 20 PKGLS demo");
+    switch (pkg_ls.operation) {
+        .package_asset_list => |package_name| try std.testing.expectEqualStrings("demo", package_name),
+        else => return error.InvalidFrame,
+    }
+
+    const pkg_get = try parseFramedRequest("REQ 21 PKGGET demo config/app.json");
+    switch (pkg_get.operation) {
+        .package_asset_get => |payload| {
+            try std.testing.expectEqualStrings("demo", payload.package_name);
+            try std.testing.expectEqualStrings("config/app.json", payload.relative_path);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const display_info = try parseFramedRequest("REQ 22 DISPLAYINFO");
+    switch (display_info.operation) {
+        .display_info => {},
+        else => return error.InvalidFrame,
+    }
+
+    const display_modes = try parseFramedRequest("REQ 23 DISPLAYMODES");
+    switch (display_modes.operation) {
+        .display_modes => {},
+        else => return error.InvalidFrame,
+    }
+
+    const trust_put = try parseFramedRequest("REQ 24 TRUSTPUT fs55-root 4\nedge");
     switch (trust_put.operation) {
         .trust_install => |payload| {
             try std.testing.expectEqualStrings("fs55-root", payload.path);
@@ -873,43 +1141,43 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
-    const trust_list = try parseFramedRequest("REQ 20 TRUSTLIST");
+    const trust_list = try parseFramedRequest("REQ 25 TRUSTLIST");
     switch (trust_list.operation) {
         .trust_list => {},
         else => return error.InvalidFrame,
     }
 
-    const trust_info = try parseFramedRequest("REQ 21 TRUSTINFO fs55-root");
+    const trust_info = try parseFramedRequest("REQ 26 TRUSTINFO fs55-root");
     switch (trust_info.operation) {
         .trust_info => |trust_name| try std.testing.expectEqualStrings("fs55-root", trust_name),
         else => return error.InvalidFrame,
     }
 
-    const trust_active = try parseFramedRequest("REQ 22 TRUSTACTIVE");
+    const trust_active = try parseFramedRequest("REQ 27 TRUSTACTIVE");
     switch (trust_active.operation) {
         .trust_active => {},
         else => return error.InvalidFrame,
     }
 
-    const trust_select = try parseFramedRequest("REQ 23 TRUSTSELECT fs55-root");
+    const trust_select = try parseFramedRequest("REQ 28 TRUSTSELECT fs55-root");
     switch (trust_select.operation) {
         .trust_select => |trust_name| try std.testing.expectEqualStrings("fs55-root", trust_name),
         else => return error.InvalidFrame,
     }
 
-    const trust_delete = try parseFramedRequest("REQ 24 TRUSTDELETE fs55-root");
+    const trust_delete = try parseFramedRequest("REQ 29 TRUSTDELETE fs55-root");
     switch (trust_delete.operation) {
         .trust_delete => |trust_name| try std.testing.expectEqualStrings("fs55-root", trust_name),
         else => return error.InvalidFrame,
     }
 
-    const install = try parseFramedRequest("REQ 25 INSTALL");
+    const install = try parseFramedRequest("REQ 30 INSTALL");
     switch (install.operation) {
         .install => {},
         else => return error.InvalidFrame,
     }
 
-    const manifest = try parseFramedRequest("REQ 26 MANIFEST");
+    const manifest = try parseFramedRequest("REQ 31 MANIFEST");
     switch (manifest.operation) {
         .manifest => {},
         else => return error.InvalidFrame,
@@ -928,6 +1196,26 @@ test "baremetal tool service parses framed request prefixes for batches" {
     const second = try parseFramedRequestPrefix(batched[first.consumed_len..]);
     switch (second.framed.operation) {
         .stat => |path| try std.testing.expectEqualStrings("/tools/cache/tool.txt", path),
+        else => return error.InvalidFrame,
+    }
+}
+
+test "baremetal tool service parses framed package asset prefixes for batches" {
+    const batched = "REQ 21 PKGPUT demo config/app.json 4\nedge\nREQ 22 DISPLAYINFO";
+    const first = try parseFramedRequestPrefix(batched);
+    try std.testing.expectEqual(@as(usize, "REQ 21 PKGPUT demo config/app.json 4\nedge".len), first.consumed_len);
+    switch (first.framed.operation) {
+        .package_asset_put => |payload| {
+            try std.testing.expectEqualStrings("demo", payload.package_name);
+            try std.testing.expectEqualStrings("config/app.json", payload.relative_path);
+            try std.testing.expectEqualStrings("edge", payload.body);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const second = try parseFramedRequestPrefix(batched[first.consumed_len..]);
+    switch (second.framed.operation) {
+        .display_info => {},
         else => return error.InvalidFrame,
     }
 }
@@ -1037,19 +1325,62 @@ test "baremetal tool service installs lists and runs persisted packages" {
     try std.testing.expect(std.mem.startsWith(u8, info_response, "RESP 33 "));
     try std.testing.expect(std.mem.indexOf(u8, info_response, "name=demo") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_response, "root=/packages/demo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_response, "asset_root=/packages/demo/assets") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_response, "asset_count=0") != null);
 
-    const run_response = try handleFramedRequest(std.testing.allocator, "REQ 34 PKGRUN demo", 512, 256, 512);
+    const asset_body = "{\"mode\":\"tcp\"}";
+    const asset_put_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 34 PKGPUT demo config/app.json {d}\n{s}", .{ asset_body.len, asset_body });
+    defer std.testing.allocator.free(asset_put_request);
+    const asset_put_response = try handleFramedRequest(std.testing.allocator, asset_put_request, 512, 256, 512);
+    defer std.testing.allocator.free(asset_put_response);
+    try std.testing.expectEqualStrings("RESP 34 52\nASSET demo -> /packages/demo/assets/config/app.json\n", asset_put_response);
+
+    const asset_list_response = try handleFramedRequest(std.testing.allocator, "REQ 35 PKGLS demo", 512, 256, 512);
+    defer std.testing.allocator.free(asset_list_response);
+    try std.testing.expectEqualStrings("RESP 35 11\ndir config\n", asset_list_response);
+
+    const asset_get_response = try handleFramedRequest(std.testing.allocator, "REQ 36 PKGGET demo config/app.json", 512, 256, 512);
+    defer std.testing.allocator.free(asset_get_response);
+    try std.testing.expectEqualStrings("RESP 36 14\n{\"mode\":\"tcp\"}", asset_get_response);
+
+    const asset_readback = try filesystem.readFileAlloc(std.testing.allocator, "/packages/demo/assets/config/app.json", 64);
+    defer std.testing.allocator.free(asset_readback);
+    try std.testing.expectEqualStrings(asset_body, asset_readback);
+
+    const run_response = try handleFramedRequest(std.testing.allocator, "REQ 37 PKGRUN demo", 512, 256, 512);
     defer std.testing.allocator.free(run_response);
-    try std.testing.expect(std.mem.startsWith(u8, run_response, "RESP 34 "));
+    try std.testing.expect(std.mem.startsWith(u8, run_response, "RESP 37 "));
     try std.testing.expect(std.mem.indexOf(u8, run_response, "pkg-service-ok\n") != null);
 
     const readback = try filesystem.readFileAlloc(std.testing.allocator, "/pkg/out/result.txt", 64);
     defer std.testing.allocator.free(readback);
     try std.testing.expectEqualStrings("pkg-service-data", readback);
 
-    const package_dir_response = try handleFramedRequest(std.testing.allocator, "REQ 35 LIST /packages/demo", 512, 256, 512);
+    const package_dir_response = try handleFramedRequest(std.testing.allocator, "REQ 38 LIST /packages/demo", 512, 256, 512);
     defer std.testing.allocator.free(package_dir_response);
-    try std.testing.expectEqualStrings("RESP 35 17\ndir bin\ndir meta\n", package_dir_response);
+    const package_dir_listing = try filesystem.listDirectoryAlloc(std.testing.allocator, "/packages/demo", 128);
+    defer std.testing.allocator.free(package_dir_listing);
+    const expected_package_dir_response = try std.fmt.allocPrint(std.testing.allocator, "RESP 38 {d}\n{s}", .{ package_dir_listing.len, package_dir_listing });
+    defer std.testing.allocator.free(expected_package_dir_response);
+    try std.testing.expectEqualStrings(expected_package_dir_response, package_dir_response);
+}
+
+test "baremetal tool service reports display info and supported modes" {
+    resetPersistentStateForTest();
+
+    const info_response = try handleFramedRequest(std.testing.allocator, "REQ 61 DISPLAYINFO", 512, 256, 512);
+    defer std.testing.allocator.free(info_response);
+    try std.testing.expect(std.mem.startsWith(u8, info_response, "RESP 61 "));
+    try std.testing.expect(std.mem.indexOf(u8, info_response, "backend=bga") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_response, "controller=bochs-bga") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_response, "connector=virtual") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_response, "current=640x400") != null);
+
+    const modes_response = try handleFramedRequest(std.testing.allocator, "REQ 62 DISPLAYMODES", 512, 256, 512);
+    defer std.testing.allocator.free(modes_response);
+    try std.testing.expect(std.mem.startsWith(u8, modes_response, "RESP 62 "));
+    try std.testing.expect(std.mem.indexOf(u8, modes_response, "mode 0 640x400") != null);
+    try std.testing.expect(std.mem.indexOf(u8, modes_response, "mode 4 1280x1024") != null);
 }
 
 test "baremetal tool service rotates queries and deletes trust bundles" {
@@ -1174,23 +1505,38 @@ test "baremetal tool service handles batched package requests" {
     const script = "mkdir /pkg/out\nwrite-file /pkg/out/result.txt pkg-service-data\necho pkg-service-ok";
     const install_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 31 PKG demo {d}\n{s}", .{ script.len, script });
     defer std.testing.allocator.free(install_request);
+    const asset_body = "{\"mode\":\"tcp\"}";
+    const asset_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 32 PKGPUT demo config/app.json {d}\n{s}", .{ asset_body.len, asset_body });
+    defer std.testing.allocator.free(asset_request);
     const batch_request = try std.mem.concat(std.testing.allocator, u8, &.{
         install_request,
-        "\nREQ 32 PKGLIST\nREQ 33 PKGINFO demo\nREQ 34 PKGRUN demo",
+        "\n",
+        asset_request,
+        "\nREQ 33 PKGLS demo\nREQ 34 PKGGET demo config/app.json\nREQ 35 PKGLIST\nREQ 36 PKGINFO demo\nREQ 37 PKGRUN demo\nREQ 38 DISPLAYINFO\nREQ 39 DISPLAYMODES",
     });
     defer std.testing.allocator.free(batch_request);
-    const batch_response = try handleFramedRequestBatch(std.testing.allocator, batch_request, 512, 256, 512);
+    const batch_response = try handleFramedRequestBatch(std.testing.allocator, batch_request, 512, 256, 2048);
     defer std.testing.allocator.free(batch_response);
 
     const expected_install = try handleFramedRequest(std.testing.allocator, install_request, 512, 256, 512);
     defer std.testing.allocator.free(expected_install);
-    const expected_list = try handleFramedRequest(std.testing.allocator, "REQ 32 PKGLIST", 512, 256, 512);
+    const expected_asset = try handleFramedRequest(std.testing.allocator, asset_request, 512, 256, 512);
+    defer std.testing.allocator.free(expected_asset);
+    const expected_asset_list = try handleFramedRequest(std.testing.allocator, "REQ 33 PKGLS demo", 512, 256, 512);
+    defer std.testing.allocator.free(expected_asset_list);
+    const expected_asset_get = try handleFramedRequest(std.testing.allocator, "REQ 34 PKGGET demo config/app.json", 512, 256, 512);
+    defer std.testing.allocator.free(expected_asset_get);
+    const expected_list = try handleFramedRequest(std.testing.allocator, "REQ 35 PKGLIST", 512, 256, 512);
     defer std.testing.allocator.free(expected_list);
-    const expected_info = try handleFramedRequest(std.testing.allocator, "REQ 33 PKGINFO demo", 512, 256, 512);
+    const expected_info = try handleFramedRequest(std.testing.allocator, "REQ 36 PKGINFO demo", 512, 256, 512);
     defer std.testing.allocator.free(expected_info);
-    const expected_run = try handleFramedRequest(std.testing.allocator, "REQ 34 PKGRUN demo", 512, 256, 512);
+    const expected_run = try handleFramedRequest(std.testing.allocator, "REQ 37 PKGRUN demo", 512, 256, 512);
     defer std.testing.allocator.free(expected_run);
-    const expected = try std.mem.concat(std.testing.allocator, u8, &.{ expected_install, expected_list, expected_info, expected_run });
+    const expected_display_info = try handleFramedRequest(std.testing.allocator, "REQ 38 DISPLAYINFO", 512, 256, 512);
+    defer std.testing.allocator.free(expected_display_info);
+    const expected_display_modes = try handleFramedRequest(std.testing.allocator, "REQ 39 DISPLAYMODES", 512, 256, 512);
+    defer std.testing.allocator.free(expected_display_modes);
+    const expected = try std.mem.concat(std.testing.allocator, u8, &.{ expected_install, expected_asset, expected_asset_list, expected_asset_get, expected_list, expected_info, expected_run, expected_display_info, expected_display_modes });
     defer std.testing.allocator.free(expected);
 
     try std.testing.expectEqualStrings(expected, batch_response);

@@ -158,7 +158,7 @@ Current local source-of-truth evidence:
   - actual MMIO framebuffer pixels read back `bg`, `O`, and `K` from the hardware-backed framebuffer BAR
 - a second live bare-metal PVH/QEMU proof now passes:
   - `scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1`
-  - exported display-output state has `magic=display_output_magic`, `api_version=2`, `backend=virtio_gpu`, `controller=virtio_gpu`, `connector=virtual`, and a real EDID header over `virtio-gpu-pci,edid=on`
+  - exported display-output state has `magic=display_output_magic`, `api_version=2`, `backend=virtio_gpu`, `controller=virtio_gpu`, an EDID-derived connector type, and a real EDID header over `virtio-gpu-pci,edid=on`
   - runtime now also reports the selected virtio-gpu PCI vendor/device, PCI location, active scanout, current mode, preferred mode, physical dimensions, manufacturer/product IDs, exported EDID byte surface, and the exported capability flags derived from the EDID payload
   - the same proof now also validates non-zero present statistics plus non-zero scanout pixels from the guest-backed render pattern after resource-create/attach/set-scanout/flush
 - current real source-of-truth rendered display support now covers bounded Bochs/QEMU BGA mode-setting plus virtio-gpu present/flush over the virtual scanout path
@@ -373,8 +373,8 @@ Notes:
   - `scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1`
   - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1`
   - `scripts/baremetal-qemu-rtl8139-gateway-probe-check.ps1`
-- `src/baremetal/package_store.zig` now persists canonical package metadata beyond the entrypoint alone, including manifest fields for `name`, `root`, `entrypoint`, and `script_bytes`, and `src/baremetal/tool_exec.zig` now exposes matching `ls` and `package-info` builtins on top of the same bare-metal filesystem/package layout
-- `src/baremetal_main.zig` host regressions now also prove TCP zero-window block/reopen behavior, framed multi-request command-service exchange on a single live flow, structured `EXEC` request/response behavior, bounded long-response chunking under the advertised remote window, bounded typed batch request multiplexing on one live flow, typed `PUT`/`GET`/`STAT`/`LIST` service behavior, typed `INSTALL` / `MANIFEST` runtime-layout service behavior, typed `TRUSTPUT` / `TRUSTLIST` / `TRUSTINFO` / `TRUSTACTIVE` / `TRUSTSELECT` / `TRUSTDELETE` trust-store behavior, persisted `run-script` execution through the framed TCP service seam, and package install/list/info/run behavior on the canonical package layout
+- `src/baremetal/package_store.zig` now persists canonical package metadata beyond the entrypoint alone, including manifest fields for `name`, `root`, `entrypoint`, `script_bytes`, `asset_root`, `asset_count`, and `asset_bytes`, and `src/baremetal/tool_exec.zig` now exposes matching `ls`, `package-info`, `package-ls`, `package-cat`, `display-info`, and `display-modes` builtins on top of the same bare-metal filesystem/package layout
+- `src/baremetal_main.zig` host regressions now also prove TCP zero-window block/reopen behavior, framed multi-request command-service exchange on a single live flow, structured `EXEC` request/response behavior, bounded long-response chunking under the advertised remote window, bounded typed batch request multiplexing on one live flow, typed `PUT`/`GET`/`STAT`/`LIST` service behavior, typed `INSTALL` / `MANIFEST` runtime-layout service behavior, typed `PKGPUT` / `PKGLS` / `PKGGET` package-asset behavior, typed `DISPLAYINFO` / `DISPLAYMODES` display-query behavior, typed `TRUSTPUT` / `TRUSTLIST` / `TRUSTINFO` / `TRUSTACTIVE` / `TRUSTSELECT` / `TRUSTDELETE` trust-store behavior, persisted `run-script` execution through the framed TCP service seam, and package install/list/info/run behavior on the canonical package layout
 - those proofs now cover live ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, TCP `SYN -> SYN-ACK -> ACK` handshake plus payload exchange, dropped-first-SYN recovery, dropped-first-payload recovery, dropped-first-FIN recovery on both close sides, bounded four-way close, bounded two-flow session isolation, zero-window block/reopen, bounded sequential payload chunking, bounded sender congestion-window growth after ACK and timeout collapse back to the initial window, framed TCP command-service exchange, bounded typed batch request multiplexing on one flow with concatenated framed responses, typed TCP `PUT` upload, direct filesystem readback of the uploaded script path, typed `INSTALL` / `MANIFEST` runtime-layout service exchange with `/boot/loader.cfg` readback, typed `PKG` / `PKGLIST` / `PKGINFO` / `PKGRUN` package-service exchange, typed `TRUSTPUT` / `TRUSTLIST` / `TRUSTINFO` / `TRUSTACTIVE` / `TRUSTSELECT` / `TRUSTDELETE` trust-store exchange, selected trust-bundle query/path readback, trust-bundle deletion, post-delete remaining-list readback, canonical package entrypoint readback, package manifest readback, package-directory listing, package output readback, and TX/RX counter advance over the freestanding PVH image
   - the live package-service extension required a real probe-stack fix: `runRtl8139TcpProbe()` now uses static scratch storage, reducing the project-built bare-metal stack frame from `0x3e78` to `0x3708` bytes before the live QEMU proof would pass with package install/list/run enabled
   - the routed UDP proof now also covers live ARP-reply learning, ARP-cache population, gateway next-hop selection for off-subnet traffic, direct-subnet gateway bypass, and routed UDP delivery with the gateway MAC on the Ethernet frame while preserving the remote IPv4 destination
@@ -422,6 +422,7 @@ Current local source-of-truth evidence:
 - `src/baremetal/package_store.zig` now provides the canonical persisted package layout used by the bare-metal execution and TCP service seams:
   - `/packages/<name>/bin/main.oc`
   - `/packages/<name>/meta/package.txt`
+  - `/packages/<name>/assets/...`
 - `src/pal/proc.zig` now exposes an explicit `runCaptureFreestanding(...)` path instead of pretending the hosted child-process path is valid on `freestanding`.
 - `src/baremetal/tool_service.zig` now exposes a bounded typed framed request/response shim on top of `tool_exec.runCapture(...)`, `package_store`, and the bare-metal filesystem for the TCP path.
 - the execution path now closes its dependency chain through real FS5.5 storage/filesystem layers:
@@ -447,9 +448,10 @@ Current local source-of-truth evidence:
   - the hosted regression in `src/baremetal_main.zig`
 - those host/module proofs now also cover:
   - persisted ATA-backed package layout roundtrips
-  - typed TCP `PKG` / `PKGLIST` / `PKGINFO` / `PKGRUN` service behavior
+  - typed TCP `PKG` / `PKGLIST` / `PKGINFO` / `PKGRUN` / `PKGPUT` / `PKGLS` / `PKGGET` service behavior
   - canonical `run-package <name>` execution against `/packages/<name>/bin/main.oc`
-  - package manifest readback and direct-child directory listing on the canonical `/packages/<name>/...` layout
+  - package manifest readback, package asset install/list/get, and direct-child directory listing on the canonical `/packages/<name>/...` layout
+  - `display-info` / `display-modes` builtin output and typed `DISPLAYINFO` / `DISPLAYMODES` service behavior
 
 ## Non-Goals For This Track
 

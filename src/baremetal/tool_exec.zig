@@ -1,7 +1,10 @@
 const std = @import("std");
+const abi = @import("abi.zig");
 const filesystem = @import("filesystem.zig");
 const package_store = @import("package_store.zig");
 const trust_store = @import("trust_store.zig");
+const display_output = @import("display_output.zig");
+const framebuffer_console = @import("framebuffer_console.zig");
 const vga_text_console = @import("vga_text_console.zig");
 const storage_backend = @import("storage_backend.zig");
 
@@ -129,7 +132,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, trust-list, trust-info, trust-active, trust-select, trust-delete, run-script, run-package");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-ls, package-cat, trust-list, trust-info, trust-active, trust-select, trust-delete, display-info, display-modes, run-script, run-package");
         return;
     }
 
@@ -272,6 +275,53 @@ fn execute(
         return;
     }
 
+    if (std.ascii.eqlIgnoreCase(parsed.name, "package-ls")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-ls <name>");
+            return;
+        };
+        if (package_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-ls <name>");
+            return;
+        }
+        const listing = package_store.listPackageAssetsAlloc(allocator, package_name.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("package-ls failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(listing);
+        try stdout_buffer.appendSlice(listing);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "package-cat")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-cat <name> <relative-path>");
+            return;
+        };
+        const relative_path = parseFirstArg(package_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-cat <name> <relative-path>");
+            return;
+        };
+        if (relative_path.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-cat <name> <relative-path>");
+            return;
+        }
+        const asset = package_store.readPackageAssetAlloc(allocator, package_name.arg, relative_path.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("package-cat failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(asset);
+        try stdout_buffer.appendSlice(asset);
+        return;
+    }
+
     if (std.ascii.eqlIgnoreCase(parsed.name, "trust-list")) {
         if (parsed.rest.len != 0) {
             exit_code.* = 2;
@@ -365,6 +415,51 @@ fn execute(
         return;
     }
 
+    if (std.ascii.eqlIgnoreCase(parsed.name, "display-info")) {
+        if (parsed.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-info");
+            return;
+        }
+        _ = framebuffer_console.init();
+        const output = display_output.statePtr();
+        try stdout_buffer.appendFmt(
+            "backend={s} controller={s} connector={s} connected={d} hardware_backed={d} current={d}x{d} preferred={d}x{d} scanouts={d} active={d} capabilities=0x{x}\n",
+            .{
+                displayBackendName(output.backend),
+                displayControllerName(output.controller),
+                displayConnectorName(output.connector_type),
+                output.connected,
+                output.hardware_backed,
+                output.current_width,
+                output.current_height,
+                output.preferred_width,
+                output.preferred_height,
+                output.scanout_count,
+                output.active_scanout,
+                output.capability_flags,
+            },
+        );
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "display-modes")) {
+        if (parsed.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-modes");
+            return;
+        }
+        _ = framebuffer_console.init();
+        var index: u16 = 0;
+        while (index < framebuffer_console.supportedModeCount()) : (index += 1) {
+            try stdout_buffer.appendFmt(
+                "mode {d} {d}x{d}\n",
+                .{ index, framebuffer_console.supportedModeWidth(index), framebuffer_console.supportedModeHeight(index) },
+            );
+        }
+        return;
+    }
+
     if (std.ascii.eqlIgnoreCase(parsed.name, "run-script")) {
         const arg = parseFirstArg(parsed.rest) catch |err| {
             exit_code.* = 2;
@@ -404,6 +499,32 @@ fn execute(
 
     exit_code.* = 127;
     try stderr_buffer.appendFmt("unknown command: {s}\n", .{parsed.name});
+}
+
+fn displayBackendName(value: u8) []const u8 {
+    return switch (value) {
+        abi.display_backend_bga => "bga",
+        abi.display_backend_virtio_gpu => "virtio-gpu",
+        else => "none",
+    };
+}
+
+fn displayControllerName(value: u8) []const u8 {
+    return switch (value) {
+        abi.display_controller_bochs_bga => "bochs-bga",
+        abi.display_controller_virtio_gpu => "virtio-gpu",
+        else => "none",
+    };
+}
+
+fn displayConnectorName(value: u8) []const u8 {
+    return switch (value) {
+        abi.display_connector_displayport => "displayport",
+        abi.display_connector_hdmi => "hdmi",
+        abi.display_connector_embedded_displayport => "embedded-displayport",
+        abi.display_connector_virtual => "virtual",
+        else => "none",
+    };
 }
 
 fn parseCommand(command: []const u8) Error!ParsedCommand {
@@ -612,6 +733,46 @@ test "baremetal tool exec lists directories and reads package metadata" {
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "name=demo") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "root=/packages/demo") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "script_bytes=15") != null);
+}
+
+test "baremetal tool exec lists and reads persisted package assets" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    vga_text_console.resetForTest();
+
+    try package_store.installScriptPackage("demo", "echo package-ok", 0);
+    try package_store.installPackageAsset("demo", "config/app.json", "{\"mode\":\"tcp\"}", 1);
+
+    var ls_result = try runCapture(std.testing.allocator, "package-ls demo", 256, 256);
+    defer ls_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), ls_result.exit_code);
+    try std.testing.expectEqualStrings("dir config\n", ls_result.stdout);
+
+    var cat_result = try runCapture(std.testing.allocator, "package-cat demo config/app.json", 256, 256);
+    defer cat_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), cat_result.exit_code);
+    try std.testing.expectEqualStrings("{\"mode\":\"tcp\"}", cat_result.stdout);
+}
+
+test "baremetal tool exec reports current display info and supported modes" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    vga_text_console.resetForTest();
+    display_output.resetForTest();
+    framebuffer_console.resetForTest();
+
+    var info_result = try runCapture(std.testing.allocator, "display-info", 256, 256);
+    defer info_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), info_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "backend=bga") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "controller=bochs-bga") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "current=640x400") != null);
+
+    var modes_result = try runCapture(std.testing.allocator, "display-modes", 256, 256);
+    defer modes_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), modes_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, modes_result.stdout, "mode 0 640x400") != null);
+    try std.testing.expect(std.mem.indexOf(u8, modes_result.stdout, "mode 4 1280x1024") != null);
 }
 
 test "baremetal tool exec rotates and revokes trust bundles" {
