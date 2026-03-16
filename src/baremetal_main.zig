@@ -2932,6 +2932,7 @@ const Rtl8139TcpProbeScratch = struct {
     packet_storage: pal_net.TcpPacket,
     service_scratch: [2048]u8,
     http_post_scratch: [2048]u8,
+    https_trust_store_scratch: [2048]u8,
     service_request_put_buffer: [256]u8,
     service_response_put_expected_buffer: [160]u8,
     service_batch_request_buffer: [320]u8,
@@ -4047,8 +4048,16 @@ fn runRtl8139HttpsPostProbe() Rtl8139TcpProbeError!void {
     pal_net.clearRouteState();
     defer pal_net.clearRouteState();
     pal_net.configureIpv4Route(.{ 10, 0, 2, 15 }, .{ 255, 255, 255, 0 }, null);
-    pal_net.configureHttpsProbeTrust();
-    defer pal_net.clearHttpsPinnedTrust();
+    filesystem.createDirPath("/runtime/trust") catch return error.HttpsPostFailed;
+    filesystem.writeFile("/runtime/trust/fs55-root.der", pal_net.httpsProbeTrustAnchorDer(), 0) catch return error.HttpsPostFailed;
+    var https_trust_fba = std.heap.FixedBufferAllocator.init(&rtl8139_tcp_probe_scratch.https_trust_store_scratch);
+    pal_net.configureHttpsBundleTrustFromPath(
+        https_trust_fba.allocator(),
+        "/runtime/trust/fs55-root.der",
+        pal_net.httpsProbeTrustAnchorDer().len,
+        1_700_000_000,
+    ) catch return error.HttpsPostFailed;
+    defer pal_net.clearHttpsBundleTrust();
 
     const tx_packets_before_http = eth.tx_packets;
     const rx_packets_before_http = eth.rx_packets;
