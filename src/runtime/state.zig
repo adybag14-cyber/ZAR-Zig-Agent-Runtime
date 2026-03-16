@@ -1,4 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
+const builtin = @import("builtin");
 const std = @import("std");
+const pal_fs = @import("../pal/fs.zig");
 
 pub const Session = struct {
     created_unix_ms: i64,
@@ -238,8 +241,8 @@ pub const RuntimeState = struct {
 
     fn load(self: *RuntimeState) !void {
         const path = self.state_path orelse return;
-        const io = std.Io.Threaded.global_single_threaded.io();
-        const raw = std.Io.Dir.cwd().readFileAlloc(io, path, self.allocator, .limited(4 * 1024 * 1024)) catch |err| switch (err) {
+        const io = persistenceIo();
+        const raw = pal_fs.readFileAlloc(io, self.allocator, path, 4 * 1024 * 1024) catch |err| switch (err) {
             error.FileNotFound => return,
             else => return err,
         };
@@ -284,10 +287,10 @@ pub const RuntimeState = struct {
     fn persist(self: *RuntimeState) !void {
         if (!self.persistent) return;
         const path = self.state_path orelse return;
-        const io = std.Io.Threaded.global_single_threaded.io();
+        const io = persistenceIo();
 
         if (std.fs.path.dirname(path)) |parent| {
-            if (parent.len > 0) try std.Io.Dir.cwd().createDirPath(io, parent);
+            if (parent.len > 0) try pal_fs.createDirPath(io, parent);
         }
 
         var persisted_sessions = try self.allocator.alloc(PersistedSession, self.sessions.count());
@@ -337,10 +340,7 @@ pub const RuntimeState = struct {
         const payload = try out.toOwnedSlice();
         defer self.allocator.free(payload);
 
-        try std.Io.Dir.cwd().writeFile(io, .{
-            .sub_path = path,
-            .data = payload,
-        });
+        try pal_fs.writeFile(io, path, payload);
     }
 
     fn appendRestoredPendingJob(self: *RuntimeState, entry: PersistedJob) !void {
@@ -354,6 +354,16 @@ pub const RuntimeState = struct {
         });
     }
 };
+
+fn persistenceIo() std.Io {
+    if (builtin.os.tag == .freestanding) return undefined;
+    return std.Io.Threaded.global_single_threaded.io();
+}
+
+fn testingHostedIo() std.Io {
+    if (builtin.os.tag == .freestanding) return undefined;
+    return std.Io.Threaded.global_single_threaded.io();
+}
 
 fn resolveStatePath(allocator: std.mem.Allocator, state_root: []const u8) ![]u8 {
     const trimmed = std.mem.trim(u8, state_root, " \t\r\n");
@@ -465,7 +475,7 @@ test "runtime state persistence roundtrip restores session and pending queue" {
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const io = std.Io.Threaded.global_single_threaded.io();
+    const io = testingHostedIo();
     const root = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(root);
 
@@ -500,7 +510,7 @@ test "runtime state restart replay preserves leased jobs that were dequeued but 
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const io = std.Io.Threaded.global_single_threaded.io();
+    const io = testingHostedIo();
     const root = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(root);
 

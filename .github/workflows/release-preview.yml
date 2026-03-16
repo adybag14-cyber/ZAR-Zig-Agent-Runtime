@@ -227,6 +227,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-tool-exec-probe-check.ps1
 
+      - name: Bare-metal QEMU tool runtime probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-tool-runtime-probe-check.ps1
+
       - name: Bare-metal QEMU framebuffer console probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-framebuffer-console-probe-check.ps1

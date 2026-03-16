@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 const builtin = @import("builtin");
 const std = @import("std");
 const baremetal_tool_exec = @import("../baremetal/tool_exec.zig");
@@ -115,4 +116,25 @@ test "isCommandAllowed supports empty and prefixed allowlists" {
     try std.testing.expect(isCommandAllowed("printf hello", ""));
     try std.testing.expect(isCommandAllowed("printf hello", "printf"));
     try std.testing.expect(!isCommandAllowed("uname -a", "printf,echo"));
+}
+
+test "resolveFreestandingCommand preserves direct and shell wrapped command forms" {
+    const allocator = std.testing.allocator;
+
+    const direct = try resolveFreestandingCommand(allocator, &.{ "echo pal-proc-direct" });
+    defer allocator.free(direct);
+    try std.testing.expectEqualStrings("echo pal-proc-direct", direct);
+
+    const shell_wrapped = try resolveFreestandingCommand(allocator, &.{ "/bin/sh", "-lc", "echo pal-proc-shell" });
+    defer allocator.free(shell_wrapped);
+    try std.testing.expectEqualStrings("echo pal-proc-shell", shell_wrapped);
+}
+
+test "runCaptureFreestanding routes through baremetal tool exec" {
+    var result = try runCaptureFreestanding(std.testing.allocator, std.testing.io, &.{ "echo pal-proc-ok" }, 1000, 256, 128);
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(i32, 0), termExitCode(result.term));
+    try std.testing.expectEqualStrings("pal-proc-ok\n", result.stdout);
+    try std.testing.expectEqual(@as(usize, 0), result.stderr.len);
 }
