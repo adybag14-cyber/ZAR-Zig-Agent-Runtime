@@ -129,7 +129,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, trust-list, trust-info, trust-select, run-script, run-package");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, trust-list, trust-info, trust-active, trust-select, trust-delete, run-script, run-package");
         return;
     }
 
@@ -309,6 +309,22 @@ fn execute(
         return;
     }
 
+    if (std.ascii.eqlIgnoreCase(parsed.name, "trust-active")) {
+        if (parsed.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: trust-active");
+            return;
+        }
+        const info = trust_store.activeBundleInfoAlloc(allocator, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("trust-active failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(info);
+        try stdout_buffer.appendSlice(info);
+        return;
+    }
+
     if (std.ascii.eqlIgnoreCase(parsed.name, "trust-select")) {
         const arg = parseFirstArg(parsed.rest) catch |err| {
             exit_code.* = 2;
@@ -326,6 +342,26 @@ fn execute(
             return;
         };
         try stdout_buffer.appendFmt("selected {s}\n", .{arg.arg});
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "trust-delete")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "trust-delete <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: trust-delete <name>");
+            return;
+        }
+        trust_store.deleteBundle(arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("trust-delete failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("deleted {s}\n", .{arg.arg});
         return;
     }
 
@@ -578,17 +614,18 @@ test "baremetal tool exec lists directories and reads package metadata" {
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "script_bytes=15") != null);
 }
 
-test "baremetal tool exec lists reads and selects trust bundles" {
+test "baremetal tool exec rotates and revokes trust bundles" {
     storage_backend.resetForTest();
     filesystem.resetForTest();
     vga_text_console.resetForTest();
 
     try trust_store.installBundle("fs55-root", "root-cert", 0);
+    try trust_store.installBundle("fs55-backup", "backup-cert", 0);
 
     var list_result = try runCapture(std.testing.allocator, "trust-list", 256, 256);
     defer list_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), list_result.exit_code);
-    try std.testing.expectEqualStrings("fs55-root\n", list_result.stdout);
+    try std.testing.expectEqualStrings("fs55-root\nfs55-backup\n", list_result.stdout);
 
     var info_result = try runCapture(std.testing.allocator, "trust-info fs55-root", 256, 256);
     defer info_result.deinit(std.testing.allocator);
@@ -601,8 +638,30 @@ test "baremetal tool exec lists reads and selects trust bundles" {
     try std.testing.expectEqual(@as(u8, 0), select_result.exit_code);
     try std.testing.expectEqualStrings("selected fs55-root\n", select_result.stdout);
 
-    var selected_info = try runCapture(std.testing.allocator, "trust-info fs55-root", 256, 256);
+    var active_result = try runCapture(std.testing.allocator, "trust-active", 256, 256);
+    defer active_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), active_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, active_result.stdout, "name=fs55-root") != null);
+    try std.testing.expect(std.mem.indexOf(u8, active_result.stdout, "selected=1") != null);
+
+    var rotate_result = try runCapture(std.testing.allocator, "trust-select fs55-backup", 256, 256);
+    defer rotate_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), rotate_result.exit_code);
+    try std.testing.expectEqualStrings("selected fs55-backup\n", rotate_result.stdout);
+
+    var delete_result = try runCapture(std.testing.allocator, "trust-delete fs55-root", 256, 256);
+    defer delete_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), delete_result.exit_code);
+    try std.testing.expectEqualStrings("deleted fs55-root\n", delete_result.stdout);
+
+    var remaining_list = try runCapture(std.testing.allocator, "trust-list", 256, 256);
+    defer remaining_list.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), remaining_list.exit_code);
+    try std.testing.expectEqualStrings("fs55-backup\n", remaining_list.stdout);
+
+    var selected_info = try runCapture(std.testing.allocator, "trust-active", 256, 256);
     defer selected_info.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), selected_info.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, selected_info.stdout, "name=fs55-backup") != null);
     try std.testing.expect(std.mem.indexOf(u8, selected_info.stdout, "selected=1") != null);
 }
