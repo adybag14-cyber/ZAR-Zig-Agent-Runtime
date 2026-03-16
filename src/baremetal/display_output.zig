@@ -108,11 +108,21 @@ pub fn updateFromBga(update: BgaUpdate) void {
     state.preferred_height = update.height;
 }
 
+pub fn inferConnectorType(capability_flags: u16) u8 {
+    if ((capability_flags & abi.display_capability_hdmi_vendor_data) != 0) {
+        return abi.display_connector_hdmi;
+    }
+    if ((capability_flags & abi.display_capability_displayid_extension) != 0) {
+        return abi.display_connector_displayport;
+    }
+    return abi.display_connector_virtual;
+}
+
 pub fn updateFromVirtioGpu(update: VirtioGpuUpdate) void {
     initState();
     state.backend = abi.display_backend_virtio_gpu;
     state.controller = abi.display_controller_virtio_gpu;
-    state.connector_type = abi.display_connector_virtual;
+    state.connector_type = inferConnectorType(update.capability_flags);
     state.hardware_backed = if (update.hardware_backed) 1 else 0;
     state.connected = if (update.connected) 1 else 0;
     state.edid_present = if (update.edid.len > 0) 1 else 0;
@@ -193,7 +203,14 @@ test "display output state copies virtio gpu edid payload" {
     const output = statePtr();
     try std.testing.expectEqual(@as(u8, abi.display_backend_virtio_gpu), output.backend);
     try std.testing.expectEqual(@as(u8, abi.display_controller_virtio_gpu), output.controller);
+    try std.testing.expectEqual(@as(u8, abi.display_connector_virtual), output.connector_type);
     try std.testing.expectEqual(@as(u16, 4), output.edid_length);
     try std.testing.expectEqual(@as(u16, abi.display_capability_digital_input | abi.display_capability_preferred_timing), output.capability_flags);
     try std.testing.expectEqual(@as(u8, 0xFF), edidByte(1));
+}
+
+test "display output infers connector type from edid capability flags" {
+    try std.testing.expectEqual(@as(u8, abi.display_connector_hdmi), inferConnectorType(abi.display_capability_hdmi_vendor_data));
+    try std.testing.expectEqual(@as(u8, abi.display_connector_displayport), inferConnectorType(abi.display_capability_displayid_extension));
+    try std.testing.expectEqual(@as(u8, abi.display_connector_virtual), inferConnectorType(abi.display_capability_digital_input));
 }
