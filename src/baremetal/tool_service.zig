@@ -2,13 +2,13 @@ const std = @import("std");
 const disk_installer = @import("disk_installer.zig");
 const filesystem = @import("filesystem.zig");
 const package_store = @import("package_store.zig");
+const trust_store = @import("trust_store.zig");
 const tool_exec = @import("tool_exec.zig");
 
-pub const Error = tool_exec.Error || package_store.Error || std.mem.Allocator.Error || error{
+pub const Error = tool_exec.Error || package_store.Error || trust_store.Error || std.mem.Allocator.Error || error{
     EmptyRequest,
     InvalidFrame,
     ResponseTooLarge,
-    InvalidTrustName,
 };
 
 pub const FramedCommandRequest = struct {
@@ -29,7 +29,7 @@ pub const RequestOp = enum {
     package_list,
     package_info,
     package_run,
-    trust_put,
+    trust_install,
     trust_list,
     trust_info,
     trust_select,
@@ -55,7 +55,7 @@ pub const FramedRequest = struct {
         package_list: void,
         package_info: []const u8,
         package_run: []const u8,
-        trust_put: PutRequest,
+        trust_install: PutRequest,
         trust_list: void,
         trust_info: []const u8,
         trust_select: []const u8,
@@ -66,9 +66,6 @@ const ConsumedRequest = struct {
     framed: FramedRequest,
     consumed_len: usize,
 };
-
-const trust_bundles_dir = "/runtime/trust/bundles";
-const trust_active_path = "/runtime/trust/active.txt";
 
 pub fn handleCommandRequest(
     allocator: std.mem.Allocator,
@@ -415,7 +412,10 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         };
     }
 
-    if (std.ascii.eqlIgnoreCase(op_part.token, "PUT") or std.ascii.eqlIgnoreCase(op_part.token, "PKG") or std.ascii.eqlIgnoreCase(op_part.token, "TRUSTPUT")) {
+    if (std.ascii.eqlIgnoreCase(op_part.token, "PUT") or
+        std.ascii.eqlIgnoreCase(op_part.token, "PKG") or
+        std.ascii.eqlIgnoreCase(op_part.token, "TRUSTPUT"))
+    {
         const path_part = try splitFirstToken(op_part.rest);
         const length_part = try splitFirstToken(path_part.rest);
         if (length_part.rest.len != 0) return error.InvalidFrame;
@@ -438,7 +438,7 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
             return .{
                 .framed = .{
                     .request_id = request_id,
-                    .operation = .{ .trust_put = .{ .path = path_part.token, .body = body_payload } },
+                    .operation = .{ .trust_install = .{ .path = path_part.token, .body = body_payload } },
                 },
                 .consumed_len = consumed_len,
             };
@@ -484,10 +484,10 @@ fn handleFramedPayload(
         .package_list => try handlePackageListRequest(allocator, payload_limit),
         .package_info => |package_name| try handlePackageInfoRequest(allocator, package_name, payload_limit),
         .package_run => |package_name| try handlePackageRunRequest(allocator, package_name, stdout_limit, stderr_limit, payload_limit),
-        .trust_put => |trust_request| try handleTrustPutRequest(allocator, trust_request.path, trust_request.body, payload_limit),
+        .trust_install => |trust_request| try handleTrustInstallRequest(allocator, trust_request.path, trust_request.body, payload_limit),
         .trust_list => try handleTrustListRequest(allocator, payload_limit),
-        .trust_info => |bundle_name| try handleTrustInfoRequest(allocator, bundle_name, payload_limit),
-        .trust_select => |bundle_name| try handleTrustSelectRequest(allocator, bundle_name, payload_limit),
+        .trust_info => |trust_name| try handleTrustInfoRequest(allocator, trust_name, payload_limit),
+        .trust_select => |trust_name| try handleTrustSelectRequest(allocator, trust_name, payload_limit),
     };
 }
 
@@ -653,123 +653,46 @@ fn handlePackageRunRequest(
     return handleCommandRequest(allocator, command, stdout_limit, stderr_limit, payload_limit);
 }
 
-fn handleTrustPutRequest(
+fn handleTrustInstallRequest(
     allocator: std.mem.Allocator,
-    bundle_name: []const u8,
+    trust_name: []const u8,
     body: []const u8,
     payload_limit: usize,
 ) Error![]u8 {
-    var path_buf: [filesystem.max_path_len]u8 = undefined;
-    const bundle_path = trustBundlePath(bundle_name, &path_buf) catch |err| {
+    trust_store.installBundle(trust_name, body, 0) catch |err| {
         return formatOperationError(allocator, "TRUSTPUT", err, payload_limit);
     };
 
-    ensureParentDirectory(bundle_path) catch |err| {
+    var bundle_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const bundle_path = trust_store.bundlePath(trust_name, &bundle_path_buffer) catch |err| {
         return formatOperationError(allocator, "TRUSTPUT", err, payload_limit);
     };
-    filesystem.writeFile(bundle_path, body, 0) catch |err| {
-        return formatOperationError(allocator, "TRUSTPUT", err, payload_limit);
-    };
-
-    const response = try std.fmt.allocPrint(allocator, "INSTALLED {s} -> {s}\n", .{ bundle_name, bundle_path });
+    const response = try std.fmt.allocPrint(allocator, "TRUSTED {s} -> {s}\n", .{ trust_name, bundle_path });
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
 }
 
 fn handleTrustListRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
-    const listing = filesystem.listDirectoryAlloc(allocator, trust_bundles_dir, payload_limit) catch |err| switch (err) {
-        error.FileNotFound => return allocator.dupe(u8, ""),
-        else => return formatOperationError(allocator, "TRUSTLIST", err, payload_limit),
+    return trust_store.listBundlesAlloc(allocator, payload_limit) catch |err| {
+        return formatOperationError(allocator, "TRUSTLIST", err, payload_limit);
     };
-    defer allocator.free(listing);
-
-    var response: std.ArrayList(u8) = .empty;
-    errdefer response.deinit(allocator);
-
-    var lines = std.mem.tokenizeScalar(u8, listing, '\n');
-    while (lines.next()) |line| {
-        if (!std.mem.startsWith(u8, line, "file ")) continue;
-        const file_meta = line["file ".len..];
-        const name_end = std.mem.indexOfScalar(u8, file_meta, ' ') orelse file_meta.len;
-        const file_name = file_meta[0..name_end];
-        if (!std.mem.endsWith(u8, file_name, ".der")) continue;
-        const bundle_name = file_name[0 .. file_name.len - 4];
-        if (response.items.len + bundle_name.len + 1 > payload_limit) return error.ResponseTooLarge;
-        try response.appendSlice(allocator, bundle_name);
-        try response.append(allocator, '\n');
-    }
-
-    return response.toOwnedSlice(allocator);
 }
 
-fn handleTrustInfoRequest(allocator: std.mem.Allocator, bundle_name: []const u8, payload_limit: usize) Error![]u8 {
-    var path_buf: [filesystem.max_path_len]u8 = undefined;
-    const bundle_path = trustBundlePath(bundle_name, &path_buf) catch |err| {
+fn handleTrustInfoRequest(allocator: std.mem.Allocator, trust_name: []const u8, payload_limit: usize) Error![]u8 {
+    return trust_store.infoAlloc(allocator, trust_name, payload_limit) catch |err| {
         return formatOperationError(allocator, "TRUSTINFO", err, payload_limit);
     };
+}
 
-    const stat = filesystem.statSummary(bundle_path) catch |err| {
-        return formatOperationError(allocator, "TRUSTINFO", err, payload_limit);
+fn handleTrustSelectRequest(allocator: std.mem.Allocator, trust_name: []const u8, payload_limit: usize) Error![]u8 {
+    trust_store.selectBundle(trust_name, 0) catch |err| {
+        return formatOperationError(allocator, "TRUSTSELECT", err, payload_limit);
     };
-
-    const maybe_active_name = filesystem.readFileAlloc(allocator, trust_active_path, 64) catch |err| switch (err) {
-        error.FileNotFound => null,
-        else => return formatOperationError(allocator, "TRUSTINFO", err, payload_limit),
-    };
-    defer {
-        if (maybe_active_name) |active_name| allocator.free(active_name);
-    }
-
-    const selected: u8 = if (maybe_active_name) |active_name| blk: {
-        const trimmed = std.mem.trim(u8, active_name, " \t\r\n");
-        break :blk if (std.mem.eql(u8, trimmed, bundle_name)) 1 else 0;
-    } else 0;
-
-    const response = try std.fmt.allocPrint(
-        allocator,
-        "name={s}\npath={s}\nbytes={d}\nselected={d}\n",
-        .{ bundle_name, bundle_path, stat.size, selected },
-    );
+    const response = try std.fmt.allocPrint(allocator, "SELECTED {s}\n", .{trust_name});
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
-}
-
-fn handleTrustSelectRequest(allocator: std.mem.Allocator, bundle_name: []const u8, payload_limit: usize) Error![]u8 {
-    var path_buf: [filesystem.max_path_len]u8 = undefined;
-    const bundle_path = trustBundlePath(bundle_name, &path_buf) catch |err| {
-        return formatOperationError(allocator, "TRUSTSELECT", err, payload_limit);
-    };
-
-    _ = filesystem.statSummary(bundle_path) catch |err| {
-        return formatOperationError(allocator, "TRUSTSELECT", err, payload_limit);
-    };
-
-    ensureParentDirectory(trust_active_path) catch |err| {
-        return formatOperationError(allocator, "TRUSTSELECT", err, payload_limit);
-    };
-    filesystem.writeFile(trust_active_path, bundle_name, 0) catch |err| {
-        return formatOperationError(allocator, "TRUSTSELECT", err, payload_limit);
-    };
-
-    const response = try std.fmt.allocPrint(allocator, "SELECTED {s}\n", .{bundle_name});
-    errdefer allocator.free(response);
-    if (response.len > payload_limit) return error.ResponseTooLarge;
-    return response;
-}
-
-fn trustBundlePath(bundle_name: []const u8, buffer: []u8) Error![]const u8 {
-    try validateTrustName(bundle_name);
-    return std.fmt.bufPrint(buffer, trust_bundles_dir ++ "/{s}.der", .{bundle_name}) catch error.InvalidTrustName;
-}
-
-fn validateTrustName(bundle_name: []const u8) Error!void {
-    if (bundle_name.len == 0) return error.InvalidTrustName;
-    for (bundle_name) |ch| {
-        if (std.ascii.isAlphanumeric(ch) or ch == '-' or ch == '_' or ch == '.') continue;
-        return error.InvalidTrustName;
-    }
 }
 
 fn formatOperationError(
@@ -883,10 +806,10 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
-    const trust_put = try parseFramedRequest("REQ 19 TRUSTPUT fs55 4\nedge");
+    const trust_put = try parseFramedRequest("REQ 19 TRUSTPUT fs55-root 4\nedge");
     switch (trust_put.operation) {
-        .trust_put => |payload| {
-            try std.testing.expectEqualStrings("fs55", payload.path);
+        .trust_install => |payload| {
+            try std.testing.expectEqualStrings("fs55-root", payload.path);
             try std.testing.expectEqualStrings("edge", payload.body);
         },
         else => return error.InvalidFrame,
@@ -898,15 +821,15 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
-    const trust_info = try parseFramedRequest("REQ 21 TRUSTINFO fs55");
+    const trust_info = try parseFramedRequest("REQ 21 TRUSTINFO fs55-root");
     switch (trust_info.operation) {
-        .trust_info => |bundle_name| try std.testing.expectEqualStrings("fs55", bundle_name),
+        .trust_info => |trust_name| try std.testing.expectEqualStrings("fs55-root", trust_name),
         else => return error.InvalidFrame,
     }
 
-    const trust_select = try parseFramedRequest("REQ 22 TRUSTSELECT fs55");
+    const trust_select = try parseFramedRequest("REQ 22 TRUSTSELECT fs55-root");
     switch (trust_select.operation) {
-        .trust_select => |bundle_name| try std.testing.expectEqualStrings("fs55", bundle_name),
+        .trust_select => |trust_name| try std.testing.expectEqualStrings("fs55-root", trust_name),
         else => return error.InvalidFrame,
     }
 
@@ -945,8 +868,6 @@ test "baremetal tool service rejects invalid framed requests" {
     try std.testing.expectError(error.InvalidFrame, parseFramedCommandRequest("REQ 7"));
     try std.testing.expectError(error.InvalidFrame, parseFramedRequest("REQ 11 PUT /tools/cache/tool.txt nope\nedge"));
     try std.testing.expectError(error.InvalidFrame, parseFramedRequest("REQ 11 PUT /tools/cache/tool.txt 5\nedge"));
-    try std.testing.expectError(error.InvalidFrame, parseFramedRequest("REQ 11 TRUSTLIST extra"));
-    try std.testing.expectError(error.InvalidFrame, parseFramedRequest("REQ 11 TRUSTSELECT"));
 }
 
 test "baremetal tool service returns framed responses for successful commands" {
@@ -1061,40 +982,53 @@ test "baremetal tool service installs lists and runs persisted packages" {
     try std.testing.expectEqualStrings("RESP 35 17\ndir bin\ndir meta\n", package_dir_response);
 }
 
-test "baremetal tool service installs lists infos and selects trust bundles" {
+test "baremetal tool service installs lists reads and selects trust bundles" {
     filesystem.resetForTest();
 
-    const cert_der = "fs55-root-der";
-    const install_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 41 TRUSTPUT fs55 {d}\n{s}", .{ cert_der.len, cert_der });
-    defer std.testing.allocator.free(install_request);
-
-    const install_response = try handleFramedRequest(std.testing.allocator, install_request, 512, 256, 512);
+    const install_response = try handleFramedRequest(std.testing.allocator, "REQ 41 TRUSTPUT fs55-root 9\nroot-cert", 512, 256, 512);
     defer std.testing.allocator.free(install_response);
-    const expected_install_payload = "INSTALLED fs55 -> /runtime/trust/bundles/fs55.der\n";
-    const expected_install_response = try std.fmt.allocPrint(std.testing.allocator, "RESP 41 {d}\n{s}", .{ expected_install_payload.len, expected_install_payload });
-    defer std.testing.allocator.free(expected_install_response);
-    try std.testing.expectEqualStrings(expected_install_response, install_response);
+    try std.testing.expect(std.mem.startsWith(u8, install_response, "RESP 41 "));
+    try std.testing.expect(std.mem.indexOf(u8, install_response, "TRUSTED fs55-root -> /runtime/trust/bundles/fs55-root.der\n") != null);
 
     const list_response = try handleFramedRequest(std.testing.allocator, "REQ 42 TRUSTLIST", 512, 256, 512);
     defer std.testing.allocator.free(list_response);
-    try std.testing.expect(std.mem.startsWith(u8, list_response, "RESP 42 "));
-    try std.testing.expect(std.mem.indexOf(u8, list_response, "fs55\n") != null);
+    try std.testing.expectEqualStrings("RESP 42 10\nfs55-root\n", list_response);
 
-    const info_response = try handleFramedRequest(std.testing.allocator, "REQ 43 TRUSTINFO fs55", 512, 256, 512);
+    const info_response = try handleFramedRequest(std.testing.allocator, "REQ 43 TRUSTINFO fs55-root", 512, 256, 512);
     defer std.testing.allocator.free(info_response);
     try std.testing.expect(std.mem.startsWith(u8, info_response, "RESP 43 "));
-    try std.testing.expect(std.mem.indexOf(u8, info_response, "name=fs55") != null);
-    try std.testing.expect(std.mem.indexOf(u8, info_response, "bytes=13") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_response, "name=fs55-root") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_response, "selected=0") != null);
 
-    const select_response = try handleFramedRequest(std.testing.allocator, "REQ 44 TRUSTSELECT fs55", 512, 256, 512);
+    const select_response = try handleFramedRequest(std.testing.allocator, "REQ 44 TRUSTSELECT fs55-root", 512, 256, 512);
     defer std.testing.allocator.free(select_response);
-    try std.testing.expectEqualStrings("RESP 44 14\nSELECTED fs55\n", select_response);
+    try std.testing.expectEqualStrings("RESP 44 19\nSELECTED fs55-root\n", select_response);
 
-    const active_info_response = try handleFramedRequest(std.testing.allocator, "REQ 45 TRUSTINFO fs55", 512, 256, 512);
-    defer std.testing.allocator.free(active_info_response);
-    try std.testing.expect(std.mem.startsWith(u8, active_info_response, "RESP 45 "));
-    try std.testing.expect(std.mem.indexOf(u8, active_info_response, "selected=1") != null);
+    const selected_info_response = try handleFramedRequest(std.testing.allocator, "REQ 45 TRUSTINFO fs55-root", 512, 256, 512);
+    defer std.testing.allocator.free(selected_info_response);
+    try std.testing.expect(std.mem.indexOf(u8, selected_info_response, "selected=1") != null);
+}
+
+test "baremetal tool service handles batched trust requests" {
+    filesystem.resetForTest();
+
+    const batch_request =
+        "REQ 51 TRUSTPUT fs55-root 9\nroot-cert\nREQ 52 TRUSTLIST\nREQ 53 TRUSTSELECT fs55-root\nREQ 54 TRUSTINFO fs55-root";
+    const batch_response = try handleFramedRequestBatch(std.testing.allocator, batch_request, 512, 256, 768);
+    defer std.testing.allocator.free(batch_response);
+
+    const expected_install = try handleFramedRequest(std.testing.allocator, "REQ 51 TRUSTPUT fs55-root 9\nroot-cert", 512, 256, 512);
+    defer std.testing.allocator.free(expected_install);
+    const expected_list = try handleFramedRequest(std.testing.allocator, "REQ 52 TRUSTLIST", 512, 256, 512);
+    defer std.testing.allocator.free(expected_list);
+    const expected_select = try handleFramedRequest(std.testing.allocator, "REQ 53 TRUSTSELECT fs55-root", 512, 256, 512);
+    defer std.testing.allocator.free(expected_select);
+    const expected_info = try handleFramedRequest(std.testing.allocator, "REQ 54 TRUSTINFO fs55-root", 512, 256, 512);
+    defer std.testing.allocator.free(expected_info);
+    const expected = try std.mem.concat(std.testing.allocator, u8, &.{ expected_install, expected_list, expected_select, expected_info });
+    defer std.testing.allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, batch_response);
 }
 
 test "baremetal tool service installs default runtime layout and returns manifest" {

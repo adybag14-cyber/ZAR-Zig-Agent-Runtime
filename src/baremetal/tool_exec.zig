@@ -5,7 +5,7 @@ const trust_store = @import("trust_store.zig");
 const vga_text_console = @import("vga_text_console.zig");
 const storage_backend = @import("storage_backend.zig");
 
-pub const Error = package_store.Error || trust_store.Error || error{
+pub const Error = filesystem.Error || trust_store.Error || std.mem.Allocator.Error || error{
     MissingCommand,
     MissingPath,
     StreamTooLong,
@@ -129,7 +129,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, trust-list, trust-info, trust-select, package-info, run-script, run-package");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, trust-list, trust-info, trust-select, run-script, run-package");
         return;
     }
 
@@ -251,8 +251,29 @@ fn execute(
         return;
     }
 
+    if (std.ascii.eqlIgnoreCase(parsed.name, "package-info")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-info <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-info <name>");
+            return;
+        }
+        const manifest = package_store.manifestAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("package-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(manifest);
+        try stdout_buffer.appendSlice(manifest);
+        return;
+    }
+
     if (std.ascii.eqlIgnoreCase(parsed.name, "trust-list")) {
-        if (trimLeftWhitespace(parsed.rest).len != 0) {
+        if (parsed.rest.len != 0) {
             exit_code.* = 2;
             try stderr_buffer.appendLine("usage: trust-list");
             return;
@@ -268,26 +289,14 @@ fn execute(
     }
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "trust-info")) {
-        const trimmed = trimLeftWhitespace(parsed.rest);
-        if (trimmed.len == 0) {
-            const info = trust_store.selectedBundleInfoAlloc(allocator, stdout_buffer.limit) catch |err| {
-                exit_code.* = 1;
-                try stderr_buffer.appendFmt("trust-info failed: {s}\n", .{@errorName(err)});
-                return;
-            };
-            defer allocator.free(info);
-            try stdout_buffer.appendSlice(info);
-            return;
-        }
-
         const arg = parseFirstArg(parsed.rest) catch |err| {
             exit_code.* = 2;
-            try writeCommandError(stderr_buffer, err, "trust-info [name]");
+            try writeCommandError(stderr_buffer, err, "trust-info <name>");
             return;
         };
         if (arg.rest.len != 0) {
             exit_code.* = 2;
-            try stderr_buffer.appendLine("usage: trust-info [name]");
+            try stderr_buffer.appendLine("usage: trust-info <name>");
             return;
         }
         const info = trust_store.infoAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
@@ -316,28 +325,7 @@ fn execute(
             try stderr_buffer.appendFmt("trust-select failed: {s}\n", .{@errorName(err)});
             return;
         };
-        try stdout_buffer.appendFmt("selected trust {s}\n", .{arg.arg});
-        return;
-    }
-
-    if (std.ascii.eqlIgnoreCase(parsed.name, "package-info")) {
-        const arg = parseFirstArg(parsed.rest) catch |err| {
-            exit_code.* = 2;
-            try writeCommandError(stderr_buffer, err, "package-info <name>");
-            return;
-        };
-        if (arg.rest.len != 0) {
-            exit_code.* = 2;
-            try stderr_buffer.appendLine("usage: package-info <name>");
-            return;
-        }
-        const manifest = package_store.manifestAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
-            exit_code.* = 1;
-            try stderr_buffer.appendFmt("package-info failed: {s}\n", .{@errorName(err)});
-            return;
-        };
-        defer allocator.free(manifest);
-        try stdout_buffer.appendSlice(manifest);
+        try stdout_buffer.appendFmt("selected {s}\n", .{arg.arg});
         return;
     }
 
@@ -590,38 +578,31 @@ test "baremetal tool exec lists directories and reads package metadata" {
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "script_bytes=15") != null);
 }
 
-test "baremetal tool exec lists selects and inspects trust bundles" {
+test "baremetal tool exec lists reads and selects trust bundles" {
     storage_backend.resetForTest();
     filesystem.resetForTest();
     vga_text_console.resetForTest();
 
-    try trust_store.installBundle("beta-root", "BBBB", 7);
-    try trust_store.installBundle("alpha-root", "ALPHA", 8);
+    try trust_store.installBundle("fs55-root", "root-cert", 0);
 
-    var list_result = try runCapture(std.testing.allocator, "trust-list", 512, 256);
+    var list_result = try runCapture(std.testing.allocator, "trust-list", 256, 256);
     defer list_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), list_result.exit_code);
-    try std.testing.expectEqualStrings(
-        "bundle alpha-root bytes=5 selected=0\nbundle beta-root bytes=4 selected=0\n",
-        list_result.stdout,
-    );
+    try std.testing.expectEqualStrings("fs55-root\n", list_result.stdout);
 
-    var select_result = try runCapture(std.testing.allocator, "trust-select beta-root", 256, 256);
+    var info_result = try runCapture(std.testing.allocator, "trust-info fs55-root", 256, 256);
+    defer info_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), info_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "name=fs55-root") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "selected=0") != null);
+
+    var select_result = try runCapture(std.testing.allocator, "trust-select fs55-root", 256, 256);
     defer select_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), select_result.exit_code);
-    try std.testing.expectEqualStrings("selected trust beta-root\n", select_result.stdout);
+    try std.testing.expectEqualStrings("selected fs55-root\n", select_result.stdout);
 
-    var selected_info = try runCapture(std.testing.allocator, "trust-info", 512, 256);
+    var selected_info = try runCapture(std.testing.allocator, "trust-info fs55-root", 256, 256);
     defer selected_info.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), selected_info.exit_code);
-    try std.testing.expect(std.mem.indexOf(u8, selected_info.stdout, "name=beta-root\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, selected_info.stdout, "selected=1\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, selected_info.stdout, "active=beta-root\n") != null);
-
-    var named_info = try runCapture(std.testing.allocator, "trust-info alpha-root", 512, 256);
-    defer named_info.deinit(std.testing.allocator);
-    try std.testing.expectEqual(@as(u8, 0), named_info.exit_code);
-    try std.testing.expect(std.mem.indexOf(u8, named_info.stdout, "name=alpha-root\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, named_info.stdout, "selected=0\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, named_info.stdout, "active=beta-root\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, selected_info.stdout, "selected=1") != null);
 }

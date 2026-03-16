@@ -1,155 +1,114 @@
 const std = @import("std");
-const abi = @import("abi.zig");
 const filesystem = @import("filesystem.zig");
 const storage_backend = @import("storage_backend.zig");
 const ata_pio_disk = @import("ata_pio_disk.zig");
 
 pub const max_name_len: usize = 32;
 
-const trust_root_path = "/runtime/trust";
-const bundle_root_path = "/runtime/trust/bundles";
+const root_dir = "/runtime/trust";
+const bundles_dir = "/runtime/trust/bundles";
 const active_bundle_path = "/runtime/trust/active.txt";
 
 pub const Error = filesystem.Error || std.mem.Allocator.Error || error{
     InvalidTrustName,
-    TrustNotFound,
-    NoActiveBundle,
+    TrustBundleNotFound,
+    ActiveBundleNotSet,
     ResponseTooLarge,
-};
-
-const BundleRecord = struct {
-    name: [max_name_len]u8 = undefined,
-    name_len: usize,
-    byte_len: u32,
 };
 
 pub fn installBundle(name: []const u8, cert_der: []const u8, tick: u64) Error!void {
     try validateTrustName(name);
+    try ensureLayout();
 
-    var path_buf: [filesystem.max_path_len]u8 = undefined;
-    try filesystem.createDirPath(bundle_root_path);
-    try filesystem.writeFile(try bundlePath(name, &path_buf), cert_der, tick);
-}
-
-pub fn selectBundle(name: []const u8, tick: u64) Error!void {
-    try validateTrustName(name);
-
-    var path_buf: [filesystem.max_path_len]u8 = undefined;
-    const selected_path = try bundlePath(name, &path_buf);
-    const stat = filesystem.statSummary(selected_path) catch |err| switch (err) {
-        error.FileNotFound => return error.TrustNotFound,
-        else => return err,
-    };
-    if (stat.kind != .file) return error.TrustNotFound;
-
-    try filesystem.createDirPath(trust_root_path);
-    try filesystem.writeFile(active_bundle_path, name, tick);
+    var path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const path = try bundlePath(name, &path_buffer);
+    try filesystem.writeFile(path, cert_der, tick);
 }
 
 pub fn bundlePath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
     try validateTrustName(name);
-    return std.fmt.bufPrint(buffer, "/runtime/trust/bundles/{s}.der", .{name}) catch error.InvalidPath;
-}
-
-pub fn selectedBundleNameAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
-    const name = filesystem.readFileAlloc(allocator, active_bundle_path, @min(max_bytes, max_name_len)) catch |err| switch (err) {
-        error.FileNotFound => return error.NoActiveBundle,
-        else => return err,
-    };
-    errdefer allocator.free(name);
-    if (name.len == 0) return error.NoActiveBundle;
-    try validateTrustName(name);
-    return name;
-}
-
-pub fn selectedBundleInfoAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
-    const name = try selectedBundleNameAlloc(allocator, max_name_len);
-    defer allocator.free(name);
-    return infoAlloc(allocator, name, max_bytes);
-}
-
-pub fn infoAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
-    try validateTrustName(name);
-
-    var path_buf: [filesystem.max_path_len]u8 = undefined;
-    const selected_path = try bundlePath(name, &path_buf);
-    const stat = filesystem.statSummary(selected_path) catch |err| switch (err) {
-        error.FileNotFound => return error.TrustNotFound,
-        else => return err,
-    };
-
-    const active_name = selectedBundleNameAlloc(allocator, max_name_len) catch |err| switch (err) {
-        error.NoActiveBundle => null,
-        else => return err,
-    };
-    defer if (active_name) |name_buf| allocator.free(name_buf);
-
-    const selected_flag: u8 = if (active_name) |current_name|
-        @intFromBool(std.mem.eql(u8, current_name, name))
-    else
-        0;
-    const active_display = if (active_name) |current_name| current_name else "<none>";
-
-    const info = try std.fmt.allocPrint(
-        allocator,
-        "name={s}\npath={s}\nbytes={d}\nselected={d}\nactive={s}\n",
-        .{ name, selected_path, stat.size, selected_flag, active_display },
-    );
-    errdefer allocator.free(info);
-    if (info.len > max_bytes) return error.ResponseTooLarge;
-    return info;
+    return std.fmt.bufPrint(buffer, "{s}/{s}.der", .{ bundles_dir, name }) catch error.InvalidPath;
 }
 
 pub fn listBundlesAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
     try filesystem.init();
 
-    const active_name = selectedBundleNameAlloc(allocator, max_name_len) catch |err| switch (err) {
-        error.NoActiveBundle => null,
-        else => return err,
-    };
-    defer if (active_name) |name_buf| allocator.free(name_buf);
-
-    var bundles: [filesystem.max_entries]BundleRecord = undefined;
-    var bundle_count: usize = 0;
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
 
     var idx: u32 = 0;
     while (idx < filesystem.max_entries) : (idx += 1) {
         const record = filesystem.entry(idx);
-        if (record.kind == 0 or record.kind != abi.filesystem_kind_file) continue;
-
+        if (record.kind == 0) continue;
         const path = record.path[0..record.path_len];
-        const bundle_name = bundleNameFromPath(path) orelse continue;
+        const name = bundleNameFromPath(path) orelse continue;
 
-        bundles[bundle_count] = .{
-            .name_len = bundle_name.len,
-            .byte_len = record.byte_len,
-        };
-        @memcpy(bundles[bundle_count].name[0..bundle_name.len], bundle_name);
-        bundle_count += 1;
-    }
-
-    sortBundleRecords(bundles[0..bundle_count]);
-
-    var out = std.ArrayList(u8).empty;
-    defer out.deinit(allocator);
-
-    for (bundles[0..bundle_count]) |bundle| {
-        const bundle_name = bundle.name[0..bundle.name_len];
-        const selected_flag: u8 = if (active_name) |current_name|
-            @intFromBool(std.mem.eql(u8, current_name, bundle_name))
-        else
-            0;
-        const line = try std.fmt.allocPrint(
-            allocator,
-            "bundle {s} bytes={d} selected={d}\n",
-            .{ bundle_name, bundle.byte_len, selected_flag },
-        );
+        const line = try std.fmt.allocPrint(allocator, "{s}\n", .{name});
         defer allocator.free(line);
         if (out.items.len + line.len > max_bytes) return error.ResponseTooLarge;
         try out.appendSlice(allocator, line);
     }
 
     return out.toOwnedSlice(allocator);
+}
+
+pub fn infoAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
+    var path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const path = try bundlePath(name, &path_buffer);
+    const stat = filesystem.statSummary(path) catch |err| switch (err) {
+        error.FileNotFound => return error.TrustBundleNotFound,
+        else => return err,
+    };
+    const selected = try isActiveBundle(name);
+
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "name={s}\npath={s}\nbytes={d}\nselected={d}\n",
+        .{ name, path, stat.size, @intFromBool(selected) },
+    );
+    errdefer allocator.free(response);
+    if (response.len > max_bytes) return error.ResponseTooLarge;
+    return response;
+}
+
+pub fn selectBundle(name: []const u8, tick: u64) Error!void {
+    try validateTrustName(name);
+    try ensureLayout();
+
+    var path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const path = try bundlePath(name, &path_buffer);
+    _ = filesystem.statSummary(path) catch |err| switch (err) {
+        error.FileNotFound => return error.TrustBundleNotFound,
+        else => return err,
+    };
+
+    try filesystem.writeFile(active_bundle_path, name, tick);
+}
+
+pub fn activeBundleNameAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
+    const name = filesystem.readFileAlloc(allocator, active_bundle_path, max_bytes) catch |err| switch (err) {
+        error.FileNotFound => return error.ActiveBundleNotSet,
+        else => return err,
+    };
+    errdefer allocator.free(name);
+    try validateTrustName(name);
+    return name;
+}
+
+pub fn activeBundlePathAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
+    const active_name = try activeBundleNameAlloc(allocator, max_name_len);
+    defer allocator.free(active_name);
+
+    var path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const path = try bundlePath(active_name, &path_buffer);
+    if (path.len > max_bytes) return error.ResponseTooLarge;
+    return allocator.dupe(u8, path);
+}
+
+fn ensureLayout() Error!void {
+    try filesystem.init();
+    try filesystem.createDirPath(root_dir);
+    try filesystem.createDirPath(bundles_dir);
 }
 
 fn validateTrustName(name: []const u8) Error!void {
@@ -161,95 +120,86 @@ fn validateTrustName(name: []const u8) Error!void {
 }
 
 fn bundleNameFromPath(path: []const u8) ?[]const u8 {
-    if (!std.mem.startsWith(u8, path, "/runtime/trust/bundles/")) return null;
+    if (!std.mem.startsWith(u8, path, bundles_dir ++ "/")) return null;
     if (!std.mem.endsWith(u8, path, ".der")) return null;
 
-    const name = path["/runtime/trust/bundles/".len .. path.len - ".der".len];
-    if (name.len == 0 or name.len > max_name_len) return null;
-    if (std.mem.indexOfScalar(u8, name, '/') != null) return null;
+    const name = path[(bundles_dir ++ "/").len .. path.len - ".der".len];
+    if (name.len == 0 or std.mem.indexOfScalar(u8, name, '/') != null) return null;
     return name;
 }
 
-fn sortBundleRecords(records: []BundleRecord) void {
-    var i: usize = 1;
-    while (i < records.len) : (i += 1) {
-        var j = i;
-        while (j > 0 and lessThan(records[j], records[j - 1])) : (j -= 1) {
-            const tmp = records[j - 1];
-            records[j - 1] = records[j];
-            records[j] = tmp;
-        }
-    }
+fn isActiveBundle(name: []const u8) Error!bool {
+    var scratch: [max_name_len]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&scratch);
+    const active_name = activeBundleNameAlloc(fba.allocator(), max_name_len) catch |err| switch (err) {
+        error.ActiveBundleNotSet => return false,
+        else => return err,
+    };
+    return std.mem.eql(u8, active_name, name);
 }
 
-fn lessThan(a: BundleRecord, b: BundleRecord) bool {
-    return std.mem.order(u8, a.name[0..a.name_len], b.name[0..b.name_len]) == .lt;
-}
-
-test "trust store installs lists selects and reports bundle info on the ram disk" {
+test "trust store installs lists and selects persisted bundles on the ram disk" {
     storage_backend.resetForTest();
     filesystem.resetForTest();
 
-    try installBundle("beta-root", "BBBB", 7);
-    try installBundle("alpha-root", "ALPHA", 8);
+    try installBundle("fs55-root", "root-cert", 7);
+    try selectBundle("fs55-root", 9);
 
-    const listing_before = try listBundlesAlloc(std.testing.allocator, 256);
-    defer std.testing.allocator.free(listing_before);
-    try std.testing.expectEqualStrings(
-        "bundle alpha-root bytes=5 selected=0\nbundle beta-root bytes=4 selected=0\n",
-        listing_before,
-    );
+    var bundle_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const bundle_path = try bundlePath("fs55-root", &bundle_path_buffer);
+    const cert = try filesystem.readFileAlloc(std.testing.allocator, bundle_path, 64);
+    defer std.testing.allocator.free(cert);
+    try std.testing.expectEqualStrings("root-cert", cert);
 
-    try selectBundle("beta-root", 9);
+    const listing = try listBundlesAlloc(std.testing.allocator, 64);
+    defer std.testing.allocator.free(listing);
+    try std.testing.expectEqualStrings("fs55-root\n", listing);
 
-    const selected_name = try selectedBundleNameAlloc(std.testing.allocator, 64);
-    defer std.testing.allocator.free(selected_name);
-    try std.testing.expectEqualStrings("beta-root", selected_name);
-
-    const listing_after = try listBundlesAlloc(std.testing.allocator, 256);
-    defer std.testing.allocator.free(listing_after);
-    try std.testing.expectEqualStrings(
-        "bundle alpha-root bytes=5 selected=0\nbundle beta-root bytes=4 selected=1\n",
-        listing_after,
-    );
-
-    const info = try selectedBundleInfoAlloc(std.testing.allocator, 256);
+    const info = try infoAlloc(std.testing.allocator, "fs55-root", 256);
     defer std.testing.allocator.free(info);
-    try std.testing.expect(std.mem.indexOf(u8, info, "name=beta-root\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, info, "path=/runtime/trust/bundles/beta-root.der\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, info, "bytes=4\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, info, "selected=1\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, info, "active=beta-root\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info, "name=fs55-root") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info, "selected=1") != null);
+
+    const active_name = try activeBundleNameAlloc(std.testing.allocator, max_name_len);
+    defer std.testing.allocator.free(active_name);
+    try std.testing.expectEqualStrings("fs55-root", active_name);
+
+    const active_path = try activeBundlePathAlloc(std.testing.allocator, 128);
+    defer std.testing.allocator.free(active_path);
+    try std.testing.expectEqualStrings(bundle_path, active_path);
 }
 
-test "trust store persists selected bundles on ata-backed storage" {
+test "trust store selection and data persist on ata-backed storage" {
     storage_backend.resetForTest();
     filesystem.resetForTest();
     ata_pio_disk.testEnableMockDevice(8192);
     ata_pio_disk.testInstallMockMbrPartition(2048, 4096, 0x83);
     defer ata_pio_disk.testDisableMockDevice();
 
-    try installBundle("fs55-root", "EDGE-ROOT", 11);
-    try selectBundle("fs55-root", 12);
+    try installBundle("persisted-root", "persisted-cert", 11);
+    try selectBundle("persisted-root", 12);
+    try std.testing.expectEqual(@as(u32, 2048), ata_pio_disk.logicalBaseLba());
 
     filesystem.resetForTest();
 
-    const listing = try listBundlesAlloc(std.testing.allocator, 256);
-    defer std.testing.allocator.free(listing);
-    try std.testing.expectEqualStrings("bundle fs55-root bytes=9 selected=1\n", listing);
+    var bundle_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const bundle_path = try bundlePath("persisted-root", &bundle_path_buffer);
+    const cert = try filesystem.readFileAlloc(std.testing.allocator, bundle_path, 64);
+    defer std.testing.allocator.free(cert);
+    try std.testing.expectEqualStrings("persisted-cert", cert);
 
-    const info = try selectedBundleInfoAlloc(std.testing.allocator, 256);
+    const active_path = try activeBundlePathAlloc(std.testing.allocator, 128);
+    defer std.testing.allocator.free(active_path);
+    try std.testing.expectEqualStrings(bundle_path, active_path);
+
+    const info = try infoAlloc(std.testing.allocator, "persisted-root", 256);
     defer std.testing.allocator.free(info);
-    try std.testing.expect(std.mem.indexOf(u8, info, "name=fs55-root\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, info, "path=/runtime/trust/bundles/fs55-root.der\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, info, "bytes=9\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, info, "selected=1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info, "selected=1") != null);
 }
 
-test "trust store rejects invalid selections" {
+test "trust store rejects selecting unknown bundles" {
     storage_backend.resetForTest();
     filesystem.resetForTest();
 
-    try std.testing.expectError(error.TrustNotFound, selectBundle("missing-root", 1));
-    try std.testing.expectError(error.NoActiveBundle, selectedBundleInfoAlloc(std.testing.allocator, 128));
+    try std.testing.expectError(error.TrustBundleNotFound, selectBundle("missing", 1));
 }
