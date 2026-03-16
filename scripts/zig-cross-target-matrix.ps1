@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 param(
     [string] $ZigExe = "C:\users\ady\documents\toolchains\zig-master\current\zig.exe",
     [string[]] $Targets = @(

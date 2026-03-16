@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
 
 pub const status_magic: u32 = 0x4f43424d; // "OCBM"

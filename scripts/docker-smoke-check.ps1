@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 $ErrorActionPreference = "Stop"
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $defaultZig = "C:\Users\Ady\Documents\toolchains\zig-master\current\zig.exe"

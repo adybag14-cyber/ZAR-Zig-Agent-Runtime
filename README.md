@@ -7,16 +7,17 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
 - RPC method surface in Zig: `175`
 - Pinned parity gate (tri-baseline, CI/docs):
   - Go baseline (`v2.14.0-go`): `134/134` covered
-  - Original OpenClaw baseline (`v2026.3.11`): `99/99` covered
-  - Original OpenClaw beta baseline (`v2026.3.11-beta.1`): `99/99` covered
-  - Union baseline: `140/140` covered (`MISSING_IN_ZIG=0`)
+  - Original OpenClaw baseline (`v2026.3.13-1`): `100/100` covered
+  - Original OpenClaw beta baseline (`v2026.3.13-beta.1`): `100/100` covered
+  - Union baseline: `141/141` covered (`MISSING_IN_ZIG=0`)
   - Gateway events: stable `19/19`, beta `19/19`, union `19/19` (`UNION_EVENTS_MISSING_IN_ZIG=0`)
 - Latest upstream release snapshot (docs drift gate reference):
-  - Original OpenClaw baseline (`v2026.3.11`): `99/99` covered
-  - Original OpenClaw beta baseline (`v2026.3.11-beta.1`): `99/99` covered
-  - Union baseline: `140/140` covered (`MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> main `302/302` + bare-metal host `296/296` passing
+  - Original OpenClaw baseline (`v2026.3.13-1`): `100/100` covered
+  - Original OpenClaw beta baseline (`v2026.3.13-beta.1`): `100/100` covered
+  - Union baseline: `141/141` covered (`MISSING_IN_ZIG=0`)
+- Latest local validation: `zig build test --summary all` -> main `352/352` + bare-metal host `298 passed / 1 skipped`
 - Latest published edge release tag: `v0.2.0-zig-edge.29`
+- License posture: repo-wide `GPL-2.0-only` with Linux-style SPDX headers on repo-owned source and script files
 - Toolchain policy: Codeberg `master` is canonical; `adybag14-cyber/zig` publishes rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
 - CI policy: keep hosted build/test/parity/docs on Zig `master`, but pin the freestanding bare-metal compile/probe lane to the known-good Linux build `0.16.0-dev.2736+3b515fbed` until the upstream Linux `master` compiler crash on `zig build baremetal -Doptimize=ReleaseFast` is resolved.
 - Recent FS1 progress (2026-03-06):
@@ -387,6 +388,14 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
   - channel-aware update lifecycle (`update.plan`, `update.status`, `update.run`)
   - npm client package and release pipeline (`@adybag14-cyber/openclaw-zig-rpc-client`)
   - Python client package + PyPI/uvx release pipeline (`openclaw-zig-rpc-client`)
+
+## License
+
+ZAR-Zig-Agent-Runtime is now distributed under `GPL-2.0-only`.
+
+- Root and package-local `LICENSE` files now carry the GNU GPL v2 text.
+- Repo-owned source and script files use Linux-style SPDX headers: `GPL-2.0-only`.
+- Release evidence now declares `GPL-2.0-only` instead of emitting `NOASSERTION` for package license fields.
 
 ## Scope and Policy
 
@@ -1007,7 +1016,6 @@ Manual python release trigger:
 ```powershell
 gh workflow run python-release.yml -R adybag14-cyber/ZAR-Zig-Agent-Runtime -f version=<pep440-version> -f release_tag=<release-tag>
 ```
-
 
 
 

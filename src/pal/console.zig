@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 const abi = @import("../baremetal/abi.zig");
 const vga_text_console = @import("../baremetal/vga_text_console.zig");
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 param(
     [string]$Owner = "adybag14-cyber",
     [string]$Repo = "zig",

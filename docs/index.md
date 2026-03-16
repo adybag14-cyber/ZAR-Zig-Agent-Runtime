@@ -7,16 +7,17 @@ Full documentation for ZAR-Zig-Agent-Runtime, the Zig runtime port of OpenClaw.
 - RPC surface in Zig: `175` methods
 - Pinned tri-baseline parity gate:
   - Go baseline (`v2.14.0-go`): `134/134`
-  - Original OpenClaw baseline (`v2026.3.11`): `99/99`
-  - Original OpenClaw beta baseline (`v2026.3.11-beta.1`): `99/99`
-  - Union baseline: `140/140` (`MISSING_IN_ZIG=0`)
+  - Original OpenClaw baseline (`v2026.3.13-1`): `100/100`
+  - Original OpenClaw beta baseline (`v2026.3.13-beta.1`): `100/100`
+  - Union baseline: `141/141` (`MISSING_IN_ZIG=0`)
   - Gateway events union baseline: `19/19` (`UNION_EVENTS_MISSING_IN_ZIG=0`)
 - Latest upstream release snapshot (docs drift gate reference):
-  - Original OpenClaw baseline (`v2026.3.11`): `99/99`
-  - Original OpenClaw beta baseline (`v2026.3.11-beta.1`): `99/99`
-  - Union baseline: `140/140` (`MISSING_IN_ZIG=0`)
-- Latest local validation: `302/302` main tests + `275/275` bare-metal host tests passing
+  - Original OpenClaw baseline (`v2026.3.13-1`): `100/100`
+  - Original OpenClaw beta baseline (`v2026.3.13-beta.1`): `100/100`
+  - Union baseline: `141/141` (`MISSING_IN_ZIG=0`)
+- Latest local validation: `352/352` main tests + `298 passed / 1 skipped` bare-metal host tests
 - Latest published edge release tag: `v0.2.0-zig-edge.29`
+- License posture: repo-wide `GPL-2.0-only` with Linux-style SPDX headers on repo-owned source and script files
 - Toolchain lane: Codeberg `master` is canonical; `adybag14-cyber/zig` provides rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
 - Recent FS1 progress (2026-03-06):
   - runtime recovery posture surfaced in `status`, `doctor`, `doctor.memory.status`, `agent.identity.get`, and maintenance RPCs
@@ -41,6 +42,7 @@ Full documentation for ZAR-Zig-Agent-Runtime, the Zig runtime port of OpenClaw.
 - Memory and edge capability surfaces
 - CI/release flows and deployment operations
 - GitHub Pages publishing workflow
+- FS5.6 repo-wide license refresh
 
 ## Project Links
 
@@ -51,5 +53,5 @@ Full documentation for ZAR-Zig-Agent-Runtime, the Zig runtime port of OpenClaw.
 - Strict FS3 matrix: [zig-port/FS3_MEMORY_KNOWLEDGE_MATRIX.md](zig-port/FS3_MEMORY_KNOWLEDGE_MATRIX.md)
 - Strict FS4 matrix: [zig-port/FS4_SECURITY_TRUST_MATRIX.md](zig-port/FS4_SECURITY_TRUST_MATRIX.md)
 - Strict FS5 matrix: [zig-port/FS5_EDGE_WASM_FINETUNE_MATRIX.md](zig-port/FS5_EDGE_WASM_FINETUNE_MATRIX.md)
+- FS5.6 license refresh: [zig-port/FS5_6_LICENSE_REFRESH.md](zig-port/FS5_6_LICENSE_REFRESH.md)
 - Method registry source: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/blob/main/src/gateway/registry.zig)
-

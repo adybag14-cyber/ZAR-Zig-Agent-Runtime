@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 $ErrorActionPreference = "Stop"
 if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
     $PSNativeCommandUseErrorActionPreference = $false

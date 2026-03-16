@@ -128,6 +128,10 @@ Full-stack replacement execution reference:
     - live QEMU+GDB proof `scripts/baremetal-qemu-tool-exec-probe-check.ps1` validates `help`, `mkdir`, `write-file`, `cat`, `stat`, `run-script`, direct filesystem readback, persisted script readback after filesystem reset/re-init, and `echo` over the freestanding PVH artifact with attached disk media
     - hosted/module validation additionally proves `run-package`, `PKG`, `PKGLIST`, `PKGINFO`, `PKGRUN`, package manifests, direct-child directory listing, and ATA-backed package persistence
 - `docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md` (FS0..FS7 scope/gates)
+- `FS5.6` repo-wide license refresh:
+  - project license posture is now `GPL-2.0-only` to align the repo with the Linux-derived RTL8139 driver slice.
+  - root/package license files, package metadata, release evidence, and repo-owned source/script headers are now refreshed in the local source of truth.
+  - tracking doc: `docs/zig-port/FS5_6_LICENSE_REFRESH.md`
 
 ## Critical Points
 
@@ -1947,5 +1951,4 @@ Full-stack replacement execution reference:
     - `zig build test --summary all` -> hosted `302/302`, bare-metal host `296/296`
     - targeted app lifecycle tests in `src/baremetal/package_store.zig`, `src/baremetal/app_runtime.zig`, `src/baremetal/tool_exec.zig`, `src/baremetal/tool_service.zig`, and `src/baremetal_main.zig` all pass
     - the real regression found during the slice was stale trust-validation/test sizing after the app-manifest widened; `loadLaunchProfile()` now uses a larger bounded trust-validation scratch and the widened manifest test limits now match the expanded app payload
-
 

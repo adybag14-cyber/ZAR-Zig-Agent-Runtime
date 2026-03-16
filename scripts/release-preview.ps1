@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 param(
     [Parameter(Mandatory = $true)]
     [string] $Version,
@@ -151,8 +152,8 @@ try {
         OutputJsonPath = $parityJsonPath
         OutputMarkdownPath = $parityMdPath
         GoTag = "v2.14.0-go"
-        OriginalRef = "v2026.3.11"
-        OriginalBetaRef = "v2026.3.11-beta.1"
+        OriginalRef = "v2026.3.13-1"
+        OriginalBetaRef = "v2026.3.13-beta.1"
     }
     if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
         $parityArgs.GitHubToken = $env:GITHUB_TOKEN

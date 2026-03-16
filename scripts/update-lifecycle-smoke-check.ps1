@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 param(
     [int] $Port = 8095,
     [int] $ReadyAttempts = 80,

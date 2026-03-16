@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 export type RpcParams = Record<string, unknown>;
 
 export interface OpenClawClientOptions {

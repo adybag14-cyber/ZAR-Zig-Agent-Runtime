@@ -3,9 +3,10 @@
 ## Current Snapshot
 
 - Latest published edge release: `v0.2.0-zig-edge.29`
-- Latest local test gate: `zig build test --summary all` -> main `302/302` + bare-metal host `291/291` passing
-- Latest parity gate: `scripts/check-go-method-parity.ps1` -> `GO_MISSING_IN_ZIG=0`, `ORIGINAL_MISSING_IN_ZIG=0`, `ORIGINAL_BETA_MISSING_IN_ZIG=0`, `UNION_MISSING_IN_ZIG=0`, `UNION_EVENTS_MISSING_IN_ZIG=0`, `ZIG_COUNT=175`, `ZIG_EVENTS_COUNT=19`
+- Latest local test gate: `zig build test --summary all` -> main `352/352` + bare-metal host `298 passed / 1 skipped`
+- Latest parity gate: `scripts/check-go-method-parity.ps1` -> `GO_MISSING_IN_ZIG=0`, `ORIGINAL_MISSING_IN_ZIG=0`, `ORIGINAL_BETA_MISSING_IN_ZIG=0`, `UNION_MISSING_IN_ZIG=0`, `UNION_EVENTS_MISSING_IN_ZIG=0`, `ZIG_COUNT=175`, `ZIG_EVENTS_COUNT=19`, union baseline `141/141`
 - Current head: local source-of-truth on `fs55-ethernet-integration` (exact pushed head is tracked in issue `#1` and the latest branch GitHub Actions runs)
+- License posture: repo-wide `GPL-2.0-only` with Linux-style SPDX headers on repo-owned source and script files
 - Toolchain lane: Codeberg `master` is canonical; `adybag14-cyber/zig` is the Windows release mirror with rolling `latest-master` plus immutable `upstream-<sha>` releases.
 - CI split: hosted validation stays on Zig `master`, while the freestanding bare-metal smoke/probe and bare-metal asset lanes are pinned to the known-good Linux build `0.16.0-dev.2736+3b515fbed` until the upstream Linux `master` compiler crash on `zig build baremetal -Doptimize=ReleaseFast` is no longer reproducible.
 - Strict hosted-phase order is now locked to `FS1 -> FS4 -> FS2 -> FS3 -> FS5`.
@@ -87,6 +88,12 @@
 - Latest CI:
   - latest pushed `main` head is tracked in issue `#1`
   - `zig-ci` + `docs-pages` must both be green before a slice is considered complete
+
+## License
+
+- The repo now carries `GPL-2.0-only` as the project-wide license posture.
+- Root release evidence and package metadata now declare `GPL-2.0-only`.
+- Repo-owned source and script files use Linux-style SPDX headers.
 
 ## Local Validation Matrix
 
@@ -722,7 +729,6 @@ Policy:
 - Use Codeberg `master` as the canonical freshness target.
 - Use `adybag14-cyber/zig` `latest-master` when the goal is a fast Windows toolchain refresh.
 - Use `adybag14-cyber/zig` `upstream-<sha>` when the goal is reproducible CI, bisects, or release recreation.
-
 
 
 

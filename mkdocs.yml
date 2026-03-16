@@ -1,8 +1,8 @@
-site_name: OpenClaw Zig Port Docs
-site_description: Full documentation for the OpenClaw Zig runtime port
-site_url: https://adybag14-cyber.github.io/openclaw-zig-port/
-repo_url: https://github.com/adybag14-cyber/openclaw-zig-port
-repo_name: adybag14-cyber/openclaw-zig-port
+site_name: ZAR-Zig-Agent-Runtime Docs
+site_description: Full documentation for ZAR-Zig-Agent-Runtime
+site_url: https://adybag14-cyber.github.io/ZAR-Zig-Agent-Runtime/
+repo_url: https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime
+repo_name: adybag14-cyber/ZAR-Zig-Agent-Runtime
 docs_dir: docs
 site_dir: site
 
@@ -34,4 +34,5 @@ nav:
   - Port Tracking:
       - Plan: zig-port/PORT_PLAN.md
       - Checklist: zig-port/PHASE_CHECKLIST.md
+      - FS5.6 License Refresh: zig-port/FS5_6_LICENSE_REFRESH.md
       - Local Toolchain: zig-port/ZIG_TOOLCHAIN_LOCAL.md

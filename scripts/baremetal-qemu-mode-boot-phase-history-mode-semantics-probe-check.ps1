@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 param(
     [switch] $SkipBuild,
     [int] $TimeoutSeconds = 30,

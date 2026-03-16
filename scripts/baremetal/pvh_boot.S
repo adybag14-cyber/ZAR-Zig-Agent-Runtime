@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 .section .note.Xen,"a",@note
 .balign 4
 .long 4
