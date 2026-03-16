@@ -30,10 +30,13 @@ pub fn installScriptPackage(name: []const u8, script: []const u8, tick: u64) Err
 
     try filesystem.writeFile(entrypoint, script, tick);
 
-    var metadata: [192]u8 = undefined;
-    const manifest_body = std.fmt.bufPrint(&metadata, "name={s}\nentrypoint={s}\n", .{
+    var metadata: [256]u8 = undefined;
+    const root = packageRootPath(name, &root_buf);
+    const manifest_body = std.fmt.bufPrint(&metadata, "name={s}\nroot={s}\nentrypoint={s}\nscript_bytes={d}\n", .{
         name,
+        root,
         entrypoint,
+        script.len,
     }) catch return error.InvalidPath;
     try filesystem.writeFile(manifest, manifest_body, tick);
 }
@@ -46,6 +49,12 @@ pub fn entrypointPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Er
 pub fn manifestPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
     try validatePackageName(name);
     return std.fmt.bufPrint(buffer, "/packages/{s}/meta/package.txt", .{name}) catch error.InvalidPath;
+}
+
+pub fn manifestAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
+    var manifest_buf: [filesystem.max_path_len]u8 = undefined;
+    const manifest = try manifestPath(name, &manifest_buf);
+    return filesystem.readFileAlloc(allocator, manifest, max_bytes);
 }
 
 pub fn listPackagesAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
@@ -116,7 +125,9 @@ test "package store installs script packages into canonical layout" {
     const metadata = try filesystem.readFileAlloc(std.testing.allocator, manifest, 128);
     defer std.testing.allocator.free(metadata);
     try std.testing.expect(std.mem.indexOf(u8, metadata, "name=demo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, metadata, "root=/packages/demo") != null);
     try std.testing.expect(std.mem.indexOf(u8, metadata, entrypoint) != null);
+    try std.testing.expect(std.mem.indexOf(u8, metadata, "script_bytes=15") != null);
 
     const listing = try listPackagesAlloc(std.testing.allocator, 64);
     defer std.testing.allocator.free(listing);
@@ -144,4 +155,19 @@ test "package store persists canonical layout on ata-backed storage" {
     const listing = try listPackagesAlloc(std.testing.allocator, 64);
     defer std.testing.allocator.free(listing);
     try std.testing.expectEqualStrings("persisted\n", listing);
+}
+
+test "package store reads persisted manifest metadata" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+
+    try installScriptPackage("info-demo", "echo info-demo", 5);
+
+    const manifest = try manifestAlloc(std.testing.allocator, "info-demo", 256);
+    defer std.testing.allocator.free(manifest);
+
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "name=info-demo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "root=/packages/info-demo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "/packages/info-demo/bin/main.oc") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "script_bytes=14") != null);
 }

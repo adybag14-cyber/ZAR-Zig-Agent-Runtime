@@ -362,19 +362,20 @@ Notes:
   - the probe keeps interrupts masked on exit, because re-enabling them after the proof can surface a real hardware IRQ0 on the test path and collapse the guest before `isa-debug-exit`
 - the live freestanding PAL `https://` POST transport path is now also proven directly:
   - `scripts/baremetal-qemu-rtl8139-https-post-probe-check.ps1`
-  - the probe proves direct-IP transport (`https://10.0.2.2:8443/...`), TCP connect, TLS handshake, HTTPS request write, HTTPS response readback, deterministic filesystem-backed CA-bundle trust with a fixed probe time, and allocator-owned body buffering against a deterministic self-hosted TLS harness over the live RTL8139 path
-  - the trust anchor is loaded through the bare-metal filesystem and validated through a bounded CA bundle on the freestanding path
+  - the probe proves direct-IP transport (`https://10.0.2.2:8443/...`), TCP connect, TLS handshake, HTTPS request write, HTTPS response readback, persistent filesystem-backed trust-store selection plus bounded CA-bundle verification with a fixed probe time, and allocator-owned body buffering against a deterministic self-hosted TLS harness over the live RTL8139 path
+  - the trust anchor is now installed under `/runtime/trust/bundles/<name>.der`, selected through `/runtime/trust/active.txt`, loaded through the bare-metal filesystem, and validated through a bounded CA bundle on the freestanding path
   - the proof closes the transport-emission question that the earlier debug slice isolated around `ClientHello` generation and payload/FIN handling
 - host regressions prove mock-device ARP, IPv4, UDP, DHCP, DNS, TCP handshake/payload exchange, bounded four-way close, dropped-first-SYN retransmission/timeout recovery, dropped-first-payload retransmission/timeout recovery, dropped-first-FIN retransmission/timeout recovery on both close sides, bounded multi-flow session isolation, bounded cumulative-ACK advancement across multiple in-flight payload chunks, bounded sender congestion-window growth/collapse on the chunked send path, DHCP-driven route configuration, gateway ARP learning, routed off-subnet UDP delivery, and direct-subnet UDP bypass through the RTL8139 path
-- `src/baremetal/tool_service.zig` now provides a bounded framed request/response shim on top of the bare-metal tool substrate for the TCP path, with typed `CMD`, `EXEC`, `GET`, `PUT`, `STAT`, `INSTALL`, `MANIFEST`, `PKG`, `PKGLIST`, and `PKGRUN` requests plus bounded batched request parsing/execution on one flow
+- `src/baremetal/tool_service.zig` now provides a bounded framed request/response shim on top of the bare-metal tool substrate for the TCP path, with typed `CMD`, `EXEC`, `GET`, `PUT`, `STAT`, `LIST`, `INSTALL`, `MANIFEST`, `PKG`, `PKGLIST`, `PKGINFO`, `PKGRUN`, `TRUSTPUT`, `TRUSTLIST`, `TRUSTINFO`, and `TRUSTSELECT` requests plus bounded batched request parsing/execution on one flow
 - live QEMU proofs now pass:
   - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1`
   - `scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1`
   - `scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1`
   - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1`
   - `scripts/baremetal-qemu-rtl8139-gateway-probe-check.ps1`
-- `src/baremetal_main.zig` host regressions now also prove TCP zero-window block/reopen behavior, framed multi-request command-service exchange on a single live flow, structured `EXEC` request/response behavior, bounded long-response chunking under the advertised remote window, bounded typed batch request multiplexing on one live flow, typed `PUT`/`GET`/`STAT` service behavior, typed `INSTALL` / `MANIFEST` runtime-layout service behavior, persisted `run-script` execution through the framed TCP service seam, and package install/list/run behavior on the canonical package layout
-- those proofs now cover live ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, TCP `SYN -> SYN-ACK -> ACK` handshake plus payload exchange, dropped-first-SYN recovery, dropped-first-payload recovery, dropped-first-FIN recovery on both close sides, bounded four-way close, bounded two-flow session isolation, zero-window block/reopen, bounded sequential payload chunking, bounded sender congestion-window growth after ACK and timeout collapse back to the initial window, framed TCP command-service exchange, bounded typed batch request multiplexing on one flow with concatenated framed responses, typed TCP `PUT` upload, direct filesystem readback of the uploaded script path, typed `INSTALL` / `MANIFEST` runtime-layout service exchange with `/boot/loader.cfg` readback, typed `PKG` / `PKGLIST` / `PKGRUN` package-service exchange, canonical package entrypoint readback, package output readback, and TX/RX counter advance over the freestanding PVH image
+- `src/baremetal/package_store.zig` now persists canonical package metadata beyond the entrypoint alone, including manifest fields for `name`, `root`, `entrypoint`, and `script_bytes`, and `src/baremetal/tool_exec.zig` now exposes matching `ls` and `package-info` builtins on top of the same bare-metal filesystem/package layout
+- `src/baremetal_main.zig` host regressions now also prove TCP zero-window block/reopen behavior, framed multi-request command-service exchange on a single live flow, structured `EXEC` request/response behavior, bounded long-response chunking under the advertised remote window, bounded typed batch request multiplexing on one live flow, typed `PUT`/`GET`/`STAT`/`LIST` service behavior, typed `INSTALL` / `MANIFEST` runtime-layout service behavior, typed `TRUSTPUT` / `TRUSTLIST` / `TRUSTINFO` / `TRUSTSELECT` trust-store behavior, persisted `run-script` execution through the framed TCP service seam, and package install/list/info/run behavior on the canonical package layout
+- those proofs now cover live ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, TCP `SYN -> SYN-ACK -> ACK` handshake plus payload exchange, dropped-first-SYN recovery, dropped-first-payload recovery, dropped-first-FIN recovery on both close sides, bounded four-way close, bounded two-flow session isolation, zero-window block/reopen, bounded sequential payload chunking, bounded sender congestion-window growth after ACK and timeout collapse back to the initial window, framed TCP command-service exchange, bounded typed batch request multiplexing on one flow with concatenated framed responses, typed TCP `PUT` upload, direct filesystem readback of the uploaded script path, typed `INSTALL` / `MANIFEST` runtime-layout service exchange with `/boot/loader.cfg` readback, typed `PKG` / `PKGLIST` / `PKGINFO` / `PKGRUN` package-service exchange, typed `TRUSTPUT` / `TRUSTLIST` / `TRUSTINFO` / `TRUSTSELECT` trust-store exchange, selected trust-bundle path readback, canonical package entrypoint readback, package manifest readback, package-directory listing, package output readback, and TX/RX counter advance over the freestanding PVH image
   - the live package-service extension required a real probe-stack fix: `runRtl8139TcpProbe()` now uses static scratch storage, reducing the project-built bare-metal stack frame from `0x3e78` to `0x3708` bytes before the live QEMU proof would pass with package install/list/run enabled
   - the routed UDP proof now also covers live ARP-reply learning, ARP-cache population, gateway next-hop selection for off-subnet traffic, direct-subnet gateway bypass, and routed UDP delivery with the gateway MAC on the Ethernet frame while preserving the remote IPv4 destination
 - A real DHCP framing/decode slice is now also closed locally:
@@ -387,8 +388,8 @@ Notes:
   - host regressions prove DNS query encode/decode, DNS A-response decode, and strict rejection of non-DNS UDP frames over the mock RTL8139 path
   - `scripts/baremetal-qemu-rtl8139-dns-probe-check.ps1` now proves real RTL8139 TX/RX of a DNS query plus strict decode/validation of a DNS A response over the freestanding PVH artifact
 - deeper networking depth remains future work above the FS5.5 closure bar:
-  - higher-level service/runtime layers beyond the current bounded typed batch + `EXEC` / `INSTALL` / `MANIFEST` / file/package seam on the bare-metal TCP path
-  - broader persistent trust-store management beyond the current deterministic filesystem-backed CA-bundle verification on the live `https://` transport path
+  - higher-level service/runtime layers beyond the current bounded typed batch + `EXEC` / `LIST` / `INSTALL` / `MANIFEST` / file/package/trust metadata seam on the bare-metal TCP path
+  - broader multi-root / rotation / revocation trust-store lifecycle beyond the current persisted selected-bundle proof on the live `https://` transport path
   - real HDMI/DisplayPort connector-specific scanout depth beyond the current BGA render path and virtio-gpu virtual scanout proof
 
 ### Filesystem Usage
@@ -446,8 +447,9 @@ Current local source-of-truth evidence:
   - the hosted regression in `src/baremetal_main.zig`
 - those host/module proofs now also cover:
   - persisted ATA-backed package layout roundtrips
-  - typed TCP `PKG` / `PKGLIST` / `PKGRUN` service behavior
+  - typed TCP `PKG` / `PKGLIST` / `PKGINFO` / `PKGRUN` service behavior
   - canonical `run-package <name>` execution against `/packages/<name>/bin/main.oc`
+  - package manifest readback and direct-child directory listing on the canonical `/packages/<name>/...` layout
 
 ## Non-Goals For This Track
 
@@ -460,3 +462,4 @@ Current local source-of-truth evidence:
 `FS5.5` is only complete when every subsystem above is implemented and validated end to end with the dependency chain satisfied.
 
 Current local source-of-truth verdict: every FS5.5 subsystem above is now implemented and validated end to end with the stated dependency chain satisfied.
+

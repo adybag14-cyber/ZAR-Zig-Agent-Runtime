@@ -15,7 +15,7 @@ Full documentation for ZAR-Zig-Agent-Runtime, the Zig runtime port of OpenClaw.
   - Original OpenClaw baseline (`v2026.3.11`): `99/99`
   - Original OpenClaw beta baseline (`v2026.3.11-beta.1`): `99/99`
   - Union baseline: `140/140` (`MISSING_IN_ZIG=0`)
-- Latest local validation: `292/292` main tests + `255/255` bare-metal host tests passing
+- Latest local validation: `302/302` main tests + `275/275` bare-metal host tests passing
 - Latest published edge release tag: `v0.2.0-zig-edge.29`
 - Toolchain lane: Codeberg `master` is canonical; `adybag14-cyber/zig` provides rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
 - Recent FS1 progress (2026-03-06):

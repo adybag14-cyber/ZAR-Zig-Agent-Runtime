@@ -50,10 +50,10 @@
   - `src/pal/net.zig` host regressions now also prove two TCP flows can handshake, exchange payloads, and teardown independently through the mock RTL8139 path
   - that same PAL surface now also proves hostname resolution through DNS, ARP resolution, TCP connect, HTTP request framing, and HTTP response parsing for freestanding plain HTTP, and that the freestanding TLS client emits a real `ClientHello` through the same mock RTL8139 transport seam
   - `scripts/baremetal-qemu-rtl8139-http-post-probe-check.ps1` now proves the freestanding PAL `http://` POST path live over RTL8139 with DNS, TCP, HTTP, and allocator-owned response buffering
-  - `scripts/baremetal-qemu-rtl8139-https-post-probe-check.ps1` now proves the freestanding PAL `https://` POST transport path live over RTL8139 with direct-IP transport (`https://10.0.2.2:8443/...`), TCP, TLS handshake, deterministic filesystem-backed CA-bundle trust, fixed probe time, and allocator-owned response buffering against a deterministic self-hosted TLS harness
-  - `src/baremetal/tool_service.zig` now exposes a bounded framed request/response shim on top of the bare-metal tool substrate for the TCP path, with typed `CMD`, `EXEC`, `GET`, `PUT`, `STAT`, `INSTALL`, `MANIFEST`, `PKG`, `PKGLIST`, and `PKGRUN` requests plus bounded batched request parsing/execution on one flow
-  - host/module validation now also proves typed TCP file-service and package-service behavior on top of the bare-metal filesystem, including structured `EXEC` exit/stdout/stderr responses, `PUT`, `GET`, `STAT`, `INSTALL`, `MANIFEST`, `PKG`, `PKGLIST`, `PKGRUN`, persisted `run-script`, canonical `run-package`, and mixed typed batch handling with concatenated framed responses through that service seam
-  - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1`, and `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1` prove live ARP, IPv4, UDP, and TCP handshake/payload exchange plus bounded four-way close over the freestanding PVH image, including dropped-first-SYN recovery, dropped-first-payload recovery, dropped-first-FIN recovery on both close sides, bounded two-flow session isolation, zero-window block/reopen behavior, bounded sequential payload chunking, bounded cumulative-ACK advancement across in-flight payload chunks, framed multi-request command-service exchange, typed `EXEC` exchange, bounded typed batch request multiplexing on one TCP flow, typed TCP `PUT` upload with direct filesystem readback, typed `INSTALL` / `MANIFEST` runtime-layout service exchange with `/boot/loader.cfg` readback, typed `PKG` / `PKGLIST` / `PKGRUN` package-service exchange, canonical `/packages/<name>/bin/main.oc` readback, and package output readback over the attached disk-backed bare-metal path
+  - `scripts/baremetal-qemu-rtl8139-https-post-probe-check.ps1` now proves the freestanding PAL `https://` POST transport path live over RTL8139 with direct-IP transport (`https://10.0.2.2:8443/...`), TCP, TLS handshake, persistent filesystem-backed trust-store selection plus bounded CA-bundle verification, fixed probe time, and allocator-owned response buffering against a deterministic self-hosted TLS harness
+  - `src/baremetal/tool_service.zig` now exposes a bounded framed request/response shim on top of the bare-metal tool substrate for the TCP path, with typed `CMD`, `EXEC`, `GET`, `PUT`, `STAT`, `LIST`, `INSTALL`, `MANIFEST`, `PKG`, `PKGLIST`, `PKGINFO`, `PKGRUN`, `TRUSTPUT`, `TRUSTLIST`, `TRUSTINFO`, and `TRUSTSELECT` requests plus bounded batched request parsing/execution on one flow
+  - host/module validation now also proves typed TCP file-service and package-service behavior on top of the bare-metal filesystem, including structured `EXEC` exit/stdout/stderr responses, `PUT`, `GET`, `STAT`, `LIST`, `INSTALL`, `MANIFEST`, `PKG`, `PKGLIST`, `PKGINFO`, `PKGRUN`, `TRUSTPUT`, `TRUSTLIST`, `TRUSTINFO`, `TRUSTSELECT`, persisted `run-script`, canonical `run-package`, package manifest readback, direct-child directory introspection, and mixed typed batch handling with concatenated framed responses through that service seam
+  - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1`, and `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1` prove live ARP, IPv4, UDP, and TCP handshake/payload exchange plus bounded four-way close over the freestanding PVH image, including dropped-first-SYN recovery, dropped-first-payload recovery, dropped-first-FIN recovery on both close sides, bounded two-flow session isolation, zero-window block/reopen behavior, bounded sequential payload chunking, bounded cumulative-ACK advancement across in-flight payload chunks, framed multi-request command-service exchange, typed `EXEC` exchange, bounded typed batch request multiplexing on one TCP flow, typed TCP `PUT` upload with direct filesystem readback, typed `INSTALL` / `MANIFEST` runtime-layout service exchange with `/boot/loader.cfg` readback, typed `PKG` / `PKGLIST` / `PKGINFO` / `PKGRUN` package-service exchange, typed `TRUSTPUT` / `TRUSTLIST` / `TRUSTINFO` / `TRUSTSELECT` trust-store exchange, canonical `/packages/<name>/bin/main.oc` readback, package manifest readback, package-directory listing, and package output readback over the attached disk-backed bare-metal path
 - DHCP framing/decode is now also proven on the real RTL8139 path:
   - `src/protocol/dhcp.zig` provides strict DHCP discover encode/decode
   - `src/pal/net.zig` exposes DHCP send/poll helpers for the hosted/mock path
@@ -69,8 +69,8 @@
   - `scripts/baremetal-qemu-rtl8139-gateway-probe-check.ps1` proves live ARP-reply learning, ARP-cache population, gateway next-hop selection, direct-subnet bypass, and routed UDP delivery over the freestanding PVH image
 - deeper networking depth remains future work above the FS5.5 closure bar:
   - sliding-window and congestion-control behavior beyond the current bounded zero-window reopen + sequential chunk-and-ACK session model
-  - higher-level service/runtime layers beyond the current bounded typed batch + `EXEC` / `INSTALL` / `MANIFEST` / file/package seam on the bare-metal TCP path
-  - broader persistent trust-store management beyond the current deterministic filesystem-backed CA-bundle verification on the live `https://` transport path
+  - higher-level service/runtime layers beyond the current bounded typed batch + `EXEC` / `LIST` / `INSTALL` / `MANIFEST` / file/package/trust metadata seam on the bare-metal TCP path
+  - broader multi-root / rotation / revocation trust-store lifecycle beyond the current persisted selected-bundle proof on the live `https://` transport path
 - filesystem usage is now also on a real shared-backend path in `FS5.5`:
   - `src/baremetal/filesystem.zig` implements path-based directory creation plus file read/write/stat
   - `src/pal/fs.zig` routes the freestanding PAL filesystem surface through that layer
@@ -81,7 +81,7 @@
   - `src/baremetal/package_store.zig` provides the canonical persisted package layout under `/packages/<name>/...`
   - `src/baremetal/tool_service.zig` provides the bounded typed request/response service shim used by the TCP proof, including structured `EXEC` responses on top of the freestanding tool-exec substrate
   - `scripts/baremetal-qemu-tool-exec-probe-check.ps1` proves `help`, `mkdir`, `write-file`, `cat`, `stat`, `run-script`, direct filesystem readback, persisted script readback after filesystem reset/re-init, and `echo` over the freestanding PVH image with attached disk media
-  - hosted/module validation also proves ATA-backed package persistence plus `run-package`, `PKG`, `PKGLIST`, and `PKGRUN`
+  - hosted/module validation also proves ATA-backed package persistence plus `run-package`, `PKG`, `PKGLIST`, `PKGINFO`, `PKGRUN`, package manifests, and direct-child directory listing
 - `scripts/package-registry-status.ps1` now performs default npmjs/PyPI visibility checks even when invoked with only `-ReleaseTag`, so local package diagnostics no longer silently skip unresolved public-registry state.
 - Latest CI:
   - latest pushed `main` head is tracked in issue `#1`
@@ -721,6 +721,7 @@ Policy:
 - Use Codeberg `master` as the canonical freshness target.
 - Use `adybag14-cyber/zig` `latest-master` when the goal is a fast Windows toolchain refresh.
 - Use `adybag14-cyber/zig` `upstream-<sha>` when the goal is reproducible CI, bisects, or release recreation.
+
 
 
 
