@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 const abi = @import("../baremetal/abi.zig");
 const ps2_input = @import("../baremetal/ps2_input.zig");
 

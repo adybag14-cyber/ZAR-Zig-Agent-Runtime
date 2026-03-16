@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
 const config = @import("../config.zig");
 const loop_guard = @import("loop_guard.zig");

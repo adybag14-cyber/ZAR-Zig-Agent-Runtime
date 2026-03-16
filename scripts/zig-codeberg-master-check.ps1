@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 param(
     [string]$ZigExePath = "",
     [string]$GitHubToken = "",

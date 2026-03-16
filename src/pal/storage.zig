@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
 const abi = @import("../baremetal/abi.zig");
 const ata_pio_disk = @import("../baremetal/ata_pio_disk.zig");

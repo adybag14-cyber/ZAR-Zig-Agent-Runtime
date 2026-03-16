@@ -1,6 +1,6 @@
 # @adybag14-cyber/openclaw-zig-rpc-client
 
-Node.js JSON-RPC client for OpenClaw Zig gateway endpoints.
+Node.js JSON-RPC client for ZAR-Zig-Agent-Runtime gateway endpoints.
 
 ## Install
 
@@ -11,7 +11,7 @@ npm install @adybag14-cyber/openclaw-zig-rpc-client
 GitHub release tarball fallback for the current edge tag:
 
 ```bash
-npm install "https://github.com/adybag14-cyber/openclaw-zig-port/releases/download/v0.2.0-zig-edge.29/adybag14-cyber-openclaw-zig-rpc-client-0.2.0-zig-edge.29.tgz"
+npm install "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases/download/v0.2.0-zig-edge.29/adybag14-cyber-openclaw-zig-rpc-client-0.2.0-zig-edge.29.tgz"
 ```
 
 ## Usage
@@ -54,3 +54,6 @@ main().catch((err) => {
 
 Use `client.rpc(method, params)` for any other OpenClaw RPC surface.
 
+## License
+
+This package is distributed under `GPL-2.0-only`.

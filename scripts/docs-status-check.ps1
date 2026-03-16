@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 [CmdletBinding()]
 param(
     [string]$ParityJsonPath = ".\release\parity-go-zig.json",
@@ -8,8 +9,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 $PinnedGoRef = "v2.14.0-go"
-$PinnedOriginalRef = "v2026.3.11"
-$PinnedOriginalBetaRef = "v2026.3.11-beta.1"
+$PinnedOriginalRef = "v2026.3.13-1"
+$PinnedOriginalBetaRef = "v2026.3.13-beta.1"
 
 function Assert-Contains {
     param(

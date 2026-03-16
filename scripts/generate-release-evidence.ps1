@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 param(
     [Parameter(Mandatory = $true)]
     [string] $ArtifactDir,
@@ -104,8 +105,8 @@ foreach ($artifact in $artifactFiles) {
                     checksumValue = $sha256
                 }
             )
-            licenseConcluded = "NOASSERTION"
-            licenseDeclared = "NOASSERTION"
+            licenseConcluded = "GPL-2.0-only"
+            licenseDeclared = "GPL-2.0-only"
             copyrightText = "NOASSERTION"
         }) | Out-Null
 
@@ -151,11 +152,11 @@ $sbom = @{
     spdxVersion = "SPDX-2.3"
     dataLicense = "CC0-1.0"
     SPDXID = "SPDXRef-DOCUMENT"
-    name = "openclaw-zig-release-$Version-sbom"
+    name = "zar-zig-agent-runtime-release-$Version-sbom"
     documentNamespace = "https://github.com/$Repository/releases/download/$escapedVersion/sbom/$namespaceSuffix"
     creationInfo = @{
         created = $generatedAtIso
-        creators = @("Tool: openclaw-zig-release-evidence/1.0.0")
+        creators = @("Tool: zar-zig-agent-runtime-release-evidence/1.0.0")
     }
     packages = $spdxPackages
     relationships = $spdxRelationships

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
 const time_util = @import("../util/time.zig");
 const web_login = @import("web_login.zig");

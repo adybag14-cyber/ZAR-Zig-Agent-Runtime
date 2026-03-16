@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
 const lightpanda = @import("lightpanda.zig");
 const time_util = @import("../util/time.zig");

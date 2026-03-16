@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 pub const console = @import("console.zig");
 pub const framebuffer = @import("framebuffer.zig");
 pub const fs = @import("fs.zig");

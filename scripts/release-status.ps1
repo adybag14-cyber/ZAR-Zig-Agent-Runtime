@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 [CmdletBinding()]
 param(
     [string]$Repository = "adybag14-cyber/ZAR-Zig-Agent-Runtime",

@@ -6,6 +6,8 @@ This repo ships three package-consumption paths for the Zig RPC client surfaces:
 - Python package: `openclaw-zig-rpc-client`
 - `uvx` CLI execution via the Python package
 
+All published package surfaces now carry `GPL-2.0-only` metadata and a package-local `LICENSE` file.
+
 ## Current Edge Release
 
 - GitHub prerelease tag: `v0.2.0-zig-edge.29`

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 const builtin = @import("builtin");
 const std = @import("std");
 

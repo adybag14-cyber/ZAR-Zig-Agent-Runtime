@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 const abi = @import("../baremetal/abi.zig");
 const display_output = @import("../baremetal/display_output.zig");
 const framebuffer_console = @import("../baremetal/framebuffer_console.zig");
