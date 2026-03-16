@@ -89,6 +89,23 @@ pub fn writeLastRun(
     try filesystem.writeFile(path, rendered, tick);
 }
 
+pub fn deleteState(name: []const u8, tick: u64) Error!void {
+    var app_dir_buf: [filesystem.max_path_len]u8 = undefined;
+    const app_dir = try appDirPath(name, &app_dir_buf);
+    filesystem.deleteTree(app_dir, tick) catch |err| switch (err) {
+        error.FileNotFound => return error.AppStateNotFound,
+        else => return err,
+    };
+}
+
+pub fn uninstallApp(name: []const u8, tick: u64) Error!void {
+    try package_store.deletePackage(name, tick);
+    deleteState(name, tick) catch |err| switch (err) {
+        error.AppStateNotFound => {},
+        else => return err,
+    };
+}
+
 pub fn statePath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
     try package_store.validatePackageName(name);
     return std.fmt.bufPrint(buffer, "{s}/{s}/last_run.txt", .{ root_dir, name }) catch error.InvalidPath;
@@ -144,4 +161,25 @@ test "app runtime state persists on ata-backed storage" {
     defer std.testing.allocator.free(state);
     try std.testing.expect(std.mem.indexOf(u8, state, "trust_bundle=app-root") != null);
     try std.testing.expect(std.mem.indexOf(u8, state, "requested_connector=virtual") != null);
+}
+
+test "app runtime uninstall removes package tree and persisted state" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    ata_pio_disk.testEnableMockDevice(8192);
+    ata_pio_disk.testInstallMockMbrPartition(2048, 4096, 0x83);
+    defer ata_pio_disk.testDisableMockDevice();
+
+    try package_store.installScriptPackage("demo", "echo app-runtime-delete", 10);
+    var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    const profile = try package_store.loadLaunchProfile("demo", &entrypoint_buf);
+    try writeLastRun("demo", profile, 0, 12, 0, 11);
+
+    try uninstallApp("demo", 12);
+    try std.testing.expectError(error.PackageNotFound, package_store.loadLaunchProfile("demo", &entrypoint_buf));
+    try std.testing.expectError(error.AppStateNotFound, stateAlloc(std.testing.allocator, "demo", 256));
+
+    const packages_listing = try filesystem.listDirectoryAlloc(std.testing.allocator, "/packages", 64);
+    defer std.testing.allocator.free(packages_listing);
+    try std.testing.expectEqualStrings("", packages_listing);
 }

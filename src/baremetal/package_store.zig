@@ -53,6 +53,14 @@ pub fn installScriptPackage(name: []const u8, script: []const u8, tick: u64) Err
     try refreshManifest(name, tick);
 }
 
+pub fn deletePackage(name: []const u8, tick: u64) Error!void {
+    try validatePackageName(name);
+    if (!try packageExists(name)) return error.PackageNotFound;
+
+    var root_buf: [filesystem.max_path_len]u8 = undefined;
+    try filesystem.deleteTree(packageRootPath(name, &root_buf), tick);
+}
+
 pub fn entrypointPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
     try validatePackageName(name);
     return std.fmt.bufPrint(buffer, "/packages/{s}/bin/main.oc", .{name}) catch error.InvalidPath;
