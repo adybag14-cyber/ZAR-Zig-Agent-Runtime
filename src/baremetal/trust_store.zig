@@ -25,6 +25,25 @@ pub fn installBundle(name: []const u8, cert_der: []const u8, tick: u64) Error!vo
     try filesystem.writeFile(path, cert_der, tick);
 }
 
+pub fn deleteBundle(name: []const u8, tick: u64) Error!void {
+    try validateTrustName(name);
+    try ensureLayout();
+
+    var path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const path = try bundlePath(name, &path_buffer);
+    filesystem.deleteFile(path, tick) catch |err| switch (err) {
+        error.FileNotFound => return error.TrustBundleNotFound,
+        else => return err,
+    };
+
+    if (try isActiveBundle(name)) {
+        clearActiveBundle(tick) catch |err| switch (err) {
+            error.ActiveBundleNotSet => {},
+            else => return err,
+        };
+    }
+}
+
 pub fn bundlePath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
     try validateTrustName(name);
     return std.fmt.bufPrint(buffer, "{s}/{s}.der", .{ bundles_dir, name }) catch error.InvalidPath;
@@ -85,6 +104,14 @@ pub fn selectBundle(name: []const u8, tick: u64) Error!void {
     try filesystem.writeFile(active_bundle_path, name, tick);
 }
 
+pub fn clearActiveBundle(tick: u64) Error!void {
+    try ensureLayout();
+    filesystem.deleteFile(active_bundle_path, tick) catch |err| switch (err) {
+        error.FileNotFound => return error.ActiveBundleNotSet,
+        else => return err,
+    };
+}
+
 pub fn activeBundleNameAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
     const name = filesystem.readFileAlloc(allocator, active_bundle_path, max_bytes) catch |err| switch (err) {
         error.FileNotFound => return error.ActiveBundleNotSet,
@@ -103,6 +130,12 @@ pub fn activeBundlePathAlloc(allocator: std.mem.Allocator, max_bytes: usize) Err
     const path = try bundlePath(active_name, &path_buffer);
     if (path.len > max_bytes) return error.ResponseTooLarge;
     return allocator.dupe(u8, path);
+}
+
+pub fn activeBundleInfoAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
+    const active_name = try activeBundleNameAlloc(allocator, max_name_len);
+    defer allocator.free(active_name);
+    return infoAlloc(allocator, active_name, max_bytes);
 }
 
 fn ensureLayout() Error!void {
@@ -202,4 +235,42 @@ test "trust store rejects selecting unknown bundles" {
     filesystem.resetForTest();
 
     try std.testing.expectError(error.TrustBundleNotFound, selectBundle("missing", 1));
+}
+
+test "trust store rotates across multiple bundles and deletes inactive bundles" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+
+    try installBundle("root-a", "cert-a", 1);
+    try installBundle("root-b", "cert-b", 2);
+    try selectBundle("root-a", 3);
+    try selectBundle("root-b", 4);
+
+    const active_info = try activeBundleInfoAlloc(std.testing.allocator, 256);
+    defer std.testing.allocator.free(active_info);
+    try std.testing.expect(std.mem.indexOf(u8, active_info, "name=root-b") != null);
+    try std.testing.expect(std.mem.indexOf(u8, active_info, "selected=1") != null);
+
+    try deleteBundle("root-a", 5);
+    const listing = try listBundlesAlloc(std.testing.allocator, 64);
+    defer std.testing.allocator.free(listing);
+    try std.testing.expectEqualStrings("root-b\n", listing);
+    try std.testing.expectError(error.TrustBundleNotFound, infoAlloc(std.testing.allocator, "root-a", 128));
+
+    const active_name = try activeBundleNameAlloc(std.testing.allocator, max_name_len);
+    defer std.testing.allocator.free(active_name);
+    try std.testing.expectEqualStrings("root-b", active_name);
+}
+
+test "trust store clears the active selection when deleting the active bundle" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+
+    try installBundle("root-a", "cert-a", 1);
+    try selectBundle("root-a", 2);
+    try deleteBundle("root-a", 3);
+
+    try std.testing.expectError(error.ActiveBundleNotSet, activeBundleNameAlloc(std.testing.allocator, max_name_len));
+    try std.testing.expectError(error.ActiveBundleNotSet, activeBundleInfoAlloc(std.testing.allocator, 256));
+    try std.testing.expectError(error.TrustBundleNotFound, infoAlloc(std.testing.allocator, "root-a", 128));
 }

@@ -2,8 +2,10 @@ const std = @import("std");
 const disk_installer = @import("disk_installer.zig");
 const filesystem = @import("filesystem.zig");
 const package_store = @import("package_store.zig");
+const storage_backend = @import("storage_backend.zig");
 const trust_store = @import("trust_store.zig");
 const tool_exec = @import("tool_exec.zig");
+const tool_layout = @import("tool_layout.zig");
 
 pub const Error = tool_exec.Error || package_store.Error || trust_store.Error || std.mem.Allocator.Error || error{
     EmptyRequest,
@@ -32,7 +34,9 @@ pub const RequestOp = enum {
     trust_install,
     trust_list,
     trust_info,
+    trust_active,
     trust_select,
+    trust_delete,
 };
 
 pub const PutRequest = struct {
@@ -58,7 +62,9 @@ pub const FramedRequest = struct {
         trust_install: PutRequest,
         trust_list: void,
         trust_info: []const u8,
+        trust_active: void,
         trust_select: []const u8,
+        trust_delete: []const u8,
     },
 };
 
@@ -398,6 +404,20 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         };
     }
 
+    if (std.ascii.eqlIgnoreCase(op_part.token, "TRUSTACTIVE")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .trust_active = {} } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .trust_active = {} } },
+            .consumed_len = request.len,
+        };
+    }
+
     if (std.ascii.eqlIgnoreCase(op_part.token, "TRUSTSELECT")) {
         if (op_part.rest.len == 0) return error.InvalidFrame;
         if (newline_index != null) {
@@ -408,6 +428,20 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         }
         return .{
             .framed = .{ .request_id = request_id, .operation = .{ .trust_select = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "TRUSTDELETE")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .trust_delete = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .trust_delete = op_part.rest } },
             .consumed_len = request.len,
         };
     }
@@ -487,7 +521,9 @@ fn handleFramedPayload(
         .trust_install => |trust_request| try handleTrustInstallRequest(allocator, trust_request.path, trust_request.body, payload_limit),
         .trust_list => try handleTrustListRequest(allocator, payload_limit),
         .trust_info => |trust_name| try handleTrustInfoRequest(allocator, trust_name, payload_limit),
+        .trust_active => try handleTrustActiveRequest(allocator, payload_limit),
         .trust_select => |trust_name| try handleTrustSelectRequest(allocator, trust_name, payload_limit),
+        .trust_delete => |trust_name| try handleTrustDeleteRequest(allocator, trust_name, payload_limit),
     };
 }
 
@@ -685,6 +721,12 @@ fn handleTrustInfoRequest(allocator: std.mem.Allocator, trust_name: []const u8, 
     };
 }
 
+fn handleTrustActiveRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    return trust_store.activeBundleInfoAlloc(allocator, payload_limit) catch |err| {
+        return formatOperationError(allocator, "TRUSTACTIVE", err, payload_limit);
+    };
+}
+
 fn handleTrustSelectRequest(allocator: std.mem.Allocator, trust_name: []const u8, payload_limit: usize) Error![]u8 {
     trust_store.selectBundle(trust_name, 0) catch |err| {
         return formatOperationError(allocator, "TRUSTSELECT", err, payload_limit);
@@ -693,6 +735,22 @@ fn handleTrustSelectRequest(allocator: std.mem.Allocator, trust_name: []const u8
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
+}
+
+fn handleTrustDeleteRequest(allocator: std.mem.Allocator, trust_name: []const u8, payload_limit: usize) Error![]u8 {
+    trust_store.deleteBundle(trust_name, 0) catch |err| {
+        return formatOperationError(allocator, "TRUSTDELETE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "DELETED {s}\n", .{trust_name});
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn resetPersistentStateForTest() void {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    tool_layout.resetForTest();
 }
 
 fn formatOperationError(
@@ -827,19 +885,31 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
-    const trust_select = try parseFramedRequest("REQ 22 TRUSTSELECT fs55-root");
+    const trust_active = try parseFramedRequest("REQ 22 TRUSTACTIVE");
+    switch (trust_active.operation) {
+        .trust_active => {},
+        else => return error.InvalidFrame,
+    }
+
+    const trust_select = try parseFramedRequest("REQ 23 TRUSTSELECT fs55-root");
     switch (trust_select.operation) {
         .trust_select => |trust_name| try std.testing.expectEqualStrings("fs55-root", trust_name),
         else => return error.InvalidFrame,
     }
 
-    const install = try parseFramedRequest("REQ 23 INSTALL");
+    const trust_delete = try parseFramedRequest("REQ 24 TRUSTDELETE fs55-root");
+    switch (trust_delete.operation) {
+        .trust_delete => |trust_name| try std.testing.expectEqualStrings("fs55-root", trust_name),
+        else => return error.InvalidFrame,
+    }
+
+    const install = try parseFramedRequest("REQ 25 INSTALL");
     switch (install.operation) {
         .install => {},
         else => return error.InvalidFrame,
     }
 
-    const manifest = try parseFramedRequest("REQ 24 MANIFEST");
+    const manifest = try parseFramedRequest("REQ 26 MANIFEST");
     switch (manifest.operation) {
         .manifest => {},
         else => return error.InvalidFrame,
@@ -904,7 +974,7 @@ test "baremetal tool service returns structured exec stderr for failures" {
 }
 
 test "baremetal tool service handles framed filesystem requests" {
-    filesystem.resetForTest();
+    resetPersistentStateForTest();
 
     const put_response = try handleFramedRequest(std.testing.allocator, "REQ 11 PUT /tools/cache/tool.txt 4\nedge", 256, 256, 256);
     defer std.testing.allocator.free(put_response);
@@ -924,7 +994,7 @@ test "baremetal tool service handles framed filesystem requests" {
 }
 
 test "baremetal tool service uploads and runs persisted scripts" {
-    filesystem.resetForTest();
+    resetPersistentStateForTest();
 
     const script = "write-file /tools/out/data.txt tcp-service-persisted";
     const put_script_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 21 PUT /tools/scripts/net.oc {d}\n{s}", .{ script.len, script });
@@ -947,7 +1017,7 @@ test "baremetal tool service uploads and runs persisted scripts" {
 }
 
 test "baremetal tool service installs lists and runs persisted packages" {
-    filesystem.resetForTest();
+    resetPersistentStateForTest();
 
     const script = "mkdir /pkg/out\nwrite-file /pkg/out/result.txt pkg-service-data\necho pkg-service-ok";
     const install_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 31 PKG demo {d}\n{s}", .{ script.len, script });
@@ -982,57 +1052,85 @@ test "baremetal tool service installs lists and runs persisted packages" {
     try std.testing.expectEqualStrings("RESP 35 17\ndir bin\ndir meta\n", package_dir_response);
 }
 
-test "baremetal tool service installs lists reads and selects trust bundles" {
-    filesystem.resetForTest();
+test "baremetal tool service rotates queries and deletes trust bundles" {
+    resetPersistentStateForTest();
 
     const install_response = try handleFramedRequest(std.testing.allocator, "REQ 41 TRUSTPUT fs55-root 9\nroot-cert", 512, 256, 512);
     defer std.testing.allocator.free(install_response);
     try std.testing.expect(std.mem.startsWith(u8, install_response, "RESP 41 "));
     try std.testing.expect(std.mem.indexOf(u8, install_response, "TRUSTED fs55-root -> /runtime/trust/bundles/fs55-root.der\n") != null);
 
-    const list_response = try handleFramedRequest(std.testing.allocator, "REQ 42 TRUSTLIST", 512, 256, 512);
-    defer std.testing.allocator.free(list_response);
-    try std.testing.expectEqualStrings("RESP 42 10\nfs55-root\n", list_response);
+    const install_backup_response = try handleFramedRequest(std.testing.allocator, "REQ 42 TRUSTPUT fs55-backup 11\nbackup-cert", 512, 256, 512);
+    defer std.testing.allocator.free(install_backup_response);
+    try std.testing.expect(std.mem.startsWith(u8, install_backup_response, "RESP 42 "));
+    try std.testing.expect(std.mem.indexOf(u8, install_backup_response, "TRUSTED fs55-backup -> /runtime/trust/bundles/fs55-backup.der\n") != null);
 
-    const info_response = try handleFramedRequest(std.testing.allocator, "REQ 43 TRUSTINFO fs55-root", 512, 256, 512);
+    const list_response = try handleFramedRequest(std.testing.allocator, "REQ 43 TRUSTLIST", 512, 256, 512);
+    defer std.testing.allocator.free(list_response);
+    try std.testing.expectEqualStrings("RESP 43 22\nfs55-root\nfs55-backup\n", list_response);
+
+    const info_response = try handleFramedRequest(std.testing.allocator, "REQ 44 TRUSTINFO fs55-root", 512, 256, 512);
     defer std.testing.allocator.free(info_response);
-    try std.testing.expect(std.mem.startsWith(u8, info_response, "RESP 43 "));
+    try std.testing.expect(std.mem.startsWith(u8, info_response, "RESP 44 "));
     try std.testing.expect(std.mem.indexOf(u8, info_response, "name=fs55-root") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_response, "selected=0") != null);
 
-    const select_response = try handleFramedRequest(std.testing.allocator, "REQ 44 TRUSTSELECT fs55-root", 512, 256, 512);
+    const select_response = try handleFramedRequest(std.testing.allocator, "REQ 45 TRUSTSELECT fs55-root", 512, 256, 512);
     defer std.testing.allocator.free(select_response);
-    try std.testing.expectEqualStrings("RESP 44 19\nSELECTED fs55-root\n", select_response);
+    try std.testing.expectEqualStrings("RESP 45 19\nSELECTED fs55-root\n", select_response);
 
-    const selected_info_response = try handleFramedRequest(std.testing.allocator, "REQ 45 TRUSTINFO fs55-root", 512, 256, 512);
+    const active_response = try handleFramedRequest(std.testing.allocator, "REQ 46 TRUSTACTIVE", 512, 256, 512);
+    defer std.testing.allocator.free(active_response);
+    try std.testing.expect(std.mem.startsWith(u8, active_response, "RESP 46 "));
+    try std.testing.expect(std.mem.indexOf(u8, active_response, "name=fs55-root") != null);
+    try std.testing.expect(std.mem.indexOf(u8, active_response, "selected=1") != null);
+
+    const rotate_response = try handleFramedRequest(std.testing.allocator, "REQ 47 TRUSTSELECT fs55-backup", 512, 256, 512);
+    defer std.testing.allocator.free(rotate_response);
+    try std.testing.expectEqualStrings("RESP 47 21\nSELECTED fs55-backup\n", rotate_response);
+
+    const delete_response = try handleFramedRequest(std.testing.allocator, "REQ 48 TRUSTDELETE fs55-root", 512, 256, 512);
+    defer std.testing.allocator.free(delete_response);
+    try std.testing.expectEqualStrings("RESP 48 18\nDELETED fs55-root\n", delete_response);
+
+    const remaining_list_response = try handleFramedRequest(std.testing.allocator, "REQ 49 TRUSTLIST", 512, 256, 512);
+    defer std.testing.allocator.free(remaining_list_response);
+    try std.testing.expectEqualStrings("RESP 49 12\nfs55-backup\n", remaining_list_response);
+
+    const selected_info_response = try handleFramedRequest(std.testing.allocator, "REQ 50 TRUSTACTIVE", 512, 256, 512);
     defer std.testing.allocator.free(selected_info_response);
+    try std.testing.expect(std.mem.indexOf(u8, selected_info_response, "name=fs55-backup") != null);
     try std.testing.expect(std.mem.indexOf(u8, selected_info_response, "selected=1") != null);
 }
 
 test "baremetal tool service handles batched trust requests" {
-    filesystem.resetForTest();
+    resetPersistentStateForTest();
 
     const batch_request =
-        "REQ 51 TRUSTPUT fs55-root 9\nroot-cert\nREQ 52 TRUSTLIST\nREQ 53 TRUSTSELECT fs55-root\nREQ 54 TRUSTINFO fs55-root";
+        "REQ 51 TRUSTPUT fs55-root 9\nroot-cert\nREQ 52 TRUSTPUT fs55-backup 11\nbackup-cert\nREQ 53 TRUSTSELECT fs55-backup\nREQ 54 TRUSTACTIVE\nREQ 55 TRUSTDELETE fs55-root\nREQ 56 TRUSTLIST";
     const batch_response = try handleFramedRequestBatch(std.testing.allocator, batch_request, 512, 256, 768);
     defer std.testing.allocator.free(batch_response);
 
     const expected_install = try handleFramedRequest(std.testing.allocator, "REQ 51 TRUSTPUT fs55-root 9\nroot-cert", 512, 256, 512);
     defer std.testing.allocator.free(expected_install);
-    const expected_list = try handleFramedRequest(std.testing.allocator, "REQ 52 TRUSTLIST", 512, 256, 512);
-    defer std.testing.allocator.free(expected_list);
-    const expected_select = try handleFramedRequest(std.testing.allocator, "REQ 53 TRUSTSELECT fs55-root", 512, 256, 512);
+    const expected_install_backup = try handleFramedRequest(std.testing.allocator, "REQ 52 TRUSTPUT fs55-backup 11\nbackup-cert", 512, 256, 512);
+    defer std.testing.allocator.free(expected_install_backup);
+    const expected_select = try handleFramedRequest(std.testing.allocator, "REQ 53 TRUSTSELECT fs55-backup", 512, 256, 512);
     defer std.testing.allocator.free(expected_select);
-    const expected_info = try handleFramedRequest(std.testing.allocator, "REQ 54 TRUSTINFO fs55-root", 512, 256, 512);
-    defer std.testing.allocator.free(expected_info);
-    const expected = try std.mem.concat(std.testing.allocator, u8, &.{ expected_install, expected_list, expected_select, expected_info });
+    const expected_active = try handleFramedRequest(std.testing.allocator, "REQ 54 TRUSTACTIVE", 512, 256, 512);
+    defer std.testing.allocator.free(expected_active);
+    const expected_delete = try handleFramedRequest(std.testing.allocator, "REQ 55 TRUSTDELETE fs55-root", 512, 256, 512);
+    defer std.testing.allocator.free(expected_delete);
+    const expected_list = try handleFramedRequest(std.testing.allocator, "REQ 56 TRUSTLIST", 512, 256, 512);
+    defer std.testing.allocator.free(expected_list);
+    const expected = try std.mem.concat(std.testing.allocator, u8, &.{ expected_install, expected_install_backup, expected_select, expected_active, expected_delete, expected_list });
     defer std.testing.allocator.free(expected);
 
     try std.testing.expectEqualStrings(expected, batch_response);
 }
 
 test "baremetal tool service installs default runtime layout and returns manifest" {
-    filesystem.resetForTest();
+    resetPersistentStateForTest();
 
     const install_response = try handleFramedRequest(std.testing.allocator, "REQ 34 INSTALL", 512, 256, 512);
     defer std.testing.allocator.free(install_response);
@@ -1052,7 +1150,7 @@ test "baremetal tool service installs default runtime layout and returns manifes
 }
 
 test "baremetal tool service handles batched filesystem requests" {
-    filesystem.resetForTest();
+    resetPersistentStateForTest();
 
     const batch_request = "REQ 11 PUT /tools/cache/tool.txt 4\nedge\nREQ 12 GET /tools/cache/tool.txt\nREQ 13 STAT /tools/cache/tool.txt";
     const batch_response = try handleFramedRequestBatch(std.testing.allocator, batch_request, 256, 256, 512);
@@ -1071,7 +1169,7 @@ test "baremetal tool service handles batched filesystem requests" {
 }
 
 test "baremetal tool service handles batched package requests" {
-    filesystem.resetForTest();
+    resetPersistentStateForTest();
 
     const script = "mkdir /pkg/out\nwrite-file /pkg/out/result.txt pkg-service-data\necho pkg-service-ok";
     const install_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 31 PKG demo {d}\n{s}", .{ script.len, script });
@@ -1099,7 +1197,8 @@ test "baremetal tool service handles batched package requests" {
 }
 
 test "baremetal tool service rejects invalid mid-batch frames" {
-    filesystem.resetForTest();
+    resetPersistentStateForTest();
+    try filesystem.createDirPath("/tools/cache");
     try filesystem.writeFile("/tools/cache/tool.txt", "edge", 0);
 
     try std.testing.expectError(

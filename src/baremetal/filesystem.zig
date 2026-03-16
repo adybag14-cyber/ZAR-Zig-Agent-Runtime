@@ -157,6 +157,26 @@ pub fn writeFile(path: []const u8, data: []const u8, tick: u64) Error!void {
     try persistAll();
 }
 
+pub fn deleteFile(path: []const u8, tick: u64) Error!void {
+    try init();
+    const normalized = try normalizePath(path);
+    const full = normalized.slice();
+    if (full.len == 1) return error.InvalidPath;
+
+    const entry_index = findEntryIndex(full) orelse return error.FileNotFound;
+    const record = entries[entry_index];
+    if (record.kind != abi.filesystem_kind_file) return error.IsDirectory;
+
+    try zeroExtent(record.start_lba, record.block_count);
+    entries[entry_index] = std.mem.zeroes(abi.BaremetalFilesystemEntry);
+
+    state.write_count +%= 1;
+    state.last_modified_tick = tick;
+    state.dirty = 1;
+    recountState();
+    try persistAll();
+}
+
 pub fn readFileAlloc(allocator: std.mem.Allocator, path: []const u8, max_bytes: usize) Error![]u8 {
     try init();
     const normalized = try normalizePath(path);
@@ -665,4 +685,19 @@ test "filesystem lists direct child entries only" {
     const bin_listing = try listDirectoryAlloc(std.testing.allocator, "/packages/demo/bin", 64);
     defer std.testing.allocator.free(bin_listing);
     try std.testing.expectEqualStrings("file main.oc 4\n", bin_listing);
+}
+
+test "filesystem deletes files and persists the removal" {
+    storage_backend.resetForTest();
+    resetForTest();
+    try init();
+
+    try createDirPath("/runtime/state");
+    try writeFile("/runtime/state/delete-me.txt", "edge", 7);
+    try deleteFile("/runtime/state/delete-me.txt", 9);
+    try std.testing.expectError(error.FileNotFound, readFileAlloc(std.testing.allocator, "/runtime/state/delete-me.txt", 64));
+
+    resetForTest();
+    try init();
+    try std.testing.expectError(error.FileNotFound, readFileAlloc(std.testing.allocator, "/runtime/state/delete-me.txt", 64));
 }
