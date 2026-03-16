@@ -11,8 +11,8 @@ Date: 2026-03-12
   - `zig-ci` `22996158098` -> success
   - `docs-pages` `22996158073` -> success
 - Latest upstream baselines verified from GitHub on 2026-03-12:
-  - stable: `v2026.3.11`
-  - beta: `v2026.3.11-beta.1`
+  - stable: `v2026.3.13-1`
+  - beta: `v2026.3.13-beta.1`
   - Go baseline: `v2.14.0-go`
 - Current parity fact from `scripts/check-go-method-parity.ps1`:
   - missing in Zig vs union baseline: `0`
@@ -28,8 +28,8 @@ This report has been refreshed after the first strict FS1 slice landed.
   - bare-metal host tests -> `116/116`
 - current local parity gate is green:
   - Go baseline `v2.14.0-go`
-  - stable baseline `v2026.3.11`
-  - beta baseline `v2026.3.11-beta.1`
+  - stable baseline `v2026.3.13-1`
+  - beta baseline `v2026.3.13-beta.1`
 - the strict execution order now advances from FS3 to FS5.
 
 This report is based on the current local repo and directly inspected upstream contracts. Stale streamed summaries, guessed percentages, and unverified reviewer claims are not accepted as evidence.
@@ -101,7 +101,7 @@ FS6 bare metal remains active, but FS1-FS5 completion must no longer be deferred
 
 #### Upstream contract locked for implementation
 
-Verified from upstream `openclaw/openclaw@v2026.3.11`:
+Verified from upstream `openclaw/openclaw@v2026.3.13-1`:
 
 - file: `src/gateway/node-pending-work.ts`
 - file: `src/gateway/node-pending-work.test.ts`

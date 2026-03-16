@@ -540,7 +540,7 @@ Registry status:
 
 FS1 runtime/core consolidation slice (active):
 - [x] Strict FS1-FS5 analysis report added: `docs/zig-port/FS1_FS5_STRICT_ANALYSIS_REPORT.md`
-  - locks the current source-of-truth baseline to the current local repo head and upstream `v2026.3.11` / `v2026.3.11-beta.1`.
+  - locks the current source-of-truth baseline to the current local repo head and upstream `v2026.3.13-1` / `v2026.3.13-beta.1`.
   - defines dependency-aware execution order: `FS1 -> FS4 -> FS2 -> FS3 -> FS5`.
   - freezes the first required FS1 slice: `node.pending.enqueue` + `node.pending.drain` with upstream no-guesswork semantics.
 - [x] First FS1 hard method gap implemented in the Zig gateway:
@@ -1473,7 +1473,6 @@ Phase 6 progress notes:
     - wired into workflows: `zig-ci` validate stage and `docs-pages` build stage.
     - initial CI regression (`zig-ci` run `22698812368`) fixed by switching release-tag resolution from `gh` CLI to GitHub API; fix commit `bcc0e68`.
     - post-fix verification runs: `zig-ci` `22698898719` success and `docs-pages` `22698975595` success.
-
 
 
 
