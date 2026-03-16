@@ -135,7 +135,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-app, package-display, package-ls, package-cat, package-delete, app-list, app-info, app-state, app-trust, app-connector, app-delete, trust-list, trust-info, trust-active, trust-select, trust-delete, display-info, display-modes, display-set, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-app, package-display, package-ls, package-cat, package-delete, app-list, app-info, app-state, app-history, app-trust, app-connector, app-delete, trust-list, trust-info, trust-active, trust-select, trust-delete, display-info, display-modes, display-set, run-script, run-package, app-run");
         return;
     }
 
@@ -461,6 +461,27 @@ fn execute(
         };
         defer allocator.free(state);
         try stdout_buffer.appendSlice(state);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-history")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-history <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-history <name>");
+            return;
+        }
+        const history = app_runtime.historyAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-history failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(history);
+        try stdout_buffer.appendSlice(history);
         return;
     }
 
@@ -1218,6 +1239,7 @@ test "baremetal tool exec configures app trust and connector and reports app inf
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "connector=virtual") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "trust_bundle=fs55-root") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "state_path=/runtime/apps/demo/last_run.txt") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "history_path=/runtime/apps/demo/history.log") != null);
 
     var list_result = try runCapture(std.testing.allocator, "app-list", 256, 256);
     defer list_result.deinit(std.testing.allocator);
@@ -1254,6 +1276,12 @@ test "baremetal tool exec app-run persists last run state and selects trust" {
     try std.testing.expect(std.mem.indexOf(u8, state_result.stdout, "requested_connector=virtual") != null);
     try std.testing.expect(std.mem.indexOf(u8, state_result.stdout, "actual_connector=virtual") != null);
     try std.testing.expect(std.mem.indexOf(u8, state_result.stdout, "trust_bundle=fs55-root") != null);
+
+    var history_result = try runCapture(std.testing.allocator, "app-history demo", 512, 256);
+    defer history_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), history_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, history_result.stdout, "name=demo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, history_result.stdout, "trust_bundle=fs55-root") != null);
 }
 
 test "baremetal tool exec uninstalls packages and clears app state" {

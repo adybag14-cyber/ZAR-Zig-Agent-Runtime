@@ -9,9 +9,11 @@ const ata_pio_disk = @import("ata_pio_disk.zig");
 const trust_store = @import("trust_store.zig");
 
 const root_dir = "/runtime/apps";
+const max_history_bytes: usize = 1024;
 
 pub const Error = filesystem.Error || package_store.Error || std.mem.Allocator.Error || error{
     AppStateNotFound,
+    AppHistoryNotFound,
     ResponseTooLarge,
 };
 
@@ -24,11 +26,13 @@ pub fn infoAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usiz
     const profile = try package_store.loadLaunchProfile(name, &entrypoint_buf);
 
     var state_path_buf: [filesystem.max_path_len]u8 = undefined;
+    var history_path_buf: [filesystem.max_path_len]u8 = undefined;
     const state_path = try statePath(name, &state_path_buf);
+    const history_path = try historyPath(name, &history_path_buf);
     const trust_bundle = profile.trustBundle();
     const response = try std.fmt.allocPrint(
         allocator,
-        "name={s}\nentrypoint={s}\ndisplay_width={d}\ndisplay_height={d}\nconnector={s}\ntrust_bundle={s}\nstate_path={s}\n",
+        "name={s}\nentrypoint={s}\ndisplay_width={d}\ndisplay_height={d}\nconnector={s}\ntrust_bundle={s}\nstate_path={s}\nhistory_path={s}\n",
         .{
             name,
             profile.entrypoint,
@@ -37,6 +41,7 @@ pub fn infoAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usiz
             package_store.connectorNameFromType(profile.connector_type),
             trust_bundle,
             state_path,
+            history_path,
         },
     );
     errdefer allocator.free(response);
@@ -53,6 +58,15 @@ pub fn stateAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usi
     };
 }
 
+pub fn historyAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
+    var history_path_buf: [filesystem.max_path_len]u8 = undefined;
+    const path = try historyPath(name, &history_path_buf);
+    return filesystem.readFileAlloc(allocator, path, max_bytes) catch |err| switch (err) {
+        error.FileNotFound => error.AppHistoryNotFound,
+        else => err,
+    };
+}
+
 pub fn writeLastRun(
     name: []const u8,
     profile: package_store.LaunchProfile,
@@ -63,8 +77,10 @@ pub fn writeLastRun(
 ) Error!void {
     var app_dir_buf: [filesystem.max_path_len]u8 = undefined;
     var state_path_buf: [filesystem.max_path_len]u8 = undefined;
+    var history_path_buf: [filesystem.max_path_len]u8 = undefined;
     const app_dir = try appDirPath(name, &app_dir_buf);
-    const path = try statePath(name, &state_path_buf);
+    const state_path = try statePath(name, &state_path_buf);
+    const history_path = try historyPath(name, &history_path_buf);
     try filesystem.createDirPath(root_dir);
     try filesystem.createDirPath(app_dir);
 
@@ -86,7 +102,26 @@ pub fn writeLastRun(
             trust_bundle,
         },
     ) catch return error.InvalidPath;
-    try filesystem.writeFile(path, rendered, tick);
+    try filesystem.writeFile(state_path, rendered, tick);
+
+    var history_line_buf: [256]u8 = undefined;
+    const history_line = std.fmt.bufPrint(
+        &history_line_buf,
+        "tick={d} name={s} exit_code={d} stdout_bytes={d} stderr_bytes={d} display={d}x{d} requested_connector={s} actual_connector={s} trust_bundle={s}\n",
+        .{
+            tick,
+            name,
+            exit_code,
+            stdout_bytes,
+            stderr_bytes,
+            profile.display_width,
+            profile.display_height,
+            package_store.connectorNameFromType(profile.connector_type),
+            package_store.connectorNameFromType(output.connector_type),
+            trust_bundle,
+        },
+    ) catch return error.InvalidPath;
+    try appendHistoryLine(history_path, history_line, tick);
 }
 
 pub fn deleteState(name: []const u8, tick: u64) Error!void {
@@ -111,9 +146,45 @@ pub fn statePath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![
     return std.fmt.bufPrint(buffer, "{s}/{s}/last_run.txt", .{ root_dir, name }) catch error.InvalidPath;
 }
 
+pub fn historyPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try package_store.validatePackageName(name);
+    return std.fmt.bufPrint(buffer, "{s}/{s}/history.log", .{ root_dir, name }) catch error.InvalidPath;
+}
+
 fn appDirPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
     try package_store.validatePackageName(name);
     return std.fmt.bufPrint(buffer, "{s}/{s}", .{ root_dir, name }) catch error.InvalidPath;
+}
+
+fn appendHistoryLine(path: []const u8, line: []const u8, tick: u64) Error!void {
+    var existing_storage: [max_history_bytes]u8 = undefined;
+    var existing_fba = std.heap.FixedBufferAllocator.init(&existing_storage);
+    const existing = filesystem.readFileAlloc(existing_fba.allocator(), path, max_history_bytes) catch |err| switch (err) {
+        error.FileNotFound => null,
+        else => return err,
+    };
+
+    var combined: [max_history_bytes + 256]u8 = undefined;
+    var combined_len: usize = 0;
+    if (existing) |bytes| {
+        @memcpy(combined[0..bytes.len], bytes);
+        combined_len = bytes.len;
+    }
+    @memcpy(combined[combined_len .. combined_len + line.len], line);
+    combined_len += line.len;
+
+    const bounded = boundHistoryTail(combined[0..combined_len]);
+    try filesystem.writeFile(path, bounded, tick);
+}
+
+fn boundHistoryTail(bytes: []const u8) []const u8 {
+    if (bytes.len <= max_history_bytes) return bytes;
+
+    const start = bytes.len - max_history_bytes;
+    const tail = bytes[start..];
+    const newline_index = std.mem.indexOfScalar(u8, tail, '\n') orelse return tail;
+    if (newline_index + 1 >= tail.len) return tail;
+    return tail[newline_index + 1 ..];
 }
 
 test "app runtime reports package app info and persists last run state on ram disk" {
@@ -127,6 +198,7 @@ test "app runtime reports package app info and persists last run state on ram di
     defer std.testing.allocator.free(info);
     try std.testing.expect(std.mem.indexOf(u8, info, "connector=virtual") != null);
     try std.testing.expect(std.mem.indexOf(u8, info, "/runtime/apps/demo/last_run.txt") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info, "/runtime/apps/demo/history.log") != null);
 
     var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
     const profile = try package_store.loadLaunchProfile("demo", &entrypoint_buf);
@@ -136,6 +208,11 @@ test "app runtime reports package app info and persists last run state on ram di
     defer std.testing.allocator.free(state);
     try std.testing.expect(std.mem.indexOf(u8, state, "exit_code=0") != null);
     try std.testing.expect(std.mem.indexOf(u8, state, "requested_connector=virtual") != null);
+
+    const history = try historyAlloc(std.testing.allocator, "demo", 256);
+    defer std.testing.allocator.free(history);
+    try std.testing.expect(std.mem.indexOf(u8, history, "name=demo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, history, "exit_code=0") != null);
 }
 
 test "app runtime state persists on ata-backed storage" {
@@ -161,6 +238,11 @@ test "app runtime state persists on ata-backed storage" {
     defer std.testing.allocator.free(state);
     try std.testing.expect(std.mem.indexOf(u8, state, "trust_bundle=app-root") != null);
     try std.testing.expect(std.mem.indexOf(u8, state, "requested_connector=virtual") != null);
+
+    const history = try historyAlloc(std.testing.allocator, "persisted", 256);
+    defer std.testing.allocator.free(history);
+    try std.testing.expect(std.mem.indexOf(u8, history, "name=persisted") != null);
+    try std.testing.expect(std.mem.indexOf(u8, history, "trust_bundle=app-root") != null);
 }
 
 test "app runtime uninstall removes package tree and persisted state" {
@@ -178,6 +260,7 @@ test "app runtime uninstall removes package tree and persisted state" {
     try uninstallApp("demo", 12);
     try std.testing.expectError(error.PackageNotFound, package_store.loadLaunchProfile("demo", &entrypoint_buf));
     try std.testing.expectError(error.AppStateNotFound, stateAlloc(std.testing.allocator, "demo", 256));
+    try std.testing.expectError(error.AppHistoryNotFound, historyAlloc(std.testing.allocator, "demo", 256));
 
     const packages_listing = try filesystem.listDirectoryAlloc(std.testing.allocator, "/packages", 64);
     defer std.testing.allocator.free(packages_listing);

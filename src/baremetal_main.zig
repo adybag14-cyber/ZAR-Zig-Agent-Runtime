@@ -2965,17 +2965,18 @@ fn expectTcpProbePacket(
 
 const Rtl8139TcpProbeScratch = struct {
     packet_storage: pal_net.TcpPacket,
-    service_scratch: [3072]u8,
+    service_scratch: [4096]u8,
     http_post_scratch: [2048]u8,
     https_trust_store_scratch: [2048]u8,
     service_request_put_buffer: [256]u8,
     service_response_put_expected_buffer: [160]u8,
-    service_batch_request_buffer: [512]u8,
-    service_batch_response_expected_buffer: [1024]u8,
+    service_batch_request_buffer: [640]u8,
+    service_batch_response_expected_buffer: [1536]u8,
     package_install_request_buffer: [512]u8,
     package_info_response_expected_buffer: [384]u8,
-    app_info_response_expected_buffer: [256]u8,
+    app_info_response_expected_buffer: [320]u8,
     app_state_response_expected_buffer: [384]u8,
+    app_history_response_expected_buffer: [320]u8,
     package_entrypoint_buffer: [filesystem.max_path_len]u8,
 };
 
@@ -3248,7 +3249,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         "exit=0 stdout_len=15 stderr_len=0\nstdout:\ntcp-service-ok\nstderr:\n";
     const service_request_long = "REQ 3 help";
     const service_response_long_payload_expected =
-        "OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-app, package-display, package-ls, package-cat, package-delete, app-list, app-info, app-state, app-trust, app-connector, app-delete, trust-list, trust-info, trust-active, trust-select, trust-delete, display-info, display-modes, display-set, run-script, run-package, app-run\n";
+        "OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-app, package-display, package-ls, package-cat, package-delete, app-list, app-info, app-state, app-history, app-trust, app-connector, app-delete, trust-list, trust-info, trust-active, trust-select, trust-delete, display-info, display-modes, display-set, run-script, run-package, app-run\n";
     const service_script_path = "/tools/scripts/net.oc";
     const service_script_body = "write-file /tools/out/net.txt tcp-service-persisted";
     const package_name = "demo";
@@ -3292,9 +3293,10 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const batch_request_id_app_info: u32 = 64;
     const batch_request_id_app_run: u32 = 65;
     const batch_request_id_app_state: u32 = 66;
-    const batch_request_id_app_list: u32 = 67;
-    const uninstall_request_id: u32 = 68;
-    const uninstall_list_request_id: u32 = 69;
+    const batch_request_id_app_history: u32 = 67;
+    const batch_request_id_app_list: u32 = 68;
+    const uninstall_request_id: u32 = 69;
+    const uninstall_list_request_id: u32 = 70;
     const retransmit_interval_ticks: u64 = 4;
     const flow_a = tcp_protocol.FlowKey{
         .local_ip = source_ip,
@@ -4584,7 +4586,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     if (batch_service_response_chunks < 2) return error.CounterMismatch;
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
-    const app_batch_service_request = std.fmt.bufPrint(&scratch.service_batch_request_buffer, "REQ {d} APPCONNECTOR {s} virtual\nREQ {d} APPTRUST {s} {s}\nREQ {d} APPINFO {s}\nREQ {d} APPRUN {s}\nREQ {d} APPSTATE {s}\nREQ {d} APPLIST", .{
+    const app_batch_service_request = std.fmt.bufPrint(&scratch.service_batch_request_buffer, "REQ {d} APPCONNECTOR {s} virtual\nREQ {d} APPTRUST {s} {s}\nREQ {d} APPINFO {s}\nREQ {d} APPRUN {s}\nREQ {d} APPSTATE {s}\nREQ {d} APPHISTORY {s}\nREQ {d} APPLIST", .{
         batch_request_id_app_connector,
         package_name,
         batch_request_id_app_trust,
@@ -4595,6 +4597,8 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         batch_request_id_app_run,
         package_name,
         batch_request_id_app_state,
+        package_name,
+        batch_request_id_app_history,
         package_name,
         batch_request_id_app_list,
     }) catch return error.ToolServiceFailed;
@@ -4613,13 +4617,14 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     ) catch return error.ToolServiceFailed;
     const app_info_payload_expected = std.fmt.bufPrint(
         &scratch.app_info_response_expected_buffer,
-        "name={s}\nentrypoint=/packages/{s}/bin/main.oc\ndisplay_width={d}\ndisplay_height={d}\nconnector=virtual\ntrust_bundle={s}\nstate_path=/runtime/apps/{s}/last_run.txt\n",
+        "name={s}\nentrypoint=/packages/{s}/bin/main.oc\ndisplay_width={d}\ndisplay_height={d}\nconnector=virtual\ntrust_bundle={s}\nstate_path=/runtime/apps/{s}/last_run.txt\nhistory_path=/runtime/apps/{s}/history.log\n",
         .{
             package_name,
             package_name,
             1280,
             720,
             trust_backup_bundle_name,
+            package_name,
             package_name,
         },
     ) catch return error.ToolServiceFailed;
@@ -4634,7 +4639,19 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
             trust_backup_bundle_name,
         },
     ) catch return error.ToolServiceFailed;
-    const app_batch_service_response_expected = std.fmt.bufPrint(&scratch.service_batch_response_expected_buffer, "RESP {d} 26\nAPPCONNECTOR {s} virtual\nRESP {d} 26\nAPPTRUST {s} {s}\nRESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} 5\ndemo\n", .{
+    const app_history_payload_expected = std.fmt.bufPrint(
+        &scratch.app_history_response_expected_buffer,
+        "tick={d} name={s} exit_code=0 stdout_bytes={d} stderr_bytes=0 display={d}x{d} requested_connector=virtual actual_connector=virtual trust_bundle={s}\n",
+        .{
+            0,
+            package_name,
+            package_run_stdout.len,
+            1280,
+            720,
+            trust_backup_bundle_name,
+        },
+    ) catch return error.ToolServiceFailed;
+    const app_batch_service_response_expected = std.fmt.bufPrint(&scratch.service_batch_response_expected_buffer, "RESP {d} 26\nAPPCONNECTOR {s} virtual\nRESP {d} 26\nAPPTRUST {s} {s}\nRESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} 5\ndemo\n", .{
         batch_request_id_app_connector,
         package_name,
         batch_request_id_app_trust,
@@ -4649,6 +4666,9 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         batch_request_id_app_state,
         app_state_payload_expected.len,
         app_state_payload_expected,
+        batch_request_id_app_history,
+        app_history_payload_expected.len,
+        app_history_payload_expected,
         batch_request_id_app_list,
     }) catch return error.ToolServiceFailed;
     if (!std.mem.eql(u8, app_batch_service_response, app_batch_service_response_expected)) return error.ToolServiceResponseMismatch;
@@ -4680,6 +4700,9 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
 
     const app_state_readback = filesystem.readFileAlloc(service_fba.allocator(), "/runtime/apps/demo/last_run.txt", 384) catch return error.ToolServiceFailed;
     if (!std.mem.eql(u8, app_state_readback, app_state_payload_expected)) return error.ToolServiceResponseMismatch;
+
+    const app_history_readback = filesystem.readFileAlloc(service_fba.allocator(), "/runtime/apps/demo/history.log", 384) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, app_history_readback, app_history_payload_expected)) return error.ToolServiceResponseMismatch;
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const uninstall_service_request = std.fmt.bufPrint(&scratch.service_batch_request_buffer, "REQ {d} APPDELETE {s}\nREQ {d} APPLIST", .{
