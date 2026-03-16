@@ -5,12 +5,21 @@ const storage_backend = @import("storage_backend.zig");
 const ata_pio_disk = @import("ata_pio_disk.zig");
 
 pub const max_name_len: usize = 32;
+pub const default_display_width: u16 = 640;
+pub const default_display_height: u16 = 400;
 
 pub const Error = filesystem.Error || std.mem.Allocator.Error || error{
     InvalidPackageName,
     InvalidPackagePath,
+    InvalidPackageMetadata,
     PackageNotFound,
     ResponseTooLarge,
+};
+
+pub const LaunchProfile = struct {
+    entrypoint: []const u8,
+    display_width: u16,
+    display_height: u16,
 };
 
 pub fn installScriptPackage(name: []const u8, script: []const u8, tick: u64) Error!void {
@@ -29,6 +38,7 @@ pub fn installScriptPackage(name: []const u8, script: []const u8, tick: u64) Err
 
     const entrypoint = try entrypointPath(name, &entrypoint_buf);
     try filesystem.writeFile(entrypoint, script, tick);
+    try refreshAppManifest(name, tick);
     try refreshManifest(name, tick);
 }
 
@@ -40,6 +50,11 @@ pub fn entrypointPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Er
 pub fn manifestPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
     try validatePackageName(name);
     return std.fmt.bufPrint(buffer, "/packages/{s}/meta/package.txt", .{name}) catch error.InvalidPath;
+}
+
+pub fn appManifestPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validatePackageName(name);
+    return std.fmt.bufPrint(buffer, "/packages/{s}/meta/app.txt", .{name}) catch error.InvalidPath;
 }
 
 pub fn assetsPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
@@ -57,6 +72,70 @@ pub fn manifestAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: 
     var manifest_buf: [filesystem.max_path_len]u8 = undefined;
     const manifest = try manifestPath(name, &manifest_buf);
     return filesystem.readFileAlloc(allocator, manifest, max_bytes);
+}
+
+pub fn appManifestAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
+    var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    const profile = try loadLaunchProfile(name, &entrypoint_buf);
+    const manifest = try std.fmt.allocPrint(
+        allocator,
+        "name={s}\nentrypoint={s}\ndisplay_width={d}\ndisplay_height={d}\n",
+        .{ name, profile.entrypoint, profile.display_width, profile.display_height },
+    );
+    errdefer allocator.free(manifest);
+    if (manifest.len > max_bytes) return error.ResponseTooLarge;
+    return manifest;
+}
+
+pub fn configureDisplayMode(name: []const u8, width: u16, height: u16, tick: u64) Error!void {
+    var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    const profile = try loadLaunchProfile(name, &entrypoint_buf);
+    try writeAppManifest(name, profile.entrypoint, width, height, tick);
+    try refreshManifest(name, tick);
+}
+
+pub fn loadLaunchProfile(name: []const u8, entrypoint_buffer: *[filesystem.max_path_len]u8) Error!LaunchProfile {
+    if (!try packageExists(name)) return error.PackageNotFound;
+
+    const default_entrypoint = try entrypointPath(name, entrypoint_buffer);
+    var profile = LaunchProfile{
+        .entrypoint = default_entrypoint,
+        .display_width = default_display_width,
+        .display_height = default_display_height,
+    };
+
+    var app_path_buf: [filesystem.max_path_len]u8 = undefined;
+    const app_path = try appManifestPath(name, &app_path_buf);
+
+    var read_buffer: [256]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&read_buffer);
+    const raw = filesystem.readFileAlloc(fba.allocator(), app_path, read_buffer.len) catch |err| switch (err) {
+        error.FileNotFound => return profile,
+        else => return err,
+    };
+
+    var lines = std.mem.splitScalar(u8, raw, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        if (std.mem.startsWith(u8, line, "entrypoint=")) {
+            const value = line["entrypoint=".len..];
+            if (!isValidEntrypoint(name, value)) return error.InvalidPackageMetadata;
+            if (value.len > entrypoint_buffer.len) return error.InvalidPackageMetadata;
+            @memcpy(entrypoint_buffer[0..value.len], value);
+            profile.entrypoint = entrypoint_buffer[0..value.len];
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "display_width=")) {
+            profile.display_width = std.fmt.parseInt(u16, line["display_width=".len..], 10) catch return error.InvalidPackageMetadata;
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "display_height=")) {
+            profile.display_height = std.fmt.parseInt(u16, line["display_height=".len..], 10) catch return error.InvalidPackageMetadata;
+            continue;
+        }
+    }
+
+    return profile;
 }
 
 pub fn installPackageAsset(name: []const u8, relative_path: []const u8, data: []const u8, tick: u64) Error!void {
@@ -195,33 +274,64 @@ fn refreshManifest(name: []const u8, tick: u64) Error!void {
     var root_buf: [filesystem.max_path_len]u8 = undefined;
     var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
     var manifest_buf: [filesystem.max_path_len]u8 = undefined;
+    var app_manifest_buf: [filesystem.max_path_len]u8 = undefined;
     var assets_buf: [filesystem.max_path_len]u8 = undefined;
 
     const root = packageRootPath(name, &root_buf);
     const entrypoint = try entrypointPath(name, &entrypoint_buf);
     const manifest = try manifestPath(name, &manifest_buf);
+    const app_manifest = try appManifestPath(name, &app_manifest_buf);
     const assets_root = try assetsPath(name, &assets_buf);
     const script_stat = filesystem.statSummary(entrypoint) catch |err| switch (err) {
         error.FileNotFound => return error.PackageNotFound,
         else => return err,
     };
     const stats = try packageAssetStats(name);
+    var launch_entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    const profile = try loadLaunchProfile(name, &launch_entrypoint_buf);
 
     var metadata: [384]u8 = undefined;
     const manifest_body = std.fmt.bufPrint(
         &metadata,
-        "name={s}\nroot={s}\nentrypoint={s}\nscript_bytes={d}\nasset_root={s}\nasset_count={d}\nasset_bytes={d}\n",
+        "name={s}\nroot={s}\nentrypoint={s}\napp_manifest={s}\nscript_bytes={d}\ndisplay_width={d}\ndisplay_height={d}\nasset_root={s}\nasset_count={d}\nasset_bytes={d}\n",
         .{
             name,
             root,
             entrypoint,
+            app_manifest,
             script_stat.size,
+            profile.display_width,
+            profile.display_height,
             assets_root,
             stats.count,
             stats.bytes,
         },
     ) catch return error.InvalidPath;
     try filesystem.writeFile(manifest, manifest_body, tick);
+}
+
+fn refreshAppManifest(name: []const u8, tick: u64) Error!void {
+    var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    const entrypoint = try entrypointPath(name, &entrypoint_buf);
+    try writeAppManifest(name, entrypoint, default_display_width, default_display_height, tick);
+}
+
+fn writeAppManifest(name: []const u8, entrypoint: []const u8, width: u16, height: u16, tick: u64) Error!void {
+    var app_manifest_buf: [filesystem.max_path_len]u8 = undefined;
+    const app_manifest = try appManifestPath(name, &app_manifest_buf);
+    var metadata: [256]u8 = undefined;
+    const body = std.fmt.bufPrint(
+        &metadata,
+        "name={s}\nentrypoint={s}\ndisplay_width={d}\ndisplay_height={d}\n",
+        .{ name, entrypoint, width, height },
+    ) catch return error.InvalidPath;
+    try filesystem.writeFile(app_manifest, body, tick);
+}
+
+fn isValidEntrypoint(name: []const u8, entrypoint: []const u8) bool {
+    var prefix_buf: [filesystem.max_path_len]u8 = undefined;
+    const prefix = std.fmt.bufPrint(&prefix_buf, "/packages/{s}/", .{name}) catch return false;
+    return std.mem.startsWith(u8, entrypoint, prefix) and entrypoint.len < filesystem.max_path_len;
 }
 
 fn parentSlice(path: []const u8) []const u8 {
@@ -248,8 +358,10 @@ test "package store installs script packages into canonical layout" {
 
     var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
     var manifest_buf: [filesystem.max_path_len]u8 = undefined;
+    var app_manifest_buf: [filesystem.max_path_len]u8 = undefined;
     const entrypoint = try entrypointPath("demo", &entrypoint_buf);
     const manifest = try manifestPath("demo", &manifest_buf);
+    const app_manifest = try appManifestPath("demo", &app_manifest_buf);
 
     const script = try filesystem.readFileAlloc(std.testing.allocator, entrypoint, 64);
     defer std.testing.allocator.free(script);
@@ -260,10 +372,19 @@ test "package store installs script packages into canonical layout" {
     try std.testing.expect(std.mem.indexOf(u8, metadata, "name=demo") != null);
     try std.testing.expect(std.mem.indexOf(u8, metadata, "root=/packages/demo") != null);
     try std.testing.expect(std.mem.indexOf(u8, metadata, entrypoint) != null);
+    try std.testing.expect(std.mem.indexOf(u8, metadata, app_manifest) != null);
     try std.testing.expect(std.mem.indexOf(u8, metadata, "script_bytes=15") != null);
+    try std.testing.expect(std.mem.indexOf(u8, metadata, "display_width=640") != null);
+    try std.testing.expect(std.mem.indexOf(u8, metadata, "display_height=400") != null);
     try std.testing.expect(std.mem.indexOf(u8, metadata, "asset_root=/packages/demo/assets") != null);
     try std.testing.expect(std.mem.indexOf(u8, metadata, "asset_count=0") != null);
     try std.testing.expect(std.mem.indexOf(u8, metadata, "asset_bytes=0") != null);
+
+    const app = try appManifestAlloc(std.testing.allocator, "demo", 256);
+    defer std.testing.allocator.free(app);
+    try std.testing.expect(std.mem.indexOf(u8, app, "entrypoint=/packages/demo/bin/main.oc") != null);
+    try std.testing.expect(std.mem.indexOf(u8, app, "display_width=640") != null);
+    try std.testing.expect(std.mem.indexOf(u8, app, "display_height=400") != null);
 
     const listing = try listPackagesAlloc(std.testing.allocator, 64);
     defer std.testing.allocator.free(listing);
@@ -306,7 +427,10 @@ test "package store reads persisted manifest metadata and tracks package assets"
     try std.testing.expect(std.mem.indexOf(u8, manifest, "name=info-demo") != null);
     try std.testing.expect(std.mem.indexOf(u8, manifest, "root=/packages/info-demo") != null);
     try std.testing.expect(std.mem.indexOf(u8, manifest, "/packages/info-demo/bin/main.oc") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "app_manifest=/packages/info-demo/meta/app.txt") != null);
     try std.testing.expect(std.mem.indexOf(u8, manifest, "script_bytes=14") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "display_width=640") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "display_height=400") != null);
     try std.testing.expect(std.mem.indexOf(u8, manifest, "asset_root=/packages/info-demo/assets") != null);
     try std.testing.expect(std.mem.indexOf(u8, manifest, "asset_count=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, manifest, "asset_bytes=14") != null);
@@ -318,4 +442,29 @@ test "package store reads persisted manifest metadata and tracks package assets"
     const asset = try readPackageAssetAlloc(std.testing.allocator, "info-demo", "config/app.json", 64);
     defer std.testing.allocator.free(asset);
     try std.testing.expectEqualStrings("{\"mode\":\"tcp\"}", asset);
+}
+
+test "package store persists app manifest display preferences and launch profile" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+
+    try installScriptPackage("app-demo", "echo app-demo", 9);
+    try configureDisplayMode("app-demo", 1280, 720, 10);
+
+    const app_manifest = try appManifestAlloc(std.testing.allocator, "app-demo", 256);
+    defer std.testing.allocator.free(app_manifest);
+    try std.testing.expect(std.mem.indexOf(u8, app_manifest, "entrypoint=/packages/app-demo/bin/main.oc") != null);
+    try std.testing.expect(std.mem.indexOf(u8, app_manifest, "display_width=1280") != null);
+    try std.testing.expect(std.mem.indexOf(u8, app_manifest, "display_height=720") != null);
+
+    var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    const profile = try loadLaunchProfile("app-demo", &entrypoint_buf);
+    try std.testing.expectEqualStrings("/packages/app-demo/bin/main.oc", profile.entrypoint);
+    try std.testing.expectEqual(@as(u16, 1280), profile.display_width);
+    try std.testing.expectEqual(@as(u16, 720), profile.display_height);
+
+    const manifest = try manifestAlloc(std.testing.allocator, "app-demo", 256);
+    defer std.testing.allocator.free(manifest);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "display_width=1280") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "display_height=720") != null);
 }

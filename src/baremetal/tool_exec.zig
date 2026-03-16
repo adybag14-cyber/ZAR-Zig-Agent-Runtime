@@ -132,7 +132,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-ls, package-cat, trust-list, trust-info, trust-active, trust-select, trust-delete, display-info, display-modes, run-script, run-package");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-app, package-display, package-ls, package-cat, trust-list, trust-info, trust-active, trust-select, trust-delete, display-info, display-modes, display-set, run-script, run-package");
         return;
     }
 
@@ -272,6 +272,67 @@ fn execute(
         };
         defer allocator.free(manifest);
         try stdout_buffer.appendSlice(manifest);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "package-app")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-app <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-app <name>");
+            return;
+        }
+        const manifest = package_store.appManifestAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("package-app failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(manifest);
+        try stdout_buffer.appendSlice(manifest);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "package-display")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-display <name> <width> <height>");
+            return;
+        };
+        const width_arg = parseFirstArg(package_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-display <name> <width> <height>");
+            return;
+        };
+        const height_arg = parseFirstArg(width_arg.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-display <name> <width> <height>");
+            return;
+        };
+        if (height_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-display <name> <width> <height>");
+            return;
+        }
+        const width = std.fmt.parseInt(u16, width_arg.arg, 10) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-display <name> <width> <height>");
+            return;
+        };
+        const height = std.fmt.parseInt(u16, height_arg.arg, 10) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-display <name> <width> <height>");
+            return;
+        };
+        package_store.configureDisplayMode(package_name.arg, width, height, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("package-display failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("package display {s} {d}x{d}\n", .{ package_name.arg, width, height });
         return;
     }
 
@@ -421,7 +482,7 @@ fn execute(
             try stderr_buffer.appendLine("usage: display-info");
             return;
         }
-        _ = framebuffer_console.init();
+        ensureDisplayReady();
         const output = display_output.statePtr();
         try stdout_buffer.appendFmt(
             "backend={s} controller={s} connector={s} connected={d} hardware_backed={d} current={d}x{d} preferred={d}x{d} scanouts={d} active={d} capabilities=0x{x}\n",
@@ -449,7 +510,7 @@ fn execute(
             try stderr_buffer.appendLine("usage: display-modes");
             return;
         }
-        _ = framebuffer_console.init();
+        ensureDisplayReady();
         var index: u16 = 0;
         while (index < framebuffer_console.supportedModeCount()) : (index += 1) {
             try stdout_buffer.appendFmt(
@@ -457,6 +518,41 @@ fn execute(
                 .{ index, framebuffer_console.supportedModeWidth(index), framebuffer_console.supportedModeHeight(index) },
             );
         }
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "display-set")) {
+        const width_arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "display-set <width> <height>");
+            return;
+        };
+        const height_arg = parseFirstArg(width_arg.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "display-set <width> <height>");
+            return;
+        };
+        if (height_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-set <width> <height>");
+            return;
+        }
+        const width = std.fmt.parseInt(u16, width_arg.arg, 10) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-set <width> <height>");
+            return;
+        };
+        const height = std.fmt.parseInt(u16, height_arg.arg, 10) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-set <width> <height>");
+            return;
+        };
+        framebuffer_console.setMode(width, height) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("display-set failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("display mode {d}x{d}\n", .{ width, height });
         return;
     }
 
@@ -488,12 +584,17 @@ fn execute(
         }
 
         var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
-        const entrypoint = package_store.entrypointPath(arg.arg, &entrypoint_buf) catch |err| {
+        const profile = package_store.loadLaunchProfile(arg.arg, &entrypoint_buf) catch |err| {
             exit_code.* = 1;
             try stderr_buffer.appendFmt("run-package failed: {s}\n", .{@errorName(err)});
             return;
         };
-        try executeScriptPath(entrypoint, "run-package", stdout_buffer, stderr_buffer, exit_code, allocator, depth);
+        framebuffer_console.setMode(profile.display_width, profile.display_height) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("run-package failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try executeScriptPath(profile.entrypoint, "run-package", stdout_buffer, stderr_buffer, exit_code, allocator, depth);
         return;
     }
 
@@ -507,6 +608,12 @@ fn displayBackendName(value: u8) []const u8 {
         abi.display_backend_virtio_gpu => "virtio-gpu",
         else => "none",
     };
+}
+
+fn ensureDisplayReady() void {
+    if (display_output.statePtr().backend == abi.display_backend_none) {
+        _ = framebuffer_console.init();
+    }
 }
 
 fn displayControllerName(value: u8) []const u8 {
@@ -733,6 +840,13 @@ test "baremetal tool exec lists directories and reads package metadata" {
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "name=demo") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "root=/packages/demo") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "script_bytes=15") != null);
+
+    var app_result = try runCapture(std.testing.allocator, "package-app demo", 256, 256);
+    defer app_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), app_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, app_result.stdout, "entrypoint=/packages/demo/bin/main.oc") != null);
+    try std.testing.expect(std.mem.indexOf(u8, app_result.stdout, "display_width=640") != null);
+    try std.testing.expect(std.mem.indexOf(u8, app_result.stdout, "display_height=400") != null);
 }
 
 test "baremetal tool exec lists and reads persisted package assets" {
@@ -773,6 +887,46 @@ test "baremetal tool exec reports current display info and supported modes" {
     try std.testing.expectEqual(@as(u8, 0), modes_result.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, modes_result.stdout, "mode 0 640x400") != null);
     try std.testing.expect(std.mem.indexOf(u8, modes_result.stdout, "mode 4 1280x1024") != null);
+
+    var set_result = try runCapture(std.testing.allocator, "display-set 800 600", 256, 256);
+    defer set_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), set_result.exit_code);
+    try std.testing.expectEqualStrings("display mode 800x600\n", set_result.stdout);
+
+    var updated_info = try runCapture(std.testing.allocator, "display-info", 256, 256);
+    defer updated_info.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), updated_info.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, updated_info.stdout, "current=800x600") != null);
+}
+
+test "baremetal tool exec persists package display mode and applies it during package launch" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    vga_text_console.resetForTest();
+    display_output.resetForTest();
+    framebuffer_console.resetForTest();
+
+    try package_store.installScriptPackage("demo", "echo package-ok", 0);
+
+    var set_result = try runCapture(std.testing.allocator, "package-display demo 1280 720", 256, 256);
+    defer set_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), set_result.exit_code);
+    try std.testing.expectEqualStrings("package display demo 1280x720\n", set_result.stdout);
+
+    var app_result = try runCapture(std.testing.allocator, "package-app demo", 256, 256);
+    defer app_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), app_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, app_result.stdout, "display_width=1280") != null);
+    try std.testing.expect(std.mem.indexOf(u8, app_result.stdout, "display_height=720") != null);
+
+    var run_result = try runCapture(std.testing.allocator, "run-package demo", 256, 256);
+    defer run_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), run_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, run_result.stdout, "package-ok\n") != null);
+
+    const display = display_output.statePtr();
+    try std.testing.expectEqual(@as(u16, 1280), display.current_width);
+    try std.testing.expectEqual(@as(u16, 720), display.current_height);
 }
 
 test "baremetal tool exec rotates and revokes trust bundles" {
