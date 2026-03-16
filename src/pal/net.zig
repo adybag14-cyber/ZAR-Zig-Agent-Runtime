@@ -10,7 +10,9 @@ const dns = @import("../protocol/dns.zig");
 const ipv4 = @import("../protocol/ipv4.zig");
 const tcp = @import("../protocol/tcp.zig");
 const udp = @import("../protocol/udp.zig");
+const pal_fs = @import("fs.zig");
 const tls = std.crypto.tls;
+const Certificate = std.crypto.Certificate;
 const tls_client_light = @import("tls_client_light.zig");
 
 pub const Response = struct {
@@ -463,7 +465,9 @@ const post_retransmit_ticks: u64 = 32;
 const freestanding_poll_pause_iterations: usize = 2048;
 const tls_wire_buffer_len: usize = tls_client_light.Client.min_buffer_len;
 const max_https_pinned_cert_der_len: usize = 2048;
-const https_probe_cert_der = @embedFile("testdata/rtl8139-https-probe-cert.der");
+const max_https_bundle_cert_der_len: usize = 4096;
+const https_bundle_allocator_bytes_len: usize = 16 * 1024;
+const https_probe_trust_anchor_der = @embedFile("testdata/rtl8139-https-probe-cert.der");
 pub const HttpsTlsInitStage = tls_client_light.DebugInitStage;
 
 const TlsTcpTransportScratch = struct {
@@ -491,6 +495,15 @@ const HttpsPinnedTrust = struct {
 };
 
 var https_pinned_trust: HttpsPinnedTrust = .{};
+const HttpsBundleTrust = struct {
+    enabled: bool = false,
+    realtime_now_seconds: i64 = 0,
+    allocator: std.heap.FixedBufferAllocator = std.heap.FixedBufferAllocator.init(&https_bundle_allocator_bytes),
+    bundle: Certificate.Bundle = .{},
+};
+
+var https_bundle_allocator_bytes: [https_bundle_allocator_bytes_len]u8 = [_]u8{0} ** https_bundle_allocator_bytes_len;
+var https_bundle_trust: HttpsBundleTrust = .{};
 
 pub const HttpsTlsTransportDebug = struct {
     drain_calls: u32 = 0,
@@ -521,6 +534,7 @@ pub fn lastHttpsTlsTransportDebug() *const HttpsTlsTransportDebug {
 }
 
 pub fn configureHttpsPinnedTrust(cert_der: []const u8, realtime_now_seconds: i64) error{CertificateTooLarge}!void {
+    clearHttpsBundleTrust();
     if (cert_der.len > https_pinned_trust.cert_der.len) return error.CertificateTooLarge;
     @memset(&https_pinned_trust.cert_der, 0);
     if (cert_der.len > 0) {
@@ -531,10 +545,51 @@ pub fn configureHttpsPinnedTrust(cert_der: []const u8, realtime_now_seconds: i64
     https_pinned_trust.realtime_now_seconds = realtime_now_seconds;
 }
 
+pub fn configureHttpsBundleTrust(
+    cert_der: []const u8,
+    realtime_now_seconds: i64,
+) error{ CertificateTooLarge, InvalidCertificate }!void {
+    clearHttpsPinnedTrust();
+    clearHttpsBundleTrust();
+    if (cert_der.len == 0 or cert_der.len > max_https_bundle_cert_der_len) return error.CertificateTooLarge;
+
+    https_bundle_trust.allocator = std.heap.FixedBufferAllocator.init(&https_bundle_allocator_bytes);
+    https_bundle_trust.bundle = .{};
+    const gpa = https_bundle_trust.allocator.allocator();
+    https_bundle_trust.bundle.bytes.appendSlice(gpa, cert_der) catch return error.CertificateTooLarge;
+    https_bundle_trust.bundle.parseCert(gpa, 0, realtime_now_seconds) catch {
+        clearHttpsBundleTrust();
+        return error.InvalidCertificate;
+    };
+    if (https_bundle_trust.bundle.bytes.items.len == 0 or https_bundle_trust.bundle.map.count() == 0) {
+        clearHttpsBundleTrust();
+        return error.InvalidCertificate;
+    }
+
+    https_bundle_trust.enabled = true;
+    https_bundle_trust.realtime_now_seconds = realtime_now_seconds;
+}
+
 pub fn configureHttpsProbeTrust() void {
     // Keep the probe deterministic while staying well inside the committed
-    // certificate validity window.
-    configureHttpsPinnedTrust(https_probe_cert_der, 1_700_000_000) catch unreachable;
+    // trust-anchor validity window.
+    configureHttpsBundleTrust(https_probe_trust_anchor_der, 1_700_000_000) catch unreachable;
+}
+
+pub fn configureHttpsBundleTrustFromPath(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    max_bytes: usize,
+    realtime_now_seconds: i64,
+) !void {
+    const cert_der = if (builtin.os.tag == .freestanding)
+        try pal_fs.readFileAlloc(undefined, allocator, path, max_bytes)
+    else blk: {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        break :blk try pal_fs.readFileAlloc(io, allocator, path, max_bytes);
+    };
+    defer allocator.free(cert_der);
+    try configureHttpsBundleTrust(cert_der, realtime_now_seconds);
 }
 
 pub fn clearHttpsPinnedTrust() void {
@@ -542,6 +597,20 @@ pub fn clearHttpsPinnedTrust() void {
     https_pinned_trust.cert_len = 0;
     https_pinned_trust.realtime_now_seconds = 0;
     @memset(&https_pinned_trust.cert_der, 0);
+}
+
+pub fn clearHttpsBundleTrust() void {
+    if (https_bundle_trust.bundle.bytes.items.len != 0 or https_bundle_trust.bundle.map.count() != 0) {
+        https_bundle_trust.bundle.deinit(https_bundle_trust.allocator.allocator());
+    }
+    https_bundle_trust.bundle = .{};
+    https_bundle_trust.allocator = std.heap.FixedBufferAllocator.init(&https_bundle_allocator_bytes);
+    https_bundle_trust.enabled = false;
+    https_bundle_trust.realtime_now_seconds = 0;
+}
+
+pub fn httpsProbeTrustAnchorDer() []const u8 {
+    return https_probe_trust_anchor_der;
 }
 
 fn resetHttpsTlsTransportDebug() void {
@@ -1057,6 +1126,7 @@ fn postFreestandingHttpsWithParsedHeaders(
     }
 
     const use_pinned_https_trust = https_pinned_trust.enabled and https_pinned_trust.cert_len != 0;
+    const use_bundle_https_trust = https_bundle_trust.enabled and https_bundle_trust.bundle.map.count() != 0;
 
     const scratch = &https_tls_scratch;
     try fillTlsEntropy(&scratch.entropy);
@@ -1075,18 +1145,25 @@ fn postFreestandingHttpsWithParsedHeaders(
         &transport.reader,
         &transport.writer,
         .{
-            .host = if (use_pinned_https_trust)
+            .host = if (use_pinned_https_trust or use_bundle_https_trust)
                 .{ .explicit = parsed.host }
             else
                 .no_verification,
             .ca = if (use_pinned_https_trust)
                 .{ .pinned_der = https_pinned_trust.cert_der[0..https_pinned_trust.cert_len] }
+            else if (use_bundle_https_trust)
+                .{ .bundle = https_bundle_trust.bundle }
             else
                 .no_verification,
             .read_buffer = &scratch.tls_reader_buffer,
             .write_buffer = &scratch.tls_writer_buffer,
             .entropy = &scratch.entropy,
-            .realtime_now_seconds = if (use_pinned_https_trust) https_pinned_trust.realtime_now_seconds else 0,
+            .realtime_now_seconds = if (use_pinned_https_trust)
+                https_pinned_trust.realtime_now_seconds
+            else if (use_bundle_https_trust)
+                https_bundle_trust.realtime_now_seconds
+            else
+                0,
             .allow_truncation_attacks = true,
             .alert = &tls_alert,
         },
@@ -3669,6 +3746,15 @@ test "baremetal net pal freestanding https post requires route configuration" {
         error.RouteUnconfigured,
         postFreestanding(std.testing.allocator, "https://10.0.2.2:8443/fs55/live-https", "{}", &.{}),
     );
+}
+
+test "baremetal net pal configures bundle trust from embedded probe root" {
+    clearHttpsBundleTrust();
+    defer clearHttpsBundleTrust();
+
+    try configureHttpsBundleTrust(httpsProbeTrustAnchorDer(), 1_700_000_000);
+    try std.testing.expect(https_bundle_trust.enabled);
+    try std.testing.expectEqual(@as(usize, 1), https_bundle_trust.bundle.map.count());
 }
 
 test "baremetal net pal tls client init emits client hello through rtl8139 mock device" {

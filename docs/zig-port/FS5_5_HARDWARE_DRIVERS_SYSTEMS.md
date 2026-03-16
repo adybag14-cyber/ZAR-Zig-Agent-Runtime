@@ -362,7 +362,8 @@ Notes:
   - the probe keeps interrupts masked on exit, because re-enabling them after the proof can surface a real hardware IRQ0 on the test path and collapse the guest before `isa-debug-exit`
 - the live freestanding PAL `https://` POST transport path is now also proven directly:
   - `scripts/baremetal-qemu-rtl8139-https-post-probe-check.ps1`
-  - the probe proves direct-IP transport (`https://10.0.2.2:8443/...`), TCP connect, TLS handshake, HTTPS request write, HTTPS response readback, deterministic pinned-certificate trust with a fixed probe time, and allocator-owned body buffering against a deterministic self-hosted TLS harness over the live RTL8139 path
+  - the probe proves direct-IP transport (`https://10.0.2.2:8443/...`), TCP connect, TLS handshake, HTTPS request write, HTTPS response readback, deterministic filesystem-backed CA-bundle trust with a fixed probe time, and allocator-owned body buffering against a deterministic self-hosted TLS harness over the live RTL8139 path
+  - the trust anchor is loaded through the bare-metal filesystem and validated through a bounded CA bundle on the freestanding path
   - the proof closes the transport-emission question that the earlier debug slice isolated around `ClientHello` generation and payload/FIN handling
 - host regressions prove mock-device ARP, IPv4, UDP, DHCP, DNS, TCP handshake/payload exchange, bounded four-way close, dropped-first-SYN retransmission/timeout recovery, dropped-first-payload retransmission/timeout recovery, dropped-first-FIN retransmission/timeout recovery on both close sides, bounded multi-flow session isolation, bounded cumulative-ACK advancement across multiple in-flight payload chunks, bounded sender congestion-window growth/collapse on the chunked send path, DHCP-driven route configuration, gateway ARP learning, routed off-subnet UDP delivery, and direct-subnet UDP bypass through the RTL8139 path
 - `src/baremetal/tool_service.zig` now provides a bounded framed request/response shim on top of the bare-metal tool substrate for the TCP path, with typed `CMD`, `EXEC`, `GET`, `PUT`, `STAT`, `INSTALL`, `MANIFEST`, `PKG`, `PKGLIST`, and `PKGRUN` requests plus bounded batched request parsing/execution on one flow
@@ -387,7 +388,7 @@ Notes:
   - `scripts/baremetal-qemu-rtl8139-dns-probe-check.ps1` now proves real RTL8139 TX/RX of a DNS query plus strict decode/validation of a DNS A response over the freestanding PVH artifact
 - deeper networking depth remains future work above the FS5.5 closure bar:
   - higher-level service/runtime layers beyond the current bounded typed batch + `EXEC` / `INSTALL` / `MANIFEST` / file/package seam on the bare-metal TCP path
-  - freestanding certificate-verification and trust-store depth on the current live `https://` transport path
+  - broader persistent trust-store management beyond the current deterministic filesystem-backed CA-bundle verification on the live `https://` transport path
   - real HDMI/DisplayPort connector-specific scanout depth beyond the current BGA render path and virtio-gpu virtual scanout proof
 
 ### Filesystem Usage
