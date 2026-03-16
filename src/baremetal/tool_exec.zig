@@ -135,7 +135,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-app, package-display, package-ls, package-cat, app-list, app-info, app-state, app-trust, app-connector, trust-list, trust-info, trust-active, trust-select, trust-delete, display-info, display-modes, display-set, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-app, package-display, package-ls, package-cat, package-delete, app-list, app-info, app-state, app-trust, app-connector, app-delete, trust-list, trust-info, trust-active, trust-select, trust-delete, display-info, display-modes, display-set, run-script, run-package, app-run");
         return;
     }
 
@@ -386,6 +386,26 @@ fn execute(
         return;
     }
 
+    if (std.ascii.eqlIgnoreCase(parsed.name, "package-delete")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-delete <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-delete <name>");
+            return;
+        }
+        app_runtime.uninstallApp(arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("package-delete failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("package deleted {s}\n", .{arg.arg});
+        return;
+    }
+
     if (std.ascii.eqlIgnoreCase(parsed.name, "app-list")) {
         if (parsed.rest.len != 0) {
             exit_code.* = 2;
@@ -497,6 +517,26 @@ fn execute(
             return;
         };
         try stdout_buffer.appendFmt("app connector {s} {s}\n", .{ package_name.arg, package_store.connectorNameFromType(connector_type) });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-delete")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-delete <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-delete <name>");
+            return;
+        }
+        app_runtime.uninstallApp(arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-delete failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("app deleted {s}\n", .{arg.arg});
         return;
     }
 
@@ -1214,4 +1254,38 @@ test "baremetal tool exec app-run persists last run state and selects trust" {
     try std.testing.expect(std.mem.indexOf(u8, state_result.stdout, "requested_connector=virtual") != null);
     try std.testing.expect(std.mem.indexOf(u8, state_result.stdout, "actual_connector=virtual") != null);
     try std.testing.expect(std.mem.indexOf(u8, state_result.stdout, "trust_bundle=fs55-root") != null);
+}
+
+test "baremetal tool exec uninstalls packages and clears app state" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    vga_text_console.resetForTest();
+    display_output.resetForTest();
+    framebuffer_console.resetForTest();
+
+    try package_store.installScriptPackage("demo", "echo delete-demo", 1);
+    try package_store.installScriptPackage("alias-demo", "echo alias-delete", 2);
+
+    var app_run_result = try runCapture(std.testing.allocator, "app-run demo", 512, 256);
+    defer app_run_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), app_run_result.exit_code);
+
+    var package_delete_result = try runCapture(std.testing.allocator, "package-delete demo", 256, 256);
+    defer package_delete_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), package_delete_result.exit_code);
+    try std.testing.expectEqualStrings("package deleted demo\n", package_delete_result.stdout);
+
+    var app_delete_result = try runCapture(std.testing.allocator, "app-delete alias-demo", 256, 256);
+    defer app_delete_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), app_delete_result.exit_code);
+    try std.testing.expectEqualStrings("app deleted alias-demo\n", app_delete_result.stdout);
+
+    var list_result = try runCapture(std.testing.allocator, "app-list", 256, 256);
+    defer list_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), list_result.exit_code);
+    try std.testing.expectEqualStrings("", list_result.stdout);
+
+    try std.testing.expectError(error.FileNotFound, filesystem.statSummary("/packages/demo"));
+    try std.testing.expectError(error.FileNotFound, filesystem.statSummary("/packages/alias-demo"));
+    try std.testing.expectError(error.FileNotFound, filesystem.statSummary("/runtime/apps/demo"));
 }

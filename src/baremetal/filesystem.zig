@@ -178,6 +178,36 @@ pub fn deleteFile(path: []const u8, tick: u64) Error!void {
     try persistAll();
 }
 
+pub fn deleteTree(path: []const u8, tick: u64) Error!void {
+    try init();
+    const normalized = try normalizePath(path);
+    const full = normalized.slice();
+    if (full.len == 1) return error.InvalidPath;
+
+    _ = findEntryIndex(full) orelse return error.FileNotFound;
+
+    var removed_any = false;
+    for (&entries) |*record| {
+        if (record.kind == 0) continue;
+        const record_path = record.path[0..record.path_len];
+        if (!pathMatchesTree(full, record_path)) continue;
+
+        if (record.kind == abi.filesystem_kind_file) {
+            try zeroExtent(record.start_lba, record.block_count);
+        }
+        record.* = std.mem.zeroes(abi.BaremetalFilesystemEntry);
+        removed_any = true;
+    }
+
+    if (!removed_any) return error.FileNotFound;
+
+    state.write_count +%= 1;
+    state.last_modified_tick = tick;
+    state.dirty = 1;
+    recountState();
+    try persistAll();
+}
+
 pub fn readFileAlloc(allocator: std.mem.Allocator, path: []const u8, max_bytes: usize) Error![]u8 {
     try init();
     const normalized = try normalizePath(path);
@@ -613,6 +643,12 @@ fn directChildName(parent: []const u8, candidate: []const u8) ?[]const u8 {
     return rest[0..end_index];
 }
 
+fn pathMatchesTree(root: []const u8, candidate: []const u8) bool {
+    if (!std.mem.startsWith(u8, candidate, root)) return false;
+    if (candidate.len == root.len) return true;
+    return candidate[root.len] == '/';
+}
+
 test "filesystem persists path-based files on the ram disk" {
     storage_backend.resetForTest();
     resetForTest();
@@ -701,4 +737,31 @@ test "filesystem deletes files and persists the removal" {
     resetForTest();
     try init();
     try std.testing.expectError(error.FileNotFound, readFileAlloc(std.testing.allocator, "/runtime/state/delete-me.txt", 64));
+}
+
+test "filesystem recursively deletes directory trees and persists the removal" {
+    storage_backend.resetForTest();
+    resetForTest();
+    try init();
+
+    try createDirPath("/packages/demo/bin");
+    try createDirPath("/packages/demo/assets/config");
+    try writeFile("/packages/demo/bin/main.oc", "echo demo", 7);
+    try writeFile("/packages/demo/assets/config/app.json", "{\"mode\":\"tcp\"}", 8);
+
+    try deleteTree("/packages/demo", 9);
+    try std.testing.expectError(error.FileNotFound, statSummary("/packages/demo"));
+    try std.testing.expectError(error.FileNotFound, readFileAlloc(std.testing.allocator, "/packages/demo/bin/main.oc", 64));
+    try std.testing.expectError(error.FileNotFound, readFileAlloc(std.testing.allocator, "/packages/demo/assets/config/app.json", 64));
+
+    const packages_listing = try listDirectoryAlloc(std.testing.allocator, "/packages", 64);
+    defer std.testing.allocator.free(packages_listing);
+    try std.testing.expectEqualStrings("", packages_listing);
+
+    resetForTest();
+    try init();
+    try std.testing.expectError(error.FileNotFound, statSummary("/packages/demo"));
+    const reloaded_listing = try listDirectoryAlloc(std.testing.allocator, "/packages", 64);
+    defer std.testing.allocator.free(reloaded_listing);
+    try std.testing.expectEqualStrings("", reloaded_listing);
 }
