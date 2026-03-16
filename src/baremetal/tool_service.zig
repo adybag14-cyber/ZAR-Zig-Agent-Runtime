@@ -1,4 +1,5 @@
 const std = @import("std");
+const disk_installer = @import("disk_installer.zig");
 const filesystem = @import("filesystem.zig");
 const package_store = @import("package_store.zig");
 const tool_exec = @import("tool_exec.zig");
@@ -20,6 +21,8 @@ pub const RequestOp = enum {
     get,
     put,
     stat,
+    install,
+    manifest,
     package_install,
     package_list,
     package_run,
@@ -38,6 +41,8 @@ pub const FramedRequest = struct {
         get: []const u8,
         put: PutRequest,
         stat: []const u8,
+        install: void,
+        manifest: void,
         package_install: PutRequest,
         package_list: void,
         package_run: []const u8,
@@ -267,6 +272,34 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         };
     }
 
+    if (std.ascii.eqlIgnoreCase(op_part.token, "INSTALL")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .install = {} } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .install = {} } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "MANIFEST")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .manifest = {} } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .manifest = {} } },
+            .consumed_len = request.len,
+        };
+    }
+
     if (std.ascii.eqlIgnoreCase(op_part.token, "PKGLIST")) {
         if (op_part.rest.len != 0) return error.InvalidFrame;
         if (newline_index != null) {
@@ -348,6 +381,8 @@ fn handleFramedPayload(
         .get => |path| try handleGetRequest(allocator, path, payload_limit),
         .put => |put_request| try handlePutRequest(allocator, put_request.path, put_request.body, payload_limit),
         .stat => |path| try handleStatRequest(allocator, path, payload_limit),
+        .install => try handleInstallRequest(allocator, payload_limit),
+        .manifest => try handleManifestRequest(allocator, payload_limit),
         .package_install => |package_request| try handlePackageInstallRequest(allocator, package_request.path, package_request.body, payload_limit),
         .package_list => try handlePackageListRequest(allocator, payload_limit),
         .package_run => |package_name| try handlePackageRunRequest(allocator, package_name, stdout_limit, stderr_limit, payload_limit),
@@ -445,6 +480,25 @@ fn handleStatRequest(allocator: std.mem.Allocator, path: []const u8, payload_lim
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
+}
+
+fn handleInstallRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    disk_installer.installDefaultLayout(1) catch |err| {
+        return formatOperationError(allocator, "INSTALL", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "INSTALLED {s}\n", .{disk_installer.install_manifest_path});
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleManifestRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    var manifest_buf: [192]u8 = undefined;
+    const manifest = disk_installer.installManifestForCurrentBackend(manifest_buf[0..]) catch |err| {
+        return formatOperationError(allocator, "MANIFEST", err, payload_limit);
+    };
+    if (manifest.len > payload_limit) return error.ResponseTooLarge;
+    return allocator.dupe(u8, manifest);
 }
 
 fn handlePackageInstallRequest(
@@ -583,6 +637,18 @@ test "baremetal tool service parses typed framed requests" {
         .package_run => |package_name| try std.testing.expectEqualStrings("demo", package_name),
         else => return error.InvalidFrame,
     }
+
+    const install = try parseFramedRequest("REQ 17 INSTALL");
+    switch (install.operation) {
+        .install => {},
+        else => return error.InvalidFrame,
+    }
+
+    const manifest = try parseFramedRequest("REQ 18 MANIFEST");
+    switch (manifest.operation) {
+        .manifest => {},
+        else => return error.InvalidFrame,
+    }
 }
 
 test "baremetal tool service parses framed request prefixes for batches" {
@@ -705,6 +771,26 @@ test "baremetal tool service installs lists and runs persisted packages" {
     const readback = try filesystem.readFileAlloc(std.testing.allocator, "/pkg/out/result.txt", 64);
     defer std.testing.allocator.free(readback);
     try std.testing.expectEqualStrings("pkg-service-data", readback);
+}
+
+test "baremetal tool service installs default runtime layout and returns manifest" {
+    filesystem.resetForTest();
+
+    const install_response = try handleFramedRequest(std.testing.allocator, "REQ 34 INSTALL", 512, 256, 512);
+    defer std.testing.allocator.free(install_response);
+    try std.testing.expectEqualStrings("RESP 34 40\nINSTALLED /runtime/install/manifest.txt\n", install_response);
+
+    var manifest_buf: [192]u8 = undefined;
+    const expected_manifest = try disk_installer.installManifestForCurrentBackend(manifest_buf[0..]);
+    const manifest_response = try handleFramedRequest(std.testing.allocator, "REQ 35 MANIFEST", 512, 256, 512);
+    defer std.testing.allocator.free(manifest_response);
+    const expected_response = try std.fmt.allocPrint(std.testing.allocator, "RESP 35 {d}\n{s}", .{ expected_manifest.len, expected_manifest });
+    defer std.testing.allocator.free(expected_response);
+    try std.testing.expectEqualStrings(expected_response, manifest_response);
+
+    const loader_cfg = try filesystem.readFileAlloc(std.testing.allocator, disk_installer.loader_cfg_path, 160);
+    defer std.testing.allocator.free(loader_cfg);
+    try std.testing.expect(std.mem.indexOf(u8, loader_cfg, "default=bootstrap") != null);
 }
 
 test "baremetal tool service handles batched filesystem requests" {

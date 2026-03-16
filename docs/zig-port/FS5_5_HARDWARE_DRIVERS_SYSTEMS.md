@@ -146,7 +146,7 @@ Current local source-of-truth evidence:
   - `src/baremetal/edid.zig` provides bounded EDID header/checksum/timing/name parsing
   - EDID parsing now also exports capability flags for digital input, preferred timing, CEA extension presence, DisplayID extension presence, HDMI vendor data, and basic audio when those descriptors are present
   - `src/baremetal/display_output.zig` provides the exported display-output ABI surface plus EDID byte export
-  - `src/baremetal/virtio_gpu.zig` probes the first real controller-specific path, `virtio-gpu-pci`, through modern virtio PCI capabilities plus `GET_DISPLAY_INFO` and `GET_EDID`
+  - `src/baremetal/virtio_gpu.zig` probes the first real controller-specific path, `virtio-gpu-pci`, through modern virtio PCI capabilities plus `GET_DISPLAY_INFO`, `GET_EDID`, bounded 2D resource creation, guest-backing attach, scanout selection, transfer-to-host, and flush
   - `src/pal/framebuffer.zig` now also exposes the display-output state and EDID byte surface through the PAL seam
 - host regressions now prove the framebuffer export surface updates host-backed framebuffer state, glyph pixels, supported-mode enumeration, high-resolution mode switching, and preservation of the last valid mode on unsupported requests
 - a live bare-metal PVH/QEMU proof now passes:
@@ -160,7 +160,8 @@ Current local source-of-truth evidence:
   - `scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1`
   - exported display-output state has `magic=display_output_magic`, `api_version=2`, `backend=virtio_gpu`, `controller=virtio_gpu`, `connector=virtual`, and a real EDID header over `virtio-gpu-pci,edid=on`
   - runtime now also reports the selected virtio-gpu PCI vendor/device, PCI location, active scanout, current mode, preferred mode, physical dimensions, manufacturer/product IDs, exported EDID byte surface, and the exported capability flags derived from the EDID payload
-- current real source-of-truth rendered display support is still bounded Bochs/QEMU BGA mode-setting only
+  - the same proof now also validates non-zero present statistics plus non-zero scanout pixels from the guest-backed render pattern after resource-create/attach/set-scanout/flush
+- current real source-of-truth rendered display support now covers bounded Bochs/QEMU BGA mode-setting plus virtio-gpu present/flush over the virtual scanout path
 - real HDMI/DisplayPort connector-specific scanout paths are not yet implemented and are not claimed by this branch
 
 ### Keyboard / Mouse
@@ -361,18 +362,18 @@ Notes:
   - the probe keeps interrupts masked on exit, because re-enabling them after the proof can surface a real hardware IRQ0 on the test path and collapse the guest before `isa-debug-exit`
 - the live freestanding PAL `https://` POST transport path is now also proven directly:
   - `scripts/baremetal-qemu-rtl8139-https-post-probe-check.ps1`
-  - the probe proves hostname resolution, TCP connect, TLS handshake, HTTPS request write, HTTPS response readback, and allocator-owned body buffering against a deterministic self-hosted TLS harness over the live RTL8139 path
+  - the probe proves direct-IP transport (`https://10.0.2.2:8443/...`), TCP connect, TLS handshake, HTTPS request write, HTTPS response readback, deterministic pinned-certificate trust with a fixed probe time, and allocator-owned body buffering against a deterministic self-hosted TLS harness over the live RTL8139 path
   - the proof closes the transport-emission question that the earlier debug slice isolated around `ClientHello` generation and payload/FIN handling
 - host regressions prove mock-device ARP, IPv4, UDP, DHCP, DNS, TCP handshake/payload exchange, bounded four-way close, dropped-first-SYN retransmission/timeout recovery, dropped-first-payload retransmission/timeout recovery, dropped-first-FIN retransmission/timeout recovery on both close sides, bounded multi-flow session isolation, bounded cumulative-ACK advancement across multiple in-flight payload chunks, bounded sender congestion-window growth/collapse on the chunked send path, DHCP-driven route configuration, gateway ARP learning, routed off-subnet UDP delivery, and direct-subnet UDP bypass through the RTL8139 path
-- `src/baremetal/tool_service.zig` now provides a bounded framed request/response shim on top of the bare-metal tool substrate for the TCP path, with typed `CMD`, `EXEC`, `GET`, `PUT`, `STAT`, `PKG`, `PKGLIST`, and `PKGRUN` requests plus bounded batched request parsing/execution on one flow
+- `src/baremetal/tool_service.zig` now provides a bounded framed request/response shim on top of the bare-metal tool substrate for the TCP path, with typed `CMD`, `EXEC`, `GET`, `PUT`, `STAT`, `INSTALL`, `MANIFEST`, `PKG`, `PKGLIST`, and `PKGRUN` requests plus bounded batched request parsing/execution on one flow
 - live QEMU proofs now pass:
   - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1`
   - `scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1`
   - `scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1`
   - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1`
   - `scripts/baremetal-qemu-rtl8139-gateway-probe-check.ps1`
-- `src/baremetal_main.zig` host regressions now also prove TCP zero-window block/reopen behavior, framed multi-request command-service exchange on a single live flow, structured `EXEC` request/response behavior, bounded long-response chunking under the advertised remote window, bounded typed batch request multiplexing on one live flow, typed `PUT`/`GET`/`STAT` service behavior, persisted `run-script` execution through the framed TCP service seam, and package install/list/run behavior on the canonical package layout
-- those proofs now cover live ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, TCP `SYN -> SYN-ACK -> ACK` handshake plus payload exchange, dropped-first-SYN recovery, dropped-first-payload recovery, dropped-first-FIN recovery on both close sides, bounded four-way close, bounded two-flow session isolation, zero-window block/reopen, bounded sequential payload chunking, bounded sender congestion-window growth after ACK and timeout collapse back to the initial window, framed TCP command-service exchange, bounded typed batch request multiplexing on one flow with concatenated framed responses, typed TCP `PUT` upload, direct filesystem readback of the uploaded script path, typed `PKG` / `PKGLIST` / `PKGRUN` package-service exchange, canonical package entrypoint readback, package output readback, and TX/RX counter advance over the freestanding PVH image
+- `src/baremetal_main.zig` host regressions now also prove TCP zero-window block/reopen behavior, framed multi-request command-service exchange on a single live flow, structured `EXEC` request/response behavior, bounded long-response chunking under the advertised remote window, bounded typed batch request multiplexing on one live flow, typed `PUT`/`GET`/`STAT` service behavior, typed `INSTALL` / `MANIFEST` runtime-layout service behavior, persisted `run-script` execution through the framed TCP service seam, and package install/list/run behavior on the canonical package layout
+- those proofs now cover live ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, TCP `SYN -> SYN-ACK -> ACK` handshake plus payload exchange, dropped-first-SYN recovery, dropped-first-payload recovery, dropped-first-FIN recovery on both close sides, bounded four-way close, bounded two-flow session isolation, zero-window block/reopen, bounded sequential payload chunking, bounded sender congestion-window growth after ACK and timeout collapse back to the initial window, framed TCP command-service exchange, bounded typed batch request multiplexing on one flow with concatenated framed responses, typed TCP `PUT` upload, direct filesystem readback of the uploaded script path, typed `INSTALL` / `MANIFEST` runtime-layout service exchange with `/boot/loader.cfg` readback, typed `PKG` / `PKGLIST` / `PKGRUN` package-service exchange, canonical package entrypoint readback, package output readback, and TX/RX counter advance over the freestanding PVH image
   - the live package-service extension required a real probe-stack fix: `runRtl8139TcpProbe()` now uses static scratch storage, reducing the project-built bare-metal stack frame from `0x3e78` to `0x3708` bytes before the live QEMU proof would pass with package install/list/run enabled
   - the routed UDP proof now also covers live ARP-reply learning, ARP-cache population, gateway next-hop selection for off-subnet traffic, direct-subnet gateway bypass, and routed UDP delivery with the gateway MAC on the Ethernet frame while preserving the remote IPv4 destination
 - A real DHCP framing/decode slice is now also closed locally:
@@ -385,9 +386,9 @@ Notes:
   - host regressions prove DNS query encode/decode, DNS A-response decode, and strict rejection of non-DNS UDP frames over the mock RTL8139 path
   - `scripts/baremetal-qemu-rtl8139-dns-probe-check.ps1` now proves real RTL8139 TX/RX of a DNS query plus strict decode/validation of a DNS A response over the freestanding PVH artifact
 - deeper networking depth remains future work above the FS5.5 closure bar:
-  - higher-level service/runtime layers beyond the current bounded typed batch + `EXEC` file/package seam on the bare-metal TCP path
+  - higher-level service/runtime layers beyond the current bounded typed batch + `EXEC` / `INSTALL` / `MANIFEST` / file/package seam on the bare-metal TCP path
   - freestanding certificate-verification and trust-store depth on the current live `https://` transport path
-  - controller-specific rendered virtio-gpu present/scanout depth before any real HDMI/DisplayPort scanout claim
+  - real HDMI/DisplayPort connector-specific scanout depth beyond the current BGA render path and virtio-gpu virtual scanout proof
 
 ### Filesystem Usage
 
