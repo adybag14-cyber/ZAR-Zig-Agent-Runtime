@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
 const builtin = @import("builtin");
 const abi = @import("baremetal/abi.zig");
@@ -16,6 +17,7 @@ const ps2_input = @import("baremetal/ps2_input.zig");
 const tool_layout = @import("baremetal/tool_layout.zig");
 const tool_service = @import("baremetal/tool_service.zig");
 const trust_store = @import("baremetal/trust_store.zig");
+const tool_runtime = @import("runtime/tool_runtime.zig");
 const pal_fs = @import("pal/fs.zig");
 const pal_net = @import("pal/net.zig");
 const pal_proc = @import("pal/proc.zig");
@@ -92,6 +94,7 @@ const qemu_rtl8139_http_post_probe_ok_code: u8 = 0x3F;
 const qemu_ata_gpt_installer_probe_ok_code: u8 = 0x40;
 const qemu_virtio_gpu_display_probe_ok_code: u8 = 0x41;
 const qemu_rtl8139_https_post_probe_ok_code: u8 = 0x42;
+const qemu_tool_runtime_probe_ok_code: u8 = 0x43;
 const build_options = if (builtin.is_test)
     struct {
         pub const qemu_smoke: bool = false;
@@ -110,6 +113,7 @@ const build_options = if (builtin.is_test)
         pub const rtl8139_http_post_probe: bool = false;
         pub const rtl8139_https_post_probe: bool = false;
         pub const tool_exec_probe: bool = false;
+        pub const tool_runtime_probe: bool = false;
         pub const rtl8139_gateway_probe: bool = false;
         pub const ata_gpt_installer_probe: bool = false;
         pub const virtio_gpu_display_probe: bool = false;
@@ -132,6 +136,7 @@ const rtl8139_dns_probe_enabled: bool = build_options.rtl8139_dns_probe;
 const rtl8139_http_post_probe_enabled: bool = if (@hasDecl(build_options, "rtl8139_http_post_probe")) build_options.rtl8139_http_post_probe else false;
 const rtl8139_https_post_probe_enabled: bool = if (@hasDecl(build_options, "rtl8139_https_post_probe")) build_options.rtl8139_https_post_probe else false;
 const tool_exec_probe_enabled: bool = build_options.tool_exec_probe;
+const tool_runtime_probe_enabled: bool = if (@hasDecl(build_options, "tool_runtime_probe")) build_options.tool_runtime_probe else false;
 const rtl8139_gateway_probe_enabled: bool = build_options.rtl8139_gateway_probe;
 const ata_gpt_installer_probe_enabled: bool = if (@hasDecl(build_options, "ata_gpt_installer_probe")) build_options.ata_gpt_installer_probe else false;
 const virtio_gpu_display_probe_enabled: bool = if (@hasDecl(build_options, "virtio_gpu_display_probe")) build_options.virtio_gpu_display_probe else false;
@@ -583,6 +588,31 @@ const ToolExecProbeError = error{
     UnexpectedStderr,
     FilesystemReadbackFailed,
     FilesystemReadbackMismatch,
+};
+
+const ToolRuntimeProbeError = error{
+    AllocatorExhausted,
+    RuntimePersistenceInitFailed,
+    RuntimeWriteRunFailed,
+    RuntimeWriteResultFailed,
+    RuntimeReadRunFailed,
+    RuntimeReadResultFailed,
+    RuntimeReadbackMismatch,
+    RuntimeExecRunFailed,
+    RuntimeExecResultFailed,
+    RuntimeExecOutputMismatch,
+    RuntimeUnexpectedStderr,
+    RuntimeQueueDepthMismatch,
+    RuntimeSessionCountMismatch,
+    RuntimeSnapshotPersistedMismatch,
+    RuntimeSnapshotPathMismatch,
+    RuntimeStateFileReadbackFailed,
+    RuntimeStateFileMissingSession,
+    RuntimeReloadFailed,
+    RuntimeRestoredSessionMissing,
+    RuntimeRestoredSessionMismatch,
+    RuntimeFilesystemReadbackFailed,
+    RuntimeFilesystemReadbackMismatch,
 };
 
 const VirtioGpuDisplayProbeError = error{
@@ -1828,6 +1858,10 @@ fn baremetalStart() callconv(.c) noreturn {
     if (tool_exec_probe_enabled) {
         runToolExecProbe() catch |err| qemuExit(toolExecProbeFailureCode(err));
         qemuExit(qemu_tool_exec_probe_ok_code);
+    }
+    if (tool_runtime_probe_enabled) {
+        runToolRuntimeProbe() catch |err| qemuExit(toolRuntimeProbeFailureCode(err));
+        qemuExit(qemu_tool_runtime_probe_ok_code);
     }
     if (rtl8139_gateway_probe_enabled) {
         runRtl8139GatewayProbe() catch |err| qemuExit(rtl8139GatewayProbeFailureCode(err));
@@ -5427,6 +5461,33 @@ fn toolExecProbeFailureCode(err: ToolExecProbeError) u8 {
     };
 }
 
+fn toolRuntimeProbeFailureCode(err: ToolRuntimeProbeError) u8 {
+    return switch (err) {
+        error.AllocatorExhausted => 0xB5,
+        error.RuntimePersistenceInitFailed => 0xB6,
+        error.RuntimeWriteRunFailed => 0xB7,
+        error.RuntimeWriteResultFailed => 0xB8,
+        error.RuntimeReadRunFailed => 0xB9,
+        error.RuntimeReadResultFailed => 0xBA,
+        error.RuntimeReadbackMismatch => 0xBB,
+        error.RuntimeExecRunFailed => 0xBC,
+        error.RuntimeExecResultFailed => 0xBD,
+        error.RuntimeExecOutputMismatch => 0xBE,
+        error.RuntimeUnexpectedStderr => 0xBF,
+        error.RuntimeQueueDepthMismatch => 0xC0,
+        error.RuntimeSessionCountMismatch => 0xC1,
+        error.RuntimeSnapshotPersistedMismatch => 0xC2,
+        error.RuntimeSnapshotPathMismatch => 0xC3,
+        error.RuntimeStateFileReadbackFailed => 0xC4,
+        error.RuntimeStateFileMissingSession => 0xC5,
+        error.RuntimeReloadFailed => 0xC6,
+        error.RuntimeRestoredSessionMissing => 0xC7,
+        error.RuntimeRestoredSessionMismatch => 0xC8,
+        error.RuntimeFilesystemReadbackFailed => 0xC9,
+        error.RuntimeFilesystemReadbackMismatch => 0xCA,
+    };
+}
+
 fn virtioGpuDisplayProbeFailureCode(err: VirtioGpuDisplayProbeError) u8 {
     return switch (err) {
         error.UnsupportedPlatform => 0x42,
@@ -5575,6 +5636,90 @@ fn runToolExecProbe() ToolExecProbeError!void {
     if (pal_proc.termExitCode(echo.term) != 0) return error.EchoExitCodeFailed;
     if (!std.mem.eql(u8, echo.stdout, "tool-exec-ok\n")) return error.EchoOutputMismatch;
     if (echo.stderr.len != 0) return error.UnexpectedStderr;
+}
+
+fn runToolRuntimeProbe() ToolRuntimeProbeError!void {
+    resetBaremetalRuntimeForTest();
+    vga_text_console.clear();
+
+    var scratch: [96 * 1024]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&scratch);
+    const allocator = fba.allocator();
+    const io: std.Io = undefined;
+
+    var runtime = tool_runtime.ToolRuntime.init(allocator, io);
+    defer runtime.deinit();
+    runtime.configureStatePersistence("/runtime/state") catch |err| switch (err) {
+        error.OutOfMemory => return error.AllocatorExhausted,
+        else => return error.RuntimePersistenceInitFailed,
+    };
+    runtime.exec_enabled = true;
+    runtime.exec_allowlist = "echo";
+
+    var write_result = runtime.fileWriteFromFrame(allocator,
+        \\{"id":"bm-write","method":"file.write","params":{"sessionId":"bm-runtime","path":"/runtime/tmp/tool-runtime.txt","content":"runtime-baremetal"}}
+    ) catch |err| switch (err) {
+        error.OutOfMemory => return error.AllocatorExhausted,
+        else => return error.RuntimeWriteRunFailed,
+    };
+    defer write_result.deinit(allocator);
+    if (!write_result.ok) return error.RuntimeWriteResultFailed;
+
+    var read_result = runtime.fileReadFromFrame(allocator,
+        \\{"id":"bm-read","method":"file.read","params":{"sessionId":"bm-runtime","path":"/runtime/tmp/tool-runtime.txt"}}
+    ) catch |err| switch (err) {
+        error.OutOfMemory => return error.AllocatorExhausted,
+        else => return error.RuntimeReadRunFailed,
+    };
+    defer read_result.deinit(allocator);
+    if (!read_result.ok) return error.RuntimeReadResultFailed;
+    if (!std.mem.eql(u8, read_result.content, "runtime-baremetal")) return error.RuntimeReadbackMismatch;
+
+    var exec_result = runtime.execRunFromFrame(allocator,
+        \\{"id":"bm-exec","method":"exec.run","params":{"sessionId":"bm-runtime","command":"echo runtime-baremetal","timeoutMs":1000}}
+    ) catch |err| switch (err) {
+        error.OutOfMemory => return error.AllocatorExhausted,
+        else => return error.RuntimeExecRunFailed,
+    };
+    defer exec_result.deinit(allocator);
+    if (!exec_result.ok or exec_result.exitCode != 0) return error.RuntimeExecResultFailed;
+    if (!std.mem.eql(u8, exec_result.stdout, "runtime-baremetal\n")) return error.RuntimeExecOutputMismatch;
+    if (exec_result.stderr.len != 0) return error.RuntimeUnexpectedStderr;
+
+    const snapshot = runtime.snapshot();
+    if (!snapshot.persisted) return error.RuntimeSnapshotPersistedMismatch;
+    if (!std.mem.eql(u8, snapshot.statePath, "/runtime/state/runtime-state.json")) return error.RuntimeSnapshotPathMismatch;
+    if (snapshot.queueDepth != 0 or snapshot.leasedJobs != 0) return error.RuntimeQueueDepthMismatch;
+    if (snapshot.sessions != 1) return error.RuntimeSessionCountMismatch;
+
+    const state_payload = filesystem.readFileAlloc(allocator, "/runtime/state/runtime-state.json", 2048) catch |err| switch (err) {
+        error.OutOfMemory => return error.AllocatorExhausted,
+        else => return error.RuntimeStateFileReadbackFailed,
+    };
+    defer allocator.free(state_payload);
+    if (!std.mem.containsAtLeast(u8, state_payload, 1, "bm-runtime")) return error.RuntimeStateFileMissingSession;
+
+    const fs_readback = filesystem.readFileAlloc(allocator, "/runtime/tmp/tool-runtime.txt", 64) catch |err| switch (err) {
+        error.OutOfMemory => return error.AllocatorExhausted,
+        else => return error.RuntimeFilesystemReadbackFailed,
+    };
+    defer allocator.free(fs_readback);
+    if (!std.mem.eql(u8, fs_readback, "runtime-baremetal")) return error.RuntimeFilesystemReadbackMismatch;
+
+    runtime.deinit();
+    runtime = tool_runtime.ToolRuntime.init(allocator, io);
+    errdefer runtime.deinit();
+    runtime.configureStatePersistence("/runtime/state") catch |err| switch (err) {
+        error.OutOfMemory => return error.AllocatorExhausted,
+        else => return error.RuntimeReloadFailed,
+    };
+
+    const restored_snapshot = runtime.snapshot();
+    if (!restored_snapshot.persisted or restored_snapshot.sessions != 1 or restored_snapshot.queueDepth != 0) {
+        return error.RuntimeReloadFailed;
+    }
+    const restored_session = runtime.runtime_state.getSession("bm-runtime") orelse return error.RuntimeRestoredSessionMissing;
+    if (!std.mem.eql(u8, restored_session.last_message, "echo runtime-baremetal")) return error.RuntimeRestoredSessionMismatch;
 }
 
 fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
@@ -13940,6 +14085,11 @@ test "baremetal tool exec probe succeeds through pal proc freestanding path" {
     try runToolExecProbe();
 }
 
+test "baremetal tool runtime probe succeeds through freestanding runtime path" {
+    if (builtin.os.tag != .freestanding) return error.SkipZigTest;
+    try runToolRuntimeProbe();
+}
+
 test "baremetal storage export surface persists block writes and flush state" {
     resetBaremetalRuntimeForTest();
 
@@ -14124,7 +14274,7 @@ test "baremetal filesystem persists path-based files on the ram disk" {
     try std.testing.expectEqual(@as(u8, 1), fs_state.formatted);
     try std.testing.expectEqual(@as(u8, abi.storage_backend_ram_disk), fs_state.active_backend);
 
-    const io = std.Io.Threaded.global_single_threaded.io();
+    const io = if (builtin.os.tag == .freestanding) undefined else std.Io.Threaded.global_single_threaded.io();
     if (builtin.os.tag == .freestanding) {
         try pal_fs.createDirPath(io, "/runtime/state");
         try pal_fs.writeFile(io, "/runtime/state/agent.json", "{\"ok\":true}");

@@ -205,6 +205,7 @@ pub const ToolRuntime = struct {
 
         const argv = switch (builtin.os.tag) {
             .windows => [_][]const u8{ "C:\\Windows\\System32\\cmd.exe", "/C", command },
+            .freestanding => [_][]const u8{command},
             else => [_][]const u8{ "/bin/sh", "-lc", command },
         };
         var run_result = try pal.proc.runCapture(
@@ -342,6 +343,10 @@ pub const ToolRuntime = struct {
             return error.PathTraversalDetected;
         }
 
+        if (builtin.os.tag == .freestanding) {
+            return self.resolveFreestandingSandboxedPath(allocator, path, mode);
+        }
+
         const absolute_path = try pal.sandbox.resolveAbsolutePath(self.io, allocator, path);
         errdefer allocator.free(absolute_path);
 
@@ -387,12 +392,67 @@ pub const ToolRuntime = struct {
         return absolute_path;
     }
 
+    fn resolveFreestandingSandboxedPath(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        path: []const u8,
+        mode: FileMode,
+    ) ![]u8 {
+        const normalized_path = try normalizeFreestandingPath(allocator, path);
+        errdefer allocator.free(normalized_path);
+
+        var roots = try parseFreestandingAllowedRoots(allocator, self.file_allowed_roots);
+        defer pal.sandbox.freePathList(allocator, &roots);
+        if (roots.items.len == 0) {
+            return error.PathAccessDenied;
+        }
+
+        if (!pal.sandbox.isWithinAnyRoot(normalized_path, roots.items)) {
+            return error.PathAccessDenied;
+        }
+
+        switch (mode) {
+            .read => {
+                const stat = pal.fs.statNoFollow(self.io, normalized_path) catch return error.PathAccessDenied;
+                if (stat.kind == .sym_link) return error.PathSymlinkDisallowed;
+            },
+            .write => {
+                const stat = pal.fs.statNoFollow(self.io, normalized_path) catch |err| switch (err) {
+                    error.FileNotFound => null,
+                    else => return error.PathAccessDenied,
+                };
+                if (stat) |entry| {
+                    if (entry.kind == .sym_link) return error.PathSymlinkDisallowed;
+                }
+
+                const parent = freestandingParentPath(normalized_path) orelse return error.PathAccessDenied;
+                if (!pal.sandbox.isWithinAnyRoot(parent, roots.items)) {
+                    return error.PathAccessDenied;
+                }
+            },
+        }
+
+        return normalized_path;
+    }
+
     fn verifyWritePathAfterMkdir(
         self: *ToolRuntime,
         allocator: std.mem.Allocator,
         path: []const u8,
     ) !void {
         if (!self.file_sandbox_enabled) return;
+
+        if (builtin.os.tag == .freestanding) {
+            var roots = try parseFreestandingAllowedRoots(allocator, self.file_allowed_roots);
+            defer pal.sandbox.freePathList(allocator, &roots);
+            if (roots.items.len == 0) return error.PathAccessDenied;
+
+            const parent = freestandingParentPath(path) orelse return error.PathAccessDenied;
+            if (!pal.sandbox.isWithinAnyRoot(parent, roots.items)) {
+                return error.PathAccessDenied;
+            }
+            return;
+        }
 
         var roots = try pal.sandbox.parseAllowedRoots(self.io, allocator, self.file_allowed_roots);
         defer pal.sandbox.freePathList(allocator, &roots);
@@ -407,6 +467,70 @@ pub const ToolRuntime = struct {
         }
     }
 };
+
+fn parseFreestandingAllowedRoots(
+    allocator: std.mem.Allocator,
+    csv: []const u8,
+) !std.ArrayList([]u8) {
+    var roots: std.ArrayList([]u8) = .empty;
+    errdefer pal.sandbox.freePathList(allocator, &roots);
+
+    const trimmed = std.mem.trim(u8, csv, " \t\r\n");
+    if (trimmed.len == 0) {
+        try roots.append(allocator, try allocator.dupe(u8, "/"));
+        return roots;
+    }
+
+    var it = std.mem.tokenizeAny(u8, trimmed, ",;");
+    while (it.next()) |entry_raw| {
+        const entry = std.mem.trim(u8, entry_raw, " \t\r\n");
+        if (entry.len == 0) continue;
+        const normalized = normalizeFreestandingPath(allocator, entry) catch continue;
+        errdefer allocator.free(normalized);
+        try roots.append(allocator, normalized);
+    }
+
+    return roots;
+}
+
+fn normalizeFreestandingPath(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+) ![]u8 {
+    const trimmed = std.mem.trim(u8, path, " \t\r\n");
+    if (trimmed.len == 0) return error.PathAccessDenied;
+    if (pal.sandbox.hasParentTraversal(trimmed)) return error.PathTraversalDetected;
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    try out.append(allocator, '/');
+    var appended_segment = false;
+    var it = std.mem.tokenizeAny(u8, trimmed, "/\\");
+    while (it.next()) |segment| {
+        if (segment.len == 0 or std.mem.eql(u8, segment, ".")) continue;
+        if (std.mem.eql(u8, segment, "..")) return error.PathTraversalDetected;
+        if (appended_segment) try out.append(allocator, '/');
+        try out.appendSlice(allocator, segment);
+        appended_segment = true;
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+fn freestandingParentPath(path: []const u8) ?[]const u8 {
+    if (path.len == 0 or !std.mem.startsWith(u8, path, "/")) return null;
+    if (std.mem.eql(u8, path, "/")) return "/";
+
+    var idx = path.len;
+    while (idx > 1) : (idx -= 1) {
+        if (path[idx - 1] == '/') {
+            return if (idx == 1) "/" else path[0 .. idx - 1];
+        }
+    }
+
+    return "/";
+}
 
 fn getParamsObject(frame: std.json.Value) !std.json.Value {
     if (frame != .object) return error.InvalidParamsFrame;
@@ -478,15 +602,25 @@ fn nowUnixMilliseconds(io: std.Io) i64 {
     return time_util.nowMs();
 }
 
+fn testingToolIo() std.Io {
+    if (builtin.os.tag == .freestanding) return undefined;
+    return std.testing.io;
+}
+
+fn testingHostedIo() std.Io {
+    if (builtin.os.tag == .freestanding) return undefined;
+    return std.Io.Threaded.global_single_threaded.io();
+}
+
 test "tool runtime file write/read lifecycle with session state" {
     const allocator = std.testing.allocator;
-    var runtime = ToolRuntime.init(std.heap.page_allocator, std.testing.io);
+    var runtime = ToolRuntime.init(std.heap.page_allocator, testingToolIo());
     defer runtime.deinit();
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const io = std.Io.Threaded.global_single_threaded.io();
+    const io = testingHostedIo();
     const base_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(base_path);
     const test_path = try std.fs.path.join(allocator, &.{ base_path, "runtime-file.txt" });
@@ -510,11 +644,12 @@ test "tool runtime file write/read lifecycle with session state" {
 
 test "tool runtime exec lifecycle returns output and keeps queue empty" {
     const allocator = std.testing.allocator;
-    var runtime = ToolRuntime.init(std.heap.page_allocator, std.testing.io);
+    var runtime = ToolRuntime.init(std.heap.page_allocator, testingToolIo());
     defer runtime.deinit();
 
     const command = switch (builtin.os.tag) {
         .windows => "echo phase3-exec",
+        .freestanding => "echo phase3-exec",
         else => "printf phase3-exec",
     };
 
@@ -525,9 +660,55 @@ test "tool runtime exec lifecycle returns output and keeps queue empty" {
     try std.testing.expectEqual(@as(usize, 0), runtime.queueDepth());
 }
 
+test "tool runtime persistence roundtrip restores freestanding-safe state posture" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const root = try tmp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const test_path = try std.fs.path.join(allocator, &.{ root, "runtime-roundtrip.txt" });
+    defer allocator.free(test_path);
+
+    {
+        var runtime = ToolRuntime.init(std.heap.page_allocator, testingToolIo());
+        defer runtime.deinit();
+        try runtime.configureStatePersistence(root);
+
+        var write_result = try runtime.fileWrite(allocator, "sess-roundtrip", test_path, "roundtrip-data");
+        defer write_result.deinit(allocator);
+        try std.testing.expect(write_result.ok);
+
+        const command = switch (builtin.os.tag) {
+            .windows => "echo phase3-roundtrip",
+            .freestanding => "echo phase3-roundtrip",
+            else => "printf phase3-roundtrip",
+        };
+        var exec_result = runtime.execRun(allocator, "sess-roundtrip", command, 20_000) catch return error.SkipZigTest;
+        defer exec_result.deinit(allocator);
+        try std.testing.expect(exec_result.ok);
+    }
+
+    {
+        var restored = ToolRuntime.init(std.heap.page_allocator, testingToolIo());
+        defer restored.deinit();
+        try restored.configureStatePersistence(root);
+
+        const snapshot = restored.snapshot();
+        try std.testing.expect(snapshot.persisted);
+        try std.testing.expect(std.mem.endsWith(u8, snapshot.statePath, "runtime-state.json"));
+        try std.testing.expectEqual(@as(usize, 1), snapshot.sessions);
+        try std.testing.expectEqual(@as(usize, 0), snapshot.queueDepth);
+
+        const session = restored.runtime_state.getSession("sess-roundtrip").?;
+        try std.testing.expect(std.mem.indexOf(u8, session.last_message, "phase3-roundtrip") != null);
+    }
+}
+
 test "tool runtime file sandbox blocks traversal and out-of-root writes" {
     const allocator = std.testing.allocator;
-    var runtime = ToolRuntime.init(std.heap.page_allocator, std.testing.io);
+    var runtime = ToolRuntime.init(std.heap.page_allocator, testingToolIo());
     defer runtime.deinit();
 
     var root_tmp = std.testing.tmpDir(.{});
@@ -535,7 +716,7 @@ test "tool runtime file sandbox blocks traversal and out-of-root writes" {
     var outside_tmp = std.testing.tmpDir(.{});
     defer outside_tmp.cleanup();
 
-    const io = std.Io.Threaded.global_single_threaded.io();
+    const io = testingHostedIo();
     const root_path = try root_tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(root_path);
     const outside_path = try outside_tmp.dir.realPathFileAlloc(io, ".", allocator);
@@ -561,7 +742,7 @@ test "tool runtime file sandbox blocks traversal and out-of-root writes" {
 
 test "tool runtime exec policy denies non-allowlisted commands" {
     const allocator = std.testing.allocator;
-    var runtime = ToolRuntime.init(std.heap.page_allocator, std.testing.io);
+    var runtime = ToolRuntime.init(std.heap.page_allocator, testingToolIo());
     defer runtime.deinit();
 
     runtime.exec_enabled = true;
@@ -576,14 +757,30 @@ test "tool runtime exec policy denies non-allowlisted commands" {
     try std.testing.expectError(error.CommandDenied, runtime.execRun(allocator, "sess-exec-policy", blocked, 20_000));
 }
 
+test "tool runtime freestanding path normalization keeps logical roots bounded" {
+    const allocator = std.testing.allocator;
+
+    const normalized_relative = try normalizeFreestandingPath(allocator, "runtime\\state\\session.json");
+    defer allocator.free(normalized_relative);
+    try std.testing.expectEqualStrings("/runtime/state/session.json", normalized_relative);
+
+    const normalized_absolute = try normalizeFreestandingPath(allocator, "/runtime/state/./session.json");
+    defer allocator.free(normalized_absolute);
+    try std.testing.expectEqualStrings("/runtime/state/session.json", normalized_absolute);
+
+    try std.testing.expectEqualStrings("/runtime/state", freestandingParentPath("/runtime/state/session.json").?);
+    try std.testing.expectEqualStrings("/", freestandingParentPath("/runtime").?);
+    try std.testing.expectError(error.PathTraversalDetected, normalizeFreestandingPath(allocator, "/runtime/../escape"));
+}
+
 test "tool runtime snapshot exposes queue and persistence posture" {
     const allocator = std.testing.allocator;
-    var runtime = ToolRuntime.init(std.heap.page_allocator, std.testing.io);
+    var runtime = ToolRuntime.init(std.heap.page_allocator, testingToolIo());
     defer runtime.deinit();
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const io = std.Io.Threaded.global_single_threaded.io();
+    const io = testingHostedIo();
     const root = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(root);
 

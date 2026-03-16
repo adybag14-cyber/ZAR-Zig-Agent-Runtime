@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 param(
     [int] $Port = 8094,
     [int] $ReadyAttempts = 80,
@@ -115,6 +116,35 @@ if (-not $ready) {
 try {
     $health = Invoke-WebRequest -Uri "$baseUrl/health" -UseBasicParsing
     $statusRpc = Invoke-Rpc -Url "$baseUrl/rpc" -Id "rt-status" -Method "status" -Params @{}
+    $runtimeFile = Join-Path $repo 'tmp_runtime_rpc_smoke.txt'
+    $runtimeCommand = if ($IsWindows -or $env:OS -eq 'Windows_NT') { 'echo runtime-smoke-exec' } else { 'printf runtime-smoke-exec' }
+
+    $runtimeWrite = Invoke-Rpc -Url "$baseUrl/rpc" -Id "rt-file-write" -Method "file.write" -Params @{
+        sessionId = "runtime-rpc-smoke"
+        path = $runtimeFile
+        content = "runtime-smoke-file"
+    }
+    $runtimeRead = Invoke-Rpc -Url "$baseUrl/rpc" -Id "rt-file-read" -Method "file.read" -Params @{
+        sessionId = "runtime-rpc-smoke"
+        path = $runtimeFile
+    }
+    $runtimeExec = Invoke-Rpc -Url "$baseUrl/rpc" -Id "rt-exec-run" -Method "exec.run" -Params @{
+        sessionId = "runtime-rpc-smoke"
+        command = $runtimeCommand
+        timeoutMs = 1000
+    }
+    if (-not $runtimeWrite.Json.result.ok) {
+        throw "file.write runtime smoke failed"
+    }
+    if ($runtimeRead.Content -notmatch 'runtime-smoke-file') {
+        throw "file.read runtime smoke missing expected content"
+    }
+    if (-not $runtimeExec.Json.result.ok) {
+        throw "exec.run runtime smoke failed"
+    }
+    if ($runtimeExec.Content -notmatch 'runtime-smoke-exec') {
+        throw "exec.run runtime smoke missing expected stdout"
+    }
 
     $wlStart = Invoke-Rpc -Url "$baseUrl/rpc" -Id "rt-wl-start" -Method "web.login.start" -Params @{
         provider = "chatgpt"
@@ -177,6 +207,10 @@ try {
 
     Write-Output "SMOKE_HEALTH_HTTP=$($health.StatusCode)"
     Write-Output "SMOKE_STATUS_RPC_HTTP=$($statusRpc.StatusCode)"
+    Write-Output "SMOKE_RUNTIME_WRITE_OK=$($runtimeWrite.Json.result.ok)"
+    Write-Output "SMOKE_RUNTIME_READ_MATCH=$([bool]($runtimeRead.Content -match 'runtime-smoke-file'))"
+    Write-Output "SMOKE_RUNTIME_EXEC_OK=$($runtimeExec.Json.result.ok)"
+    Write-Output "SMOKE_RUNTIME_EXEC_STDOUT_MATCH=$([bool]($runtimeExec.Content -match 'runtime-smoke-exec'))"
     Write-Output "SMOKE_WEB_LOGIN_WAIT_STATUS=$($wlWait.Json.result.status)"
     Write-Output "SMOKE_WEB_LOGIN_COMPLETE_STATUS=$($wlComplete.Json.result.status)"
     Write-Output "SMOKE_WEB_LOGIN_STATUS_STATUS=$($wlStatus.Json.result.status)"
@@ -189,6 +223,7 @@ finally {
         Stop-Process -Id $proc.Id -Force
     }
     Remove-Item Env:OPENCLAW_ZIG_HTTP_PORT -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $repo 'tmp_runtime_rpc_smoke.txt') -ErrorAction SilentlyContinue
     if (-not $KeepLogs) {
         Remove-Item $stdoutLog,$stderrLog -ErrorAction SilentlyContinue
     }
