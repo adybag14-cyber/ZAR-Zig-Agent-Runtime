@@ -1,5 +1,6 @@
 const std = @import("std");
 const abi = @import("abi.zig");
+const app_runtime = @import("app_runtime.zig");
 const disk_installer = @import("disk_installer.zig");
 const display_output = @import("display_output.zig");
 const filesystem = @import("filesystem.zig");
@@ -39,6 +40,12 @@ pub const RequestOp = enum {
     package_asset_put,
     package_asset_list,
     package_asset_get,
+    app_list,
+    app_info,
+    app_state,
+    app_trust,
+    app_connector,
+    app_run,
     display_info,
     display_modes,
     display_set,
@@ -72,6 +79,11 @@ pub const PackageDisplayRequest = struct {
     height: u16,
 };
 
+pub const NamedValueRequest = struct {
+    package_name: []const u8,
+    value: []const u8,
+};
+
 pub const DisplayModeRequest = struct {
     width: u16,
     height: u16,
@@ -97,6 +109,12 @@ pub const FramedRequest = struct {
         package_asset_put: PackagePutRequest,
         package_asset_list: []const u8,
         package_asset_get: PackagePathRequest,
+        app_list: void,
+        app_info: []const u8,
+        app_state: []const u8,
+        app_trust: NamedValueRequest,
+        app_connector: NamedValueRequest,
+        app_run: []const u8,
         display_info: void,
         display_modes: void,
         display_set: DisplayModeRequest,
@@ -497,6 +515,108 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         };
     }
 
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPLIST")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .app_list = {} } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .app_list = {} } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPINFO")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .app_info = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .app_info = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPSTATE")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .app_state = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .app_state = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPTRUST")) {
+        const package_name_part = try splitFirstToken(op_part.rest);
+        const trust_name_part = try splitFirstToken(package_name_part.rest);
+        if (trust_name_part.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .app_trust = .{
+                .package_name = package_name_part.token,
+                .value = trust_name_part.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPCONNECTOR")) {
+        const package_name_part = try splitFirstToken(op_part.rest);
+        const connector_part = try splitFirstToken(package_name_part.rest);
+        if (connector_part.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .app_connector = .{
+                .package_name = package_name_part.token,
+                .value = connector_part.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPRUN")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .app_run = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .app_run = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
     if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYINFO")) {
         if (op_part.rest.len != 0) return error.InvalidFrame;
         if (newline_index != null) {
@@ -718,6 +838,12 @@ fn handleFramedPayload(
         .package_asset_put => |asset_request| try handlePackageAssetPutRequest(allocator, asset_request.package_name, asset_request.relative_path, asset_request.body, payload_limit),
         .package_asset_list => |package_name| try handlePackageAssetListRequest(allocator, package_name, payload_limit),
         .package_asset_get => |asset_request| try handlePackageAssetGetRequest(allocator, asset_request.package_name, asset_request.relative_path, payload_limit),
+        .app_list => try handleAppListRequest(allocator, payload_limit),
+        .app_info => |package_name| try handleAppInfoRequest(allocator, package_name, payload_limit),
+        .app_state => |package_name| try handleAppStateRequest(allocator, package_name, payload_limit),
+        .app_trust => |app_request| try handleAppTrustRequest(allocator, app_request.package_name, app_request.value, payload_limit),
+        .app_connector => |app_request| try handleAppConnectorRequest(allocator, app_request.package_name, app_request.value, payload_limit),
+        .app_run => |package_name| try handleAppRunRequest(allocator, package_name, stdout_limit, stderr_limit, payload_limit),
         .display_info => try handleDisplayInfoRequest(allocator, payload_limit),
         .display_modes => try handleDisplayModesRequest(allocator, payload_limit),
         .display_set => |display_mode| try handleDisplaySetRequest(allocator, display_mode.width, display_mode.height, payload_limit),
@@ -949,6 +1075,78 @@ fn handlePackageRunRequest(
 ) Error![]u8 {
     var command_buf: [96]u8 = undefined;
     const command = std.fmt.bufPrint(&command_buf, "run-package {s}", .{package_name}) catch return error.InvalidFrame;
+    return handleCommandRequest(allocator, command, stdout_limit, stderr_limit, payload_limit);
+}
+
+fn handleAppListRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    return app_runtime.listAppsAlloc(allocator, payload_limit) catch |err| {
+        return formatOperationError(allocator, "APPLIST", err, payload_limit);
+    };
+}
+
+fn handleAppInfoRequest(allocator: std.mem.Allocator, package_name: []const u8, payload_limit: usize) Error![]u8 {
+    return app_runtime.infoAlloc(allocator, package_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "APPINFO", err, payload_limit);
+    };
+}
+
+fn handleAppStateRequest(allocator: std.mem.Allocator, package_name: []const u8, payload_limit: usize) Error![]u8 {
+    return app_runtime.stateAlloc(allocator, package_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "APPSTATE", err, payload_limit);
+    };
+}
+
+fn handleAppTrustRequest(
+    allocator: std.mem.Allocator,
+    package_name: []const u8,
+    trust_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    const selected_name = if (std.ascii.eqlIgnoreCase(trust_name, "none")) "" else trust_name;
+    package_store.configureTrustBundle(package_name, selected_name, 0) catch |err| {
+        return formatOperationError(allocator, "APPTRUST", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "APPTRUST {s} {s}\n",
+        .{ package_name, if (selected_name.len == 0) "none" else selected_name },
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleAppConnectorRequest(
+    allocator: std.mem.Allocator,
+    package_name: []const u8,
+    connector_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    const connector_type = package_store.parseConnectorType(connector_name) catch |err| {
+        return formatOperationError(allocator, "APPCONNECTOR", err, payload_limit);
+    };
+    package_store.configureConnectorType(package_name, connector_type, 0) catch |err| {
+        return formatOperationError(allocator, "APPCONNECTOR", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "APPCONNECTOR {s} {s}\n",
+        .{ package_name, package_store.connectorNameFromType(connector_type) },
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleAppRunRequest(
+    allocator: std.mem.Allocator,
+    package_name: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    var command_buf: [96]u8 = undefined;
+    const command = std.fmt.bufPrint(&command_buf, "app-run {s}", .{package_name}) catch return error.InvalidFrame;
     return handleCommandRequest(allocator, command, stdout_limit, stderr_limit, payload_limit);
 }
 
@@ -1318,13 +1516,55 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
-    const install = try parseFramedRequest("REQ 33 INSTALL");
+    const app_list = try parseFramedRequest("REQ 33 APPLIST");
+    switch (app_list.operation) {
+        .app_list => {},
+        else => return error.InvalidFrame,
+    }
+
+    const app_info = try parseFramedRequest("REQ 34 APPINFO demo");
+    switch (app_info.operation) {
+        .app_info => |package_name| try std.testing.expectEqualStrings("demo", package_name),
+        else => return error.InvalidFrame,
+    }
+
+    const app_state = try parseFramedRequest("REQ 35 APPSTATE demo");
+    switch (app_state.operation) {
+        .app_state => |package_name| try std.testing.expectEqualStrings("demo", package_name),
+        else => return error.InvalidFrame,
+    }
+
+    const app_trust = try parseFramedRequest("REQ 36 APPTRUST demo fs55-root");
+    switch (app_trust.operation) {
+        .app_trust => |payload| {
+            try std.testing.expectEqualStrings("demo", payload.package_name);
+            try std.testing.expectEqualStrings("fs55-root", payload.value);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const app_connector = try parseFramedRequest("REQ 37 APPCONNECTOR demo virtual");
+    switch (app_connector.operation) {
+        .app_connector => |payload| {
+            try std.testing.expectEqualStrings("demo", payload.package_name);
+            try std.testing.expectEqualStrings("virtual", payload.value);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const app_run = try parseFramedRequest("REQ 38 APPRUN demo");
+    switch (app_run.operation) {
+        .app_run => |package_name| try std.testing.expectEqualStrings("demo", package_name),
+        else => return error.InvalidFrame,
+    }
+
+    const install = try parseFramedRequest("REQ 39 INSTALL");
     switch (install.operation) {
         .install => {},
         else => return error.InvalidFrame,
     }
 
-    const manifest = try parseFramedRequest("REQ 34 MANIFEST");
+    const manifest = try parseFramedRequest("REQ 40 MANIFEST");
     switch (manifest.operation) {
         .manifest => {},
         else => return error.InvalidFrame,
@@ -1604,6 +1844,45 @@ test "baremetal tool service rotates queries and deletes trust bundles" {
     defer std.testing.allocator.free(selected_info_response);
     try std.testing.expect(std.mem.indexOf(u8, selected_info_response, "name=fs55-backup") != null);
     try std.testing.expect(std.mem.indexOf(u8, selected_info_response, "selected=1") != null);
+}
+
+test "baremetal tool service configures and runs app lifecycle requests" {
+    resetPersistentStateForTest();
+
+    try trust_store.installBundle("fs55-root", "root-cert", 0);
+    try package_store.installScriptPackage("demo", "mkdir /pkg/out\nwrite-file /pkg/out/app.txt app-service-data\necho app-service-ok", 1);
+
+    const app_list_response = try handleFramedRequest(std.testing.allocator, "REQ 51 APPLIST", 512, 256, 512);
+    defer std.testing.allocator.free(app_list_response);
+    try std.testing.expectEqualStrings("RESP 51 5\ndemo\n", app_list_response);
+
+    const app_connector_response = try handleFramedRequest(std.testing.allocator, "REQ 52 APPCONNECTOR demo virtual", 512, 256, 512);
+    defer std.testing.allocator.free(app_connector_response);
+    try std.testing.expectEqualStrings("RESP 52 26\nAPPCONNECTOR demo virtual\n", app_connector_response);
+
+    const app_trust_response = try handleFramedRequest(std.testing.allocator, "REQ 53 APPTRUST demo fs55-root", 512, 256, 512);
+    defer std.testing.allocator.free(app_trust_response);
+    try std.testing.expectEqualStrings("RESP 53 24\nAPPTRUST demo fs55-root\n", app_trust_response);
+
+    const app_info_response = try handleFramedRequest(std.testing.allocator, "REQ 54 APPINFO demo", 512, 256, 512);
+    defer std.testing.allocator.free(app_info_response);
+    try std.testing.expect(std.mem.startsWith(u8, app_info_response, "RESP 54 "));
+    try std.testing.expect(std.mem.indexOf(u8, app_info_response, "connector=virtual") != null);
+    try std.testing.expect(std.mem.indexOf(u8, app_info_response, "trust_bundle=fs55-root") != null);
+    try std.testing.expect(std.mem.indexOf(u8, app_info_response, "state_path=/runtime/apps/demo/last_run.txt") != null);
+
+    const app_run_response = try handleFramedRequest(std.testing.allocator, "REQ 55 APPRUN demo", 512, 256, 512);
+    defer std.testing.allocator.free(app_run_response);
+    try std.testing.expect(std.mem.startsWith(u8, app_run_response, "RESP 55 "));
+    try std.testing.expect(std.mem.indexOf(u8, app_run_response, "app-service-ok\n") != null);
+
+    const app_state_response = try handleFramedRequest(std.testing.allocator, "REQ 56 APPSTATE demo", 512, 256, 512);
+    defer std.testing.allocator.free(app_state_response);
+    try std.testing.expect(std.mem.startsWith(u8, app_state_response, "RESP 56 "));
+    try std.testing.expect(std.mem.indexOf(u8, app_state_response, "exit_code=0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, app_state_response, "requested_connector=virtual") != null);
+    try std.testing.expect(std.mem.indexOf(u8, app_state_response, "actual_connector=virtual") != null);
+    try std.testing.expect(std.mem.indexOf(u8, app_state_response, "trust_bundle=fs55-root") != null);
 }
 
 test "baremetal tool service handles batched trust requests" {

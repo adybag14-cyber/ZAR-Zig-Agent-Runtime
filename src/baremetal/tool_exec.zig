@@ -1,5 +1,6 @@
 const std = @import("std");
 const abi = @import("abi.zig");
+const app_runtime = @import("app_runtime.zig");
 const filesystem = @import("filesystem.zig");
 const package_store = @import("package_store.zig");
 const trust_store = @import("trust_store.zig");
@@ -8,12 +9,13 @@ const framebuffer_console = @import("framebuffer_console.zig");
 const vga_text_console = @import("vga_text_console.zig");
 const storage_backend = @import("storage_backend.zig");
 
-pub const Error = filesystem.Error || trust_store.Error || std.mem.Allocator.Error || error{
+pub const Error = filesystem.Error || trust_store.Error || app_runtime.Error || std.mem.Allocator.Error || error{
     MissingCommand,
     MissingPath,
     StreamTooLong,
     InvalidQuotedArgument,
     ScriptDepthExceeded,
+    DisplayConnectorMismatch,
 };
 
 const max_script_depth: usize = 4;
@@ -132,7 +134,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-app, package-display, package-ls, package-cat, trust-list, trust-info, trust-active, trust-select, trust-delete, display-info, display-modes, display-set, run-script, run-package");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-app, package-display, package-ls, package-cat, app-list, app-info, app-state, app-trust, app-connector, trust-list, trust-info, trust-active, trust-select, trust-delete, display-info, display-modes, display-set, run-script, run-package, app-run");
         return;
     }
 
@@ -383,6 +385,120 @@ fn execute(
         return;
     }
 
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-list")) {
+        if (parsed.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-list");
+            return;
+        }
+        const listing = app_runtime.listAppsAlloc(allocator, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-list failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(listing);
+        try stdout_buffer.appendSlice(listing);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-info")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-info <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-info <name>");
+            return;
+        }
+        const info = app_runtime.infoAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(info);
+        try stdout_buffer.appendSlice(info);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-state")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-state <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-state <name>");
+            return;
+        }
+        const state = app_runtime.stateAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-state failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(state);
+        try stdout_buffer.appendSlice(state);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-trust")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-trust <name> <bundle|none>");
+            return;
+        };
+        const bundle_arg = parseFirstArg(package_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-trust <name> <bundle|none>");
+            return;
+        };
+        if (bundle_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-trust <name> <bundle|none>");
+            return;
+        }
+        const trust_bundle = if (std.ascii.eqlIgnoreCase(bundle_arg.arg, "none")) "" else bundle_arg.arg;
+        package_store.configureTrustBundle(package_name.arg, trust_bundle, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-trust failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("app trust {s} {s}\n", .{ package_name.arg, if (trust_bundle.len == 0) "none" else trust_bundle });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-connector")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-connector <name> <connector>");
+            return;
+        };
+        const connector_arg = parseFirstArg(package_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-connector <name> <connector>");
+            return;
+        };
+        if (connector_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-connector <name> <connector>");
+            return;
+        }
+        const connector_type = package_store.parseConnectorType(connector_arg.arg) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-connector <name> <connector>");
+            return;
+        };
+        package_store.configureConnectorType(package_name.arg, connector_type, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-connector failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("app connector {s} {s}\n", .{ package_name.arg, package_store.connectorNameFromType(connector_type) });
+        return;
+    }
+
     if (std.ascii.eqlIgnoreCase(parsed.name, "trust-list")) {
         if (parsed.rest.len != 0) {
             exit_code.* = 2;
@@ -582,19 +698,22 @@ fn execute(
             try stderr_buffer.appendLine("usage: run-package <name>");
             return;
         }
+        try runLaunchProfile(arg.arg, "run-package", false, stdout_buffer, stderr_buffer, exit_code, allocator, depth);
+        return;
+    }
 
-        var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
-        const profile = package_store.loadLaunchProfile(arg.arg, &entrypoint_buf) catch |err| {
-            exit_code.* = 1;
-            try stderr_buffer.appendFmt("run-package failed: {s}\n", .{@errorName(err)});
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-run")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-run <name>");
             return;
         };
-        framebuffer_console.setMode(profile.display_width, profile.display_height) catch |err| {
-            exit_code.* = 1;
-            try stderr_buffer.appendFmt("run-package failed: {s}\n", .{@errorName(err)});
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-run <name>");
             return;
-        };
-        try executeScriptPath(profile.entrypoint, "run-package", stdout_buffer, stderr_buffer, exit_code, allocator, depth);
+        }
+        try runLaunchProfile(arg.arg, "app-run", true, stdout_buffer, stderr_buffer, exit_code, allocator, depth);
         return;
     }
 
@@ -675,6 +794,59 @@ fn ensureParentDirectory(path: []const u8) !void {
     const parent = std.fs.path.dirname(path) orelse return;
     if (parent.len == 0 or std.mem.eql(u8, parent, "/")) return;
     try filesystem.createDirPath(parent);
+}
+
+fn runLaunchProfile(
+    package_name: []const u8,
+    operation: []const u8,
+    persist_state: bool,
+    stdout_buffer: *OutputBuffer,
+    stderr_buffer: *OutputBuffer,
+    exit_code: *u8,
+    allocator: std.mem.Allocator,
+    depth: usize,
+) Error!void {
+    var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    const profile = package_store.loadLaunchProfile(package_name, &entrypoint_buf) catch |err| {
+        exit_code.* = 1;
+        try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+        return;
+    };
+
+    if (profile.trustBundle().len != 0) {
+        trust_store.selectBundle(profile.trustBundle(), 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+            return;
+        };
+    }
+
+    ensureDisplayReady();
+    if (profile.connector_type != abi.display_connector_none and display_output.statePtr().connector_type != profile.connector_type) {
+        exit_code.* = 1;
+        try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(error.DisplayConnectorMismatch) });
+        return;
+    }
+
+    framebuffer_console.setMode(profile.display_width, profile.display_height) catch |err| {
+        exit_code.* = 1;
+        try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+        return;
+    };
+
+    const stdout_before = stdout_buffer.list.items.len;
+    const stderr_before = stderr_buffer.list.items.len;
+    try executeScriptPath(profile.entrypoint, operation, stdout_buffer, stderr_buffer, exit_code, allocator, depth);
+
+    if (persist_state) {
+        const stdout_delta = stdout_buffer.list.items.len - stdout_before;
+        const stderr_delta = stderr_buffer.list.items.len - stderr_before;
+        app_runtime.writeLastRun(package_name, profile, exit_code.*, stdout_delta, stderr_delta, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+            return;
+        };
+    }
 }
 
 fn executeScriptPath(
@@ -979,4 +1151,66 @@ test "baremetal tool exec rotates and revokes trust bundles" {
     try std.testing.expectEqual(@as(u8, 0), selected_info.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, selected_info.stdout, "name=fs55-backup") != null);
     try std.testing.expect(std.mem.indexOf(u8, selected_info.stdout, "selected=1") != null);
+}
+
+test "baremetal tool exec configures app trust and connector and reports app info" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    vga_text_console.resetForTest();
+
+    try trust_store.installBundle("fs55-root", "root-cert", 0);
+    try package_store.installScriptPackage("demo", "echo package-ok", 1);
+
+    var connector_result = try runCapture(std.testing.allocator, "app-connector demo virtual", 256, 256);
+    defer connector_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), connector_result.exit_code);
+    try std.testing.expectEqualStrings("app connector demo virtual\n", connector_result.stdout);
+
+    var trust_result = try runCapture(std.testing.allocator, "app-trust demo fs55-root", 256, 256);
+    defer trust_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), trust_result.exit_code);
+    try std.testing.expectEqualStrings("app trust demo fs55-root\n", trust_result.stdout);
+
+    var info_result = try runCapture(std.testing.allocator, "app-info demo", 512, 256);
+    defer info_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), info_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "connector=virtual") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "trust_bundle=fs55-root") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "state_path=/runtime/apps/demo/last_run.txt") != null);
+
+    var list_result = try runCapture(std.testing.allocator, "app-list", 256, 256);
+    defer list_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), list_result.exit_code);
+    try std.testing.expectEqualStrings("demo\n", list_result.stdout);
+}
+
+test "baremetal tool exec app-run persists last run state and selects trust" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    vga_text_console.resetForTest();
+    display_output.resetForTest();
+    framebuffer_console.resetForTest();
+
+    try trust_store.installBundle("fs55-root", "root-cert", 0);
+    try package_store.installScriptPackage("demo", "mkdir /pkg/out\nwrite-file /pkg/out/data.txt app-data\necho app-ok\n", 1);
+    try package_store.configureDisplayMode("demo", 1280, 720, 2);
+    try package_store.configureConnectorType("demo", abi.display_connector_virtual, 3);
+    try package_store.configureTrustBundle("demo", "fs55-root", 4);
+
+    var run_result = try runCapture(std.testing.allocator, "app-run demo", 512, 256);
+    defer run_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), run_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, run_result.stdout, "app-ok\n") != null);
+
+    const active_bundle = try trust_store.activeBundleNameAlloc(std.testing.allocator, trust_store.max_name_len);
+    defer std.testing.allocator.free(active_bundle);
+    try std.testing.expectEqualStrings("fs55-root", active_bundle);
+
+    var state_result = try runCapture(std.testing.allocator, "app-state demo", 512, 256);
+    defer state_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), state_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, state_result.stdout, "exit_code=0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, state_result.stdout, "requested_connector=virtual") != null);
+    try std.testing.expect(std.mem.indexOf(u8, state_result.stdout, "actual_connector=virtual") != null);
+    try std.testing.expect(std.mem.indexOf(u8, state_result.stdout, "trust_bundle=fs55-root") != null);
 }
