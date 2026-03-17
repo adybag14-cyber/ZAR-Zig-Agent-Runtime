@@ -44,8 +44,11 @@ pub const RequestOp = enum {
     package_verify,
     package_delete,
     package_release_list,
+    package_release_info,
     package_release_save,
     package_release_activate,
+    package_release_delete,
+    package_release_prune,
     app_list,
     app_info,
     app_state,
@@ -103,6 +106,11 @@ pub const DisplayModeRequest = struct {
     height: u16,
 };
 
+pub const PackageReleasePruneRequest = struct {
+    package_name: []const u8,
+    keep: u32,
+};
+
 pub const FramedRequest = struct {
     request_id: u32,
     operation: union(RequestOp) {
@@ -126,8 +134,11 @@ pub const FramedRequest = struct {
         package_verify: []const u8,
         package_delete: []const u8,
         package_release_list: []const u8,
+        package_release_info: NamedValueRequest,
         package_release_save: NamedValueRequest,
         package_release_activate: NamedValueRequest,
+        package_release_delete: NamedValueRequest,
+        package_release_prune: PackageReleasePruneRequest,
         app_list: void,
         app_info: []const u8,
         app_state: []const u8,
@@ -584,6 +595,29 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         };
     }
 
+    if (std.ascii.eqlIgnoreCase(op_part.token, "PKGRELEASEINFO")) {
+        const package_name_part = try splitFirstToken(op_part.rest);
+        const release_name_part = try splitFirstToken(package_name_part.rest);
+        if (release_name_part.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .package_release_info = .{
+                .package_name = package_name_part.token,
+                .value = release_name_part.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
     if (std.ascii.eqlIgnoreCase(op_part.token, "PKGRELEASESAVE")) {
         const package_name_part = try splitFirstToken(op_part.rest);
         const release_name_part = try splitFirstToken(package_name_part.rest);
@@ -616,6 +650,52 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
             .operation = .{ .package_release_activate = .{
                 .package_name = package_name_part.token,
                 .value = release_name_part.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "PKGRELEASEDELETE")) {
+        const package_name_part = try splitFirstToken(op_part.rest);
+        const release_name_part = try splitFirstToken(package_name_part.rest);
+        if (release_name_part.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .package_release_delete = .{
+                .package_name = package_name_part.token,
+                .value = release_name_part.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "PKGRELEASEPRUNE")) {
+        const package_name_part = try splitFirstToken(op_part.rest);
+        const keep_part = try splitFirstToken(package_name_part.rest);
+        if (keep_part.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .package_release_prune = .{
+                .package_name = package_name_part.token,
+                .keep = std.fmt.parseInt(u32, keep_part.token, 10) catch return error.InvalidFrame,
             } },
         };
         if (newline_index != null) {
@@ -1068,8 +1148,11 @@ fn handleFramedPayload(
         .package_verify => |package_name| try handlePackageVerifyRequest(allocator, package_name, payload_limit),
         .package_delete => |package_name| try handlePackageDeleteRequest(allocator, package_name, payload_limit),
         .package_release_list => |package_name| try handlePackageReleaseListRequest(allocator, package_name, payload_limit),
+        .package_release_info => |release_request| try handlePackageReleaseInfoRequest(allocator, release_request.package_name, release_request.value, payload_limit),
         .package_release_save => |release_request| try handlePackageReleaseSaveRequest(allocator, release_request.package_name, release_request.value, payload_limit),
         .package_release_activate => |release_request| try handlePackageReleaseActivateRequest(allocator, release_request.package_name, release_request.value, payload_limit),
+        .package_release_delete => |release_request| try handlePackageReleaseDeleteRequest(allocator, release_request.package_name, release_request.value, payload_limit),
+        .package_release_prune => |release_request| try handlePackageReleasePruneRequest(allocator, release_request.package_name, release_request.keep, payload_limit),
         .app_list => try handleAppListRequest(allocator, payload_limit),
         .app_info => |package_name| try handleAppInfoRequest(allocator, package_name, payload_limit),
         .app_state => |package_name| try handleAppStateRequest(allocator, package_name, payload_limit),
@@ -1344,6 +1427,17 @@ fn handlePackageReleaseListRequest(allocator: std.mem.Allocator, package_name: [
     };
 }
 
+fn handlePackageReleaseInfoRequest(
+    allocator: std.mem.Allocator,
+    package_name: []const u8,
+    release_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return package_store.releaseInfoAlloc(allocator, package_name, release_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "PKGRELEASEINFO", err, payload_limit);
+    };
+}
+
 fn handlePackageReleaseSaveRequest(
     allocator: std.mem.Allocator,
     package_name: []const u8,
@@ -1369,6 +1463,40 @@ fn handlePackageReleaseActivateRequest(
         return formatOperationError(allocator, "PKGRELEASEACTIVATE", err, payload_limit);
     };
     const response = try std.fmt.allocPrint(allocator, "PKGRELEASEACTIVATE {s} {s}\n", .{ package_name, release_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handlePackageReleaseDeleteRequest(
+    allocator: std.mem.Allocator,
+    package_name: []const u8,
+    release_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    package_store.deletePackageRelease(package_name, release_name, 0) catch |err| {
+        return formatOperationError(allocator, "PKGRELEASEDELETE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "PKGRELEASEDELETE {s} {s}\n", .{ package_name, release_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handlePackageReleasePruneRequest(
+    allocator: std.mem.Allocator,
+    package_name: []const u8,
+    keep: u32,
+    payload_limit: usize,
+) Error![]u8 {
+    const prune = package_store.prunePackageReleases(package_name, keep, 0) catch |err| {
+        return formatOperationError(allocator, "PKGRELEASEPRUNE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "PKGRELEASEPRUNE {s} keep={d} deleted={d} kept={d}\n",
+        .{ package_name, keep, prune.deleted_count, prune.kept_count },
+    );
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
@@ -1833,6 +1961,15 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
+    const pkg_release_info = try parseFramedRequest("REQ 129 PKGRELEASEINFO demo r1");
+    switch (pkg_release_info.operation) {
+        .package_release_info => |payload| {
+            try std.testing.expectEqualStrings("demo", payload.package_name);
+            try std.testing.expectEqualStrings("r1", payload.value);
+        },
+        else => return error.InvalidFrame,
+    }
+
     const pkg_release_save = try parseFramedRequest("REQ 127 PKGRELEASESAVE demo r1");
     switch (pkg_release_save.operation) {
         .package_release_save => |payload| {
@@ -1847,6 +1984,24 @@ test "baremetal tool service parses typed framed requests" {
         .package_release_activate => |payload| {
             try std.testing.expectEqualStrings("demo", payload.package_name);
             try std.testing.expectEqualStrings("r1", payload.value);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const pkg_release_delete = try parseFramedRequest("REQ 130 PKGRELEASEDELETE demo r1");
+    switch (pkg_release_delete.operation) {
+        .package_release_delete => |payload| {
+            try std.testing.expectEqualStrings("demo", payload.package_name);
+            try std.testing.expectEqualStrings("r1", payload.value);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const pkg_release_prune = try parseFramedRequest("REQ 131 PKGRELEASEPRUNE demo 1");
+    switch (pkg_release_prune.operation) {
+        .package_release_prune => |payload| {
+            try std.testing.expectEqualStrings("demo", payload.package_name);
+            try std.testing.expectEqual(@as(u32, 1), payload.keep);
         },
         else => return error.InvalidFrame,
     }
@@ -2233,7 +2388,7 @@ test "baremetal tool service verifies package integrity and reports tampering" {
     try std.testing.expect(std.mem.indexOf(u8, verify_bad_response, "field=script_checksum") != null);
 }
 
-test "baremetal tool service saves lists and activates persisted package releases" {
+test "baremetal tool service manages persisted package releases" {
     resetPersistentStateForTest();
 
     const script = "mkdir /pkg/out\nwrite-file /pkg/out/result.txt release-original\necho release-original";
@@ -2268,29 +2423,59 @@ test "baremetal tool service saves lists and activates persisted package release
     defer std.testing.allocator.free(mutated_asset_put_response);
     try std.testing.expectEqualStrings("RESP 94 52\nASSET demo -> /packages/demo/assets/config/app.json\n", mutated_asset_put_response);
 
-    const run_mutated_response = try handleFramedRequest(std.testing.allocator, "REQ 95 PKGRUN demo", 512, 256, 512);
+    const save_second_response = try handleFramedRequest(std.testing.allocator, "REQ 95 PKGRELEASESAVE demo r2", 512, 256, 512);
+    defer std.testing.allocator.free(save_second_response);
+    try std.testing.expectEqualStrings("RESP 95 23\nPKGRELEASESAVE demo r2\n", save_second_response);
+
+    const release_info_response = try handleFramedRequest(std.testing.allocator, "REQ 96 PKGRELEASEINFO demo r2", 512, 256, 512);
+    defer std.testing.allocator.free(release_info_response);
+    try std.testing.expect(std.mem.startsWith(u8, release_info_response, "RESP 96 "));
+    try std.testing.expect(std.mem.indexOf(u8, release_info_response, "release=r2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info_response, "saved_seq=2") != null);
+
+    const run_mutated_response = try handleFramedRequest(std.testing.allocator, "REQ 97 PKGRUN demo", 512, 256, 512);
     defer std.testing.allocator.free(run_mutated_response);
-    try std.testing.expect(std.mem.startsWith(u8, run_mutated_response, "RESP 95 "));
+    try std.testing.expect(std.mem.startsWith(u8, run_mutated_response, "RESP 97 "));
     try std.testing.expect(std.mem.indexOf(u8, run_mutated_response, "release-mutated\n") != null);
 
-    const release_list_response = try handleFramedRequest(std.testing.allocator, "REQ 96 PKGRELEASELIST demo", 512, 256, 512);
+    const release_list_response = try handleFramedRequest(std.testing.allocator, "REQ 98 PKGRELEASELIST demo", 512, 256, 512);
     defer std.testing.allocator.free(release_list_response);
-    try std.testing.expectEqualStrings("RESP 96 3\nr1\n", release_list_response);
+    try std.testing.expectEqualStrings("RESP 98 6\nr1\nr2\n", release_list_response);
 
-    const activate_response = try handleFramedRequest(std.testing.allocator, "REQ 97 PKGRELEASEACTIVATE demo r1", 512, 256, 512);
+    const activate_response = try handleFramedRequest(std.testing.allocator, "REQ 99 PKGRELEASEACTIVATE demo r1", 512, 256, 512);
     defer std.testing.allocator.free(activate_response);
-    try std.testing.expectEqualStrings("RESP 97 27\nPKGRELEASEACTIVATE demo r1\n", activate_response);
+    try std.testing.expectEqualStrings("RESP 99 27\nPKGRELEASEACTIVATE demo r1\n", activate_response);
 
-    const run_restored_response = try handleFramedRequest(std.testing.allocator, "REQ 98 PKGRUN demo", 512, 256, 512);
+    const run_restored_response = try handleFramedRequest(std.testing.allocator, "REQ 100 PKGRUN demo", 512, 256, 512);
     defer std.testing.allocator.free(run_restored_response);
-    try std.testing.expect(std.mem.startsWith(u8, run_restored_response, "RESP 98 "));
+    try std.testing.expect(std.mem.startsWith(u8, run_restored_response, "RESP 100 "));
     try std.testing.expect(std.mem.indexOf(u8, run_restored_response, "release-original\n") != null);
 
-    const asset_get_response = try handleFramedRequest(std.testing.allocator, "REQ 99 PKGGET demo config/app.json", 512, 256, 512);
+    const asset_get_response = try handleFramedRequest(std.testing.allocator, "REQ 101 PKGGET demo config/app.json", 512, 256, 512);
     defer std.testing.allocator.free(asset_get_response);
-    const expected_asset_get_response = try std.fmt.allocPrint(std.testing.allocator, "RESP 99 {d}\n{s}", .{ asset_body.len, asset_body });
+    const expected_asset_get_response = try std.fmt.allocPrint(std.testing.allocator, "RESP 101 {d}\n{s}", .{ asset_body.len, asset_body });
     defer std.testing.allocator.free(expected_asset_get_response);
     try std.testing.expectEqualStrings(expected_asset_get_response, asset_get_response);
+
+    const save_third_response = try handleFramedRequest(std.testing.allocator, "REQ 102 PKGRELEASESAVE demo r3", 512, 256, 512);
+    defer std.testing.allocator.free(save_third_response);
+    try std.testing.expectEqualStrings("RESP 102 23\nPKGRELEASESAVE demo r3\n", save_third_response);
+
+    const delete_response = try handleFramedRequest(std.testing.allocator, "REQ 103 PKGRELEASEDELETE demo r2", 512, 256, 512);
+    defer std.testing.allocator.free(delete_response);
+    try std.testing.expectEqualStrings("RESP 103 25\nPKGRELEASEDELETE demo r2\n", delete_response);
+
+    const list_after_delete = try handleFramedRequest(std.testing.allocator, "REQ 104 PKGRELEASELIST demo", 512, 256, 512);
+    defer std.testing.allocator.free(list_after_delete);
+    try std.testing.expectEqualStrings("RESP 104 6\nr1\nr3\n", list_after_delete);
+
+    const prune_response = try handleFramedRequest(std.testing.allocator, "REQ 105 PKGRELEASEPRUNE demo 1", 512, 256, 512);
+    defer std.testing.allocator.free(prune_response);
+    try std.testing.expectEqualStrings("RESP 105 45\nPKGRELEASEPRUNE demo keep=1 deleted=1 kept=1\n", prune_response);
+
+    const list_after_prune = try handleFramedRequest(std.testing.allocator, "REQ 106 PKGRELEASELIST demo", 512, 256, 512);
+    defer std.testing.allocator.free(list_after_prune);
+    try std.testing.expectEqualStrings("RESP 106 3\nr3\n", list_after_prune);
 
     const script_readback = try filesystem.readFileAlloc(std.testing.allocator, "/packages/demo/bin/main.oc", 128);
     defer std.testing.allocator.free(script_readback);
