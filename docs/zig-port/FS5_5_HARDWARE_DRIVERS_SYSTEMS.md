@@ -424,6 +424,7 @@ Current local source-of-truth evidence:
   - `/packages/<name>/meta/package.txt`
   - `/packages/<name>/meta/app.txt`
   - `/packages/<name>/assets/...`
+  - manifest `script_checksum`, `app_manifest_checksum`, and `asset_tree_checksum` fields that can be recomputed against the current persisted package tree
 - `src/pal/proc.zig` now exposes an explicit `runCaptureFreestanding(...)` path instead of pretending the hosted child-process path is valid on `freestanding`.
 - `src/baremetal/tool_service.zig` now exposes a bounded typed framed request/response shim on top of `tool_exec.runCapture(...)`, `package_store`, and the bare-metal filesystem for the TCP path.
 - the execution path now closes its dependency chain through real FS5.5 storage/filesystem layers:
@@ -449,9 +450,11 @@ Current local source-of-truth evidence:
   - the hosted regression in `src/baremetal_main.zig`
 - those host/module proofs now also cover:
   - persisted ATA-backed package layout roundtrips
-  - typed TCP `PKG` / `PKGLIST` / `PKGINFO` / `PKGRUN` / `PKGAPP` / `PKGDISPLAY` / `PKGPUT` / `PKGLS` / `PKGGET` / `PKGDELETE` service behavior
+  - typed TCP `PKG` / `PKGLIST` / `PKGINFO` / `PKGRUN` / `PKGAPP` / `PKGDISPLAY` / `PKGPUT` / `PKGLS` / `PKGGET` / `PKGVERIFY` / `PKGDELETE` service behavior
   - canonical `run-package <name>` execution against `/packages/<name>/bin/main.oc`
-  - package manifest readback, package app-manifest readback, package asset install/list/get, persisted package display profiles, and direct-child directory listing on the canonical `/packages/<name>/...` layout
+  - package manifest readback, package app-manifest readback, manifest checksum fields, package asset install/list/get, persisted package display profiles, and direct-child directory listing on the canonical `/packages/<name>/...` layout
+  - `package-verify <name>` plus typed `PKGVERIFY <name>` success receipts against the persisted package tree
+  - deterministic mismatch detection after script tampering, currently proven by hosted/module tests through `field=script_checksum`
   - `display-info` / `display-modes` / `display-set` builtin output and typed `DISPLAYINFO` / `DISPLAYMODES` / `DISPLAYSET` service behavior
 
 ## Non-Goals For This Track

@@ -41,6 +41,7 @@ pub const RequestOp = enum {
     package_asset_put,
     package_asset_list,
     package_asset_get,
+    package_verify,
     package_delete,
     app_list,
     app_info,
@@ -115,6 +116,7 @@ pub const FramedRequest = struct {
         package_asset_put: PackagePutRequest,
         package_asset_list: []const u8,
         package_asset_get: PackagePathRequest,
+        package_verify: []const u8,
         package_delete: []const u8,
         app_list: void,
         app_info: []const u8,
@@ -526,6 +528,20 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         };
     }
 
+    if (std.ascii.eqlIgnoreCase(op_part.token, "PKGVERIFY")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .package_verify = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .package_verify = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
     if (std.ascii.eqlIgnoreCase(op_part.token, "PKGDELETE")) {
         if (op_part.rest.len == 0) return error.InvalidFrame;
         if (newline_index != null) {
@@ -919,6 +935,7 @@ fn handleFramedPayload(
         .package_asset_put => |asset_request| try handlePackageAssetPutRequest(allocator, asset_request.package_name, asset_request.relative_path, asset_request.body, payload_limit),
         .package_asset_list => |package_name| try handlePackageAssetListRequest(allocator, package_name, payload_limit),
         .package_asset_get => |asset_request| try handlePackageAssetGetRequest(allocator, asset_request.package_name, asset_request.relative_path, payload_limit),
+        .package_verify => |package_name| try handlePackageVerifyRequest(allocator, package_name, payload_limit),
         .package_delete => |package_name| try handlePackageDeleteRequest(allocator, package_name, payload_limit),
         .app_list => try handleAppListRequest(allocator, payload_limit),
         .app_info => |package_name| try handleAppInfoRequest(allocator, package_name, payload_limit),
@@ -1150,6 +1167,16 @@ fn handlePackageAssetGetRequest(
     return package_store.readPackageAssetAlloc(allocator, package_name, relative_path, payload_limit) catch |err| {
         return formatOperationError(allocator, "PKGGET", err, payload_limit);
     };
+}
+
+fn handlePackageVerifyRequest(allocator: std.mem.Allocator, package_name: []const u8, payload_limit: usize) Error![]u8 {
+    var result = package_store.verifyPackageAlloc(allocator, package_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "PKGVERIFY", err, payload_limit);
+    };
+    defer result.deinit(allocator);
+
+    if (result.payload.len > payload_limit) return error.ResponseTooLarge;
+    return allocator.dupe(u8, result.payload);
 }
 
 fn handlePackageRunRequest(
@@ -1580,25 +1607,31 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
-    const pkg_delete = try parseFramedRequest("REQ 24 PKGDELETE demo");
+    const pkg_verify = try parseFramedRequest("REQ 24 PKGVERIFY demo");
+    switch (pkg_verify.operation) {
+        .package_verify => |package_name| try std.testing.expectEqualStrings("demo", package_name),
+        else => return error.InvalidFrame,
+    }
+
+    const pkg_delete = try parseFramedRequest("REQ 25 PKGDELETE demo");
     switch (pkg_delete.operation) {
         .package_delete => |package_name| try std.testing.expectEqualStrings("demo", package_name),
         else => return error.InvalidFrame,
     }
 
-    const display_info = try parseFramedRequest("REQ 25 DISPLAYINFO");
+    const display_info = try parseFramedRequest("REQ 26 DISPLAYINFO");
     switch (display_info.operation) {
         .display_info => {},
         else => return error.InvalidFrame,
     }
 
-    const display_modes = try parseFramedRequest("REQ 26 DISPLAYMODES");
+    const display_modes = try parseFramedRequest("REQ 27 DISPLAYMODES");
     switch (display_modes.operation) {
         .display_modes => {},
         else => return error.InvalidFrame,
     }
 
-    const display_set = try parseFramedRequest("REQ 27 DISPLAYSET 800 600");
+    const display_set = try parseFramedRequest("REQ 28 DISPLAYSET 800 600");
     switch (display_set.operation) {
         .display_set => |payload| {
             try std.testing.expectEqual(@as(u16, 800), payload.width);
@@ -1923,6 +1956,27 @@ test "baremetal tool service installs lists and runs persisted packages" {
     try std.testing.expectEqualStrings(expected_package_dir_response, package_dir_response);
 }
 
+test "baremetal tool service verifies package integrity and reports tampering" {
+    resetPersistentStateForTest();
+
+    try package_store.installScriptPackage("demo", "echo verify-demo", 1);
+    try package_store.installPackageAsset("demo", "config/app.json", "{\"mode\":\"verify\"}", 2);
+
+    const verify_ok_response = try handleFramedRequest(std.testing.allocator, "REQ 80 PKGVERIFY demo", 512, 256, 512);
+    defer std.testing.allocator.free(verify_ok_response);
+    try std.testing.expect(std.mem.startsWith(u8, verify_ok_response, "RESP 80 "));
+    try std.testing.expect(std.mem.indexOf(u8, verify_ok_response, "status=ok") != null);
+    try std.testing.expect(std.mem.indexOf(u8, verify_ok_response, "asset_tree_checksum=") != null);
+
+    try filesystem.writeFile("/packages/demo/bin/main.oc", "echo verify-dam0", 3);
+
+    const verify_bad_response = try handleFramedRequest(std.testing.allocator, "REQ 81 PKGVERIFY demo", 512, 256, 512);
+    defer std.testing.allocator.free(verify_bad_response);
+    try std.testing.expect(std.mem.startsWith(u8, verify_bad_response, "RESP 81 "));
+    try std.testing.expect(std.mem.indexOf(u8, verify_bad_response, "status=mismatch") != null);
+    try std.testing.expect(std.mem.indexOf(u8, verify_bad_response, "field=script_checksum") != null);
+}
+
 test "baremetal tool service reports display info and supported modes" {
     resetPersistentStateForTest();
 
@@ -2180,7 +2234,7 @@ test "baremetal tool service handles batched package requests" {
         install_request,
         "\n",
         asset_request,
-        "\nREQ 33 PKGLS demo\nREQ 34 PKGGET demo config/app.json\nREQ 35 PKGLIST\nREQ 36 PKGINFO demo\nREQ 37 PKGAPP demo\nREQ 38 PKGDISPLAY demo 1280 720\nREQ 39 PKGRUN demo\nREQ 40 DISPLAYSET 800 600\nREQ 41 DISPLAYINFO\nREQ 42 DISPLAYMODES",
+        "\nREQ 33 PKGLS demo\nREQ 34 PKGGET demo config/app.json\nREQ 35 PKGVERIFY demo\nREQ 36 PKGLIST\nREQ 37 PKGINFO demo\nREQ 38 PKGAPP demo\nREQ 39 PKGDISPLAY demo 1280 720\nREQ 40 PKGRUN demo\nREQ 41 DISPLAYSET 800 600\nREQ 42 DISPLAYINFO\nREQ 43 DISPLAYMODES",
     });
     defer std.testing.allocator.free(batch_request);
     const batch_response = try handleFramedRequestBatch(std.testing.allocator, batch_request, 512, 256, 2048);
@@ -2194,23 +2248,25 @@ test "baremetal tool service handles batched package requests" {
     defer std.testing.allocator.free(expected_asset_list);
     const expected_asset_get = try handleFramedRequest(std.testing.allocator, "REQ 34 PKGGET demo config/app.json", 512, 256, 512);
     defer std.testing.allocator.free(expected_asset_get);
-    const expected_list = try handleFramedRequest(std.testing.allocator, "REQ 35 PKGLIST", 512, 256, 512);
+    const expected_verify = try handleFramedRequest(std.testing.allocator, "REQ 35 PKGVERIFY demo", 512, 256, 512);
+    defer std.testing.allocator.free(expected_verify);
+    const expected_list = try handleFramedRequest(std.testing.allocator, "REQ 36 PKGLIST", 512, 256, 512);
     defer std.testing.allocator.free(expected_list);
-    const expected_info = try handleFramedRequest(std.testing.allocator, "REQ 36 PKGINFO demo", 512, 256, 512);
+    const expected_info = try handleFramedRequest(std.testing.allocator, "REQ 37 PKGINFO demo", 512, 256, 512);
     defer std.testing.allocator.free(expected_info);
-    const expected_app = try handleFramedRequest(std.testing.allocator, "REQ 37 PKGAPP demo", 512, 256, 512);
+    const expected_app = try handleFramedRequest(std.testing.allocator, "REQ 38 PKGAPP demo", 512, 256, 512);
     defer std.testing.allocator.free(expected_app);
-    const expected_pkg_display = try handleFramedRequest(std.testing.allocator, "REQ 38 PKGDISPLAY demo 1280 720", 512, 256, 512);
+    const expected_pkg_display = try handleFramedRequest(std.testing.allocator, "REQ 39 PKGDISPLAY demo 1280 720", 512, 256, 512);
     defer std.testing.allocator.free(expected_pkg_display);
-    const expected_run = try handleFramedRequest(std.testing.allocator, "REQ 39 PKGRUN demo", 512, 256, 512);
+    const expected_run = try handleFramedRequest(std.testing.allocator, "REQ 40 PKGRUN demo", 512, 256, 512);
     defer std.testing.allocator.free(expected_run);
-    const expected_display_set = try handleFramedRequest(std.testing.allocator, "REQ 40 DISPLAYSET 800 600", 512, 256, 512);
+    const expected_display_set = try handleFramedRequest(std.testing.allocator, "REQ 41 DISPLAYSET 800 600", 512, 256, 512);
     defer std.testing.allocator.free(expected_display_set);
-    const expected_display_info = try handleFramedRequest(std.testing.allocator, "REQ 41 DISPLAYINFO", 512, 256, 512);
+    const expected_display_info = try handleFramedRequest(std.testing.allocator, "REQ 42 DISPLAYINFO", 512, 256, 512);
     defer std.testing.allocator.free(expected_display_info);
-    const expected_display_modes = try handleFramedRequest(std.testing.allocator, "REQ 42 DISPLAYMODES", 512, 256, 512);
+    const expected_display_modes = try handleFramedRequest(std.testing.allocator, "REQ 43 DISPLAYMODES", 512, 256, 512);
     defer std.testing.allocator.free(expected_display_modes);
-    const expected = try std.mem.concat(std.testing.allocator, u8, &.{ expected_install, expected_asset, expected_asset_list, expected_asset_get, expected_list, expected_info, expected_app, expected_pkg_display, expected_run, expected_display_set, expected_display_info, expected_display_modes });
+    const expected = try std.mem.concat(std.testing.allocator, u8, &.{ expected_install, expected_asset, expected_asset_list, expected_asset_get, expected_verify, expected_list, expected_info, expected_app, expected_pkg_display, expected_run, expected_display_set, expected_display_info, expected_display_modes });
     defer std.testing.allocator.free(expected);
 
     try std.testing.expectEqualStrings(expected, batch_response);

@@ -308,6 +308,7 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
 pub const SimpleStat = struct {
     kind: std.Io.File.Kind,
     size: u64,
+    checksum: u32,
     modified_tick: u64,
     entry_id: u64,
 };
@@ -354,6 +355,7 @@ pub fn statSummary(path: []const u8) Error!SimpleStat {
     if (full.len == 1) {
         return .{
             .size = 0,
+            .checksum = 0,
             .kind = .directory,
             .modified_tick = 0,
             .entry_id = 0,
@@ -364,6 +366,7 @@ pub fn statSummary(path: []const u8) Error!SimpleStat {
     const record = entries[entry_index];
     return .{
         .size = record.byte_len,
+        .checksum = record.checksum,
         .kind = if (record.kind == abi.filesystem_kind_directory) .directory else .file,
         .modified_tick = record.modified_tick,
         .entry_id = record.entry_id,

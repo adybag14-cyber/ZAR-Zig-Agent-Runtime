@@ -135,7 +135,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-app, package-display, package-ls, package-cat, package-delete, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-delete, trust-list, trust-info, trust-active, trust-select, trust-delete, display-info, display-modes, display-set, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-delete, trust-list, trust-info, trust-active, trust-select, trust-delete, display-info, display-modes, display-set, run-script, run-package, app-run");
         return;
     }
 
@@ -275,6 +275,33 @@ fn execute(
         };
         defer allocator.free(manifest);
         try stdout_buffer.appendSlice(manifest);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "package-verify")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-verify <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-verify <name>");
+            return;
+        }
+        var verification = package_store.verifyPackageAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("package-verify failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer verification.deinit(allocator);
+
+        if (verification.ok) {
+            try stdout_buffer.appendSlice(verification.payload);
+        } else {
+            exit_code.* = 1;
+            try stderr_buffer.appendSlice(verification.payload);
+        }
         return;
     }
 
@@ -1110,7 +1137,7 @@ test "baremetal tool exec lists directories and reads package metadata" {
     try std.testing.expectEqual(@as(u8, 0), list_result.exit_code);
     try std.testing.expectEqualStrings("dir demo\n", list_result.stdout);
 
-    var info_result = try runCapture(std.testing.allocator, "package-info demo", 256, 256);
+    var info_result = try runCapture(std.testing.allocator, "package-info demo", 512, 256);
     defer info_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), info_result.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "name=demo") != null);
@@ -1123,6 +1150,31 @@ test "baremetal tool exec lists directories and reads package metadata" {
     try std.testing.expect(std.mem.indexOf(u8, app_result.stdout, "entrypoint=/packages/demo/bin/main.oc") != null);
     try std.testing.expect(std.mem.indexOf(u8, app_result.stdout, "display_width=640") != null);
     try std.testing.expect(std.mem.indexOf(u8, app_result.stdout, "display_height=400") != null);
+}
+
+test "baremetal tool exec verifies package manifest integrity and reports tampering" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    vga_text_console.resetForTest();
+
+    try package_store.installScriptPackage("verify-demo", "echo verify-demo", 1);
+    try package_store.installPackageAsset("verify-demo", "config/app.json", "{\"mode\":\"verify\"}", 2);
+
+    var verify_ok = try runCapture(std.testing.allocator, "package-verify verify-demo", 512, 256);
+    defer verify_ok.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), verify_ok.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, verify_ok.stdout, "status=ok") != null);
+    try std.testing.expect(std.mem.indexOf(u8, verify_ok.stdout, "asset_tree_checksum=") != null);
+
+    var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    const entrypoint = try package_store.entrypointPath("verify-demo", &entrypoint_buf);
+    try filesystem.writeFile(entrypoint, "echo verify-dam0", 3);
+
+    var verify_bad = try runCapture(std.testing.allocator, "package-verify verify-demo", 512, 256);
+    defer verify_bad.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 1), verify_bad.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, verify_bad.stderr, "status=mismatch") != null);
+    try std.testing.expect(std.mem.indexOf(u8, verify_bad.stderr, "field=script_checksum") != null);
 }
 
 test "baremetal tool exec lists and reads persisted package assets" {
