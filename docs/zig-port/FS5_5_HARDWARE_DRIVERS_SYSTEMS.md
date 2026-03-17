@@ -399,6 +399,7 @@ Status: `Complete`
 Current local source-of-truth evidence:
 
 - `src/baremetal/filesystem.zig` now implements a real path-based bare-metal filesystem layer on top of the shared storage backend
+- the filesystem entry budget is now `64`, which is the current bounded baseline that keeps the deeper FS5.5 package/trust/app/autorun runtime state fitting on the persisted filesystem surface
 - directory creation is implemented through `createDirPath`
 - file write/read/stat are implemented through `writeFile`, `readFileAlloc`, and `statNoFollow`
 - `src/pal/fs.zig` now routes the freestanding PAL surface through that filesystem layer instead of requiring hosted filesystem calls
@@ -456,6 +457,7 @@ Current local source-of-truth evidence:
   - `package-verify <name>` plus typed `PKGVERIFY <name>` success receipts against the persisted package tree
   - deterministic mismatch detection after script tampering, currently proven by hosted/module tests through `field=script_checksum`
   - `display-info` / `display-modes` / `display-set` builtin output and typed `DISPLAYINFO` / `DISPLAYMODES` / `DISPLAYSET` service behavior
+  - the current FS5.5 autorun slice now adds persisted `/runtime/apps/autorun.txt` state through `src/baremetal/app_runtime.zig`, new `tool_exec` builtins (`app-autorun-list`, `app-autorun-add`, `app-autorun-remove`, `app-autorun-run`), new typed TCP verbs (`APPAUTORUNLIST`, `APPAUTORUNADD`, `APPAUTORUNREMOVE`, `APPAUTORUNRUN`), ATA/RAM-backed autorun registry tests, and live RTL8139 TCP proof for add/list/run/remove plus `/runtime/apps/autorun.txt`, `/runtime/apps/aux/last_run.txt`, and `/runtime/apps/aux/stdout.log` readback
 
 ## Non-Goals For This Track
 
@@ -468,5 +470,4 @@ Current local source-of-truth evidence:
 `FS5.5` is only complete when every subsystem above is implemented and validated end to end with the dependency chain satisfied.
 
 Current local source-of-truth verdict: the current FS5.5 closure bar is satisfied for the subsystems above, and the remaining future-depth gaps are listed explicitly in this document rather than being claimed as complete.
-
 

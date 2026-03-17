@@ -2965,13 +2965,13 @@ fn expectTcpProbePacket(
 
 const Rtl8139TcpProbeScratch = struct {
     packet_storage: pal_net.TcpPacket,
-    service_scratch: [6144]u8,
+    service_scratch: [8192]u8,
     http_post_scratch: [2048]u8,
     https_trust_store_scratch: [2048]u8,
     service_request_put_buffer: [256]u8,
     service_response_put_expected_buffer: [160]u8,
-    service_batch_request_buffer: [768]u8,
-    service_batch_response_expected_buffer: [1792]u8,
+    service_batch_request_buffer: [1024]u8,
+    service_batch_response_expected_buffer: [2304]u8,
     package_install_request_buffer: [512]u8,
     package_info_response_expected_buffer: [384]u8,
     app_info_response_expected_buffer: [448]u8,
@@ -3251,13 +3251,13 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         "exit=0 stdout_len=15 stderr_len=0\nstdout:\ntcp-service-ok\nstderr:\n";
     const service_request_long = "REQ 3 help";
     const service_response_long_payload_expected =
-        "OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-delete, trust-list, trust-info, trust-active, trust-select, trust-delete, display-info, display-modes, display-set, run-script, run-package, app-run\n";
+        "OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, display-info, display-modes, display-set, run-script, run-package, app-run\n";
     const service_script_path = "/tools/scripts/net.oc";
     const service_script_body = "write-file /tools/out/net.txt tcp-service-persisted";
     const package_name = "demo";
     const package_install_request_id: u32 = 31;
     const package_list_request = "REQ 32 PKGLIST";
-    const package_list_expected = "RESP 32 5\ndemo\n";
+    const package_list_expected = "RESP 32 9\ndemo\naux\n";
     const package_run_request = "REQ 33 PKGRUN demo";
     const package_verify_request = "REQ 34 PKGVERIFY demo";
     const package_app_request = "REQ 41 PKGAPP demo";
@@ -3274,6 +3274,9 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const package_run_stdout = "created /pkg/out\nwrote 16 bytes to /pkg/out/result.txt\npkg-service-ok\n";
     const package_output_path = "/pkg/out/result.txt";
     const package_output_expected = "pkg-service-data";
+    const autorun_package_name = "aux";
+    const autorun_package_script_body = "echo aux-autorun";
+    const autorun_run_stdout = "aux-autorun\n";
     const trust_bundle_name = "fs55-root";
     const trust_backup_bundle_name = "fs55-backup";
     const trust_install_request_id: u32 = 45;
@@ -3300,8 +3303,14 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const batch_request_id_app_stdout: u32 = 68;
     const batch_request_id_app_stderr: u32 = 69;
     const batch_request_id_app_list: u32 = 70;
-    const uninstall_request_id: u32 = 71;
-    const uninstall_list_request_id: u32 = 72;
+    const autorun_add_demo_request_id: u32 = 71;
+    const autorun_add_aux_request_id: u32 = 72;
+    const autorun_list_request_id: u32 = 73;
+    const autorun_run_request_id: u32 = 74;
+    const autorun_remove_request_id: u32 = 75;
+    const autorun_list_after_remove_request_id: u32 = 76;
+    const uninstall_request_id: u32 = 79;
+    const uninstall_list_request_id: u32 = 80;
     const retransmit_interval_ticks: u64 = 4;
     const flow_a = tcp_protocol.FlowKey{
         .local_ip = source_ip,
@@ -3612,7 +3621,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
         512,
         256,
-        512,
+        1024,
     ) catch return error.ToolServiceFailed;
     if (!std.mem.startsWith(u8, service_response_long, "RESP 3 ")) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, service_response_long, service_response_long_payload_expected) == null) return error.ToolServiceResponseMismatch;
@@ -3716,6 +3725,8 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const package_script_readback = filesystem.readFileAlloc(service_fba.allocator(), package_entrypoint, 160) catch return error.ToolServiceFailed;
     if (!std.mem.eql(u8, package_script_readback, package_script_body)) return error.ToolServiceResponseMismatch;
+
+    package_store.installScriptPackage(autorun_package_name, autorun_package_script_body, 0) catch return error.ToolServiceFailed;
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const package_list_request_payload = client_b.buildPayload(package_list_request) catch |err| return mapTcpSessionProbeError(err);
@@ -4716,7 +4727,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         "{s}",
         .{""},
     ) catch return error.ToolServiceFailed;
-    const app_batch_service_response_expected = std.fmt.bufPrint(&scratch.service_batch_response_expected_buffer, "RESP {d} 26\nAPPCONNECTOR {s} virtual\nRESP {d} 26\nAPPTRUST {s} {s}\nRESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} 5\ndemo\n", .{
+    const app_batch_service_response_expected = std.fmt.bufPrint(&scratch.service_batch_response_expected_buffer, "RESP {d} 26\nAPPCONNECTOR {s} virtual\nRESP {d} 26\nAPPTRUST {s} {s}\nRESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} 9\ndemo\naux\n", .{
         batch_request_id_app_connector,
         package_name,
         batch_request_id_app_trust,
@@ -4782,6 +4793,108 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     if (!std.mem.eql(u8, app_stderr_readback, app_stderr_payload_expected)) return error.ToolServiceResponseMismatch;
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const autorun_batch_service_request = std.fmt.bufPrint(
+        &scratch.service_batch_request_buffer,
+        "REQ {d} APPAUTORUNADD {s}\nREQ {d} APPAUTORUNADD {s}\nREQ {d} APPAUTORUNLIST\nREQ {d} APPAUTORUNRUN\nREQ {d} APPAUTORUNREMOVE {s}\nREQ {d} APPAUTORUNLIST",
+        .{
+            autorun_add_demo_request_id,
+            package_name,
+            autorun_add_aux_request_id,
+            autorun_package_name,
+            autorun_list_request_id,
+            autorun_run_request_id,
+            autorun_remove_request_id,
+            package_name,
+            autorun_list_after_remove_request_id,
+        },
+    ) catch return error.ToolServiceFailed;
+    const autorun_batch_service_request_payload = client_b.buildPayload(autorun_batch_service_request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, autorun_batch_service_request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, autorun_batch_service_request_payload);
+    server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const autorun_batch_service_response = tool_service.handleFramedRequestBatch(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        512,
+        256,
+        1024,
+    ) catch return error.ToolServiceFailed;
+    var autorun_add_demo_payload_buffer: [32]u8 = undefined;
+    const autorun_add_demo_payload_expected = std.fmt.bufPrint(&autorun_add_demo_payload_buffer, "APPAUTORUNADD {s}\n", .{package_name}) catch return error.ToolServiceFailed;
+    var autorun_add_aux_payload_buffer: [32]u8 = undefined;
+    const autorun_add_aux_payload_expected = std.fmt.bufPrint(&autorun_add_aux_payload_buffer, "APPAUTORUNADD {s}\n", .{autorun_package_name}) catch return error.ToolServiceFailed;
+    const autorun_list_payload_expected = "demo\naux\n";
+    const autorun_run_payload_expected = std.fmt.bufPrint(
+        &scratch.app_stdout_response_expected_buffer,
+        "{s}{s}",
+        .{ package_run_stdout, autorun_run_stdout },
+    ) catch return error.ToolServiceFailed;
+    var autorun_remove_payload_buffer: [40]u8 = undefined;
+    const autorun_remove_payload_expected = std.fmt.bufPrint(&autorun_remove_payload_buffer, "APPAUTORUNREMOVE {s}\n", .{package_name}) catch return error.ToolServiceFailed;
+    const autorun_list_after_remove_payload_expected = "aux\n";
+    const autorun_batch_service_response_expected = std.fmt.bufPrint(
+        &scratch.service_batch_response_expected_buffer,
+        "RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}",
+        .{
+            autorun_add_demo_request_id,
+            autorun_add_demo_payload_expected.len,
+            autorun_add_demo_payload_expected,
+            autorun_add_aux_request_id,
+            autorun_add_aux_payload_expected.len,
+            autorun_add_aux_payload_expected,
+            autorun_list_request_id,
+            autorun_list_payload_expected.len,
+            autorun_list_payload_expected,
+            autorun_run_request_id,
+            autorun_run_payload_expected.len,
+            autorun_run_payload_expected,
+            autorun_remove_request_id,
+            autorun_remove_payload_expected.len,
+            autorun_remove_payload_expected,
+            autorun_list_after_remove_request_id,
+            autorun_list_after_remove_payload_expected.len,
+            autorun_list_after_remove_payload_expected,
+        },
+    ) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, autorun_batch_service_response, autorun_batch_service_response_expected)) return error.ToolServiceResponseMismatch;
+
+    var autorun_batch_service_response_offset: usize = 0;
+    while (autorun_batch_service_response_offset < autorun_batch_service_response.len) {
+        const autorun_batch_service_reply_chunk = server_b.buildPayloadChunk(autorun_batch_service_response[autorun_batch_service_response_offset..]) catch |err| return mapTcpSessionProbeError(err);
+        const expected_chunk = autorun_batch_service_response[autorun_batch_service_response_offset .. autorun_batch_service_response_offset + autorun_batch_service_reply_chunk.payload.len];
+        _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, autorun_batch_service_reply_chunk);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, autorun_batch_service_reply_chunk);
+        if (!std.mem.eql(u8, autorun_batch_service_reply_chunk.payload, expected_chunk)) return error.PayloadMismatch;
+        const mapped_b_autorun_reply_chunk = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+        if (mapped_b_autorun_reply_chunk != client_b) return error.SessionStateMismatch;
+        mapped_b_autorun_reply_chunk.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+        autorun_batch_service_response_offset += autorun_batch_service_reply_chunk.payload.len;
+
+        const autorun_batch_service_reply_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+        _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, autorun_batch_service_reply_ack);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, autorun_batch_service_reply_ack);
+        server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    }
+    if (autorun_batch_service_response_offset != autorun_batch_service_response.len) return error.PayloadMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const autorun_list_readback = filesystem.readFileAlloc(service_fba.allocator(), "/runtime/apps/autorun.txt", 64) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, autorun_list_readback, autorun_list_after_remove_payload_expected)) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const autorun_aux_state_readback = filesystem.readFileAlloc(service_fba.allocator(), "/runtime/apps/aux/last_run.txt", 256) catch return error.ToolServiceFailed;
+    if (std.mem.indexOf(u8, autorun_aux_state_readback, "exit_code=0") == null) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const autorun_aux_stdout_readback = filesystem.readFileAlloc(service_fba.allocator(), "/runtime/apps/aux/stdout.log", 64) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, autorun_aux_stdout_readback, autorun_run_stdout)) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const uninstall_service_request = std.fmt.bufPrint(&scratch.service_batch_request_buffer, "REQ {d} APPDELETE {s}\nREQ {d} APPLIST", .{
         uninstall_request_id,
         package_name,
@@ -4800,7 +4913,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         256,
         512,
     ) catch return error.ToolServiceFailed;
-    const uninstall_service_response_expected = std.fmt.bufPrint(&scratch.service_batch_response_expected_buffer, "RESP {d} 16\nAPPDELETED {s}\nRESP {d} 0\n", .{
+    const uninstall_service_response_expected = std.fmt.bufPrint(&scratch.service_batch_response_expected_buffer, "RESP {d} 16\nAPPDELETED {s}\nRESP {d} 4\naux\n", .{
         uninstall_request_id,
         package_name,
         uninstall_list_request_id,

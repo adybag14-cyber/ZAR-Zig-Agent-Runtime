@@ -3,7 +3,7 @@
 ## Current Snapshot
 
 - Latest published edge release: `v0.2.0-zig-edge.29`
-- Latest local test gate: `zig build test --summary all` -> main `352/352` + bare-metal host `298 passed / 1 skipped`
+- Latest local test gate: `zig build test --summary all` -> `361/361` passed
 - Latest parity gate: `scripts/check-go-method-parity.ps1` -> `GO_MISSING_IN_ZIG=0`, `ORIGINAL_MISSING_IN_ZIG=0`, `ORIGINAL_BETA_MISSING_IN_ZIG=0`, `UNION_MISSING_IN_ZIG=0`, `UNION_EVENTS_MISSING_IN_ZIG=0`, `ZIG_COUNT=175`, `ZIG_EVENTS_COUNT=19`, union baseline `141/141`
 - Current head: local source-of-truth on `fs55-ethernet-integration` (exact pushed head is tracked in issue `#1` and the latest branch GitHub Actions runs)
 - License posture: repo-wide `GPL-2.0-only` with Linux-style SPDX headers on repo-owned source and script files
@@ -77,6 +77,7 @@
   - `src/baremetal/filesystem.zig` implements path-based directory creation plus file read/write/stat
   - `src/pal/fs.zig` routes the freestanding PAL filesystem surface through that layer
   - hosted and host validation now prove persistence over both RAM-disk and ATA PIO backends
+  - the filesystem entry budget is now `64`, which is the current bounded baseline that keeps the deeper FS5.5 package/trust/app/autorun runtime state fitting on the persisted filesystem surface
 - bare-metal tool execution is now also on a real freestanding path in `FS5.5`:
   - `src/baremetal/tool_exec.zig` provides the builtin command substrate used by the bare-metal PAL instead of a hosted-process stub, including persisted `run-script` execution, canonical `run-package`, `package-verify`, `package-app`, `package-display`, `package-ls`, `package-cat`, `package-delete`, `app-list`, `app-info`, `app-state`, `app-history`, `app-stdout`, `app-stderr`, `app-trust`, `app-connector`, `app-run`, `app-delete`, `display-info`, `display-modes`, and `display-set`
   - `src/pal/proc.zig` now exposes the explicit freestanding capture path
@@ -84,6 +85,7 @@
   - `src/baremetal/tool_service.zig` provides the bounded typed request/response service shim used by the TCP proof, including structured `EXEC` responses, typed `PKGVERIFY`, and typed app lifecycle verbs on top of the freestanding tool-exec substrate
   - `scripts/baremetal-qemu-tool-exec-probe-check.ps1` proves `help`, `mkdir`, `write-file`, `cat`, `stat`, `run-script`, direct filesystem readback, persisted script readback after filesystem reset/re-init, and `echo` over the freestanding PVH image with attached disk media
   - hosted/module validation also proves ATA-backed package persistence plus `run-package`, `package-verify`, `PKG`, `PKGLIST`, `PKGINFO`, `PKGRUN`, `PKGAPP`, `PKGDISPLAY`, `PKGPUT`, `PKGLS`, `PKGGET`, `PKGVERIFY`, `PKGDELETE`, `APPLIST`, `APPINFO`, `APPSTATE`, `APPHISTORY`, `APPSTDOUT`, `APPSTDERR`, `APPTRUST`, `APPCONNECTOR`, `APPRUN`, `APPDELETE`, `DISPLAYINFO`, `DISPLAYMODES`, `DISPLAYSET`, package manifests, app manifests, manifest checksum fields, persisted package display profiles, package assets, direct-child directory listing, deterministic tamper detection on package script checksum mismatch, recursive uninstall cleanup, persisted app runtime-state receipts, persisted app stdout/stderr receipts, and live display-mode application during `run-package`
+  - the current FS5.5 autorun slice now adds persisted `/runtime/apps/autorun.txt` state through `src/baremetal/app_runtime.zig`, new `tool_exec` builtins (`app-autorun-list`, `app-autorun-add`, `app-autorun-remove`, `app-autorun-run`), new typed TCP verbs (`APPAUTORUNLIST`, `APPAUTORUNADD`, `APPAUTORUNREMOVE`, `APPAUTORUNRUN`), ATA/RAM-backed autorun registry tests, and live RTL8139 TCP proof for add/list/run/remove plus `/runtime/apps/autorun.txt`, `/runtime/apps/aux/last_run.txt`, and `/runtime/apps/aux/stdout.log` readback
 - `scripts/package-registry-status.ps1` now performs default npmjs/PyPI visibility checks even when invoked with only `-ReleaseTag`, so local package diagnostics no longer silently skip unresolved public-registry state.
 - Latest CI:
   - latest pushed `main` head is tracked in issue `#1`
@@ -729,7 +731,4 @@ Policy:
 - Use Codeberg `master` as the canonical freshness target.
 - Use `adybag14-cyber/zig` `latest-master` when the goal is a fast Windows toolchain refresh.
 - Use `adybag14-cyber/zig` `upstream-<sha>` when the goal is reproducible CI, bisects, or release recreation.
-
-
-
 

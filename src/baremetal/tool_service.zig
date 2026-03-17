@@ -53,6 +53,10 @@ pub const RequestOp = enum {
     app_connector,
     app_run,
     app_delete,
+    app_autorun_list,
+    app_autorun_add,
+    app_autorun_remove,
+    app_autorun_run,
     display_info,
     display_modes,
     display_set,
@@ -128,6 +132,10 @@ pub const FramedRequest = struct {
         app_connector: NamedValueRequest,
         app_run: []const u8,
         app_delete: []const u8,
+        app_autorun_list: void,
+        app_autorun_add: []const u8,
+        app_autorun_remove: []const u8,
+        app_autorun_run: void,
         display_info: void,
         display_modes: void,
         display_set: DisplayModeRequest,
@@ -714,6 +722,62 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         };
     }
 
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPAUTORUNLIST")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .app_autorun_list = {} } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .app_autorun_list = {} } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPAUTORUNADD")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .app_autorun_add = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .app_autorun_add = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPAUTORUNREMOVE")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .app_autorun_remove = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .app_autorun_remove = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPAUTORUNRUN")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .app_autorun_run = {} } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .app_autorun_run = {} } },
+            .consumed_len = request.len,
+        };
+    }
+
     if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYINFO")) {
         if (op_part.rest.len != 0) return error.InvalidFrame;
         if (newline_index != null) {
@@ -947,6 +1011,10 @@ fn handleFramedPayload(
         .app_connector => |app_request| try handleAppConnectorRequest(allocator, app_request.package_name, app_request.value, payload_limit),
         .app_run => |package_name| try handleAppRunRequest(allocator, package_name, stdout_limit, stderr_limit, payload_limit),
         .app_delete => |package_name| try handleAppDeleteRequest(allocator, package_name, payload_limit),
+        .app_autorun_list => try handleAppAutorunListRequest(allocator, payload_limit),
+        .app_autorun_add => |package_name| try handleAppAutorunAddRequest(allocator, package_name, payload_limit),
+        .app_autorun_remove => |package_name| try handleAppAutorunRemoveRequest(allocator, package_name, payload_limit),
+        .app_autorun_run => try handleAppAutorunRunRequest(allocator, stdout_limit, stderr_limit, payload_limit),
         .display_info => try handleDisplayInfoRequest(allocator, payload_limit),
         .display_modes => try handleDisplayModesRequest(allocator, payload_limit),
         .display_set => |display_mode| try handleDisplaySetRequest(allocator, display_mode.width, display_mode.height, payload_limit),
@@ -1299,6 +1367,41 @@ fn handleAppDeleteRequest(allocator: std.mem.Allocator, package_name: []const u8
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
+}
+
+fn handleAppAutorunListRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    return app_runtime.autorunListAlloc(allocator, payload_limit) catch |err| {
+        return formatOperationError(allocator, "APPAUTORUNLIST", err, payload_limit);
+    };
+}
+
+fn handleAppAutorunAddRequest(allocator: std.mem.Allocator, package_name: []const u8, payload_limit: usize) Error![]u8 {
+    app_runtime.addAutorun(package_name, 0) catch |err| {
+        return formatOperationError(allocator, "APPAUTORUNADD", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "APPAUTORUNADD {s}\n", .{package_name});
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleAppAutorunRemoveRequest(allocator: std.mem.Allocator, package_name: []const u8, payload_limit: usize) Error![]u8 {
+    app_runtime.removeAutorun(package_name, 0) catch |err| {
+        return formatOperationError(allocator, "APPAUTORUNREMOVE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "APPAUTORUNREMOVE {s}\n", .{package_name});
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleAppAutorunRunRequest(
+    allocator: std.mem.Allocator,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    return handleCommandRequest(allocator, "app-autorun-run", stdout_limit, stderr_limit, payload_limit);
 }
 
 fn handleTrustInstallRequest(
@@ -1745,6 +1848,30 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
+    const app_autorun_list = try parseFramedRequest("REQ 43 APPAUTORUNLIST");
+    switch (app_autorun_list.operation) {
+        .app_autorun_list => {},
+        else => return error.InvalidFrame,
+    }
+
+    const app_autorun_add = try parseFramedRequest("REQ 44 APPAUTORUNADD demo");
+    switch (app_autorun_add.operation) {
+        .app_autorun_add => |package_name| try std.testing.expectEqualStrings("demo", package_name),
+        else => return error.InvalidFrame,
+    }
+
+    const app_autorun_remove = try parseFramedRequest("REQ 45 APPAUTORUNREMOVE demo");
+    switch (app_autorun_remove.operation) {
+        .app_autorun_remove => |package_name| try std.testing.expectEqualStrings("demo", package_name),
+        else => return error.InvalidFrame,
+    }
+
+    const app_autorun_run = try parseFramedRequest("REQ 46 APPAUTORUNRUN");
+    switch (app_autorun_run.operation) {
+        .app_autorun_run => {},
+        else => return error.InvalidFrame,
+    }
+
     const install = try parseFramedRequest("REQ 41 INSTALL");
     switch (install.operation) {
         .install => {},
@@ -2107,6 +2234,64 @@ test "baremetal tool service configures and runs app lifecycle requests" {
     const app_stderr_response = try handleFramedRequest(std.testing.allocator, "REQ 59 APPSTDERR demo", 512, 256, 512);
     defer std.testing.allocator.free(app_stderr_response);
     try std.testing.expectEqualStrings("RESP 59 0\n", app_stderr_response);
+}
+
+test "baremetal tool service persists and runs autorun requests" {
+    resetPersistentStateForTest();
+
+    try package_store.installScriptPackage("demo", "echo demo-autorun", 1);
+    try package_store.installScriptPackage("aux", "echo aux-autorun", 2);
+
+    const add_demo_payload = "APPAUTORUNADD demo\n";
+    const add_aux_payload = "APPAUTORUNADD aux\n";
+    const list_payload = "demo\naux\n";
+    const run_payload = "demo-autorun\naux-autorun\n";
+    const remove_demo_payload = "APPAUTORUNREMOVE demo\n";
+    const updated_list_payload = "aux\n";
+
+    const add_demo_response = try handleFramedRequest(std.testing.allocator, "REQ 60 APPAUTORUNADD demo", 512, 256, 512);
+    defer std.testing.allocator.free(add_demo_response);
+    const add_demo_expected = try std.fmt.allocPrint(std.testing.allocator, "RESP 60 {d}\n{s}", .{ add_demo_payload.len, add_demo_payload });
+    defer std.testing.allocator.free(add_demo_expected);
+    try std.testing.expectEqualStrings(add_demo_expected, add_demo_response);
+
+    const add_aux_response = try handleFramedRequest(std.testing.allocator, "REQ 61 APPAUTORUNADD aux", 512, 256, 512);
+    defer std.testing.allocator.free(add_aux_response);
+    const add_aux_expected = try std.fmt.allocPrint(std.testing.allocator, "RESP 61 {d}\n{s}", .{ add_aux_payload.len, add_aux_payload });
+    defer std.testing.allocator.free(add_aux_expected);
+    try std.testing.expectEqualStrings(add_aux_expected, add_aux_response);
+
+    const list_response = try handleFramedRequest(std.testing.allocator, "REQ 62 APPAUTORUNLIST", 512, 256, 512);
+    defer std.testing.allocator.free(list_response);
+    const list_expected = try std.fmt.allocPrint(std.testing.allocator, "RESP 62 {d}\n{s}", .{ list_payload.len, list_payload });
+    defer std.testing.allocator.free(list_expected);
+    try std.testing.expectEqualStrings(list_expected, list_response);
+
+    const run_response = try handleFramedRequest(std.testing.allocator, "REQ 63 APPAUTORUNRUN", 512, 256, 512);
+    defer std.testing.allocator.free(run_response);
+    const run_expected = try std.fmt.allocPrint(std.testing.allocator, "RESP 63 {d}\n{s}", .{ run_payload.len, run_payload });
+    defer std.testing.allocator.free(run_expected);
+    try std.testing.expectEqualStrings(run_expected, run_response);
+
+    const demo_state = try app_runtime.stateAlloc(std.testing.allocator, "demo", 256);
+    defer std.testing.allocator.free(demo_state);
+    try std.testing.expect(std.mem.indexOf(u8, demo_state, "exit_code=0") != null);
+
+    const aux_stdout = try app_runtime.stdoutAlloc(std.testing.allocator, "aux", 256);
+    defer std.testing.allocator.free(aux_stdout);
+    try std.testing.expectEqualStrings("aux-autorun\n", aux_stdout);
+
+    const remove_demo_response = try handleFramedRequest(std.testing.allocator, "REQ 64 APPAUTORUNREMOVE demo", 512, 256, 512);
+    defer std.testing.allocator.free(remove_demo_response);
+    const remove_demo_expected = try std.fmt.allocPrint(std.testing.allocator, "RESP 64 {d}\n{s}", .{ remove_demo_payload.len, remove_demo_payload });
+    defer std.testing.allocator.free(remove_demo_expected);
+    try std.testing.expectEqualStrings(remove_demo_expected, remove_demo_response);
+
+    const updated_list_response = try handleFramedRequest(std.testing.allocator, "REQ 65 APPAUTORUNLIST", 512, 256, 512);
+    defer std.testing.allocator.free(updated_list_response);
+    const updated_list_expected = try std.fmt.allocPrint(std.testing.allocator, "RESP 65 {d}\n{s}", .{ updated_list_payload.len, updated_list_payload });
+    defer std.testing.allocator.free(updated_list_expected);
+    try std.testing.expectEqualStrings(updated_list_expected, updated_list_response);
 }
 
 test "baremetal tool service uninstalls packages and clears app state" {

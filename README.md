@@ -15,7 +15,7 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
   - Original OpenClaw baseline (`v2026.3.13-1`): `100/100` covered
   - Original OpenClaw beta baseline (`v2026.3.13-beta.1`): `100/100` covered
   - Union baseline: `141/141` covered (`MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> main `352/352` + bare-metal host `298 passed / 1 skipped`
+- Latest local validation: `zig build test --summary all` -> `361/361` passed
 - Latest published edge release tag: `v0.2.0-zig-edge.29`
 - License posture: repo-wide `GPL-2.0-only` with Linux-style SPDX headers on repo-owned source and script files
 - Toolchain policy: Codeberg `master` is canonical; `adybag14-cyber/zig` publishes rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
@@ -96,6 +96,7 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
     - `src/baremetal/filesystem.zig` implements directory creation plus file read/write/stat on the shared storage backend
     - `src/pal/fs.zig` routes the freestanding PAL filesystem surface through that layer
 - hosted and host validation now prove persistence over both RAM-disk and ATA PIO backends, including the partition-mounted ATA view
+  - the filesystem entry budget is now `64`, which is the current bounded baseline that keeps the deeper FS5.5 package/trust/app/autorun runtime state fitting on the persisted filesystem surface
   - bare-metal tool execution is now also on a real freestanding path:
     - `src/baremetal/tool_exec.zig` provides the builtin command substrate instead of falling back to hosted process execution, including canonical `run-package` support plus `package-verify`, `package-app`, `package-display`, `package-ls`, `package-cat`, `package-delete`, `app-delete`, `display-info`, `display-modes`, and `display-set`
     - `src/pal/proc.zig` exposes the explicit freestanding capture path used by the bare-metal PAL
@@ -103,6 +104,7 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
     - `src/baremetal/tool_service.zig` provides the bounded typed request/response shim used by the bare-metal TCP proof, including structured `EXEC` responses, typed `PKGVERIFY`, and typed app lifecycle and uninstall verbs on top of the freestanding tool-exec substrate
     - `scripts/baremetal-qemu-tool-exec-probe-check.ps1` proves `help`, `mkdir`, `write-file`, `cat`, `stat`, `run-script`, direct readback, persisted script readback after filesystem reset/re-init, and `echo` over the freestanding PVH artifact with attached disk media, while the live RTL8139 TCP proof now covers persisted `app-run` state receipts, persisted app-history receipts, and persisted app stdout/stderr receipts
     - hosted/module validation also proves ATA-backed package persistence plus `run-package`, `package-verify`, `PKG`, `PKGLIST`, `PKGINFO`, `PKGRUN`, `PKGAPP`, `PKGDISPLAY`, `PKGPUT`, `PKGLS`, `PKGGET`, `PKGVERIFY`, `PKGDELETE`, `APPLIST`, `APPINFO`, `APPSTATE`, `APPHISTORY`, `APPSTDOUT`, `APPSTDERR`, `APPTRUST`, `APPCONNECTOR`, `APPRUN`, `APPDELETE`, `DISPLAYINFO`, `DISPLAYMODES`, `DISPLAYSET`, package manifests, app manifests, manifest checksum fields, persisted package display profiles, package assets, direct-child directory listing, deterministic tamper detection on package script checksum mismatch, recursive uninstall cleanup, persisted app runtime-state receipts, persisted app stdout/stderr receipts, and live display-mode application during `run-package`
+    - the current FS5.5 autorun slice now adds persisted `/runtime/apps/autorun.txt` state through `src/baremetal/app_runtime.zig`, new `tool_exec` builtins (`app-autorun-list`, `app-autorun-add`, `app-autorun-remove`, `app-autorun-run`), new typed TCP verbs (`APPAUTORUNLIST`, `APPAUTORUNADD`, `APPAUTORUNREMOVE`, `APPAUTORUNRUN`), ATA/RAM-backed autorun registry tests, and live RTL8139 TCP proof for add/list/run/remove plus `/runtime/apps/autorun.txt`, `/runtime/apps/aux/last_run.txt`, and `/runtime/apps/aux/stdout.log` readback
 - Recent FS6 progress (2026-03-06):
   - `update.*` now has a real `canary` rollout lane instead of collapsing `canary` into `edge`
   - appliance rollout boundary is now enforced by live smoke validation (`canary` selection, secure-boot block, canary apply, stable promotion)
@@ -1016,7 +1018,4 @@ Manual python release trigger:
 ```powershell
 gh workflow run python-release.yml -R adybag14-cyber/ZAR-Zig-Agent-Runtime -f version=<pep440-version> -f release_tag=<release-tag>
 ```
-
-
-
 

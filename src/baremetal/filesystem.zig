@@ -4,7 +4,7 @@ const abi = @import("abi.zig");
 const storage_backend = @import("storage_backend.zig");
 const tool_layout = @import("tool_layout.zig");
 
-pub const max_entries: usize = 32;
+pub const max_entries: usize = 64;
 pub const max_path_len: usize = 96;
 pub const superblock_lba: u32 = tool_layout.slot_data_lba + @as(u32, tool_layout.slot_count * tool_layout.slot_block_capacity);
 pub const entry_table_lba: u32 = superblock_lba + 1;
