@@ -7,16 +7,22 @@ const ata_pio_disk = @import("ata_pio_disk.zig");
 const trust_store = @import("trust_store.zig");
 
 pub const max_name_len: usize = 32;
+pub const max_release_len: usize = 32;
 pub const default_display_width: u16 = 640;
 pub const default_display_height: u16 = 400;
 pub const default_connector_type: u8 = abi.display_connector_none;
+const release_list_scan_max_bytes: usize = storage_backend.block_size * 4;
+const release_copy_max_bytes: usize = storage_backend.block_size * 8;
 
 pub const Error = filesystem.Error || trust_store.Error || std.mem.Allocator.Error || error{
     InvalidPackageName,
+    InvalidReleaseName,
     InvalidPackagePath,
     InvalidPackageMetadata,
     InvalidDisplayConnector,
     PackageNotFound,
+    PackageReleaseNotFound,
+    PackageReleaseAlreadyExists,
     ResponseTooLarge,
 };
 
@@ -412,11 +418,127 @@ pub fn listPackagesAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![
     return out.toOwnedSlice(allocator);
 }
 
+pub fn releaseListAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
+    try validatePackageName(name);
+    if (!try packageExists(name)) return error.PackageNotFound;
+
+    var releases_buf: [filesystem.max_path_len]u8 = undefined;
+    const releases_root = releasesRootPath(name, &releases_buf);
+    const raw_listing = filesystem.listDirectoryAlloc(allocator, releases_root, release_list_scan_max_bytes) catch |err| switch (err) {
+        error.FileNotFound => return allocator.alloc(u8, 0),
+        else => return err,
+    };
+    defer allocator.free(raw_listing);
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    var lines = std.mem.splitScalar(u8, raw_listing, '\n');
+    while (lines.next()) |line| {
+        if (!std.mem.startsWith(u8, line, "dir ")) continue;
+        const release_name = line["dir ".len..];
+        if (release_name.len == 0) continue;
+        if (out.items.len + release_name.len + 1 > max_bytes) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, release_name);
+        try out.append(allocator, '\n');
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+pub fn snapshotPackageRelease(name: []const u8, release: []const u8, tick: u64) Error!void {
+    try validatePackageName(name);
+    try validateReleaseName(release);
+    if (!try packageExists(name)) return error.PackageNotFound;
+    if (try releaseExists(name, release)) return error.PackageReleaseAlreadyExists;
+
+    try createReleaseDirectories(name, release);
+
+    var canonical_entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    var canonical_manifest_buf: [filesystem.max_path_len]u8 = undefined;
+    var canonical_app_manifest_buf: [filesystem.max_path_len]u8 = undefined;
+    var canonical_assets_buf: [filesystem.max_path_len]u8 = undefined;
+    var release_entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    var release_manifest_buf: [filesystem.max_path_len]u8 = undefined;
+    var release_app_manifest_buf: [filesystem.max_path_len]u8 = undefined;
+    var release_assets_buf: [filesystem.max_path_len]u8 = undefined;
+
+    try copyFilePath(
+        try entrypointPath(name, &canonical_entrypoint_buf),
+        try releaseEntrypointPath(name, release, &release_entrypoint_buf),
+        tick,
+    );
+    try copyFilePath(
+        try manifestPath(name, &canonical_manifest_buf),
+        try releaseManifestPath(name, release, &release_manifest_buf),
+        tick,
+    );
+    try copyFilePath(
+        try appManifestPath(name, &canonical_app_manifest_buf),
+        try releaseAppManifestPath(name, release, &release_app_manifest_buf),
+        tick,
+    );
+    try copyTreeUnderPrefix(
+        try assetsPath(name, &canonical_assets_buf),
+        try releaseAssetsPath(name, release, &release_assets_buf),
+        tick,
+    );
+}
+
+pub fn activatePackageRelease(name: []const u8, release: []const u8, tick: u64) Error!void {
+    try validatePackageName(name);
+    try validateReleaseName(release);
+    if (!try releaseExists(name, release)) return error.PackageReleaseNotFound;
+
+    try deleteActivePackageLayout(name, tick);
+
+    var root_buf: [filesystem.max_path_len]u8 = undefined;
+    var bin_buf: [filesystem.max_path_len]u8 = undefined;
+    var meta_buf: [filesystem.max_path_len]u8 = undefined;
+    var assets_buf: [filesystem.max_path_len]u8 = undefined;
+    try filesystem.createDirPath(packageRootPath(name, &root_buf));
+    try filesystem.createDirPath(packageBinPath(name, &bin_buf));
+    try filesystem.createDirPath(packageMetaPath(name, &meta_buf));
+    try filesystem.createDirPath(packageAssetsPath(name, &assets_buf));
+
+    var canonical_entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    var canonical_app_manifest_buf: [filesystem.max_path_len]u8 = undefined;
+    var canonical_assets_buf: [filesystem.max_path_len]u8 = undefined;
+    var release_entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    var release_app_manifest_buf: [filesystem.max_path_len]u8 = undefined;
+    var release_assets_buf: [filesystem.max_path_len]u8 = undefined;
+
+    try copyFilePath(
+        try releaseEntrypointPath(name, release, &release_entrypoint_buf),
+        try entrypointPath(name, &canonical_entrypoint_buf),
+        tick,
+    );
+    try copyFilePath(
+        try releaseAppManifestPath(name, release, &release_app_manifest_buf),
+        try appManifestPath(name, &canonical_app_manifest_buf),
+        tick,
+    );
+    try copyTreeUnderPrefix(
+        try releaseAssetsPath(name, release, &release_assets_buf),
+        try assetsPath(name, &canonical_assets_buf),
+        tick,
+    );
+    try refreshManifest(name, tick);
+}
+
 pub fn validatePackageName(name: []const u8) Error!void {
     if (name.len == 0 or name.len > max_name_len) return error.InvalidPackageName;
     for (name) |char| {
         if (std.ascii.isAlphanumeric(char) or char == '-' or char == '_' or char == '.') continue;
         return error.InvalidPackageName;
+    }
+}
+
+pub fn validateReleaseName(name: []const u8) Error!void {
+    if (name.len == 0 or name.len > max_release_len) return error.InvalidReleaseName;
+    for (name) |char| {
+        if (std.ascii.isAlphanumeric(char) or char == '-' or char == '_' or char == '.') continue;
+        return error.InvalidReleaseName;
     }
 }
 
@@ -440,6 +562,10 @@ fn packageRootPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) []con
     return std.fmt.bufPrint(buffer, "/packages/{s}", .{name}) catch unreachable;
 }
 
+fn releasesRootPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) []const u8 {
+    return std.fmt.bufPrint(buffer, "/packages/{s}/releases", .{name}) catch unreachable;
+}
+
 fn packageBinPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) []const u8 {
     return std.fmt.bufPrint(buffer, "/packages/{s}/bin", .{name}) catch unreachable;
 }
@@ -452,9 +578,61 @@ fn packageAssetsPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) []c
     return std.fmt.bufPrint(buffer, "/packages/{s}/assets", .{name}) catch unreachable;
 }
 
+fn releaseRootPath(name: []const u8, release: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validatePackageName(name);
+    try validateReleaseName(release);
+    return std.fmt.bufPrint(buffer, "/packages/{s}/releases/{s}", .{ name, release }) catch error.InvalidPath;
+}
+
+fn releaseBinPath(name: []const u8, release: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validatePackageName(name);
+    try validateReleaseName(release);
+    return std.fmt.bufPrint(buffer, "/packages/{s}/releases/{s}/bin", .{ name, release }) catch error.InvalidPath;
+}
+
+fn releaseMetaPath(name: []const u8, release: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validatePackageName(name);
+    try validateReleaseName(release);
+    return std.fmt.bufPrint(buffer, "/packages/{s}/releases/{s}/meta", .{ name, release }) catch error.InvalidPath;
+}
+
+fn releaseAssetsPath(name: []const u8, release: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validatePackageName(name);
+    try validateReleaseName(release);
+    return std.fmt.bufPrint(buffer, "/packages/{s}/releases/{s}/assets", .{ name, release }) catch error.InvalidPath;
+}
+
+fn releaseEntrypointPath(name: []const u8, release: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validatePackageName(name);
+    try validateReleaseName(release);
+    return std.fmt.bufPrint(buffer, "/packages/{s}/releases/{s}/bin/main.oc", .{ name, release }) catch error.InvalidPath;
+}
+
+fn releaseManifestPath(name: []const u8, release: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validatePackageName(name);
+    try validateReleaseName(release);
+    return std.fmt.bufPrint(buffer, "/packages/{s}/releases/{s}/meta/package.txt", .{ name, release }) catch error.InvalidPath;
+}
+
+fn releaseAppManifestPath(name: []const u8, release: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validatePackageName(name);
+    try validateReleaseName(release);
+    return std.fmt.bufPrint(buffer, "/packages/{s}/releases/{s}/meta/app.txt", .{ name, release }) catch error.InvalidPath;
+}
+
 fn packageExists(name: []const u8) Error!bool {
     var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
     const entrypoint = try entrypointPath(name, &entrypoint_buf);
+    _ = filesystem.statSummary(entrypoint) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => return err,
+    };
+    return true;
+}
+
+fn releaseExists(name: []const u8, release: []const u8) Error!bool {
+    var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    const entrypoint = try releaseEntrypointPath(name, release, &entrypoint_buf);
     _ = filesystem.statSummary(entrypoint) catch |err| switch (err) {
         error.FileNotFound => return false,
         else => return err,
@@ -555,6 +733,86 @@ fn refreshManifest(name: []const u8, tick: u64) Error!void {
         },
     ) catch return error.InvalidPath;
     try filesystem.writeFile(manifest, manifest_body, tick);
+}
+
+fn createReleaseDirectories(name: []const u8, release: []const u8) Error!void {
+    var releases_root_buf: [filesystem.max_path_len]u8 = undefined;
+    var release_root_buf: [filesystem.max_path_len]u8 = undefined;
+    var release_bin_buf: [filesystem.max_path_len]u8 = undefined;
+    var release_meta_buf: [filesystem.max_path_len]u8 = undefined;
+    var release_assets_buf: [filesystem.max_path_len]u8 = undefined;
+
+    try filesystem.createDirPath(releasesRootPath(name, &releases_root_buf));
+    try filesystem.createDirPath(try releaseRootPath(name, release, &release_root_buf));
+    try filesystem.createDirPath(try releaseBinPath(name, release, &release_bin_buf));
+    try filesystem.createDirPath(try releaseMetaPath(name, release, &release_meta_buf));
+    try filesystem.createDirPath(try releaseAssetsPath(name, release, &release_assets_buf));
+}
+
+fn deleteActivePackageLayout(name: []const u8, tick: u64) Error!void {
+    var bin_buf: [filesystem.max_path_len]u8 = undefined;
+    var meta_buf: [filesystem.max_path_len]u8 = undefined;
+    var assets_buf: [filesystem.max_path_len]u8 = undefined;
+    const active_paths = [_][]const u8{
+        packageBinPath(name, &bin_buf),
+        packageMetaPath(name, &meta_buf),
+        packageAssetsPath(name, &assets_buf),
+    };
+    for (active_paths) |active_path| {
+        filesystem.deleteTree(active_path, tick) catch |err| switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        };
+    }
+}
+
+fn copyFilePath(source_path: []const u8, destination_path: []const u8, tick: u64) Error!void {
+    var copy_scratch: [release_copy_max_bytes]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&copy_scratch);
+    const data = try filesystem.readFileAlloc(fba.allocator(), source_path, copy_scratch.len);
+    try filesystem.createDirPath(parentSlice(destination_path));
+    try filesystem.writeFile(destination_path, data, tick);
+}
+
+fn copyTreeUnderPrefix(source_prefix: []const u8, destination_prefix: []const u8, tick: u64) Error!void {
+    try filesystem.createDirPath(destination_prefix);
+
+    var list_scratch: [release_list_scan_max_bytes]u8 = undefined;
+    var list_fba = std.heap.FixedBufferAllocator.init(&list_scratch);
+    const listing = filesystem.listDirectoryAlloc(list_fba.allocator(), source_prefix, list_scratch.len) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+
+    var lines = std.mem.splitScalar(u8, listing, '\n');
+    while (lines.next()) |line| {
+        if (std.mem.startsWith(u8, line, "dir ")) {
+            const child_name = line["dir ".len..];
+            if (child_name.len == 0) continue;
+            var child_source_buf: [filesystem.max_path_len]u8 = undefined;
+            var child_destination_buf: [filesystem.max_path_len]u8 = undefined;
+            const child_source = std.fmt.bufPrint(&child_source_buf, "{s}/{s}", .{ source_prefix, child_name }) catch return error.InvalidPath;
+            const child_destination = std.fmt.bufPrint(&child_destination_buf, "{s}/{s}", .{ destination_prefix, child_name }) catch return error.InvalidPath;
+            try copyTreeUnderPrefix(child_source, child_destination, tick);
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "file ")) {
+            const child_name = fileListingName(line) orelse return error.InvalidPackageMetadata;
+            var child_source_buf: [filesystem.max_path_len]u8 = undefined;
+            var child_destination_buf: [filesystem.max_path_len]u8 = undefined;
+            const child_source = std.fmt.bufPrint(&child_source_buf, "{s}/{s}", .{ source_prefix, child_name }) catch return error.InvalidPath;
+            const child_destination = std.fmt.bufPrint(&child_destination_buf, "{s}/{s}", .{ destination_prefix, child_name }) catch return error.InvalidPath;
+            try copyFilePath(child_source, child_destination, tick);
+        }
+    }
+}
+
+fn fileListingName(line: []const u8) ?[]const u8 {
+    if (!std.mem.startsWith(u8, line, "file ")) return null;
+    const remainder = line["file ".len..];
+    const last_space = std.mem.lastIndexOfScalar(u8, remainder, ' ') orelse return null;
+    if (last_space == 0) return null;
+    return remainder[0..last_space];
 }
 
 fn lessAssetRecordPath(_: void, lhs_index: u32, rhs_index: u32) bool {
@@ -925,4 +1183,73 @@ test "package store verification detects tampered package script" {
     try std.testing.expect(!result.ok);
     try std.testing.expect(std.mem.indexOf(u8, result.payload, "status=mismatch") != null);
     try std.testing.expect(std.mem.indexOf(u8, result.payload, "field=script_checksum") != null);
+}
+
+test "package store snapshots and reactivates persisted package releases" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+
+    try installScriptPackage("demo", "echo release-one", 1);
+    try installPackageAsset("demo", "config/app.json", "{\"mode\":\"one\"}", 2);
+    try snapshotPackageRelease("demo", "r1", 3);
+
+    const release_listing = try releaseListAlloc(std.testing.allocator, "demo", 64);
+    defer std.testing.allocator.free(release_listing);
+    try std.testing.expectEqualStrings("r1\n", release_listing);
+
+    try installScriptPackage("demo", "echo release-two", 4);
+    try installPackageAsset("demo", "config/app.json", "{\"mode\":\"two\"}", 5);
+
+    var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    const canonical_entrypoint = try entrypointPath("demo", &entrypoint_buf);
+    const mutated_script = try filesystem.readFileAlloc(std.testing.allocator, canonical_entrypoint, 64);
+    defer std.testing.allocator.free(mutated_script);
+    try std.testing.expectEqualStrings("echo release-two", mutated_script);
+
+    try activatePackageRelease("demo", "r1", 6);
+
+    const restored_script = try filesystem.readFileAlloc(std.testing.allocator, canonical_entrypoint, 64);
+    defer std.testing.allocator.free(restored_script);
+    try std.testing.expectEqualStrings("echo release-one", restored_script);
+
+    const restored_asset = try readPackageAssetAlloc(std.testing.allocator, "demo", "config/app.json", 64);
+    defer std.testing.allocator.free(restored_asset);
+    try std.testing.expectEqualStrings("{\"mode\":\"one\"}", restored_asset);
+
+    const manifest = try manifestAlloc(std.testing.allocator, "demo", 512);
+    defer std.testing.allocator.free(manifest);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "script_checksum=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "asset_tree_checksum=") != null);
+}
+
+test "package store persists package releases on ata-backed storage" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    ata_pio_disk.testEnableMockDevice(8192);
+    ata_pio_disk.testInstallMockMbrPartition(2048, 4096, 0x83);
+    defer ata_pio_disk.testDisableMockDevice();
+
+    try installScriptPackage("persisted", "echo release-one", 1);
+    try installPackageAsset("persisted", "config/app.json", "{\"mode\":\"release-one\"}", 2);
+    try snapshotPackageRelease("persisted", "golden", 3);
+
+    try installScriptPackage("persisted", "echo release-two", 4);
+    try installPackageAsset("persisted", "config/app.json", "{\"mode\":\"release-two\"}", 5);
+
+    filesystem.resetForTest();
+    try activatePackageRelease("persisted", "golden", 6);
+
+    var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    const canonical_entrypoint = try entrypointPath("persisted", &entrypoint_buf);
+    const restored_script = try filesystem.readFileAlloc(std.testing.allocator, canonical_entrypoint, 64);
+    defer std.testing.allocator.free(restored_script);
+    try std.testing.expectEqualStrings("echo release-one", restored_script);
+
+    const restored_asset = try readPackageAssetAlloc(std.testing.allocator, "persisted", "config/app.json", 64);
+    defer std.testing.allocator.free(restored_asset);
+    try std.testing.expectEqualStrings("{\"mode\":\"release-one\"}", restored_asset);
+
+    const release_listing = try releaseListAlloc(std.testing.allocator, "persisted", 64);
+    defer std.testing.allocator.free(release_listing);
+    try std.testing.expectEqualStrings("golden\n", release_listing);
 }

@@ -451,13 +451,14 @@ Current local source-of-truth evidence:
   - the hosted regression in `src/baremetal_main.zig`
 - those host/module proofs now also cover:
   - persisted ATA-backed package layout roundtrips
-  - typed TCP `PKG` / `PKGLIST` / `PKGINFO` / `PKGRUN` / `PKGAPP` / `PKGDISPLAY` / `PKGPUT` / `PKGLS` / `PKGGET` / `PKGVERIFY` / `PKGDELETE` service behavior
+  - typed TCP `PKG` / `PKGLIST` / `PKGINFO` / `PKGRUN` / `PKGAPP` / `PKGDISPLAY` / `PKGPUT` / `PKGLS` / `PKGGET` / `PKGVERIFY` / `PKGRELEASELIST` / `PKGRELEASESAVE` / `PKGRELEASEACTIVATE` / `PKGDELETE` service behavior
   - canonical `run-package <name>` execution against `/packages/<name>/bin/main.oc`
-  - package manifest readback, package app-manifest readback, manifest checksum fields, package asset install/list/get, persisted package display profiles, and direct-child directory listing on the canonical `/packages/<name>/...` layout
+  - package manifest readback, package app-manifest readback, manifest checksum fields, package asset install/list/get, persisted package display profiles, direct-child directory listing, and persisted release snapshots under `/packages/<name>/releases/<release>/...` on the canonical `/packages/<name>/...` layout
   - `package-verify <name>` plus typed `PKGVERIFY <name>` success receipts against the persisted package tree
   - deterministic mismatch detection after script tampering, currently proven by hosted/module tests through `field=script_checksum`
   - `display-info` / `display-modes` / `display-set` builtin output and typed `DISPLAYINFO` / `DISPLAYMODES` / `DISPLAYSET` service behavior
   - the current FS5.5 autorun slice now adds persisted `/runtime/apps/autorun.txt` state through `src/baremetal/app_runtime.zig`, new `tool_exec` builtins (`app-autorun-list`, `app-autorun-add`, `app-autorun-remove`, `app-autorun-run`), new typed TCP verbs (`APPAUTORUNLIST`, `APPAUTORUNADD`, `APPAUTORUNREMOVE`, `APPAUTORUNRUN`), ATA/RAM-backed autorun registry tests, and live RTL8139 TCP proof for add/list/run/remove plus `/runtime/apps/autorun.txt`, `/runtime/apps/aux/last_run.txt`, and `/runtime/apps/aux/stdout.log` readback
+  - the current FS5.5 package-release slice now adds `package-release-list` / `package-release-save` / `package-release-activate`, typed `PKGRELEASELIST` / `PKGRELEASESAVE` / `PKGRELEASEACTIVATE`, ATA/RAM-backed release snapshot tests, and live RTL8139 TCP proof for save -> mutate -> list -> activate plus restored canonical script and asset readback
 
 ## Non-Goals For This Track
 
