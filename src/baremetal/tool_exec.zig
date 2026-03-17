@@ -135,7 +135,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-save, package-release-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, display-info, display-modes, display-set, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, display-info, display-modes, display-set, run-script, run-package, app-run");
         return;
     }
 
@@ -454,6 +454,32 @@ fn execute(
         return;
     }
 
+    if (std.ascii.eqlIgnoreCase(parsed.name, "package-release-info")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-info <name> <release>");
+            return;
+        };
+        const release_name = parseFirstArg(package_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-info <name> <release>");
+            return;
+        };
+        if (release_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-release-info <name> <release>");
+            return;
+        }
+        const info = package_store.releaseInfoAlloc(allocator, package_name.arg, release_name.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("package-release-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(info);
+        try stdout_buffer.appendSlice(info);
+        return;
+    }
+
     if (std.ascii.eqlIgnoreCase(parsed.name, "package-release-save")) {
         const package_name = parseFirstArg(parsed.rest) catch |err| {
             exit_code.* = 2;
@@ -501,6 +527,64 @@ fn execute(
             return;
         };
         try stdout_buffer.appendFmt("package release activated {s} {s}\n", .{ package_name.arg, release_name.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "package-release-delete")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-delete <name> <release>");
+            return;
+        };
+        const release_name = parseFirstArg(package_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-delete <name> <release>");
+            return;
+        };
+        if (release_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-release-delete <name> <release>");
+            return;
+        }
+        package_store.deletePackageRelease(package_name.arg, release_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("package-release-delete failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("package release deleted {s} {s}\n", .{ package_name.arg, release_name.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "package-release-prune")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-prune <name> <keep>");
+            return;
+        };
+        const keep_arg = parseFirstArg(package_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-prune <name> <keep>");
+            return;
+        };
+        if (keep_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-release-prune <name> <keep>");
+            return;
+        }
+        const keep = std.fmt.parseInt(usize, keep_arg.arg, 10) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-release-prune <name> <keep>");
+            return;
+        };
+        const prune = package_store.prunePackageReleases(package_name.arg, keep, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("package-release-prune failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt(
+            "package release pruned {s} keep={d} deleted={d} kept={d}\n",
+            .{ package_name.arg, keep, prune.deleted_count, prune.kept_count },
+        );
         return;
     }
 
@@ -1357,7 +1441,7 @@ test "baremetal tool exec lists and reads persisted package assets" {
     try std.testing.expectEqualStrings("{\"mode\":\"tcp\"}", cat_result.stdout);
 }
 
-test "baremetal tool exec saves, lists, and activates package releases" {
+test "baremetal tool exec manages persisted package releases" {
     storage_backend.resetForTest();
     filesystem.resetForTest();
     vga_text_console.resetForTest();
@@ -1373,6 +1457,17 @@ test "baremetal tool exec saves, lists, and activates package releases" {
     try package_store.installScriptPackage("demo", "echo release-two", 2);
     try package_store.installPackageAsset("demo", "config/app.json", "{\"mode\":\"two\"}", 3);
 
+    var save_result_two = try runCapture(std.testing.allocator, "package-release-save demo r2", 256, 256);
+    defer save_result_two.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_result_two.exit_code);
+    try std.testing.expectEqualStrings("package release saved demo r2\n", save_result_two.stdout);
+
+    var info_result = try runCapture(std.testing.allocator, "package-release-info demo r2", 512, 256);
+    defer info_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), info_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "release=r2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "saved_seq=2") != null);
+
     var mutated_run = try runCapture(std.testing.allocator, "run-package demo", 256, 256);
     defer mutated_run.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), mutated_run.exit_code);
@@ -1381,7 +1476,7 @@ test "baremetal tool exec saves, lists, and activates package releases" {
     var list_result = try runCapture(std.testing.allocator, "package-release-list demo", 256, 256);
     defer list_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), list_result.exit_code);
-    try std.testing.expectEqualStrings("r1\n", list_result.stdout);
+    try std.testing.expectEqualStrings("r1\nr2\n", list_result.stdout);
 
     var activate_result = try runCapture(std.testing.allocator, "package-release-activate demo r1", 256, 256);
     defer activate_result.deinit(std.testing.allocator);
@@ -1397,6 +1492,31 @@ test "baremetal tool exec saves, lists, and activates package releases" {
     defer restored_asset.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), restored_asset.exit_code);
     try std.testing.expectEqualStrings("{\"mode\":\"one\"}", restored_asset.stdout);
+
+    var save_result_three = try runCapture(std.testing.allocator, "package-release-save demo r3", 256, 256);
+    defer save_result_three.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_result_three.exit_code);
+    try std.testing.expectEqualStrings("package release saved demo r3\n", save_result_three.stdout);
+
+    var delete_result = try runCapture(std.testing.allocator, "package-release-delete demo r2", 256, 256);
+    defer delete_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), delete_result.exit_code);
+    try std.testing.expectEqualStrings("package release deleted demo r2\n", delete_result.stdout);
+
+    var list_after_delete = try runCapture(std.testing.allocator, "package-release-list demo", 256, 256);
+    defer list_after_delete.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), list_after_delete.exit_code);
+    try std.testing.expectEqualStrings("r1\nr3\n", list_after_delete.stdout);
+
+    var prune_result = try runCapture(std.testing.allocator, "package-release-prune demo 1", 256, 256);
+    defer prune_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), prune_result.exit_code);
+    try std.testing.expectEqualStrings("package release pruned demo keep=1 deleted=1 kept=1\n", prune_result.stdout);
+
+    var list_after_prune = try runCapture(std.testing.allocator, "package-release-list demo", 256, 256);
+    defer list_after_prune.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), list_after_prune.exit_code);
+    try std.testing.expectEqualStrings("r3\n", list_after_prune.stdout);
 }
 
 test "baremetal tool exec reports current display info and supported modes" {

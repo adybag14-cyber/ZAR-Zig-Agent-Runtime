@@ -49,6 +49,11 @@ pub const VerifyResult = struct {
     }
 };
 
+pub const ReleasePruneResult = struct {
+    kept_count: u32,
+    deleted_count: u32,
+};
+
 const ManifestInfo = struct {
     root: []const u8 = "",
     entrypoint: []const u8 = "",
@@ -60,6 +65,23 @@ const ManifestInfo = struct {
     asset_count: u32 = 0,
     asset_bytes: u32 = 0,
     asset_tree_checksum: u64 = 0,
+};
+
+const ReleaseMetadata = struct {
+    name: []const u8 = "",
+    release: []const u8 = "",
+    saved_seq: u32 = 0,
+    saved_tick: u64 = 0,
+};
+
+const ReleaseRecord = struct {
+    name_len: usize,
+    name_storage: [max_release_len]u8 = [_]u8{0} ** max_release_len,
+    saved_seq: u32,
+
+    fn name(self: *const @This()) []const u8 {
+        return self.name_storage[0..self.name_len];
+    }
 };
 
 pub fn installScriptPackage(name: []const u8, script: []const u8, tick: u64) Error!void {
@@ -446,12 +468,67 @@ pub fn releaseListAlloc(allocator: std.mem.Allocator, name: []const u8, max_byte
     return out.toOwnedSlice(allocator);
 }
 
+pub fn releaseInfoAlloc(
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    release: []const u8,
+    max_bytes: usize,
+) Error![]u8 {
+    try validatePackageName(name);
+    try validateReleaseName(release);
+    if (!try releaseExists(name, release)) return error.PackageReleaseNotFound;
+
+    var metadata_path_buf: [filesystem.max_path_len]u8 = undefined;
+    var manifest_path_buf: [filesystem.max_path_len]u8 = undefined;
+
+    const metadata_path = try releaseMetadataPath(name, release, &metadata_path_buf);
+    const manifest_path = try releaseManifestPath(name, release, &manifest_path_buf);
+
+    var metadata_scratch: [512]u8 = undefined;
+    var metadata_fba = std.heap.FixedBufferAllocator.init(&metadata_scratch);
+    const metadata_raw = try filesystem.readFileAlloc(metadata_fba.allocator(), metadata_path, metadata_scratch.len);
+    const metadata = try parseReleaseMetadata(metadata_raw);
+
+    var manifest_scratch: [768]u8 = undefined;
+    var manifest_fba = std.heap.FixedBufferAllocator.init(&manifest_scratch);
+    const manifest_raw = try filesystem.readFileAlloc(manifest_fba.allocator(), manifest_path, manifest_scratch.len);
+    const manifest = try parseManifestInfo(manifest_raw);
+
+    var root_buf: [filesystem.max_path_len]u8 = undefined;
+    const root = try releaseRootPath(name, release, &root_buf);
+    const payload = try std.fmt.allocPrint(
+        allocator,
+        "name={s}\nrelease={s}\nsaved_seq={d}\nsaved_tick={d}\nroot={s}\nentrypoint={s}\nmanifest={s}\napp_manifest={s}\nscript_bytes={d}\nscript_checksum={x:0>8}\napp_manifest_checksum={x:0>8}\nasset_root={s}\nasset_count={d}\nasset_bytes={d}\nasset_tree_checksum={x:0>16}\n",
+        .{
+            if (metadata.name.len != 0) metadata.name else name,
+            if (metadata.release.len != 0) metadata.release else release,
+            metadata.saved_seq,
+            metadata.saved_tick,
+            root,
+            manifest.entrypoint,
+            manifest_path,
+            manifest.app_manifest,
+            manifest.script_bytes,
+            manifest.script_checksum,
+            manifest.app_manifest_checksum,
+            manifest.asset_root,
+            manifest.asset_count,
+            manifest.asset_bytes,
+            manifest.asset_tree_checksum,
+        },
+    );
+    errdefer allocator.free(payload);
+    if (payload.len > max_bytes) return error.ResponseTooLarge;
+    return payload;
+}
+
 pub fn snapshotPackageRelease(name: []const u8, release: []const u8, tick: u64) Error!void {
     try validatePackageName(name);
     try validateReleaseName(release);
     if (!try packageExists(name)) return error.PackageNotFound;
     if (try releaseExists(name, release)) return error.PackageReleaseAlreadyExists;
 
+    const saved_seq = try nextReleaseSequence(name);
     try createReleaseDirectories(name, release);
 
     var canonical_entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
@@ -483,6 +560,7 @@ pub fn snapshotPackageRelease(name: []const u8, release: []const u8, tick: u64) 
         try releaseAssetsPath(name, release, &release_assets_buf),
         tick,
     );
+    try writeReleaseMetadata(name, release, saved_seq, tick);
 }
 
 pub fn activatePackageRelease(name: []const u8, release: []const u8, tick: u64) Error!void {
@@ -524,6 +602,36 @@ pub fn activatePackageRelease(name: []const u8, release: []const u8, tick: u64) 
         tick,
     );
     try refreshManifest(name, tick);
+}
+
+pub fn deletePackageRelease(name: []const u8, release: []const u8, tick: u64) Error!void {
+    try validatePackageName(name);
+    try validateReleaseName(release);
+    if (!try releaseExists(name, release)) return error.PackageReleaseNotFound;
+
+    var root_buf: [filesystem.max_path_len]u8 = undefined;
+    try filesystem.deleteTree(try releaseRootPath(name, release, &root_buf), tick);
+}
+
+pub fn prunePackageReleases(name: []const u8, keep: usize, tick: u64) Error!ReleasePruneResult {
+    try validatePackageName(name);
+    if (!try packageExists(name)) return error.PackageNotFound;
+
+    var records: [filesystem.max_entries]ReleaseRecord = undefined;
+    const record_count = try collectReleaseRecords(name, &records);
+    sortReleaseRecordsNewestFirst(records[0..record_count]);
+
+    var deleted_count: u32 = 0;
+    var index = keep;
+    while (index < record_count) : (index += 1) {
+        try deletePackageRelease(name, records[index].name(), tick);
+        deleted_count += 1;
+    }
+
+    return .{
+        .kept_count = @intCast(@min(keep, record_count)),
+        .deleted_count = deleted_count,
+    };
 }
 
 pub fn validatePackageName(name: []const u8) Error!void {
@@ -602,6 +710,12 @@ fn releaseAssetsPath(name: []const u8, release: []const u8, buffer: *[filesystem
     return std.fmt.bufPrint(buffer, "/packages/{s}/releases/{s}/assets", .{ name, release }) catch error.InvalidPath;
 }
 
+fn releaseMetadataPath(name: []const u8, release: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validatePackageName(name);
+    try validateReleaseName(release);
+    return std.fmt.bufPrint(buffer, "/packages/{s}/releases/{s}/meta/release.txt", .{ name, release }) catch error.InvalidPath;
+}
+
 fn releaseEntrypointPath(name: []const u8, release: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
     try validatePackageName(name);
     try validateReleaseName(release);
@@ -638,6 +752,16 @@ fn releaseExists(name: []const u8, release: []const u8) Error!bool {
         else => return err,
     };
     return true;
+}
+
+fn nextReleaseSequence(name: []const u8) Error!u32 {
+    var records: [filesystem.max_entries]ReleaseRecord = undefined;
+    const record_count = try collectReleaseRecords(name, &records);
+    var max_seq: u32 = 0;
+    for (records[0..record_count]) |record| {
+        max_seq = @max(max_seq, record.saved_seq);
+    }
+    return max_seq + 1;
 }
 
 const AssetDigest = struct {
@@ -749,6 +873,19 @@ fn createReleaseDirectories(name: []const u8, release: []const u8) Error!void {
     try filesystem.createDirPath(try releaseAssetsPath(name, release, &release_assets_buf));
 }
 
+fn writeReleaseMetadata(name: []const u8, release: []const u8, saved_seq: u32, saved_tick: u64) Error!void {
+    var metadata_path_buf: [filesystem.max_path_len]u8 = undefined;
+    const metadata_path = try releaseMetadataPath(name, release, &metadata_path_buf);
+
+    var body: [256]u8 = undefined;
+    const metadata = std.fmt.bufPrint(
+        &body,
+        "name={s}\nrelease={s}\nsaved_seq={d}\nsaved_tick={d}\n",
+        .{ name, release, saved_seq, saved_tick },
+    ) catch return error.InvalidPath;
+    try filesystem.writeFile(metadata_path, metadata, saved_tick);
+}
+
 fn deleteActivePackageLayout(name: []const u8, tick: u64) Error!void {
     var bin_buf: [filesystem.max_path_len]u8 = undefined;
     var meta_buf: [filesystem.max_path_len]u8 = undefined;
@@ -815,6 +952,67 @@ fn fileListingName(line: []const u8) ?[]const u8 {
     return remainder[0..last_space];
 }
 
+fn collectReleaseRecords(name: []const u8, records: *[filesystem.max_entries]ReleaseRecord) Error!usize {
+    var releases_buf: [filesystem.max_path_len]u8 = undefined;
+    const releases_root = releasesRootPath(name, &releases_buf);
+
+    var listing_scratch: [release_list_scan_max_bytes]u8 = undefined;
+    var listing_fba = std.heap.FixedBufferAllocator.init(&listing_scratch);
+    const raw_listing = filesystem.listDirectoryAlloc(listing_fba.allocator(), releases_root, listing_scratch.len) catch |err| switch (err) {
+        error.FileNotFound => return 0,
+        else => return err,
+    };
+
+    var count: usize = 0;
+    var lines = std.mem.splitScalar(u8, raw_listing, '\n');
+    while (lines.next()) |line| {
+        if (!std.mem.startsWith(u8, line, "dir ")) continue;
+        const release_name = line["dir ".len..];
+        if (release_name.len == 0) continue;
+
+        var saved_seq: u32 = 0;
+        var metadata_path_buf: [filesystem.max_path_len]u8 = undefined;
+        const metadata_path = try releaseMetadataPath(name, release_name, &metadata_path_buf);
+        var metadata_scratch: [256]u8 = undefined;
+        var metadata_fba = std.heap.FixedBufferAllocator.init(&metadata_scratch);
+        const metadata_raw = filesystem.readFileAlloc(metadata_fba.allocator(), metadata_path, metadata_scratch.len) catch |err| switch (err) {
+            error.FileNotFound => null,
+            else => return err,
+        };
+        if (metadata_raw) |raw| {
+            const metadata = try parseReleaseMetadata(raw);
+            saved_seq = metadata.saved_seq;
+        }
+
+        records[count] = .{
+            .name_len = release_name.len,
+            .saved_seq = saved_seq,
+        };
+        @memcpy(records[count].name_storage[0..release_name.len], release_name);
+        count += 1;
+    }
+
+    return count;
+}
+
+fn sortReleaseRecordsNewestFirst(records: []ReleaseRecord) void {
+    var i: usize = 0;
+    while (i < records.len) : (i += 1) {
+        var best_index = i;
+        var j: usize = i + 1;
+        while (j < records.len) : (j += 1) {
+            if (records[j].saved_seq > records[best_index].saved_seq) {
+                best_index = j;
+                continue;
+            }
+            if (records[j].saved_seq == records[best_index].saved_seq and std.mem.lessThan(u8, records[best_index].name(), records[j].name())) {
+                best_index = j;
+            }
+        }
+        if (best_index != i) std.mem.swap(ReleaseRecord, &records[i], &records[best_index]);
+    }
+}
+
 fn lessAssetRecordPath(_: void, lhs_index: u32, rhs_index: u32) bool {
     const lhs = filesystem.entry(lhs_index);
     const rhs = filesystem.entry(rhs_index);
@@ -872,6 +1070,31 @@ fn parseManifestInfo(raw: []const u8) Error!ManifestInfo {
         return error.InvalidPackageMetadata;
     }
     return info;
+}
+
+fn parseReleaseMetadata(raw: []const u8) Error!ReleaseMetadata {
+    var metadata: ReleaseMetadata = .{};
+    var lines = std.mem.splitScalar(u8, raw, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        if (std.mem.startsWith(u8, line, "name=")) {
+            metadata.name = line["name=".len..];
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "release=")) {
+            metadata.release = line["release=".len..];
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "saved_seq=")) {
+            metadata.saved_seq = std.fmt.parseInt(u32, line["saved_seq=".len..], 10) catch return error.InvalidPackageMetadata;
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "saved_tick=")) {
+            metadata.saved_tick = std.fmt.parseInt(u64, line["saved_tick=".len..], 10) catch return error.InvalidPackageMetadata;
+            continue;
+        }
+    }
+    return metadata;
 }
 
 fn formatVerifyPathMismatch(
@@ -1252,4 +1475,46 @@ test "package store persists package releases on ata-backed storage" {
     const release_listing = try releaseListAlloc(std.testing.allocator, "persisted", 64);
     defer std.testing.allocator.free(release_listing);
     try std.testing.expectEqualStrings("golden\n", release_listing);
+}
+
+test "package store reports, deletes, and prunes persisted package releases" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+
+    try installScriptPackage("demo", "echo release-one", 1);
+    try installPackageAsset("demo", "config/app.json", "{\"mode\":\"one\"}", 2);
+    try snapshotPackageRelease("demo", "r1", 3);
+
+    try installScriptPackage("demo", "echo release-two", 4);
+    try installPackageAsset("demo", "config/app.json", "{\"mode\":\"two\"}", 5);
+    try snapshotPackageRelease("demo", "r2", 6);
+
+    try installScriptPackage("demo", "echo release-three", 7);
+    try installPackageAsset("demo", "config/app.json", "{\"mode\":\"three\"}", 8);
+    try snapshotPackageRelease("demo", "r3", 9);
+
+    const info = try releaseInfoAlloc(std.testing.allocator, "demo", "r2", 512);
+    defer std.testing.allocator.free(info);
+    try std.testing.expect(std.mem.indexOf(u8, info, "name=demo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info, "release=r2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info, "saved_seq=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info, "saved_tick=6") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info, "script_checksum=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info, "asset_tree_checksum=") != null);
+
+    try deletePackageRelease("demo", "r2", 10);
+
+    const listing_after_delete = try releaseListAlloc(std.testing.allocator, "demo", 64);
+    defer std.testing.allocator.free(listing_after_delete);
+    try std.testing.expectEqualStrings("r1\nr3\n", listing_after_delete);
+
+    const prune = try prunePackageReleases("demo", 1, 11);
+    try std.testing.expectEqual(@as(u32, 1), prune.kept_count);
+    try std.testing.expectEqual(@as(u32, 1), prune.deleted_count);
+
+    const listing_after_prune = try releaseListAlloc(std.testing.allocator, "demo", 64);
+    defer std.testing.allocator.free(listing_after_prune);
+    try std.testing.expectEqualStrings("r3\n", listing_after_prune);
+
+    try std.testing.expectError(error.PackageReleaseNotFound, activatePackageRelease("demo", "r1", 12));
 }
