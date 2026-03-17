@@ -135,7 +135,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-delete, trust-list, trust-info, trust-active, trust-select, trust-delete, display-info, display-modes, display-set, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, display-info, display-modes, display-set, run-script, run-package, app-run");
         return;
     }
 
@@ -630,6 +630,62 @@ fn execute(
         return;
     }
 
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-autorun-list")) {
+        if (parsed.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-autorun-list");
+            return;
+        }
+        const listing = app_runtime.autorunListAlloc(allocator, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-autorun-list failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(listing);
+        try stdout_buffer.appendSlice(listing);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-autorun-add")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-autorun-add <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-autorun-add <name>");
+            return;
+        }
+        app_runtime.addAutorun(arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-autorun-add failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("app autorun add {s}\n", .{arg.arg});
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-autorun-remove")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-autorun-remove <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-autorun-remove <name>");
+            return;
+        }
+        app_runtime.removeAutorun(arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-autorun-remove failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("app autorun remove {s}\n", .{arg.arg});
+        return;
+    }
+
     if (std.ascii.eqlIgnoreCase(parsed.name, "trust-list")) {
         if (parsed.rest.len != 0) {
             exit_code.* = 2;
@@ -848,6 +904,16 @@ fn execute(
         return;
     }
 
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-autorun-run")) {
+        if (parsed.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-autorun-run");
+            return;
+        }
+        try runAutorunProfiles("app-autorun-run", stdout_buffer, stderr_buffer, exit_code, allocator, depth);
+        return;
+    }
+
     exit_code.* = 127;
     try stderr_buffer.appendFmt("unknown command: {s}\n", .{parsed.name});
 }
@@ -977,6 +1043,30 @@ fn runLaunchProfile(
             try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
             return;
         };
+    }
+}
+
+fn runAutorunProfiles(
+    operation: []const u8,
+    stdout_buffer: *OutputBuffer,
+    stderr_buffer: *OutputBuffer,
+    exit_code: *u8,
+    allocator: std.mem.Allocator,
+    depth: usize,
+) Error!void {
+    const autorun_list = app_runtime.autorunListAlloc(allocator, 1024) catch |err| {
+        exit_code.* = 1;
+        try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+        return;
+    };
+    defer allocator.free(autorun_list);
+
+    var lines = std.mem.splitScalar(u8, autorun_list, '\n');
+    while (lines.next()) |raw_line| {
+        const package_name = std.mem.trim(u8, raw_line, " \t\r");
+        if (package_name.len == 0) continue;
+        try runLaunchProfile(package_name, operation, true, stdout_buffer, stderr_buffer, exit_code, allocator, depth);
+        if (exit_code.* != 0) return;
     }
 }
 
@@ -1388,6 +1478,53 @@ test "baremetal tool exec app-run persists last run state and selects trust" {
     defer stderr_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), stderr_result.exit_code);
     try std.testing.expectEqualStrings("", stderr_result.stdout);
+}
+
+test "baremetal tool exec persists and runs autorun apps" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    vga_text_console.resetForTest();
+
+    try package_store.installScriptPackage("demo", "echo demo-autorun", 1);
+    try package_store.installScriptPackage("aux", "echo aux-autorun", 2);
+
+    var add_demo = try runCapture(std.testing.allocator, "app-autorun-add demo", 256, 256);
+    defer add_demo.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), add_demo.exit_code);
+    try std.testing.expectEqualStrings("app autorun add demo\n", add_demo.stdout);
+
+    var add_aux = try runCapture(std.testing.allocator, "app-autorun-add aux", 256, 256);
+    defer add_aux.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), add_aux.exit_code);
+    try std.testing.expectEqualStrings("app autorun add aux\n", add_aux.stdout);
+
+    var list_result = try runCapture(std.testing.allocator, "app-autorun-list", 256, 256);
+    defer list_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), list_result.exit_code);
+    try std.testing.expectEqualStrings("demo\naux\n", list_result.stdout);
+
+    var run_result = try runCapture(std.testing.allocator, "app-autorun-run", 256, 256);
+    defer run_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), run_result.exit_code);
+    try std.testing.expectEqualStrings("demo-autorun\naux-autorun\n", run_result.stdout);
+
+    const demo_state = try app_runtime.stateAlloc(std.testing.allocator, "demo", 256);
+    defer std.testing.allocator.free(demo_state);
+    try std.testing.expect(std.mem.indexOf(u8, demo_state, "exit_code=0") != null);
+
+    const aux_stdout = try app_runtime.stdoutAlloc(std.testing.allocator, "aux", 256);
+    defer std.testing.allocator.free(aux_stdout);
+    try std.testing.expectEqualStrings("aux-autorun\n", aux_stdout);
+
+    var remove_demo = try runCapture(std.testing.allocator, "app-autorun-remove demo", 256, 256);
+    defer remove_demo.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), remove_demo.exit_code);
+    try std.testing.expectEqualStrings("app autorun remove demo\n", remove_demo.stdout);
+
+    var updated_list = try runCapture(std.testing.allocator, "app-autorun-list", 256, 256);
+    defer updated_list.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), updated_list.exit_code);
+    try std.testing.expectEqualStrings("aux\n", updated_list.stdout);
 }
 
 test "baremetal tool exec uninstalls packages and clears app state" {

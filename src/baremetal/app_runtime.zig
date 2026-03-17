@@ -10,17 +10,79 @@ const trust_store = @import("trust_store.zig");
 
 const root_dir = "/runtime/apps";
 const max_history_bytes: usize = 1024;
+const max_autorun_bytes: usize = 1024;
+const autorun_list_path = "/runtime/apps/autorun.txt";
 
 pub const Error = filesystem.Error || package_store.Error || std.mem.Allocator.Error || error{
     AppStateNotFound,
     AppHistoryNotFound,
     AppStdoutNotFound,
     AppStderrNotFound,
+    AppAutorunEntryNotFound,
     ResponseTooLarge,
 };
 
 pub fn listAppsAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
     return package_store.listPackagesAlloc(allocator, max_bytes);
+}
+
+pub fn autorunListAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
+    return readAutorunListAlloc(allocator, max_bytes);
+}
+
+pub fn addAutorun(name: []const u8, tick: u64) Error!void {
+    var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    _ = try package_store.loadLaunchProfile(name, &entrypoint_buf);
+
+    var existing_scratch: [max_autorun_bytes]u8 = undefined;
+    const existing = try loadAutorunListScratch(&existing_scratch);
+    if (containsAutorunName(existing, name)) return;
+
+    var rendered: [max_autorun_bytes + package_store.max_name_len + 2]u8 = undefined;
+    var len: usize = 0;
+    if (existing.len != 0) {
+        @memcpy(rendered[0..existing.len], existing);
+        len = existing.len;
+        if (rendered[len - 1] != '\n') {
+            rendered[len] = '\n';
+            len += 1;
+        }
+    }
+    @memcpy(rendered[len .. len + name.len], name);
+    len += name.len;
+    rendered[len] = '\n';
+    len += 1;
+
+    try filesystem.createDirPath(root_dir);
+    try filesystem.writeFile(autorun_list_path, rendered[0..len], tick);
+}
+
+pub fn removeAutorun(name: []const u8, tick: u64) Error!void {
+    try package_store.validatePackageName(name);
+    var existing_scratch: [max_autorun_bytes]u8 = undefined;
+    const existing = try loadAutorunListScratch(&existing_scratch);
+
+    var rendered: [max_autorun_bytes]u8 = undefined;
+    var len: usize = 0;
+    var found = false;
+    var lines = std.mem.splitScalar(u8, existing, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (line.len == 0) continue;
+        if (std.mem.eql(u8, line, name)) {
+            found = true;
+            continue;
+        }
+        @memcpy(rendered[len .. len + line.len], line);
+        len += line.len;
+        rendered[len] = '\n';
+        len += 1;
+    }
+
+    if (!found) return error.AppAutorunEntryNotFound;
+
+    try filesystem.createDirPath(root_dir);
+    try filesystem.writeFile(autorun_list_path, rendered[0..len], tick);
 }
 
 pub fn infoAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
@@ -198,6 +260,32 @@ fn appDirPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]co
     return std.fmt.bufPrint(buffer, "{s}/{s}", .{ root_dir, name }) catch error.InvalidPath;
 }
 
+fn readAutorunListAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
+    return filesystem.readFileAlloc(allocator, autorun_list_path, max_bytes) catch |err| switch (err) {
+        error.FileNotFound => allocator.dupe(u8, ""),
+        else => err,
+    };
+}
+
+fn loadAutorunListScratch(buffer: *[max_autorun_bytes]u8) Error![]const u8 {
+    var fba = std.heap.FixedBufferAllocator.init(buffer);
+    const existing = filesystem.readFileAlloc(fba.allocator(), autorun_list_path, buffer.len) catch |err| switch (err) {
+        error.FileNotFound => "",
+        else => return err,
+    };
+    return existing;
+}
+
+fn containsAutorunName(entries: []const u8, name: []const u8) bool {
+    var lines = std.mem.splitScalar(u8, entries, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (line.len == 0) continue;
+        if (std.mem.eql(u8, line, name)) return true;
+    }
+    return false;
+}
+
 fn appendHistoryLine(path: []const u8, line: []const u8, tick: u64) Error!void {
     var existing_storage: [max_history_bytes]u8 = undefined;
     var existing_fba = std.heap.FixedBufferAllocator.init(&existing_storage);
@@ -327,4 +415,48 @@ test "app runtime uninstall removes package tree and persisted state" {
     const packages_listing = try filesystem.listDirectoryAlloc(std.testing.allocator, "/packages", 64);
     defer std.testing.allocator.free(packages_listing);
     try std.testing.expectEqualStrings("", packages_listing);
+}
+
+test "app runtime persists autorun registry on ram disk" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+
+    try package_store.installScriptPackage("demo", "echo demo", 1);
+    try package_store.installScriptPackage("aux", "echo aux", 2);
+
+    try addAutorun("demo", 3);
+    try addAutorun("demo", 4);
+    try addAutorun("aux", 5);
+
+    const autorun = try autorunListAlloc(std.testing.allocator, 128);
+    defer std.testing.allocator.free(autorun);
+    try std.testing.expectEqualStrings("demo\naux\n", autorun);
+
+    try removeAutorun("demo", 6);
+    const updated = try autorunListAlloc(std.testing.allocator, 128);
+    defer std.testing.allocator.free(updated);
+    try std.testing.expectEqualStrings("aux\n", updated);
+}
+
+test "app runtime persists autorun registry on ata-backed storage" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    ata_pio_disk.testEnableMockDevice(8192);
+    ata_pio_disk.testInstallMockMbrPartition(2048, 4096, 0x83);
+    defer ata_pio_disk.testDisableMockDevice();
+
+    try package_store.installScriptPackage("demo", "echo demo", 1);
+    try package_store.installScriptPackage("aux", "echo aux", 2);
+
+    try addAutorun("demo", 3);
+    try addAutorun("aux", 4);
+
+    const autorun = try autorunListAlloc(std.testing.allocator, 128);
+    defer std.testing.allocator.free(autorun);
+    try std.testing.expectEqualStrings("demo\naux\n", autorun);
+
+    try removeAutorun("aux", 5);
+    const updated = try autorunListAlloc(std.testing.allocator, 128);
+    defer std.testing.allocator.free(updated);
+    try std.testing.expectEqualStrings("demo\n", updated);
 }
