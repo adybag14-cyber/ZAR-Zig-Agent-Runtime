@@ -95,6 +95,7 @@ const qemu_ata_gpt_installer_probe_ok_code: u8 = 0x40;
 const qemu_virtio_gpu_display_probe_ok_code: u8 = 0x41;
 const qemu_rtl8139_https_post_probe_ok_code: u8 = 0x42;
 const qemu_tool_runtime_probe_ok_code: u8 = 0x43;
+const qemu_rtl8139_runtime_service_probe_ok_code: u8 = 0x44;
 const build_options = if (builtin.is_test)
     struct {
         pub const qemu_smoke: bool = false;
@@ -112,6 +113,7 @@ const build_options = if (builtin.is_test)
         pub const rtl8139_dns_probe: bool = false;
         pub const rtl8139_http_post_probe: bool = false;
         pub const rtl8139_https_post_probe: bool = false;
+        pub const rtl8139_runtime_service_probe: bool = false;
         pub const tool_exec_probe: bool = false;
         pub const tool_runtime_probe: bool = false;
         pub const rtl8139_gateway_probe: bool = false;
@@ -135,6 +137,7 @@ const rtl8139_dhcp_probe_enabled: bool = build_options.rtl8139_dhcp_probe;
 const rtl8139_dns_probe_enabled: bool = build_options.rtl8139_dns_probe;
 const rtl8139_http_post_probe_enabled: bool = if (@hasDecl(build_options, "rtl8139_http_post_probe")) build_options.rtl8139_http_post_probe else false;
 const rtl8139_https_post_probe_enabled: bool = if (@hasDecl(build_options, "rtl8139_https_post_probe")) build_options.rtl8139_https_post_probe else false;
+const rtl8139_runtime_service_probe_enabled: bool = if (@hasDecl(build_options, "rtl8139_runtime_service_probe")) build_options.rtl8139_runtime_service_probe else false;
 const tool_exec_probe_enabled: bool = build_options.tool_exec_probe;
 const tool_runtime_probe_enabled: bool = if (@hasDecl(build_options, "tool_runtime_probe")) build_options.tool_runtime_probe else false;
 const rtl8139_gateway_probe_enabled: bool = build_options.rtl8139_gateway_probe;
@@ -1855,6 +1858,10 @@ fn baremetalStart() callconv(.c) noreturn {
         runRtl8139HttpsPostProbe() catch |err| qemuExit(rtl8139TcpProbeFailureCode(err));
         qemuExit(qemu_rtl8139_https_post_probe_ok_code);
     }
+    if (rtl8139_runtime_service_probe_enabled) {
+        runRtl8139RuntimeServiceProbe() catch |err| qemuExit(rtl8139TcpProbeFailureCode(err));
+        qemuExit(qemu_rtl8139_runtime_service_probe_ok_code);
+    }
     if (tool_exec_probe_enabled) {
         runToolExecProbe() catch |err| qemuExit(toolExecProbeFailureCode(err));
         qemuExit(qemu_tool_exec_probe_ok_code);
@@ -2963,15 +2970,83 @@ fn expectTcpProbePacket(
     if (!std.mem.eql(u8, expected.payload, packet.payload[0..packet.payload_len])) return error.PayloadMismatch;
 }
 
+fn establishTcpProbeSession(
+    eth: *const BaremetalEthernetState,
+    scratch: *Rtl8139TcpProbeScratch,
+    client: *tcp_protocol.Session,
+    server: *tcp_protocol.Session,
+    source_ip: [4]u8,
+    destination_ip: [4]u8,
+) Rtl8139TcpProbeError!void {
+    const syn = client.buildSyn() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, client.local_port, client.remote_port, syn);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, client.local_port, client.remote_port, syn);
+
+    const syn_ack = server.acceptSyn(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, server.local_port, server.remote_port, syn_ack);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, server.local_port, server.remote_port, syn_ack);
+
+    const ack = client.acceptSynAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, client.local_port, client.remote_port, ack);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, client.local_port, client.remote_port, ack);
+    server.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+}
+
+fn exchangeTcpProbeServiceRequest(
+    eth: *const BaremetalEthernetState,
+    scratch: *Rtl8139TcpProbeScratch,
+    client: *tcp_protocol.Session,
+    server: *tcp_protocol.Session,
+    source_ip: [4]u8,
+    destination_ip: [4]u8,
+    request: []const u8,
+    query_limit: usize,
+    payload_limit: usize,
+    response_limit: usize,
+) Rtl8139TcpProbeError![]const u8 {
+    var service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+
+    const request_payload = client.buildPayload(request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, client.local_port, client.remote_port, request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, client.local_port, client.remote_port, request_payload);
+    server.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const response = tool_service.handleFramedRequest(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        query_limit,
+        payload_limit,
+        response_limit,
+    ) catch return error.ToolServiceFailed;
+
+    const reply = server.buildPayload(response) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, server.local_port, server.remote_port, reply);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, server.local_port, server.remote_port, reply);
+    client.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const ack = client.buildAck() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, client.local_port, client.remote_port, ack);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, client.local_port, client.remote_port, ack);
+    server.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    return response;
+}
+
 const Rtl8139TcpProbeScratch = struct {
     packet_storage: pal_net.TcpPacket,
-    service_scratch: [8192]u8,
+    service_scratch: [65536]u8,
     http_post_scratch: [2048]u8,
     https_trust_store_scratch: [2048]u8,
     service_request_put_buffer: [256]u8,
     service_response_put_expected_buffer: [160]u8,
-    service_batch_request_buffer: [1024]u8,
-    service_batch_response_expected_buffer: [2304]u8,
+    service_batch_request_buffer: [2048]u8,
+    service_batch_response_expected_buffer: [4096]u8,
     package_install_request_buffer: [512]u8,
     package_info_response_expected_buffer: [384]u8,
     app_info_response_expected_buffer: [448]u8,
@@ -5636,6 +5711,160 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     if (eth.last_rx_len != expected_final_ack_frame_len_b) return error.FrameLengthMismatch;
 
     if (eth.tx_packets < 20 or eth.rx_packets < 20) return error.CounterMismatch;
+}
+
+fn runRtl8139RuntimeServiceProbe() Rtl8139TcpProbeError!void {
+    resetBaremetalRuntimeForTest();
+    rtl8139.initDetailed() catch |err| return switch (err) {
+        error.UnsupportedPlatform => error.UnsupportedPlatform,
+        error.DeviceNotFound => error.DeviceNotFound,
+        error.ResetTimeout => error.ResetTimeout,
+        error.BufferProgramFailed => error.BufferProgramFailed,
+        error.MacReadFailed => error.MacReadFailed,
+        error.DataPathEnableFailed => error.DataPathEnableFailed,
+    };
+
+    const eth = oc_ethernet_state_ptr();
+    if (eth.magic != abi.ethernet_magic) return error.StateMagicMismatch;
+    if (eth.backend != abi.ethernet_backend_rtl8139) return error.BackendMismatch;
+    if (eth.initialized == 0) return error.InitFlagMismatch;
+    if (!builtin.is_test and eth.hardware_backed == 0) return error.HardwareBackedMismatch;
+    if (eth.io_base == 0) return error.IoBaseMismatch;
+
+    rtl8139.installProbeSendHook(rtl8139TcpProbeLoopbackHook);
+    defer rtl8139.installProbeSendHook(null);
+
+    const source_ip = [4]u8{ 192, 168, 56, 10 };
+    const destination_ip = [4]u8{ 192, 168, 56, 1 };
+    const runtime_write_frame =
+        "{\"id\":\"svc-write\",\"method\":\"file.write\",\"params\":{\"sessionId\":\"svc-runtime\",\"path\":\"/runtime/tmp/service-runtime.txt\",\"content\":\"service-runtime-data\"}}";
+    const runtime_exec_frame =
+        "{\"id\":\"svc-exec\",\"method\":\"exec.run\",\"params\":{\"sessionId\":\"svc-runtime\",\"command\":\"echo service-runtime\",\"timeoutMs\":1000}}";
+    const runtime_read_frame =
+        "{\"id\":\"svc-read\",\"method\":\"file.read\",\"params\":{\"sessionId\":\"svc-runtime\",\"path\":\"/runtime/tmp/service-runtime.txt\"}}";
+    const runtime_sessions_expected = "RESP 99 12\nsvc-runtime\n";
+
+    var client = tcp_protocol.Session.initClient(4333, 445, 0x5152_5354, 4096);
+    var server = tcp_protocol.Session.initServer(445, 4333, 0xA1B2_C3D4, 4096);
+    const scratch = &rtl8139_tcp_probe_scratch;
+
+    try establishTcpProbeSession(eth, scratch, &client, &server, source_ip, destination_ip);
+
+    const runtime_write_request = std.fmt.bufPrint(
+        &scratch.service_batch_request_buffer,
+        "REQ 95 RUNTIMECALL {d}\n{s}",
+        .{ runtime_write_frame.len, runtime_write_frame },
+    ) catch return error.ToolServiceFailed;
+    const runtime_write_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        runtime_write_request,
+        768,
+        256,
+        768,
+    );
+    if (!std.mem.startsWith(u8, runtime_write_response, "RESP 95 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, runtime_write_response, "\"id\":\"svc-write\"") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, runtime_write_response, "\"path\":\"/runtime/tmp/service-runtime.txt\"") == null) return error.ToolServiceResponseMismatch;
+
+    const runtime_exec_request = std.fmt.bufPrint(
+        &scratch.service_batch_request_buffer,
+        "REQ 96 RUNTIMECALL {d}\n{s}",
+        .{ runtime_exec_frame.len, runtime_exec_frame },
+    ) catch return error.ToolServiceFailed;
+    const runtime_exec_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        runtime_exec_request,
+        768,
+        256,
+        768,
+    );
+    if (!std.mem.startsWith(u8, runtime_exec_response, "RESP 96 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, runtime_exec_response, "\"id\":\"svc-exec\"") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, runtime_exec_response, "\"stdout\"") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, runtime_exec_response, "service-runtime") == null) return error.ToolServiceResponseMismatch;
+
+    const runtime_read_request = std.fmt.bufPrint(
+        &scratch.service_batch_request_buffer,
+        "REQ 97 RUNTIMECALL {d}\n{s}",
+        .{ runtime_read_frame.len, runtime_read_frame },
+    ) catch return error.ToolServiceFailed;
+    const runtime_read_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        runtime_read_request,
+        768,
+        256,
+        768,
+    );
+    if (!std.mem.startsWith(u8, runtime_read_response, "RESP 97 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, runtime_read_response, "\"content\":\"service-runtime-data\"") == null) return error.ToolServiceResponseMismatch;
+
+    const runtime_snapshot_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 98 RUNTIMESNAPSHOT",
+        512,
+        256,
+        512,
+    );
+    if (std.mem.indexOf(u8, runtime_snapshot_response, "state_path=/runtime/state/runtime-state.json") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, runtime_snapshot_response, "sessions=1") == null) return error.ToolServiceResponseMismatch;
+
+    const runtime_sessions_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 99 RUNTIMESESSIONS",
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, runtime_sessions_response, runtime_sessions_expected)) return error.ToolServiceResponseMismatch;
+
+    const runtime_session_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 100 RUNTIMESESSION svc-runtime",
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, runtime_session_response, "RESP 100 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, runtime_session_response, "id=svc-runtime") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, runtime_session_response, "last_message=file.read:/runtime/tmp/service-runtime.txt") == null) return error.ToolServiceResponseMismatch;
+
+    var service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const state_payload = filesystem.readFileAlloc(service_fba.allocator(), "/runtime/state/runtime-state.json", 2048) catch return error.ToolServiceFailed;
+    if (std.mem.indexOf(u8, state_payload, "svc-runtime") == null) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const fs_readback = filesystem.readFileAlloc(service_fba.allocator(), "/runtime/tmp/service-runtime.txt", 256) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, fs_readback, "service-runtime-data")) return error.ToolServiceResponseMismatch;
 }
 
 fn runRtl8139HttpPostProbe() Rtl8139TcpProbeError!void {

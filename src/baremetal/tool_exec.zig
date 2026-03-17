@@ -4,6 +4,7 @@ const abi = @import("abi.zig");
 const app_runtime = @import("app_runtime.zig");
 const filesystem = @import("filesystem.zig");
 const package_store = @import("package_store.zig");
+const runtime_bridge = @import("runtime_bridge.zig");
 const trust_store = @import("trust_store.zig");
 const display_output = @import("display_output.zig");
 const framebuffer_console = @import("framebuffer_console.zig");
@@ -135,7 +136,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, display-info, display-modes, display-set, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-modes, display-set, run-script, run-package, app-run");
         return;
     }
 
@@ -934,6 +935,59 @@ fn execute(
         return;
     }
 
+    if (std.ascii.eqlIgnoreCase(parsed.name, "runtime-snapshot")) {
+        if (parsed.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: runtime-snapshot");
+            return;
+        }
+        const snapshot = runtime_bridge.snapshotAlloc(allocator) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("runtime-snapshot failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(snapshot);
+        try stdout_buffer.appendSlice(snapshot);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "runtime-sessions")) {
+        if (parsed.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: runtime-sessions");
+            return;
+        }
+        const sessions = runtime_bridge.sessionListAlloc(allocator) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("runtime-sessions failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(sessions);
+        try stdout_buffer.appendSlice(sessions);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "runtime-session")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "runtime-session <id>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: runtime-session <id>");
+            return;
+        }
+        const session_info = runtime_bridge.sessionInfoAlloc(allocator, arg.arg) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("runtime-session failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(session_info);
+        try stdout_buffer.appendSlice(session_info);
+        return;
+    }
+
     if (std.ascii.eqlIgnoreCase(parsed.name, "display-info")) {
         if (parsed.rest.len != 0) {
             exit_code.* = 2;
@@ -1630,6 +1684,46 @@ test "baremetal tool exec rotates and revokes trust bundles" {
     try std.testing.expectEqual(@as(u8, 0), selected_info.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, selected_info.stdout, "name=fs55-backup") != null);
     try std.testing.expect(std.mem.indexOf(u8, selected_info.stdout, "selected=1") != null);
+}
+
+test "baremetal tool exec reports persisted runtime snapshot and sessions" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    vga_text_console.resetForTest();
+
+    var runtime = try runtime_bridge.initRuntime(std.heap.page_allocator);
+    defer runtime.deinit();
+
+    var write_result = try runtime.fileWriteFromFrame(
+        std.heap.page_allocator,
+        "{\"id\":\"rt-write\",\"method\":\"file.write\",\"params\":{\"sessionId\":\"cli-runtime\",\"path\":\"/runtime/tmp/cli-runtime.txt\",\"content\":\"cli-runtime-data\"}}",
+    );
+    defer write_result.deinit(std.heap.page_allocator);
+    try std.testing.expect(write_result.ok);
+
+    var exec_result = try runtime.execRunFromFrame(
+        std.heap.page_allocator,
+        "{\"id\":\"rt-exec\",\"method\":\"exec.run\",\"params\":{\"sessionId\":\"cli-runtime\",\"command\":\"echo cli-runtime\",\"timeoutMs\":1000}}",
+    );
+    defer exec_result.deinit(std.heap.page_allocator);
+    try std.testing.expect(exec_result.ok);
+
+    var snapshot_result = try runCapture(std.testing.allocator, "runtime-snapshot", 256, 256);
+    defer snapshot_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), snapshot_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, snapshot_result.stdout, "state_path=/runtime/state/runtime-state.json") != null);
+    try std.testing.expect(std.mem.indexOf(u8, snapshot_result.stdout, "sessions=1") != null);
+
+    var sessions_result = try runCapture(std.testing.allocator, "runtime-sessions", 256, 256);
+    defer sessions_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), sessions_result.exit_code);
+    try std.testing.expectEqualStrings("cli-runtime\n", sessions_result.stdout);
+
+    var session_result = try runCapture(std.testing.allocator, "runtime-session cli-runtime", 256, 256);
+    defer session_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), session_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, session_result.stdout, "id=cli-runtime") != null);
+    try std.testing.expect(std.mem.indexOf(u8, session_result.stdout, "last_message=echo cli-runtime") != null);
 }
 
 test "baremetal tool exec configures app trust and connector and reports app info" {

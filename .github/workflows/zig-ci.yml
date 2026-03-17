@@ -185,6 +185,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1
 
+      - name: Bare-metal QEMU RTL8139 runtime service probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-rtl8139-runtime-service-probe-check.ps1
+
       - name: Bare-metal QEMU RTL8139 DHCP probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-rtl8139-dhcp-probe-check.ps1

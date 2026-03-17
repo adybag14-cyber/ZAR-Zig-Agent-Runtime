@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $releaseDir = Join-Path $repo 'release'
-$expectedProbeCode = 0x3A
+$expectedProbeCode = 0x44
 $expectedExitCode = ($expectedProbeCode * 2) + 1
 
 function Resolve-ZigExecutable {
@@ -165,7 +165,7 @@ $zigLocalCacheDir = if ($env:ZIG_LOCAL_CACHE_DIR -and $env:ZIG_LOCAL_CACHE_DIR.T
 
 if ($null -eq $qemu) {
     Write-Output 'BAREMETAL_QEMU_AVAILABLE=False'
-    Write-Output 'BAREMETAL_QEMU_RTL8139_TCP_PROBE=skipped'
+    Write-Output 'BAREMETAL_QEMU_RTL8139_RUNTIME_SERVICE_PROBE=skipped'
     return
 }
 
@@ -176,20 +176,19 @@ if ($null -eq $clang -or $null -eq $lld -or $null -eq $compilerRt) {
     if ($null -eq $clang) { Write-Output 'BAREMETAL_QEMU_PVH_MISSING=clang' }
     if ($null -eq $lld) { Write-Output 'BAREMETAL_QEMU_PVH_MISSING=lld' }
     if ($null -eq $compilerRt) { Write-Output 'BAREMETAL_QEMU_PVH_MISSING=libcompiler_rt.a' }
-    Write-Output 'BAREMETAL_QEMU_RTL8139_TCP_PROBE=skipped'
+    Write-Output 'BAREMETAL_QEMU_RTL8139_RUNTIME_SERVICE_PROBE=skipped'
     return
 }
 
-$optionsPath = Join-Path $releaseDir 'qemu-rtl8139-tcp-probe-options.zig'
-$mainObj = Join-Path $releaseDir 'openclaw-zig-baremetal-main-rtl8139-tcp-probe.o'
-$bootObj = Join-Path $releaseDir 'openclaw-zig-pvh-boot-rtl8139-tcp-probe.o'
-$artifact = Join-Path $releaseDir 'openclaw-zig-baremetal-pvh-rtl8139-tcp-probe.elf'
-$diskImage = Join-Path $releaseDir 'qemu-rtl8139-tcp-probe.img'
+$optionsPath = Join-Path $releaseDir 'qemu-rtl8139-runtime-service-probe-options.zig'
+$mainObj = Join-Path $releaseDir 'openclaw-zig-baremetal-main-rtl8139-runtime-service-probe.o'
+$bootObj = Join-Path $releaseDir 'openclaw-zig-pvh-boot-rtl8139-runtime-service-probe.o'
+$artifact = Join-Path $releaseDir 'openclaw-zig-baremetal-pvh-rtl8139-runtime-service-probe.elf'
+$diskImage = Join-Path $releaseDir 'qemu-rtl8139-runtime-service-probe.img'
 $bootSource = Join-Path $repo 'scripts\baremetal\pvh_boot.S'
 $linkerScript = Join-Path $repo 'scripts\baremetal\pvh_lld.ld'
-$stdoutPath = Join-Path $releaseDir 'qemu-rtl8139-tcp-probe.stdout.log'
-$stderrPath = Join-Path $releaseDir 'qemu-rtl8139-tcp-probe.stderr.log'
-
+$stdoutPath = Join-Path $releaseDir 'qemu-rtl8139-runtime-service-probe.stdout.log'
+$stderrPath = Join-Path $releaseDir 'qemu-rtl8139-runtime-service-probe.stderr.log'
 if (-not $SkipBuild) {
     New-Item -ItemType Directory -Force -Path $zigGlobalCacheDir | Out-Null
     New-Item -ItemType Directory -Force -Path $zigLocalCacheDir | Out-Null
@@ -202,9 +201,10 @@ pub const rtl8139_probe: bool = false;
 pub const rtl8139_arp_probe: bool = false;
 pub const rtl8139_ipv4_probe: bool = false;
 pub const rtl8139_udp_probe: bool = false;
-pub const rtl8139_tcp_probe: bool = true;
+pub const rtl8139_tcp_probe: bool = false;
 pub const rtl8139_dhcp_probe: bool = false;
 pub const rtl8139_dns_probe: bool = false;
+pub const rtl8139_runtime_service_probe: bool = true;
 pub const tool_exec_probe: bool = false;
 pub const rtl8139_gateway_probe: bool = false;
 pub const ata_gpt_installer_probe: bool = false;
@@ -221,10 +221,10 @@ pub const ata_gpt_installer_probe: bool = false;
         "-Mbuild_options=$optionsPath" `
         --cache-dir "$zigLocalCacheDir" `
         --global-cache-dir "$zigGlobalCacheDir" `
-        --name 'openclaw-zig-baremetal-main-rtl8139-tcp-probe' `
+        --name 'openclaw-zig-baremetal-main-rtl8139-runtime-service-probe' `
         "-femit-bin=$mainObj"
     if ($LASTEXITCODE -ne 0) {
-        throw "zig build-obj for RTL8139 TCP probe failed with exit code $LASTEXITCODE"
+        throw "zig build-obj for RTL8139 runtime-service probe failed with exit code $LASTEXITCODE"
     }
 
     & $clang -c -target x86_64-unknown-elf $bootSource -o $bootObj
@@ -239,7 +239,7 @@ pub const ata_gpt_installer_probe: bool = false;
 }
 
 if (-not (Test-Path $artifact)) {
-    throw "RTL8139 TCP probe artifact is missing: $artifact"
+    throw "RTL8139 runtime-service probe artifact is missing: $artifact"
 }
 
 New-RawDiskImage -Path $diskImage -SizeMiB $DiskSizeMiB
@@ -280,7 +280,7 @@ $stderrTask = $proc.StandardError.ReadToEndAsync()
 
 if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
     try { $proc.Kill($true) } catch {}
-    throw "QEMU RTL8139 TCP probe timed out after $TimeoutSeconds seconds."
+    throw "QEMU RTL8139 runtime-service probe timed out after $TimeoutSeconds seconds."
 }
 
 $proc.WaitForExit()
@@ -291,15 +291,15 @@ Set-Content -Path $stderrPath -Value $stderr -Encoding Ascii
 $exitCode = $proc.ExitCode
 if ($exitCode -ne $expectedExitCode) {
     $probeCode = [int](($exitCode - 1) / 2)
-    throw ("QEMU RTL8139 TCP probe failed with exit code {0} (probe code 0x{1:X2})." -f $exitCode, $probeCode)
+    throw ("QEMU RTL8139 runtime-service probe failed with exit code {0} (probe code 0x{1:X2})." -f $exitCode, $probeCode)
 }
 
 Write-Output 'BAREMETAL_QEMU_AVAILABLE=True'
 Write-Output "BAREMETAL_QEMU_BINARY=$qemu"
-Write-Output 'BAREMETAL_QEMU_RTL8139_TCP_PROBE=pass'
-Write-Output ("BAREMETAL_QEMU_RTL8139_TCP_PROBE_CODE=0x{0:X2}" -f $expectedProbeCode)
-Write-Output "BAREMETAL_QEMU_RTL8139_TCP_STDOUT=$stdoutPath"
-Write-Output "BAREMETAL_QEMU_RTL8139_TCP_STDERR=$stderrPath"
+Write-Output 'BAREMETAL_QEMU_RTL8139_RUNTIME_SERVICE_PROBE=pass'
+Write-Output ("BAREMETAL_QEMU_RTL8139_RUNTIME_SERVICE_PROBE_CODE=0x{0:X2}" -f $expectedProbeCode)
+Write-Output "BAREMETAL_QEMU_RTL8139_RUNTIME_SERVICE_STDOUT=$stdoutPath"
+Write-Output "BAREMETAL_QEMU_RTL8139_RUNTIME_SERVICE_STDERR=$stderrPath"
 
 
 
