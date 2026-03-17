@@ -33,6 +33,29 @@ pub const LaunchProfile = struct {
     }
 };
 
+pub const VerifyResult = struct {
+    ok: bool,
+    payload: []u8,
+
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        allocator.free(self.payload);
+        self.* = undefined;
+    }
+};
+
+const ManifestInfo = struct {
+    root: []const u8 = "",
+    entrypoint: []const u8 = "",
+    app_manifest: []const u8 = "",
+    script_bytes: u32 = 0,
+    script_checksum: u32 = 0,
+    app_manifest_checksum: u32 = 0,
+    asset_root: []const u8 = "",
+    asset_count: u32 = 0,
+    asset_bytes: u32 = 0,
+    asset_tree_checksum: u64 = 0,
+};
+
 pub fn installScriptPackage(name: []const u8, script: []const u8, tick: u64) Error!void {
     try validatePackageName(name);
 
@@ -91,6 +114,135 @@ pub fn manifestAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: 
     var manifest_buf: [filesystem.max_path_len]u8 = undefined;
     const manifest = try manifestPath(name, &manifest_buf);
     return filesystem.readFileAlloc(allocator, manifest, max_bytes);
+}
+
+pub fn verifyPackageAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error!VerifyResult {
+    try validatePackageName(name);
+    if (!try packageExists(name)) return error.PackageNotFound;
+
+    const manifest = try manifestAlloc(allocator, name, 1024);
+    defer allocator.free(manifest);
+    const info = try parseManifestInfo(manifest);
+
+    var root_buf: [filesystem.max_path_len]u8 = undefined;
+    var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    var app_manifest_buf: [filesystem.max_path_len]u8 = undefined;
+    var assets_buf: [filesystem.max_path_len]u8 = undefined;
+
+    const expected_root = packageRootPath(name, &root_buf);
+    if (!std.mem.eql(u8, info.root, expected_root)) {
+        return .{
+            .ok = false,
+            .payload = try formatVerifyPathMismatch(allocator, name, "root", info.root, expected_root, max_bytes),
+        };
+    }
+
+    const expected_entrypoint = try entrypointPath(name, &entrypoint_buf);
+    if (!std.mem.eql(u8, info.entrypoint, expected_entrypoint)) {
+        return .{
+            .ok = false,
+            .payload = try formatVerifyPathMismatch(allocator, name, "entrypoint", info.entrypoint, expected_entrypoint, max_bytes),
+        };
+    }
+
+    const expected_app_manifest = try appManifestPath(name, &app_manifest_buf);
+    if (!std.mem.eql(u8, info.app_manifest, expected_app_manifest)) {
+        return .{
+            .ok = false,
+            .payload = try formatVerifyPathMismatch(allocator, name, "app_manifest", info.app_manifest, expected_app_manifest, max_bytes),
+        };
+    }
+
+    const expected_asset_root = try assetsPath(name, &assets_buf);
+    if (!std.mem.eql(u8, info.asset_root, expected_asset_root)) {
+        return .{
+            .ok = false,
+            .payload = try formatVerifyPathMismatch(allocator, name, "asset_root", info.asset_root, expected_asset_root, max_bytes),
+        };
+    }
+
+    const script_stat = try filesystem.statSummary(expected_entrypoint);
+    const app_manifest_stat = try filesystem.statSummary(expected_app_manifest);
+    const asset_digest = try packageAssetDigest(name);
+
+    if (info.script_bytes != @as(u32, @intCast(script_stat.size))) {
+        return .{
+            .ok = false,
+            .payload = try formatVerifyU32Mismatch(
+                allocator,
+                name,
+                "script_bytes",
+                info.script_bytes,
+                @as(u32, @intCast(script_stat.size)),
+                max_bytes,
+            ),
+        };
+    }
+    if (info.script_checksum != script_stat.checksum) {
+        return .{
+            .ok = false,
+            .payload = try formatVerifyHex32Mismatch(allocator, name, "script_checksum", info.script_checksum, script_stat.checksum, max_bytes),
+        };
+    }
+    if (info.app_manifest_checksum != app_manifest_stat.checksum) {
+        return .{
+            .ok = false,
+            .payload = try formatVerifyHex32Mismatch(
+                allocator,
+                name,
+                "app_manifest_checksum",
+                info.app_manifest_checksum,
+                app_manifest_stat.checksum,
+                max_bytes,
+            ),
+        };
+    }
+    if (info.asset_count != asset_digest.count) {
+        return .{
+            .ok = false,
+            .payload = try formatVerifyU32Mismatch(allocator, name, "asset_count", info.asset_count, asset_digest.count, max_bytes),
+        };
+    }
+    if (info.asset_bytes != asset_digest.bytes) {
+        return .{
+            .ok = false,
+            .payload = try formatVerifyU32Mismatch(allocator, name, "asset_bytes", info.asset_bytes, asset_digest.bytes, max_bytes),
+        };
+    }
+    if (info.asset_tree_checksum != asset_digest.tree_checksum) {
+        return .{
+            .ok = false,
+            .payload = try formatVerifyHex64Mismatch(
+                allocator,
+                name,
+                "asset_tree_checksum",
+                info.asset_tree_checksum,
+                asset_digest.tree_checksum,
+                max_bytes,
+            ),
+        };
+    }
+
+    const payload = try std.fmt.allocPrint(
+        allocator,
+        "name={s}\nstatus=ok\nroot={s}\nentrypoint={s}\nscript_bytes={d}\nscript_checksum={x:0>8}\napp_manifest={s}\napp_manifest_checksum={x:0>8}\nasset_root={s}\nasset_count={d}\nasset_bytes={d}\nasset_tree_checksum={x:0>16}\n",
+        .{
+            name,
+            expected_root,
+            expected_entrypoint,
+            info.script_bytes,
+            info.script_checksum,
+            expected_app_manifest,
+            info.app_manifest_checksum,
+            expected_asset_root,
+            info.asset_count,
+            info.asset_bytes,
+            info.asset_tree_checksum,
+        },
+    );
+    errdefer allocator.free(payload);
+    if (payload.len > max_bytes) return error.ResponseTooLarge;
+    return .{ .ok = true, .payload = payload };
 }
 
 pub fn appManifestAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
@@ -310,15 +462,18 @@ fn packageExists(name: []const u8) Error!bool {
     return true;
 }
 
-const AssetStats = struct {
+const AssetDigest = struct {
     count: u32 = 0,
     bytes: u32 = 0,
+    tree_checksum: u64 = 0,
 };
 
-fn packageAssetStats(name: []const u8) Error!AssetStats {
+fn packageAssetDigest(name: []const u8) Error!AssetDigest {
     var assets_buf: [filesystem.max_path_len]u8 = undefined;
     const assets_root = try assetsPath(name, &assets_buf);
-    var stats: AssetStats = .{};
+    var digest: AssetDigest = .{};
+    var matching_indices: [filesystem.max_entries]u32 = undefined;
+    var matching_count: usize = 0;
 
     var idx: u32 = 0;
     while (idx < filesystem.max_entries) : (idx += 1) {
@@ -327,11 +482,30 @@ fn packageAssetStats(name: []const u8) Error!AssetStats {
         const path = record.path[0..record.path_len];
         if (!std.mem.startsWith(u8, path, assets_root)) continue;
         if (path.len <= assets_root.len or path[assets_root.len] != '/') continue;
-        stats.count +%= 1;
-        stats.bytes +%= record.byte_len;
+        matching_indices[matching_count] = idx;
+        matching_count += 1;
+        digest.count +%= 1;
+        digest.bytes +%= record.byte_len;
     }
 
-    return stats;
+    std.mem.sort(u32, matching_indices[0..matching_count], {}, lessAssetRecordPath);
+
+    var hasher = std.hash.Wyhash.init(0);
+    for (matching_indices[0..matching_count]) |record_index| {
+        const record = filesystem.entry(record_index);
+        const path = record.path[0..record.path_len];
+        hasher.update(path);
+
+        var size_bytes: [4]u8 = undefined;
+        std.mem.writeInt(u32, &size_bytes, record.byte_len, .little);
+        hasher.update(&size_bytes);
+
+        var checksum_bytes: [4]u8 = undefined;
+        std.mem.writeInt(u32, &checksum_bytes, record.checksum, .little);
+        hasher.update(&checksum_bytes);
+    }
+    digest.tree_checksum = hasher.final();
+    return digest;
 }
 
 fn refreshManifest(name: []const u8, tick: u64) Error!void {
@@ -350,30 +524,168 @@ fn refreshManifest(name: []const u8, tick: u64) Error!void {
         error.FileNotFound => return error.PackageNotFound,
         else => return err,
     };
-    const stats = try packageAssetStats(name);
+    const app_manifest_stat = filesystem.statSummary(app_manifest) catch |err| switch (err) {
+        error.FileNotFound => return error.PackageNotFound,
+        else => return err,
+    };
+    const digest = try packageAssetDigest(name);
     var launch_entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
     const profile = try loadLaunchProfile(name, &launch_entrypoint_buf);
 
-    var metadata: [384]u8 = undefined;
+    var metadata: [512]u8 = undefined;
     const manifest_body = std.fmt.bufPrint(
         &metadata,
-        "name={s}\nroot={s}\nentrypoint={s}\napp_manifest={s}\nscript_bytes={d}\ndisplay_width={d}\ndisplay_height={d}\nconnector={s}\ntrust_bundle={s}\nasset_root={s}\nasset_count={d}\nasset_bytes={d}\n",
+        "name={s}\nroot={s}\nentrypoint={s}\napp_manifest={s}\nscript_bytes={d}\nscript_checksum={x:0>8}\napp_manifest_checksum={x:0>8}\ndisplay_width={d}\ndisplay_height={d}\nconnector={s}\ntrust_bundle={s}\nasset_root={s}\nasset_count={d}\nasset_bytes={d}\nasset_tree_checksum={x:0>16}\n",
         .{
             name,
             root,
             entrypoint,
             app_manifest,
             script_stat.size,
+            script_stat.checksum,
+            app_manifest_stat.checksum,
             profile.display_width,
             profile.display_height,
             connectorNameFromType(profile.connector_type),
             profile.trustBundle(),
             assets_root,
-            stats.count,
-            stats.bytes,
+            digest.count,
+            digest.bytes,
+            digest.tree_checksum,
         },
     ) catch return error.InvalidPath;
     try filesystem.writeFile(manifest, manifest_body, tick);
+}
+
+fn lessAssetRecordPath(_: void, lhs_index: u32, rhs_index: u32) bool {
+    const lhs = filesystem.entry(lhs_index);
+    const rhs = filesystem.entry(rhs_index);
+    return std.mem.lessThan(u8, lhs.path[0..lhs.path_len], rhs.path[0..rhs.path_len]);
+}
+
+fn parseManifestInfo(raw: []const u8) Error!ManifestInfo {
+    var info: ManifestInfo = .{};
+    var lines = std.mem.splitScalar(u8, raw, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        if (std.mem.startsWith(u8, line, "root=")) {
+            info.root = line["root=".len..];
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "entrypoint=")) {
+            info.entrypoint = line["entrypoint=".len..];
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "app_manifest=")) {
+            info.app_manifest = line["app_manifest=".len..];
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "script_bytes=")) {
+            info.script_bytes = std.fmt.parseInt(u32, line["script_bytes=".len..], 10) catch return error.InvalidPackageMetadata;
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "script_checksum=")) {
+            info.script_checksum = std.fmt.parseInt(u32, line["script_checksum=".len..], 16) catch return error.InvalidPackageMetadata;
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "app_manifest_checksum=")) {
+            info.app_manifest_checksum = std.fmt.parseInt(u32, line["app_manifest_checksum=".len..], 16) catch return error.InvalidPackageMetadata;
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "asset_root=")) {
+            info.asset_root = line["asset_root=".len..];
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "asset_count=")) {
+            info.asset_count = std.fmt.parseInt(u32, line["asset_count=".len..], 10) catch return error.InvalidPackageMetadata;
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "asset_bytes=")) {
+            info.asset_bytes = std.fmt.parseInt(u32, line["asset_bytes=".len..], 10) catch return error.InvalidPackageMetadata;
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "asset_tree_checksum=")) {
+            info.asset_tree_checksum = std.fmt.parseInt(u64, line["asset_tree_checksum=".len..], 16) catch return error.InvalidPackageMetadata;
+            continue;
+        }
+    }
+
+    if (info.root.len == 0 or info.entrypoint.len == 0 or info.app_manifest.len == 0 or info.asset_root.len == 0) {
+        return error.InvalidPackageMetadata;
+    }
+    return info;
+}
+
+fn formatVerifyPathMismatch(
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    field: []const u8,
+    expected: []const u8,
+    actual: []const u8,
+    max_bytes: usize,
+) Error![]u8 {
+    const payload = try std.fmt.allocPrint(
+        allocator,
+        "name={s}\nstatus=mismatch\nfield={s}\nexpected={s}\nactual={s}\n",
+        .{ name, field, expected, actual },
+    );
+    errdefer allocator.free(payload);
+    if (payload.len > max_bytes) return error.ResponseTooLarge;
+    return payload;
+}
+
+fn formatVerifyU32Mismatch(
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    field: []const u8,
+    expected: u32,
+    actual: u32,
+    max_bytes: usize,
+) Error![]u8 {
+    const payload = try std.fmt.allocPrint(
+        allocator,
+        "name={s}\nstatus=mismatch\nfield={s}\nexpected={d}\nactual={d}\n",
+        .{ name, field, expected, actual },
+    );
+    errdefer allocator.free(payload);
+    if (payload.len > max_bytes) return error.ResponseTooLarge;
+    return payload;
+}
+
+fn formatVerifyHex32Mismatch(
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    field: []const u8,
+    expected: u32,
+    actual: u32,
+    max_bytes: usize,
+) Error![]u8 {
+    const payload = try std.fmt.allocPrint(
+        allocator,
+        "name={s}\nstatus=mismatch\nfield={s}\nexpected={x:0>8}\nactual={x:0>8}\n",
+        .{ name, field, expected, actual },
+    );
+    errdefer allocator.free(payload);
+    if (payload.len > max_bytes) return error.ResponseTooLarge;
+    return payload;
+}
+
+fn formatVerifyHex64Mismatch(
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    field: []const u8,
+    expected: u64,
+    actual: u64,
+    max_bytes: usize,
+) Error![]u8 {
+    const payload = try std.fmt.allocPrint(
+        allocator,
+        "name={s}\nstatus=mismatch\nfield={s}\nexpected={x:0>16}\nactual={x:0>16}\n",
+        .{ name, field, expected, actual },
+    );
+    errdefer allocator.free(payload);
+    if (payload.len > max_bytes) return error.ResponseTooLarge;
+    return payload;
 }
 
 fn refreshAppManifest(name: []const u8, tick: u64) Error!void {
@@ -453,13 +765,15 @@ test "package store installs script packages into canonical layout" {
     defer std.testing.allocator.free(script);
     try std.testing.expectEqualStrings("echo package-ok", script);
 
-    const metadata = try filesystem.readFileAlloc(std.testing.allocator, manifest, 256);
+    const metadata = try filesystem.readFileAlloc(std.testing.allocator, manifest, 512);
     defer std.testing.allocator.free(metadata);
     try std.testing.expect(std.mem.indexOf(u8, metadata, "name=demo") != null);
     try std.testing.expect(std.mem.indexOf(u8, metadata, "root=/packages/demo") != null);
     try std.testing.expect(std.mem.indexOf(u8, metadata, entrypoint) != null);
     try std.testing.expect(std.mem.indexOf(u8, metadata, app_manifest) != null);
     try std.testing.expect(std.mem.indexOf(u8, metadata, "script_bytes=15") != null);
+    try std.testing.expect(std.mem.indexOf(u8, metadata, "script_checksum=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, metadata, "app_manifest_checksum=") != null);
     try std.testing.expect(std.mem.indexOf(u8, metadata, "display_width=640") != null);
     try std.testing.expect(std.mem.indexOf(u8, metadata, "display_height=400") != null);
     try std.testing.expect(std.mem.indexOf(u8, metadata, "connector=none") != null);
@@ -467,6 +781,7 @@ test "package store installs script packages into canonical layout" {
     try std.testing.expect(std.mem.indexOf(u8, metadata, "asset_root=/packages/demo/assets") != null);
     try std.testing.expect(std.mem.indexOf(u8, metadata, "asset_count=0") != null);
     try std.testing.expect(std.mem.indexOf(u8, metadata, "asset_bytes=0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, metadata, "asset_tree_checksum=") != null);
 
     const app = try appManifestAlloc(std.testing.allocator, "demo", 256);
     defer std.testing.allocator.free(app);
@@ -519,6 +834,8 @@ test "package store reads persisted manifest metadata and tracks package assets"
     try std.testing.expect(std.mem.indexOf(u8, manifest, "/packages/info-demo/bin/main.oc") != null);
     try std.testing.expect(std.mem.indexOf(u8, manifest, "app_manifest=/packages/info-demo/meta/app.txt") != null);
     try std.testing.expect(std.mem.indexOf(u8, manifest, "script_bytes=14") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "script_checksum=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "app_manifest_checksum=") != null);
     try std.testing.expect(std.mem.indexOf(u8, manifest, "display_width=640") != null);
     try std.testing.expect(std.mem.indexOf(u8, manifest, "display_height=400") != null);
     try std.testing.expect(std.mem.indexOf(u8, manifest, "connector=none") != null);
@@ -526,6 +843,7 @@ test "package store reads persisted manifest metadata and tracks package assets"
     try std.testing.expect(std.mem.indexOf(u8, manifest, "asset_root=/packages/info-demo/assets") != null);
     try std.testing.expect(std.mem.indexOf(u8, manifest, "asset_count=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, manifest, "asset_bytes=14") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "asset_tree_checksum=") != null);
 
     const assets = try listPackageAssetsAlloc(std.testing.allocator, "info-demo", 64);
     defer std.testing.allocator.free(assets);
@@ -568,4 +886,43 @@ test "package store persists app manifest display preferences and launch profile
     try std.testing.expect(std.mem.indexOf(u8, manifest, "display_height=720") != null);
     try std.testing.expect(std.mem.indexOf(u8, manifest, "connector=virtual") != null);
     try std.testing.expect(std.mem.indexOf(u8, manifest, "trust_bundle=app-root") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "script_checksum=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "app_manifest_checksum=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "asset_tree_checksum=") != null);
+}
+
+test "package store verifies persisted package manifest and asset tree" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+
+    try installScriptPackage("verify-demo", "echo verify-demo", 20);
+    try installPackageAsset("verify-demo", "config/app.json", "{\"mode\":\"verify\"}", 21);
+    try configureDisplayMode("verify-demo", 1280, 720, 22);
+
+    var result = try verifyPackageAlloc(std.testing.allocator, "verify-demo", 512);
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expect(result.ok);
+    try std.testing.expect(std.mem.indexOf(u8, result.payload, "status=ok") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.payload, "script_checksum=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.payload, "app_manifest_checksum=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.payload, "asset_tree_checksum=") != null);
+}
+
+test "package store verification detects tampered package script" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+
+    try installScriptPackage("tamper-demo", "echo original", 30);
+
+    var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    const entrypoint = try entrypointPath("tamper-demo", &entrypoint_buf);
+    try filesystem.writeFile(entrypoint, "echo altered!", 31);
+
+    var result = try verifyPackageAlloc(std.testing.allocator, "tamper-demo", 512);
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expect(!result.ok);
+    try std.testing.expect(std.mem.indexOf(u8, result.payload, "status=mismatch") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.payload, "field=script_checksum") != null);
 }
