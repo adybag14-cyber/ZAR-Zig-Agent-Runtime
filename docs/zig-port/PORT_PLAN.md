@@ -1978,17 +1978,18 @@ Full-stack replacement execution reference:
     - parity gate -> pass (`union 141/141`, `events 19/19`)
     - docs status gate -> pass
     - the real regressions fixed during the slice were a dangling `sessionId` slice in `runtime.session.get`, Windows-hosted path separator drift for the logical `/runtime/state` contract, and hosted-test PAL filesystem leakage that kept the runtime bridge off the persisted bare-metal filesystem surface
-  - current local validation after the master-Zig Windows refresh + app-plan slice is green:
+  - current local validation after the master-Zig Windows refresh + workspace slice is green:
     - local Windows GitHub mirror install target is now `47d2e5de90faec1221f61255c36e2be81c9e3db3` via `toolchains/zig-master/current`
     - current Codeberg `master` is newer (`f8997aca8f62eef4968e4abf817ece4eb4e91c38`), so freshness mismatch remains explicit
     - `build.zig` no longer uses the stale Windows system-command workaround that produced fake-green `All 0 tests passed`; the normal test runner path is restored
     - `scripts/zig-codeberg-master-check.ps1` now resolves local hash identity from installed mirror metadata when `zig version` is too coarse to include a commit suffix
-    - `zig build test --summary all` on the refreshed local master toolchain -> `706/707` passed (`1 skipped`)
+    - `zig build test --summary all` on the refreshed local master toolchain -> hosted `378/378`, bare-metal host `346 passed / 1 skipped`
+    - `scripts/.tmp-debug-rtl8139-tcp-probe-check.ps1 -TimeoutSeconds 120` -> pass on the local `Debug` probe lane
     - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1 -TimeoutSeconds 120` -> pass on the stable local `ReleaseSafe` probe lane
     - `scripts/baremetal-qemu-rtl8139-https-post-probe-check.ps1 -TimeoutSeconds 120` -> pass on the same refreshed toolchain
     - parity gate -> pass (`union 141/141`, `events 19/19`)
     - docs status gate -> pass
-    - the remaining local master-Zig gap is a `Debug`-only timeout on the broad live RTL8139 TCP QEMU probe; project correctness is green, but the upstream/local-toolchain hang is still open
+    - `scripts/baremetal/pvh_boot.S` now carries a `262144`-byte PVH boot/runtime stack so the broader FS5.5 probe depth stays stable on the local master toolchain
   - current FS5.5 app-plan slice is now locally closed on the same branch:
     - `src/baremetal/app_runtime.zig` now persists bounded app plans under `/runtime/apps/<name>/plans/<plan>.txt` with active-plan selection via `/runtime/apps/<name>/active_plan.txt`
     - `src/baremetal/tool_exec.zig` now exposes `app-plan-list`, `app-plan-info`, `app-plan-active`, `app-plan-save`, `app-plan-apply`, and `app-plan-delete`
@@ -2000,6 +2001,12 @@ Full-stack replacement execution reference:
     - `src/baremetal/tool_service.zig` now exposes `APPSUITELIST`, `APPSUITEINFO`, `APPSUITESAVE`, `APPSUITEAPPLY`, `APPSUITERUN`, and `APPSUITEDELETE`
     - host validation now proves RAM-disk and ATA-backed suite persistence plus suite-driven active-plan restoration across multiple apps
     - the broad live RTL8139 TCP proof now covers save -> list -> info -> apply -> run -> delete plus restored active-plan, autorun, and stdout readback on the persisted app-suite surface
+  - current FS5.5 workspace slice is now locally closed on the same branch:
+    - `src/baremetal/workspace_runtime.zig` now persists bounded workspace definitions under `/runtime/workspaces/<name>.txt` with saved suite/trust/display/channel orchestration state
+    - `src/baremetal/tool_exec.zig` now exposes `workspace-list`, `workspace-info`, `workspace-save`, `workspace-apply`, and `workspace-delete`
+    - `src/baremetal/tool_service.zig` now exposes `WORKSPACELIST`, `WORKSPACEINFO`, `WORKSPACESAVE`, `WORKSPACEAPPLY`, and `WORKSPACEDELETE`
+    - host validation now proves RAM-disk and ATA-backed workspace persistence plus restored canonical package script content, trust-bundle selection, display mode, and app-suite active-plan markers
+    - the broad live RTL8139 TCP proof now covers save -> list -> info -> apply -> delete plus restored canonical package content and persisted app-suite state readback on the workspace surface
     - `build.zig` now runs the compiled native test executables directly on Windows, which avoids the current Zig master `--listen=-` test-runner hang while keeping the real hosted and baremetal-host test matrix intact
 
 
