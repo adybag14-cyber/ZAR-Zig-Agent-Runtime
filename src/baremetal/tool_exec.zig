@@ -154,7 +154,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-modes, display-set, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-modes, display-set, run-script, run-package, app-run");
         return;
     }
 
@@ -1192,6 +1192,161 @@ fn execute(
             return;
         };
         try stdout_buffer.appendFmt("app suite deleted {s}\n", .{arg.arg});
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-suite-release-list")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-suite-release-list <suite>");
+            return;
+        };
+        if (suite_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-suite-release-list <suite>");
+            return;
+        }
+        const listing = app_runtime.suiteReleaseListAlloc(allocator, suite_name.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-suite-release-list failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(listing);
+        try stdout_buffer.appendSlice(listing);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-suite-release-info")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-suite-release-info <suite> <release>");
+            return;
+        };
+        const release_name = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-suite-release-info <suite> <release>");
+            return;
+        };
+        if (release_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-suite-release-info <suite> <release>");
+            return;
+        }
+        const info = app_runtime.suiteReleaseInfoAlloc(allocator, suite_name.arg, release_name.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-suite-release-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(info);
+        try stdout_buffer.appendSlice(info);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-suite-release-save")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-suite-release-save <suite> <release>");
+            return;
+        };
+        const release_name = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-suite-release-save <suite> <release>");
+            return;
+        };
+        if (release_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-suite-release-save <suite> <release>");
+            return;
+        }
+        app_runtime.snapshotSuiteRelease(suite_name.arg, release_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-suite-release-save failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("app suite release saved {s} {s}\n", .{ suite_name.arg, release_name.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-suite-release-activate")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-suite-release-activate <suite> <release>");
+            return;
+        };
+        const release_name = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-suite-release-activate <suite> <release>");
+            return;
+        };
+        if (release_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-suite-release-activate <suite> <release>");
+            return;
+        }
+        app_runtime.activateSuiteRelease(suite_name.arg, release_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-suite-release-activate failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("app suite release activated {s} {s}\n", .{ suite_name.arg, release_name.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-suite-release-delete")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-suite-release-delete <suite> <release>");
+            return;
+        };
+        const release_name = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-suite-release-delete <suite> <release>");
+            return;
+        };
+        if (release_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-suite-release-delete <suite> <release>");
+            return;
+        }
+        app_runtime.deleteSuiteRelease(suite_name.arg, release_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-suite-release-delete failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("app suite release deleted {s} {s}\n", .{ suite_name.arg, release_name.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-suite-release-prune")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-suite-release-prune <suite> <keep>");
+            return;
+        };
+        const keep_arg = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-suite-release-prune <suite> <keep>");
+            return;
+        };
+        if (keep_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-suite-release-prune <suite> <keep>");
+            return;
+        }
+        const keep = std.fmt.parseInt(usize, keep_arg.arg, 10) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-suite-release-prune <suite> <keep>");
+            return;
+        };
+        const prune = app_runtime.pruneSuiteReleases(suite_name.arg, keep, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-suite-release-prune failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt(
+            "app suite release pruned {s} keep={d} deleted={d} kept={d}\n",
+            .{ suite_name.arg, keep, prune.deleted_count, prune.kept_count },
+        );
         return;
     }
 
@@ -3084,6 +3239,94 @@ test "baremetal tool exec saves applies runs and deletes app suites" {
     defer suite_list_after_delete.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), suite_list_after_delete.exit_code);
     try std.testing.expectEqualStrings("", suite_list_after_delete.stdout);
+}
+
+test "baremetal tool exec manages app suite releases" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    display_output.resetForTest();
+    framebuffer_console.resetForTest();
+    vga_text_console.resetForTest();
+
+    try package_store.installScriptPackage("demo", "echo suite-demo", 1);
+    try package_store.installScriptPackage("aux", "echo suite-aux", 2);
+
+    var save_demo_plan = try runCapture(std.testing.allocator, "app-plan-save demo golden none none virtual 1280 720 1", 256, 256);
+    defer save_demo_plan.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_demo_plan.exit_code);
+
+    var save_demo_canary = try runCapture(std.testing.allocator, "app-plan-save demo canary none none virtual 640 400 0", 256, 256);
+    defer save_demo_canary.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_demo_canary.exit_code);
+
+    var save_aux_plan = try runCapture(std.testing.allocator, "app-plan-save aux sidecar none none virtual 800 600 0", 256, 256);
+    defer save_aux_plan.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_aux_plan.exit_code);
+
+    var save_suite = try runCapture(std.testing.allocator, "app-suite-save duo demo:golden aux:sidecar", 256, 256);
+    defer save_suite.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_suite.exit_code);
+
+    var save_release_golden = try runCapture(std.testing.allocator, "app-suite-release-save duo golden", 256, 256);
+    defer save_release_golden.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_release_golden.exit_code);
+    try std.testing.expectEqualStrings("app suite release saved duo golden\n", save_release_golden.stdout);
+
+    var mutate_suite = try runCapture(std.testing.allocator, "app-suite-save duo demo:canary", 256, 256);
+    defer mutate_suite.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), mutate_suite.exit_code);
+
+    var save_release_staging = try runCapture(std.testing.allocator, "app-suite-release-save duo staging", 256, 256);
+    defer save_release_staging.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_release_staging.exit_code);
+    try std.testing.expectEqualStrings("app suite release saved duo staging\n", save_release_staging.stdout);
+
+    var release_list = try runCapture(std.testing.allocator, "app-suite-release-list duo", 256, 256);
+    defer release_list.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), release_list.exit_code);
+    try std.testing.expectEqualStrings("golden\nstaging\n", release_list.stdout);
+
+    var release_info = try runCapture(std.testing.allocator, "app-suite-release-info duo staging", 512, 256);
+    defer release_info.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), release_info.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, release_info.stdout, "release=staging") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info.stdout, "saved_seq=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info.stdout, "entry=demo:canary") != null);
+
+    var activate_release = try runCapture(std.testing.allocator, "app-suite-release-activate duo golden", 256, 256);
+    defer activate_release.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), activate_release.exit_code);
+    try std.testing.expectEqualStrings("app suite release activated duo golden\n", activate_release.stdout);
+
+    var suite_info = try runCapture(std.testing.allocator, "app-suite-info duo", 512, 256);
+    defer suite_info.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), suite_info.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info.stdout, "entry=demo:golden") != null);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info.stdout, "entry=aux:sidecar") != null);
+
+    var delete_release = try runCapture(std.testing.allocator, "app-suite-release-delete duo staging", 256, 256);
+    defer delete_release.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), delete_release.exit_code);
+    try std.testing.expectEqualStrings("app suite release deleted duo staging\n", delete_release.stdout);
+
+    var mutate_fallback = try runCapture(std.testing.allocator, "app-suite-save duo demo:canary aux:sidecar", 256, 256);
+    defer mutate_fallback.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), mutate_fallback.exit_code);
+
+    var save_release_fallback = try runCapture(std.testing.allocator, "app-suite-release-save duo fallback", 256, 256);
+    defer save_release_fallback.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_release_fallback.exit_code);
+    try std.testing.expectEqualStrings("app suite release saved duo fallback\n", save_release_fallback.stdout);
+
+    var prune_release = try runCapture(std.testing.allocator, "app-suite-release-prune duo 1", 256, 256);
+    defer prune_release.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), prune_release.exit_code);
+    try std.testing.expectEqualStrings("app suite release pruned duo keep=1 deleted=1 kept=1\n", prune_release.stdout);
+
+    var release_list_after_prune = try runCapture(std.testing.allocator, "app-suite-release-list duo", 256, 256);
+    defer release_list_after_prune.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), release_list_after_prune.exit_code);
+    try std.testing.expectEqualStrings("fallback\n", release_list_after_prune.stdout);
 }
 
 test "baremetal tool exec saves applies and deletes workspaces" {
