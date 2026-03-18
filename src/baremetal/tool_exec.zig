@@ -153,7 +153,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-modes, display-set, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-modes, display-set, run-script, run-package, app-run");
         return;
     }
 
@@ -1082,6 +1082,118 @@ fn execute(
         return;
     }
 
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-suite-list")) {
+        if (parsed.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-suite-list");
+            return;
+        }
+        const listing = app_runtime.suiteListAlloc(allocator, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-suite-list failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(listing);
+        try stdout_buffer.appendSlice(listing);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-suite-info")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-suite-info <suite>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-suite-info <suite>");
+            return;
+        }
+        const info = app_runtime.suiteInfoAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-suite-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(info);
+        try stdout_buffer.appendSlice(info);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-suite-save")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-suite-save <suite> <package:plan> [package:plan...]");
+            return;
+        };
+        if (suite_name.rest.len == 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-suite-save <suite> <package:plan> [package:plan...]");
+            return;
+        }
+        app_runtime.saveSuite(suite_name.arg, suite_name.rest, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-suite-save failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("app suite saved {s}\n", .{suite_name.arg});
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-suite-apply")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-suite-apply <suite>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-suite-apply <suite>");
+            return;
+        }
+        app_runtime.applySuite(arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-suite-apply failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("app suite applied {s}\n", .{arg.arg});
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-suite-run")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-suite-run <suite>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-suite-run <suite>");
+            return;
+        }
+        try runSuiteProfiles(arg.arg, "app-suite-run", stdout_buffer, stderr_buffer, exit_code, allocator, depth);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-suite-delete")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-suite-delete <suite>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-suite-delete <suite>");
+            return;
+        }
+        app_runtime.deleteSuite(arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-suite-delete failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("app suite deleted {s}\n", .{arg.arg});
+        return;
+    }
+
     if (std.ascii.eqlIgnoreCase(parsed.name, "app-delete")) {
         const arg = parseFirstArg(parsed.rest) catch |err| {
             exit_code.* = 2;
@@ -1617,6 +1729,48 @@ fn runAutorunProfiles(
     while (lines.next()) |raw_line| {
         const package_name = std.mem.trim(u8, raw_line, " \t\r");
         if (package_name.len == 0) continue;
+        try runLaunchProfile(package_name, operation, true, stdout_buffer, stderr_buffer, exit_code, allocator, depth);
+        if (exit_code.* != 0) return;
+    }
+}
+
+fn runSuiteProfiles(
+    suite_name: []const u8,
+    operation: []const u8,
+    stdout_buffer: *OutputBuffer,
+    stderr_buffer: *OutputBuffer,
+    exit_code: *u8,
+    allocator: std.mem.Allocator,
+    depth: usize,
+) Error!void {
+    const suite_entries = app_runtime.suiteEntriesAlloc(allocator, suite_name, 1024) catch |err| {
+        exit_code.* = 1;
+        try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+        return;
+    };
+    defer allocator.free(suite_entries);
+
+    app_runtime.applySuite(suite_name, 0) catch |err| {
+        exit_code.* = 1;
+        try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+        return;
+    };
+
+    var lines = std.mem.splitScalar(u8, suite_entries, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (line.len == 0) continue;
+        const separator = std.mem.indexOfScalar(u8, line, ':') orelse {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("{s} failed: InvalidAppSuite\n", .{operation});
+            return;
+        };
+        const package_name = line[0..separator];
+        if (package_name.len == 0) {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("{s} failed: InvalidAppSuite\n", .{operation});
+            return;
+        }
         try runLaunchProfile(package_name, operation, true, stdout_buffer, stderr_buffer, exit_code, allocator, depth);
         if (exit_code.* != 0) return;
     }
@@ -2241,4 +2395,85 @@ test "baremetal tool exec uninstalls packages and clears app state" {
     try std.testing.expectError(error.FileNotFound, filesystem.statSummary("/packages/demo"));
     try std.testing.expectError(error.FileNotFound, filesystem.statSummary("/packages/alias-demo"));
     try std.testing.expectError(error.FileNotFound, filesystem.statSummary("/runtime/apps/demo"));
+}
+
+test "baremetal tool exec saves applies runs and deletes app suites" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    display_output.resetForTest();
+    framebuffer_console.resetForTest();
+    vga_text_console.resetForTest();
+
+    try package_store.installScriptPackage("demo", "echo suite-demo", 1);
+    try package_store.installScriptPackage("aux", "echo suite-aux", 2);
+
+    var save_demo_plan = try runCapture(std.testing.allocator, "app-plan-save demo golden none none virtual 1280 720 1", 256, 256);
+    defer save_demo_plan.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_demo_plan.exit_code);
+    try std.testing.expectEqualStrings("app plan saved demo golden\n", save_demo_plan.stdout);
+
+    var save_aux_plan = try runCapture(std.testing.allocator, "app-plan-save aux sidecar none none virtual 800 600 0", 256, 256);
+    defer save_aux_plan.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_aux_plan.exit_code);
+    try std.testing.expectEqualStrings("app plan saved aux sidecar\n", save_aux_plan.stdout);
+
+    var save_suite = try runCapture(std.testing.allocator, "app-suite-save duo demo:golden aux:sidecar", 256, 256);
+    defer save_suite.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_suite.exit_code);
+    try std.testing.expectEqualStrings("app suite saved duo\n", save_suite.stdout);
+
+    var suite_list = try runCapture(std.testing.allocator, "app-suite-list", 256, 256);
+    defer suite_list.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), suite_list.exit_code);
+    try std.testing.expectEqualStrings("duo\n", suite_list.stdout);
+
+    var suite_info = try runCapture(std.testing.allocator, "app-suite-info duo", 256, 256);
+    defer suite_info.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), suite_info.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info.stdout, "suite=duo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info.stdout, "entry=demo:golden") != null);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info.stdout, "entry=aux:sidecar") != null);
+
+    var apply_suite = try runCapture(std.testing.allocator, "app-suite-apply duo", 256, 256);
+    defer apply_suite.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), apply_suite.exit_code);
+    try std.testing.expectEqualStrings("app suite applied duo\n", apply_suite.stdout);
+
+    var demo_active = try runCapture(std.testing.allocator, "app-plan-active demo", 256, 256);
+    defer demo_active.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), demo_active.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, demo_active.stdout, "active_plan=golden") != null);
+
+    var aux_active = try runCapture(std.testing.allocator, "app-plan-active aux", 256, 256);
+    defer aux_active.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), aux_active.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, aux_active.stdout, "active_plan=sidecar") != null);
+
+    var autorun_list = try runCapture(std.testing.allocator, "app-autorun-list", 256, 256);
+    defer autorun_list.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), autorun_list.exit_code);
+    try std.testing.expectEqualStrings("demo\n", autorun_list.stdout);
+
+    var run_suite = try runCapture(std.testing.allocator, "app-suite-run duo", 256, 256);
+    defer run_suite.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), run_suite.exit_code);
+    try std.testing.expectEqualStrings("suite-demo\nsuite-aux\n", run_suite.stdout);
+
+    const demo_stdout = try app_runtime.stdoutAlloc(std.testing.allocator, "demo", 64);
+    defer std.testing.allocator.free(demo_stdout);
+    try std.testing.expectEqualStrings("suite-demo\n", demo_stdout);
+
+    const aux_stdout = try app_runtime.stdoutAlloc(std.testing.allocator, "aux", 64);
+    defer std.testing.allocator.free(aux_stdout);
+    try std.testing.expectEqualStrings("suite-aux\n", aux_stdout);
+
+    var delete_suite = try runCapture(std.testing.allocator, "app-suite-delete duo", 256, 256);
+    defer delete_suite.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), delete_suite.exit_code);
+    try std.testing.expectEqualStrings("app suite deleted duo\n", delete_suite.stdout);
+
+    var suite_list_after_delete = try runCapture(std.testing.allocator, "app-suite-list", 256, 256);
+    defer suite_list_after_delete.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), suite_list_after_delete.exit_code);
+    try std.testing.expectEqualStrings("", suite_list_after_delete.stdout);
 }

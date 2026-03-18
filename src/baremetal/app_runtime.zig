@@ -9,9 +9,12 @@ const ata_pio_disk = @import("ata_pio_disk.zig");
 const trust_store = @import("trust_store.zig");
 
 const root_dir = "/runtime/apps";
+const suite_root_dir = "/runtime/app-suites";
 const max_history_bytes: usize = 1024;
 const max_autorun_bytes: usize = 1024;
 const max_plan_bytes: usize = 512;
+const max_suite_bytes: usize = 1024;
+const max_suite_entries: usize = 8;
 const autorun_list_path = "/runtime/apps/autorun.txt";
 
 pub const Error = filesystem.Error || package_store.Error || std.mem.Allocator.Error || error{
@@ -22,8 +25,12 @@ pub const Error = filesystem.Error || package_store.Error || std.mem.Allocator.E
     AppAutorunEntryNotFound,
     AppPlanNotFound,
     AppActivePlanNotSet,
+    AppSuiteNotFound,
     InvalidAppPlanName,
     InvalidAppPlan,
+    InvalidAppSuiteName,
+    InvalidAppSuite,
+    AppSuiteEmpty,
     ResponseTooLarge,
 };
 
@@ -55,6 +62,32 @@ const AppPlan = struct {
 
     fn trustBundle(self: *const @This()) []const u8 {
         return self.trust_bundle_storage[0..self.trust_bundle_len];
+    }
+};
+
+const AppSuiteEntry = struct {
+    package_name_len: u8 = 0,
+    package_name_storage: [package_store.max_name_len]u8 = [_]u8{0} ** package_store.max_name_len,
+    plan_name_len: u8 = 0,
+    plan_name_storage: [package_store.max_release_len]u8 = [_]u8{0} ** package_store.max_release_len,
+
+    fn packageName(self: *const @This()) []const u8 {
+        return self.package_name_storage[0..self.package_name_len];
+    }
+
+    fn planName(self: *const @This()) []const u8 {
+        return self.plan_name_storage[0..self.plan_name_len];
+    }
+};
+
+const AppSuite = struct {
+    suite_name_len: u8 = 0,
+    suite_name_storage: [package_store.max_release_len]u8 = [_]u8{0} ** package_store.max_release_len,
+    entry_count: u8 = 0,
+    entries: [max_suite_entries]AppSuiteEntry = [_]AppSuiteEntry{.{}} ** max_suite_entries,
+
+    fn suiteName(self: *const @This()) []const u8 {
+        return self.suite_name_storage[0..self.suite_name_len];
     }
 };
 
@@ -259,6 +292,89 @@ pub fn deletePlan(name: []const u8, plan_name: []const u8, tick: u64) Error!void
             };
         }
     }
+}
+
+pub fn suiteListAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
+    const raw_listing = filesystem.listDirectoryAlloc(allocator, suite_root_dir, max_suite_bytes) catch |err| switch (err) {
+        error.FileNotFound => return allocator.alloc(u8, 0),
+        else => return err,
+    };
+    defer allocator.free(raw_listing);
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    var lines = std.mem.splitScalar(u8, raw_listing, '\n');
+    while (lines.next()) |line| {
+        if (!std.mem.startsWith(u8, line, "file ")) continue;
+        var parts = std.mem.splitScalar(u8, line["file ".len..], ' ');
+        const file_name = parts.next() orelse continue;
+        if (!std.mem.endsWith(u8, file_name, ".txt")) continue;
+        const suite_name = file_name[0 .. file_name.len - ".txt".len];
+        if (suite_name.len == 0) continue;
+        if (out.items.len + suite_name.len + 1 > max_bytes) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, suite_name);
+        try out.append(allocator, '\n');
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+pub fn suiteEntriesAlloc(allocator: std.mem.Allocator, suite_name: []const u8, max_bytes: usize) Error![]u8 {
+    const suite = try loadSuite(suite_name);
+    return renderSuiteEntriesAlloc(allocator, suite, max_bytes);
+}
+
+pub fn suiteInfoAlloc(allocator: std.mem.Allocator, suite_name: []const u8, max_bytes: usize) Error![]u8 {
+    const suite = try loadSuite(suite_name);
+    var path_buf: [filesystem.max_path_len]u8 = undefined;
+    const path = try suitePath(suite_name, &path_buf);
+    return renderSuiteInfoAlloc(allocator, suite, path, max_bytes);
+}
+
+pub fn saveSuite(suite_name: []const u8, entries_spec: []const u8, tick: u64) Error!void {
+    try validateSuiteName(suite_name);
+
+    const suite = try parseSuiteEntriesSpec(suite_name, entries_spec);
+    if (suite.entry_count == 0) return error.AppSuiteEmpty;
+
+    var suite_path_buf: [filesystem.max_path_len]u8 = undefined;
+    const path = try suitePath(suite_name, &suite_path_buf);
+    try filesystem.createDirPath(suite_root_dir);
+
+    var body: [max_suite_bytes]u8 = undefined;
+    var used: usize = 0;
+    const suite_line = std.fmt.bufPrint(body[used..], "suite={s}\n", .{suite.suiteName()}) catch |err| switch (err) {
+        error.NoSpaceLeft => return error.ResponseTooLarge,
+    };
+    used += suite_line.len;
+    var entry_index: usize = 0;
+    while (entry_index < suite.entry_count) : (entry_index += 1) {
+        const entry = suite.entries[entry_index];
+        const entry_line = std.fmt.bufPrint(body[used..], "entry={s}:{s}\n", .{ entry.packageName(), entry.planName() }) catch |err| switch (err) {
+            error.NoSpaceLeft => return error.ResponseTooLarge,
+        };
+        used += entry_line.len;
+    }
+    try filesystem.writeFile(path, body[0..used], tick);
+}
+
+pub fn applySuite(suite_name: []const u8, tick: u64) Error!void {
+    const suite = try loadSuite(suite_name);
+    var entry_index: usize = 0;
+    while (entry_index < suite.entry_count) : (entry_index += 1) {
+        const entry = suite.entries[entry_index];
+        try applyPlan(entry.packageName(), entry.planName(), tick);
+    }
+}
+
+pub fn deleteSuite(suite_name: []const u8, tick: u64) Error!void {
+    var suite_path_buf: [filesystem.max_path_len]u8 = undefined;
+    const path = try suitePath(suite_name, &suite_path_buf);
+    filesystem.deleteFile(path, tick) catch |err| switch (err) {
+        error.FileNotFound => return error.AppSuiteNotFound,
+        else => return err,
+    };
 }
 
 pub fn infoAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
@@ -483,6 +599,14 @@ fn validatePlanInputs(
     _ = package_store.parseConnectorType(package_store.connectorNameFromType(connector_type)) catch return error.InvalidDisplayConnector;
 }
 
+fn validateSuiteName(name: []const u8) Error!void {
+    if (name.len == 0 or name.len > package_store.max_release_len) return error.InvalidAppSuiteName;
+    for (name) |char| {
+        if (std.ascii.isAlphanumeric(char) or char == '-' or char == '_' or char == '.') continue;
+        return error.InvalidAppSuiteName;
+    }
+}
+
 fn setActivePlan(name: []const u8, plan_name: []const u8, tick: u64) Error!void {
     var active_path_buf: [filesystem.max_path_len]u8 = undefined;
     const path = try activePlanPath(name, &active_path_buf);
@@ -496,6 +620,11 @@ fn clearActivePlan(name: []const u8, tick: u64) Error!void {
         error.FileNotFound => return error.AppActivePlanNotSet,
         else => return err,
     };
+}
+
+fn suitePath(suite_name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validateSuiteName(suite_name);
+    return std.fmt.bufPrint(buffer, "{s}/{s}.txt", .{ suite_root_dir, suite_name }) catch error.InvalidPath;
 }
 
 fn activePlanNameAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
@@ -522,6 +651,119 @@ fn initPlan(package_name: []const u8, plan_name: []const u8) Error!AppPlan {
     try copyPlanComponent(plan.package_name_storage[0..], &plan.package_name_len, package_name, error.InvalidPackageName);
     try copyPlanComponent(plan.plan_name_storage[0..], &plan.plan_name_len, plan_name, error.InvalidAppPlanName);
     return plan;
+}
+
+fn initSuite(suite_name: []const u8) Error!AppSuite {
+    var suite = AppSuite{};
+    try copyPlanComponent(suite.suite_name_storage[0..], &suite.suite_name_len, suite_name, error.InvalidAppSuiteName);
+    return suite;
+}
+
+fn loadSuite(suite_name: []const u8) Error!AppSuite {
+    try validateSuiteName(suite_name);
+
+    var path_buf: [filesystem.max_path_len]u8 = undefined;
+    var body_storage: [max_suite_bytes]u8 = undefined;
+    const path = try suitePath(suite_name, &path_buf);
+    var fba = std.heap.FixedBufferAllocator.init(&body_storage);
+    const body = filesystem.readFileAlloc(fba.allocator(), path, body_storage.len) catch |err| switch (err) {
+        error.FileNotFound => return error.AppSuiteNotFound,
+        else => return err,
+    };
+    return parseSuite(suite_name, body);
+}
+
+fn parseSuiteEntriesSpec(suite_name: []const u8, entries_spec: []const u8) Error!AppSuite {
+    var suite = try initSuite(suite_name);
+    var tokens = std.mem.tokenizeAny(u8, entries_spec, " \t\r\n");
+    while (tokens.next()) |token| {
+        if (suite.entry_count >= max_suite_entries) return error.InvalidAppSuite;
+        const entry = try parseSuiteEntryValue(token);
+        _ = try loadPlan(entry.packageName(), entry.planName());
+        suite.entries[suite.entry_count] = entry;
+        suite.entry_count += 1;
+    }
+    if (suite.entry_count == 0) return error.AppSuiteEmpty;
+    return suite;
+}
+
+fn parseSuite(suite_name: []const u8, body: []const u8) Error!AppSuite {
+    var suite = try initSuite(suite_name);
+    var saw_suite_name = false;
+
+    var lines = std.mem.splitScalar(u8, body, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (line.len == 0) continue;
+
+        if (std.mem.startsWith(u8, line, "suite=")) {
+            if (!std.mem.eql(u8, line["suite=".len..], suite_name)) return error.InvalidAppSuite;
+            saw_suite_name = true;
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "entry=")) {
+            if (suite.entry_count >= max_suite_entries) return error.InvalidAppSuite;
+            suite.entries[suite.entry_count] = try parseSuiteEntryValue(line["entry=".len..]);
+            suite.entry_count += 1;
+            continue;
+        }
+        return error.InvalidAppSuite;
+    }
+
+    if (!saw_suite_name or suite.entry_count == 0) return error.InvalidAppSuite;
+    return suite;
+}
+
+fn parseSuiteEntryValue(value: []const u8) Error!AppSuiteEntry {
+    const separator_index = std.mem.indexOfScalar(u8, value, ':') orelse return error.InvalidAppSuite;
+    const package_name = value[0..separator_index];
+    const plan_name = value[separator_index + 1 ..];
+    if (package_name.len == 0 or plan_name.len == 0) return error.InvalidAppSuite;
+
+    try package_store.validatePackageName(package_name);
+    try validatePlanName(plan_name);
+
+    var entry = AppSuiteEntry{};
+    try copyPlanComponent(entry.package_name_storage[0..], &entry.package_name_len, package_name, error.InvalidPackageName);
+    try copyPlanComponent(entry.plan_name_storage[0..], &entry.plan_name_len, plan_name, error.InvalidAppPlanName);
+    return entry;
+}
+
+fn renderSuiteEntriesAlloc(allocator: std.mem.Allocator, suite: AppSuite, max_bytes: usize) Error![]u8 {
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    var entry_index: usize = 0;
+    while (entry_index < suite.entry_count) : (entry_index += 1) {
+        const entry = suite.entries[entry_index];
+        const line = try std.fmt.allocPrint(allocator, "{s}:{s}\n", .{ entry.packageName(), entry.planName() });
+        defer allocator.free(line);
+        if (out.items.len + line.len > max_bytes) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, line);
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+fn renderSuiteInfoAlloc(allocator: std.mem.Allocator, suite: AppSuite, path: []const u8, max_bytes: usize) Error![]u8 {
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    const header = try std.fmt.allocPrint(allocator, "suite={s}\npath={s}\n", .{ suite.suiteName(), path });
+    defer allocator.free(header);
+    if (header.len > max_bytes) return error.ResponseTooLarge;
+    try out.appendSlice(allocator, header);
+
+    var entry_index: usize = 0;
+    while (entry_index < suite.entry_count) : (entry_index += 1) {
+        const entry = suite.entries[entry_index];
+        const line = try std.fmt.allocPrint(allocator, "entry={s}:{s}\n", .{ entry.packageName(), entry.planName() });
+        defer allocator.free(line);
+        if (out.items.len + line.len > max_bytes) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, line);
+    }
+
+    return out.toOwnedSlice(allocator);
 }
 
 fn loadPlan(name: []const u8, plan_name: []const u8) Error!AppPlan {
@@ -951,4 +1193,86 @@ test "app runtime app plans persist on ata-backed storage" {
     const autorun = try autorunListAlloc(std.testing.allocator, 64);
     defer std.testing.allocator.free(autorun);
     try std.testing.expectEqualStrings("persisted\n", autorun);
+}
+
+test "app runtime saves applies and deletes app suites on ram disk" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+
+    try trust_store.installBundle("suite-root", "cert-root", 1);
+    try package_store.installScriptPackage("demo", "echo suite-demo", 2);
+    try package_store.installScriptPackage("aux", "echo suite-aux", 3);
+    try savePlan("demo", "golden", "", "suite-root", abi.display_connector_virtual, 1280, 720, true, 4);
+    try savePlan("aux", "sidecar", "", "", abi.display_connector_virtual, 800, 600, false, 5);
+
+    try saveSuite("daily", "demo:golden aux:sidecar", 6);
+
+    const suite_list = try suiteListAlloc(std.testing.allocator, 128);
+    defer std.testing.allocator.free(suite_list);
+    try std.testing.expectEqualStrings("daily\n", suite_list);
+
+    const suite_info = try suiteInfoAlloc(std.testing.allocator, "daily", 256);
+    defer std.testing.allocator.free(suite_info);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info, "suite=daily") != null);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info, "entry=demo:golden") != null);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info, "entry=aux:sidecar") != null);
+
+    const suite_entries = try suiteEntriesAlloc(std.testing.allocator, "daily", 128);
+    defer std.testing.allocator.free(suite_entries);
+    try std.testing.expectEqualStrings("demo:golden\naux:sidecar\n", suite_entries);
+
+    try applySuite("daily", 7);
+
+    const demo_active = try activePlanInfoAlloc(std.testing.allocator, "demo", 256);
+    defer std.testing.allocator.free(demo_active);
+    try std.testing.expect(std.mem.indexOf(u8, demo_active, "active_plan=golden") != null);
+
+    const aux_active = try activePlanInfoAlloc(std.testing.allocator, "aux", 256);
+    defer std.testing.allocator.free(aux_active);
+    try std.testing.expect(std.mem.indexOf(u8, aux_active, "active_plan=sidecar") != null);
+
+    const autorun = try autorunListAlloc(std.testing.allocator, 64);
+    defer std.testing.allocator.free(autorun);
+    try std.testing.expectEqualStrings("demo\n", autorun);
+
+    try deleteSuite("daily", 8);
+    try std.testing.expectError(error.AppSuiteNotFound, suiteInfoAlloc(std.testing.allocator, "daily", 256));
+
+    const after_delete = try suiteListAlloc(std.testing.allocator, 64);
+    defer std.testing.allocator.free(after_delete);
+    try std.testing.expectEqualStrings("", after_delete);
+}
+
+test "app runtime app suites persist on ata-backed storage" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    ata_pio_disk.testEnableMockDevice(8192);
+    ata_pio_disk.testInstallMockMbrPartition(2048, 4096, 0x83);
+    defer ata_pio_disk.testDisableMockDevice();
+
+    try package_store.installScriptPackage("demo", "echo persisted-demo", 1);
+    try package_store.installScriptPackage("aux", "echo persisted-aux", 2);
+    try savePlan("demo", "golden", "", "", abi.display_connector_virtual, 1024, 768, true, 3);
+    try savePlan("aux", "sidecar", "", "", abi.display_connector_virtual, 800, 600, false, 4);
+    try saveSuite("persisted", "demo:golden aux:sidecar", 5);
+    try applySuite("persisted", 6);
+
+    filesystem.resetForTest();
+
+    const suite_list = try suiteListAlloc(std.testing.allocator, 128);
+    defer std.testing.allocator.free(suite_list);
+    try std.testing.expectEqualStrings("persisted\n", suite_list);
+
+    const suite_info = try suiteInfoAlloc(std.testing.allocator, "persisted", 256);
+    defer std.testing.allocator.free(suite_info);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info, "entry=demo:golden") != null);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info, "entry=aux:sidecar") != null);
+
+    const demo_active = try activePlanInfoAlloc(std.testing.allocator, "demo", 256);
+    defer std.testing.allocator.free(demo_active);
+    try std.testing.expect(std.mem.indexOf(u8, demo_active, "active_plan=golden") != null);
+
+    const aux_active = try activePlanInfoAlloc(std.testing.allocator, "aux", 256);
+    defer std.testing.allocator.free(aux_active);
+    try std.testing.expect(std.mem.indexOf(u8, aux_active, "active_plan=sidecar") != null);
 }
