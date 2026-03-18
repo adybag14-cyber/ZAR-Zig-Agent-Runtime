@@ -3459,6 +3459,16 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const workspace_stderr_request_id: u32 = 124;
     const workspace_delete_request_id: u32 = 125;
     const workspace_list_after_delete_request_id: u32 = 126;
+    const workspace_autorun_name = "ops2";
+    const workspace_autorun_save_request_id: u32 = 127;
+    const workspace_autorun_add_primary_request_id: u32 = 128;
+    const workspace_autorun_add_secondary_request_id: u32 = 129;
+    const workspace_autorun_list_request_id: u32 = 130;
+    const workspace_autorun_run_request_id: u32 = 131;
+    const workspace_autorun_remove_primary_request_id: u32 = 132;
+    const workspace_autorun_list_after_remove_request_id: u32 = 133;
+    const workspace_autorun_delete_secondary_request_id: u32 = 134;
+    const workspace_autorun_list_final_request_id: u32 = 135;
     const uninstall_request_id: u32 = 79;
     const uninstall_list_request_id: u32 = 80;
     const retransmit_interval_ticks: u64 = 4;
@@ -6766,6 +6776,172 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const workspace_stdout_readback = filesystem.readFileAlloc(service_fba.allocator(), workspace_stdout_path, 128) catch return error.ToolServiceFailed;
     if (!std.mem.eql(u8, workspace_stdout_readback, workspace_run_payload_expected)) return error.ToolServiceResponseMismatch;
+
+    var workspace_autorun_save_request_buffer: [160]u8 = undefined;
+    const workspace_autorun_save_request = std.fmt.bufPrint(
+        &workspace_autorun_save_request_buffer,
+        "REQ {d} WORKSPACESAVE {s} {s} {s} 1024 768 {s}:{s}:{s}",
+        .{ workspace_autorun_save_request_id, workspace_autorun_name, app_suite_name, trust_backup_bundle_name, package_name, package_channel_name, package_release_three_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_autorun_save_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_autorun_save_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_autorun_save_response, "RESP 127 19\nWORKSPACESAVE ops2\n")) return error.ToolServiceResponseMismatch;
+
+    var workspace_autorun_batch_request_buffer: [256]u8 = undefined;
+    const workspace_autorun_batch_request = std.fmt.bufPrint(
+        &workspace_autorun_batch_request_buffer,
+        "REQ {d} WORKSPACEAUTORUNADD {s}\nREQ {d} WORKSPACEAUTORUNADD {s}\nREQ {d} WORKSPACEAUTORUNLIST\nREQ {d} WORKSPACEAUTORUNRUN\nREQ {d} WORKSPACEAUTORUNREMOVE {s}\nREQ {d} WORKSPACEAUTORUNLIST",
+        .{
+            workspace_autorun_add_primary_request_id,
+            workspace_name,
+            workspace_autorun_add_secondary_request_id,
+            workspace_autorun_name,
+            workspace_autorun_list_request_id,
+            workspace_autorun_run_request_id,
+            workspace_autorun_remove_primary_request_id,
+            workspace_name,
+            workspace_autorun_list_after_remove_request_id,
+        },
+    ) catch return error.ToolServiceFailed;
+    const workspace_autorun_batch_request_payload = client_b.buildPayload(workspace_autorun_batch_request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, workspace_autorun_batch_request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, workspace_autorun_batch_request_payload);
+    server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const workspace_autorun_batch_service_response = tool_service.handleFramedRequestBatch(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        512,
+        256,
+        512,
+    ) catch return error.ToolServiceFailed;
+
+    const workspace_autorun_add_primary_payload_expected = "WORKSPACEAUTORUNADD ops\n";
+    const workspace_autorun_add_secondary_payload_expected = "WORKSPACEAUTORUNADD ops2\n";
+    const workspace_autorun_list_payload_expected = "ops\nops2\n";
+    var workspace_autorun_run_payload_buffer: [192]u8 = undefined;
+    const workspace_autorun_run_payload_expected = std.fmt.bufPrint(
+        &workspace_autorun_run_payload_buffer,
+        "{s}{s}{s}{s}",
+        .{ package_run_stdout, autorun_run_stdout, package_run_stdout, autorun_run_stdout },
+    ) catch return error.ToolServiceFailed;
+    const workspace_autorun_remove_primary_payload_expected = "WORKSPACEAUTORUNREMOVE ops\n";
+    const workspace_autorun_list_after_remove_payload_expected = "ops2\n";
+    var workspace_autorun_batch_service_response_expected_buffer: [768]u8 = undefined;
+    const workspace_autorun_batch_service_response_expected = std.fmt.bufPrint(
+        &workspace_autorun_batch_service_response_expected_buffer,
+        "RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}",
+        .{
+            workspace_autorun_add_primary_request_id,
+            workspace_autorun_add_primary_payload_expected.len,
+            workspace_autorun_add_primary_payload_expected,
+            workspace_autorun_add_secondary_request_id,
+            workspace_autorun_add_secondary_payload_expected.len,
+            workspace_autorun_add_secondary_payload_expected,
+            workspace_autorun_list_request_id,
+            workspace_autorun_list_payload_expected.len,
+            workspace_autorun_list_payload_expected,
+            workspace_autorun_run_request_id,
+            workspace_autorun_run_payload_expected.len,
+            workspace_autorun_run_payload_expected,
+            workspace_autorun_remove_primary_request_id,
+            workspace_autorun_remove_primary_payload_expected.len,
+            workspace_autorun_remove_primary_payload_expected,
+            workspace_autorun_list_after_remove_request_id,
+            workspace_autorun_list_after_remove_payload_expected.len,
+            workspace_autorun_list_after_remove_payload_expected,
+        },
+    ) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, workspace_autorun_batch_service_response, workspace_autorun_batch_service_response_expected)) return error.ToolServiceResponseMismatch;
+
+    var workspace_autorun_batch_service_response_offset: usize = 0;
+    while (workspace_autorun_batch_service_response_offset < workspace_autorun_batch_service_response.len) {
+        const workspace_autorun_batch_service_reply_chunk = server_b.buildPayloadChunk(workspace_autorun_batch_service_response[workspace_autorun_batch_service_response_offset..]) catch |err| return mapTcpSessionProbeError(err);
+        const expected_chunk = workspace_autorun_batch_service_response[workspace_autorun_batch_service_response_offset .. workspace_autorun_batch_service_response_offset + workspace_autorun_batch_service_reply_chunk.payload.len];
+        _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, workspace_autorun_batch_service_reply_chunk);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, workspace_autorun_batch_service_reply_chunk);
+        if (!std.mem.eql(u8, workspace_autorun_batch_service_reply_chunk.payload, expected_chunk)) return error.PayloadMismatch;
+        const mapped_workspace_autorun_reply_chunk = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+        if (mapped_workspace_autorun_reply_chunk != client_b) return error.SessionStateMismatch;
+        mapped_workspace_autorun_reply_chunk.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+        workspace_autorun_batch_service_response_offset += workspace_autorun_batch_service_reply_chunk.payload.len;
+        const workspace_autorun_batch_service_reply_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+        _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, workspace_autorun_batch_service_reply_ack);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, workspace_autorun_batch_service_reply_ack);
+        server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    }
+    if (workspace_autorun_batch_service_response_offset != workspace_autorun_batch_service_response.len) return error.PayloadMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const workspace_autorun_list_readback = filesystem.readFileAlloc(service_fba.allocator(), "/runtime/workspace-runs/autorun.txt", 64) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, workspace_autorun_list_readback, workspace_autorun_list_after_remove_payload_expected)) return error.ToolServiceResponseMismatch;
+
+    var workspace_autorun_state_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const workspace_autorun_state_path = std.fmt.bufPrint(&workspace_autorun_state_path_buffer, "/runtime/workspace-runs/{s}/last_run.txt", .{workspace_autorun_name}) catch return error.ToolServiceFailed;
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const workspace_autorun_state_readback = filesystem.readFileAlloc(service_fba.allocator(), workspace_autorun_state_path, 256) catch return error.ToolServiceFailed;
+    if (std.mem.indexOf(u8, workspace_autorun_state_readback, "exit_code=0") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_autorun_stdout_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const workspace_autorun_stdout_path = std.fmt.bufPrint(&workspace_autorun_stdout_path_buffer, "/runtime/workspace-runs/{s}/stdout.log", .{workspace_autorun_name}) catch return error.ToolServiceFailed;
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const workspace_autorun_stdout_readback = filesystem.readFileAlloc(service_fba.allocator(), workspace_autorun_stdout_path, 160) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, workspace_autorun_stdout_readback, workspace_run_payload_expected)) return error.ToolServiceResponseMismatch;
+
+    var workspace_autorun_delete_secondary_request_buffer: [96]u8 = undefined;
+    const workspace_autorun_delete_secondary_request = std.fmt.bufPrint(
+        &workspace_autorun_delete_secondary_request_buffer,
+        "REQ {d} WORKSPACEDELETE {s}",
+        .{ workspace_autorun_delete_secondary_request_id, workspace_autorun_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_autorun_delete_secondary_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_autorun_delete_secondary_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_autorun_delete_secondary_response, "RESP 134 21\nWORKSPACEDELETE ops2\n")) return error.ToolServiceResponseMismatch;
+
+    var workspace_autorun_list_final_request_buffer: [64]u8 = undefined;
+    const workspace_autorun_list_final_request = std.fmt.bufPrint(
+        &workspace_autorun_list_final_request_buffer,
+        "REQ {d} WORKSPACEAUTORUNLIST",
+        .{workspace_autorun_list_final_request_id},
+    ) catch return error.ToolServiceFailed;
+    const workspace_autorun_list_final_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_autorun_list_final_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_autorun_list_final_response, "RESP 135 0\n")) return error.ToolServiceResponseMismatch;
 
     var workspace_delete_request_buffer: [64]u8 = undefined;
     const workspace_delete_request = std.fmt.bufPrint(

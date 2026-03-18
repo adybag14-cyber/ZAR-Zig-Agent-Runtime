@@ -154,7 +154,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-modes, display-set, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-modes, display-set, run-script, run-package, app-run");
         return;
     }
 
@@ -1386,24 +1386,7 @@ fn execute(
             try stderr_buffer.appendLine("usage: workspace-run <name>");
             return;
         }
-        const suite_name = workspace_runtime.suiteNameAlloc(allocator, arg.arg, 128) catch |err| {
-            exit_code.* = 1;
-            try stderr_buffer.appendFmt("workspace-run failed: {s}\n", .{@errorName(err)});
-            return;
-        };
-        defer allocator.free(suite_name);
-
-        workspace_runtime.applyWorkspace(arg.arg, 0) catch |err| {
-            exit_code.* = 1;
-            try stderr_buffer.appendFmt("workspace-run failed: {s}\n", .{@errorName(err)});
-            return;
-        };
-        try runSuiteProfiles(suite_name, "workspace-run", stdout_buffer, stderr_buffer, exit_code, allocator, depth);
-        workspace_runtime.writeLastRun(arg.arg, exit_code.*, stdout_buffer.list.items, stderr_buffer.list.items, 0) catch |err| {
-            exit_code.* = 1;
-            try stderr_buffer.appendFmt("workspace-run failed: {s}\n", .{@errorName(err)});
-            return;
-        };
+        try runWorkspace(arg.arg, "workspace-run", stdout_buffer, stderr_buffer, exit_code, allocator, depth);
         return;
     }
 
@@ -1508,6 +1491,62 @@ fn execute(
             return;
         };
         try stdout_buffer.appendFmt("workspace deleted {s}\n", .{arg.arg});
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-autorun-list")) {
+        if (parsed.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-autorun-list");
+            return;
+        }
+        const listing = workspace_runtime.autorunListAlloc(allocator, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-autorun-list failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(listing);
+        try stdout_buffer.appendSlice(listing);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-autorun-add")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-autorun-add <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-autorun-add <name>");
+            return;
+        }
+        workspace_runtime.addAutorun(arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-autorun-add failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("workspace autorun add {s}\n", .{arg.arg});
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-autorun-remove")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-autorun-remove <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-autorun-remove <name>");
+            return;
+        }
+        workspace_runtime.removeAutorun(arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-autorun-remove failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("workspace autorun remove {s}\n", .{arg.arg});
         return;
     }
 
@@ -1792,6 +1831,16 @@ fn execute(
         return;
     }
 
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-autorun-run")) {
+        if (parsed.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-autorun-run");
+            return;
+        }
+        try runWorkspaceAutorun("workspace-autorun-run", stdout_buffer, stderr_buffer, exit_code, allocator, depth);
+        return;
+    }
+
     exit_code.* = 127;
     try stderr_buffer.appendFmt("unknown command: {s}\n", .{parsed.name});
 }
@@ -1971,6 +2020,64 @@ fn runAutorunProfiles(
         const package_name = std.mem.trim(u8, raw_line, " \t\r");
         if (package_name.len == 0) continue;
         try runLaunchProfile(package_name, operation, true, stdout_buffer, stderr_buffer, exit_code, allocator, depth);
+        if (exit_code.* != 0) return;
+    }
+}
+
+fn runWorkspace(
+    workspace_name: []const u8,
+    operation: []const u8,
+    stdout_buffer: *OutputBuffer,
+    stderr_buffer: *OutputBuffer,
+    exit_code: *u8,
+    allocator: std.mem.Allocator,
+    depth: usize,
+) Error!void {
+    const suite_name = workspace_runtime.suiteNameAlloc(allocator, workspace_name, 128) catch |err| {
+        exit_code.* = 1;
+        try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+        return;
+    };
+    defer allocator.free(suite_name);
+
+    workspace_runtime.applyWorkspace(workspace_name, 0) catch |err| {
+        exit_code.* = 1;
+        try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+        return;
+    };
+
+    const stdout_before = stdout_buffer.list.items.len;
+    const stderr_before = stderr_buffer.list.items.len;
+    try runSuiteProfiles(suite_name, operation, stdout_buffer, stderr_buffer, exit_code, allocator, depth);
+    const stdout_delta = stdout_buffer.list.items[stdout_before..];
+    const stderr_delta = stderr_buffer.list.items[stderr_before..];
+    workspace_runtime.writeLastRun(workspace_name, exit_code.*, stdout_delta, stderr_delta, 0) catch |err| {
+        exit_code.* = 1;
+        try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+        return;
+    };
+}
+
+fn runWorkspaceAutorun(
+    operation: []const u8,
+    stdout_buffer: *OutputBuffer,
+    stderr_buffer: *OutputBuffer,
+    exit_code: *u8,
+    allocator: std.mem.Allocator,
+    depth: usize,
+) Error!void {
+    const autorun_list = workspace_runtime.autorunListAlloc(allocator, 1024) catch |err| {
+        exit_code.* = 1;
+        try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+        return;
+    };
+    defer allocator.free(autorun_list);
+
+    var lines = std.mem.splitScalar(u8, autorun_list, '\n');
+    while (lines.next()) |raw_line| {
+        const workspace_name = std.mem.trim(u8, raw_line, " \t\r");
+        if (workspace_name.len == 0) continue;
+        try runWorkspace(workspace_name, operation, stdout_buffer, stderr_buffer, exit_code, allocator, depth);
         if (exit_code.* != 0) return;
     }
 }
@@ -2850,4 +2957,88 @@ test "baremetal tool exec saves applies and deletes workspaces" {
     defer workspace_list_after_delete.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), workspace_list_after_delete.exit_code);
     try std.testing.expectEqualStrings("", workspace_list_after_delete.stdout);
+}
+
+test "baremetal tool exec persists and runs workspace autorun" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    display_output.resetForTest();
+    framebuffer_console.resetForTest();
+    vga_text_console.resetForTest();
+
+    try package_store.installScriptPackage("demo", "echo demo-workspace", 1);
+    try package_store.installScriptPackage("aux", "echo aux-workspace", 2);
+
+    var save_demo_plan = try runCapture(std.testing.allocator, "app-plan-save demo boot none none virtual 1024 768 0", 256, 256);
+    defer save_demo_plan.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_demo_plan.exit_code);
+
+    var save_aux_plan = try runCapture(std.testing.allocator, "app-plan-save aux sidecar none none virtual 800 600 0", 256, 256);
+    defer save_aux_plan.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_aux_plan.exit_code);
+
+    var save_demo_suite = try runCapture(std.testing.allocator, "app-suite-save demo-suite demo:boot", 256, 256);
+    defer save_demo_suite.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_demo_suite.exit_code);
+
+    var save_aux_suite = try runCapture(std.testing.allocator, "app-suite-save aux-suite aux:sidecar", 256, 256);
+    defer save_aux_suite.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_aux_suite.exit_code);
+
+    var save_ops = try runCapture(std.testing.allocator, "workspace-save ops demo-suite none 1024 768", 256, 256);
+    defer save_ops.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_ops.exit_code);
+    try std.testing.expectEqualStrings("workspace saved ops\n", save_ops.stdout);
+
+    var save_sidecar = try runCapture(std.testing.allocator, "workspace-save sidecar aux-suite none 800 600", 256, 256);
+    defer save_sidecar.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_sidecar.exit_code);
+    try std.testing.expectEqualStrings("workspace saved sidecar\n", save_sidecar.stdout);
+
+    var add_ops = try runCapture(std.testing.allocator, "workspace-autorun-add ops", 256, 256);
+    defer add_ops.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), add_ops.exit_code);
+    try std.testing.expectEqualStrings("workspace autorun add ops\n", add_ops.stdout);
+
+    var add_sidecar = try runCapture(std.testing.allocator, "workspace-autorun-add sidecar", 256, 256);
+    defer add_sidecar.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), add_sidecar.exit_code);
+    try std.testing.expectEqualStrings("workspace autorun add sidecar\n", add_sidecar.stdout);
+
+    var autorun_list = try runCapture(std.testing.allocator, "workspace-autorun-list", 256, 256);
+    defer autorun_list.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), autorun_list.exit_code);
+    try std.testing.expectEqualStrings("ops\nsidecar\n", autorun_list.stdout);
+
+    var autorun_run = try runCapture(std.testing.allocator, "workspace-autorun-run", 256, 256);
+    defer autorun_run.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), autorun_run.exit_code);
+    try std.testing.expectEqualStrings("demo-workspace\naux-workspace\n", autorun_run.stdout);
+
+    const sidecar_state = try workspace_runtime.stateAlloc(std.testing.allocator, "sidecar", 256);
+    defer std.testing.allocator.free(sidecar_state);
+    try std.testing.expect(std.mem.indexOf(u8, sidecar_state, "exit_code=0") != null);
+
+    const sidecar_stdout = try workspace_runtime.stdoutAlloc(std.testing.allocator, "sidecar", 256);
+    defer std.testing.allocator.free(sidecar_stdout);
+    try std.testing.expectEqualStrings("aux-workspace\n", sidecar_stdout);
+
+    var remove_ops = try runCapture(std.testing.allocator, "workspace-autorun-remove ops", 256, 256);
+    defer remove_ops.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), remove_ops.exit_code);
+    try std.testing.expectEqualStrings("workspace autorun remove ops\n", remove_ops.stdout);
+
+    var updated_autorun_list = try runCapture(std.testing.allocator, "workspace-autorun-list", 256, 256);
+    defer updated_autorun_list.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), updated_autorun_list.exit_code);
+    try std.testing.expectEqualStrings("sidecar\n", updated_autorun_list.stdout);
+
+    var delete_sidecar = try runCapture(std.testing.allocator, "workspace-delete sidecar", 256, 256);
+    defer delete_sidecar.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), delete_sidecar.exit_code);
+
+    var final_autorun_list = try runCapture(std.testing.allocator, "workspace-autorun-list", 256, 256);
+    defer final_autorun_list.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), final_autorun_list.exit_code);
+    try std.testing.expectEqualStrings("", final_autorun_list.stdout);
 }
