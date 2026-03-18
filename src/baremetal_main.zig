@@ -3452,8 +3452,13 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const workspace_list_request_id: u32 = 117;
     const workspace_info_request_id: u32 = 118;
     const workspace_apply_request_id: u32 = 119;
-    const workspace_delete_request_id: u32 = 120;
-    const workspace_list_after_delete_request_id: u32 = 121;
+    const workspace_run_request_id: u32 = 120;
+    const workspace_state_request_id: u32 = 121;
+    const workspace_history_request_id: u32 = 122;
+    const workspace_stdout_request_id: u32 = 123;
+    const workspace_stderr_request_id: u32 = 124;
+    const workspace_delete_request_id: u32 = 125;
+    const workspace_list_after_delete_request_id: u32 = 126;
     const uninstall_request_id: u32 = 79;
     const uninstall_list_request_id: u32 = 80;
     const retransmit_interval_ticks: u64 = 4;
@@ -6533,13 +6538,33 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
 
     var workspace_info_path_buffer: [filesystem.max_path_len]u8 = undefined;
     const workspace_info_path = std.fmt.bufPrint(&workspace_info_path_buffer, "/runtime/workspaces/{s}.txt", .{workspace_name}) catch return error.ToolServiceFailed;
-    var workspace_info_payload_buffer: [320]u8 = undefined;
+    var workspace_state_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const workspace_state_path = std.fmt.bufPrint(&workspace_state_path_buffer, "/runtime/workspace-runs/{s}/last_run.txt", .{workspace_name}) catch return error.ToolServiceFailed;
+    var workspace_history_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const workspace_history_path = std.fmt.bufPrint(&workspace_history_path_buffer, "/runtime/workspace-runs/{s}/history.log", .{workspace_name}) catch return error.ToolServiceFailed;
+    var workspace_stdout_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const workspace_stdout_path = std.fmt.bufPrint(&workspace_stdout_path_buffer, "/runtime/workspace-runs/{s}/stdout.log", .{workspace_name}) catch return error.ToolServiceFailed;
+    var workspace_stderr_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const workspace_stderr_path = std.fmt.bufPrint(&workspace_stderr_path_buffer, "/runtime/workspace-runs/{s}/stderr.log", .{workspace_name}) catch return error.ToolServiceFailed;
+    var workspace_info_payload_buffer: [512]u8 = undefined;
     const workspace_info_payload_expected = std.fmt.bufPrint(
         &workspace_info_payload_buffer,
-        "workspace={s}\npath={s}\nsuite={s}\ntrust_bundle={s}\ndisplay=1024x768\nchannel={s}:{s}:{s}\n",
-        .{ workspace_name, workspace_info_path, app_suite_name, trust_backup_bundle_name, package_name, package_channel_name, package_release_three_name },
+        "workspace={s}\npath={s}\nsuite={s}\ntrust_bundle={s}\ndisplay=1024x768\nstate_path={s}\nhistory_path={s}\nstdout_path={s}\nstderr_path={s}\nchannel={s}:{s}:{s}\n",
+        .{
+            workspace_name,
+            workspace_info_path,
+            app_suite_name,
+            trust_backup_bundle_name,
+            workspace_state_path,
+            workspace_history_path,
+            workspace_stdout_path,
+            workspace_stderr_path,
+            package_name,
+            package_channel_name,
+            package_release_three_name,
+        },
     ) catch return error.ToolServiceFailed;
-    var workspace_info_response_buffer: [384]u8 = undefined;
+    var workspace_info_response_buffer: [640]u8 = undefined;
     const workspace_info_response_expected = std.fmt.bufPrint(
         &workspace_info_response_buffer,
         "RESP {d} {d}\n{s}",
@@ -6613,6 +6638,135 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const workspace_aux_active_readback = filesystem.readFileAlloc(service_fba.allocator(), "/runtime/apps/aux/active_plan.txt", 32) catch return error.ToolServiceFailed;
     if (!std.mem.eql(u8, workspace_aux_active_readback, app_suite_aux_plan_name)) return error.ToolServiceResponseMismatch;
 
+    var workspace_run_request_buffer: [64]u8 = undefined;
+    const workspace_run_request = std.fmt.bufPrint(
+        &workspace_run_request_buffer,
+        "REQ {d} WORKSPACERUN {s}",
+        .{ workspace_run_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    var workspace_run_response_buffer: [160]u8 = undefined;
+    const workspace_run_payload_expected = std.fmt.bufPrint(
+        &workspace_run_response_buffer,
+        "{s}{s}",
+        .{ package_run_stdout, autorun_run_stdout },
+    ) catch return error.ToolServiceFailed;
+    const workspace_run_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_run_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_run_response, "RESP 120 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_run_response, workspace_run_payload_expected) == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_state_request_buffer: [64]u8 = undefined;
+    const workspace_state_request = std.fmt.bufPrint(
+        &workspace_state_request_buffer,
+        "REQ {d} WORKSPACESTATE {s}",
+        .{ workspace_state_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_state_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_state_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_state_response, "RESP 121 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_state_response, "workspace=ops") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_state_response, "suite=duo") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_state_response, "exit_code=0") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_history_request_buffer: [64]u8 = undefined;
+    const workspace_history_request = std.fmt.bufPrint(
+        &workspace_history_request_buffer,
+        "REQ {d} WORKSPACEHISTORY {s}",
+        .{ workspace_history_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_history_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_history_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_history_response, "RESP 122 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_history_response, "workspace=ops") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_stdout_request_buffer: [64]u8 = undefined;
+    const workspace_stdout_request = std.fmt.bufPrint(
+        &workspace_stdout_request_buffer,
+        "REQ {d} WORKSPACESTDOUT {s}",
+        .{ workspace_stdout_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_stdout_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_stdout_request,
+        512,
+        256,
+        512,
+    );
+    var workspace_stdout_response_expected_buffer: [160]u8 = undefined;
+    const workspace_stdout_response_expected = std.fmt.bufPrint(
+        &workspace_stdout_response_expected_buffer,
+        "RESP {d} {d}\n{s}",
+        .{ workspace_stdout_request_id, workspace_run_payload_expected.len, workspace_run_payload_expected },
+    ) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, workspace_stdout_response, workspace_stdout_response_expected)) return error.ToolServiceResponseMismatch;
+
+    var workspace_stderr_request_buffer: [64]u8 = undefined;
+    const workspace_stderr_request = std.fmt.bufPrint(
+        &workspace_stderr_request_buffer,
+        "REQ {d} WORKSPACESTDERR {s}",
+        .{ workspace_stderr_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_stderr_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_stderr_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_stderr_response, "RESP 124 0\n")) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const workspace_state_readback = filesystem.readFileAlloc(service_fba.allocator(), workspace_state_path, 256) catch return error.ToolServiceFailed;
+    if (std.mem.indexOf(u8, workspace_state_readback, "suite=duo") == null) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const workspace_history_readback = filesystem.readFileAlloc(service_fba.allocator(), workspace_history_path, 256) catch return error.ToolServiceFailed;
+    if (std.mem.indexOf(u8, workspace_history_readback, "workspace=ops") == null) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const workspace_stdout_readback = filesystem.readFileAlloc(service_fba.allocator(), workspace_stdout_path, 128) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, workspace_stdout_readback, workspace_run_payload_expected)) return error.ToolServiceResponseMismatch;
+
     var workspace_delete_request_buffer: [64]u8 = undefined;
     const workspace_delete_request = std.fmt.bufPrint(
         &workspace_delete_request_buffer,
@@ -6631,7 +6785,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         256,
         512,
     );
-    if (!std.mem.eql(u8, workspace_delete_response, "RESP 120 20\nWORKSPACEDELETE ops\n")) return error.ToolServiceResponseMismatch;
+    if (!std.mem.eql(u8, workspace_delete_response, "RESP 125 20\nWORKSPACEDELETE ops\n")) return error.ToolServiceResponseMismatch;
 
     var workspace_list_after_delete_request_buffer: [64]u8 = undefined;
     const workspace_list_after_delete_request = std.fmt.bufPrint(
@@ -6651,9 +6805,16 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         256,
         512,
     );
-    if (!std.mem.eql(u8, workspace_list_after_delete_response, "RESP 121 0\n")) return error.ToolServiceResponseMismatch;
+    if (!std.mem.eql(u8, workspace_list_after_delete_response, "RESP 126 0\n")) return error.ToolServiceResponseMismatch;
 
     if (filesystem.statSummary(workspace_info_path)) |_| {
+        return error.ToolServiceResponseMismatch;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return error.ToolServiceFailed,
+    }
+
+    if (filesystem.statSummary(workspace_state_path)) |_| {
         return error.ToolServiceResponseMismatch;
     } else |err| switch (err) {
         error.FileNotFound => {},

@@ -4,7 +4,7 @@ const abi = @import("abi.zig");
 const storage_backend = @import("storage_backend.zig");
 const tool_layout = @import("tool_layout.zig");
 
-pub const max_entries: usize = 64;
+pub const max_entries: usize = 80;
 // Keep filesystem paths large enough for hosted absolute temp/workspace roots while
 // still leaving each persisted entry at a tidy 256-byte ABI footprint.
 pub const max_path_len: usize = 224;

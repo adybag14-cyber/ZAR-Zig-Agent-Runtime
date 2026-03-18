@@ -79,6 +79,11 @@ pub const RequestOp = enum {
     workspace_info,
     workspace_save,
     workspace_apply,
+    workspace_run,
+    workspace_state,
+    workspace_history,
+    workspace_stdout,
+    workspace_stderr,
     workspace_delete,
     app_run,
     app_delete,
@@ -225,6 +230,11 @@ pub const FramedRequest = struct {
         workspace_info: []const u8,
         workspace_save: WorkspaceSaveRequest,
         workspace_apply: []const u8,
+        workspace_run: []const u8,
+        workspace_state: []const u8,
+        workspace_history: []const u8,
+        workspace_stdout: []const u8,
+        workspace_stderr: []const u8,
         workspace_delete: []const u8,
         app_run: []const u8,
         app_delete: []const u8,
@@ -1303,6 +1313,76 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         };
     }
 
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACERUN")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .workspace_run = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .workspace_run = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACESTATE")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .workspace_state = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .workspace_state = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACEHISTORY")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .workspace_history = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .workspace_history = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACESTDOUT")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .workspace_stdout = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .workspace_stdout = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACESTDERR")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .workspace_stderr = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .workspace_stderr = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
     if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACEDELETE")) {
         if (op_part.rest.len == 0) return error.InvalidFrame;
         if (newline_index != null) {
@@ -1717,6 +1797,11 @@ fn handleFramedPayload(
         .workspace_info => |workspace_name| try handleWorkspaceInfoRequest(allocator, workspace_name, payload_limit),
         .workspace_save => |workspace_request| try handleWorkspaceSaveRequest(allocator, workspace_request, payload_limit),
         .workspace_apply => |workspace_name| try handleWorkspaceApplyRequest(allocator, workspace_name, payload_limit),
+        .workspace_run => |workspace_name| try handleWorkspaceRunRequest(allocator, workspace_name, stdout_limit, stderr_limit, payload_limit),
+        .workspace_state => |workspace_name| try handleWorkspaceStateRequest(allocator, workspace_name, payload_limit),
+        .workspace_history => |workspace_name| try handleWorkspaceHistoryRequest(allocator, workspace_name, payload_limit),
+        .workspace_stdout => |workspace_name| try handleWorkspaceStdoutRequest(allocator, workspace_name, payload_limit),
+        .workspace_stderr => |workspace_name| try handleWorkspaceStderrRequest(allocator, workspace_name, payload_limit),
         .workspace_delete => |workspace_name| try handleWorkspaceDeleteRequest(allocator, workspace_name, payload_limit),
         .app_run => |package_name| try handleAppRunRequest(allocator, package_name, stdout_limit, stderr_limit, payload_limit),
         .app_delete => |package_name| try handleAppDeleteRequest(allocator, package_name, payload_limit),
@@ -2394,6 +2479,58 @@ fn handleWorkspaceApplyRequest(
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
+}
+
+fn handleWorkspaceRunRequest(
+    allocator: std.mem.Allocator,
+    workspace_name: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    var command_buf: [96]u8 = undefined;
+    const command = std.fmt.bufPrint(&command_buf, "workspace-run {s}", .{workspace_name}) catch return error.InvalidFrame;
+    return handleCommandRequest(allocator, command, stdout_limit, stderr_limit, payload_limit);
+}
+
+fn handleWorkspaceStateRequest(
+    allocator: std.mem.Allocator,
+    workspace_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return workspace_runtime.stateAlloc(allocator, workspace_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "WORKSPACESTATE", err, payload_limit);
+    };
+}
+
+fn handleWorkspaceHistoryRequest(
+    allocator: std.mem.Allocator,
+    workspace_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return workspace_runtime.historyAlloc(allocator, workspace_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "WORKSPACEHISTORY", err, payload_limit);
+    };
+}
+
+fn handleWorkspaceStdoutRequest(
+    allocator: std.mem.Allocator,
+    workspace_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return workspace_runtime.stdoutAlloc(allocator, workspace_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "WORKSPACESTDOUT", err, payload_limit);
+    };
+}
+
+fn handleWorkspaceStderrRequest(
+    allocator: std.mem.Allocator,
+    workspace_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return workspace_runtime.stderrAlloc(allocator, workspace_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "WORKSPACESTDERR", err, payload_limit);
+    };
 }
 
 fn handleWorkspaceDeleteRequest(
@@ -3152,7 +3289,37 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
-    const workspace_delete = try parseFramedRequest("REQ 156 WORKSPACEDELETE ops");
+    const workspace_run = try parseFramedRequest("REQ 156 WORKSPACERUN ops");
+    switch (workspace_run.operation) {
+        .workspace_run => |workspace_name| try std.testing.expectEqualStrings("ops", workspace_name),
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_state = try parseFramedRequest("REQ 157 WORKSPACESTATE ops");
+    switch (workspace_state.operation) {
+        .workspace_state => |workspace_name| try std.testing.expectEqualStrings("ops", workspace_name),
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_history = try parseFramedRequest("REQ 158 WORKSPACEHISTORY ops");
+    switch (workspace_history.operation) {
+        .workspace_history => |workspace_name| try std.testing.expectEqualStrings("ops", workspace_name),
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_stdout = try parseFramedRequest("REQ 159 WORKSPACESTDOUT ops");
+    switch (workspace_stdout.operation) {
+        .workspace_stdout => |workspace_name| try std.testing.expectEqualStrings("ops", workspace_name),
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_stderr = try parseFramedRequest("REQ 160 WORKSPACESTDERR ops");
+    switch (workspace_stderr.operation) {
+        .workspace_stderr => |workspace_name| try std.testing.expectEqualStrings("ops", workspace_name),
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_delete = try parseFramedRequest("REQ 161 WORKSPACEDELETE ops");
     switch (workspace_delete.operation) {
         .workspace_delete => |workspace_name| try std.testing.expectEqualStrings("ops", workspace_name),
         else => return error.InvalidFrame,
@@ -3846,6 +4013,7 @@ test "baremetal tool service manages persisted workspaces" {
     try std.testing.expect(std.mem.indexOf(u8, info_response, "suite=duo") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_response, "trust_bundle=root-a") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_response, "display=1024x768") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_response, "state_path=/runtime/workspace-runs/ops/last_run.txt") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_response, "channel=demo:stable:r1") != null);
 
     try package_store.setPackageReleaseChannel("demo", "stable", "r2", 18);
@@ -3881,15 +4049,40 @@ test "baremetal tool service manages persisted workspaces" {
     defer std.testing.allocator.free(aux_active);
     try std.testing.expect(std.mem.indexOf(u8, aux_active, "active_plan=sidecar") != null);
 
-    const delete_response = try handleFramedRequest(std.testing.allocator, "REQ 186 WORKSPACEDELETE ops", 512, 256, 512);
-    defer std.testing.allocator.free(delete_response);
-    try std.testing.expectEqualStrings("RESP 186 20\nWORKSPACEDELETE ops\n", delete_response);
+    const run_response = try handleFramedRequest(std.testing.allocator, "REQ 186 WORKSPACERUN ops", 512, 256, 512);
+    defer std.testing.allocator.free(run_response);
+    try std.testing.expectEqualStrings("RESP 186 23\nrelease-r1\naux-sidecar\n", run_response);
 
-    const list_after_delete = try handleFramedRequest(std.testing.allocator, "REQ 187 WORKSPACELIST", 512, 256, 512);
+    const state_response = try handleFramedRequest(std.testing.allocator, "REQ 187 WORKSPACESTATE ops", 512, 256, 512);
+    defer std.testing.allocator.free(state_response);
+    try std.testing.expect(std.mem.startsWith(u8, state_response, "RESP 187 "));
+    try std.testing.expect(std.mem.indexOf(u8, state_response, "workspace=ops") != null);
+    try std.testing.expect(std.mem.indexOf(u8, state_response, "suite=duo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, state_response, "exit_code=0") != null);
+
+    const history_response = try handleFramedRequest(std.testing.allocator, "REQ 188 WORKSPACEHISTORY ops", 512, 256, 512);
+    defer std.testing.allocator.free(history_response);
+    try std.testing.expect(std.mem.startsWith(u8, history_response, "RESP 188 "));
+    try std.testing.expect(std.mem.indexOf(u8, history_response, "workspace=ops") != null);
+
+    const stdout_response = try handleFramedRequest(std.testing.allocator, "REQ 189 WORKSPACESTDOUT ops", 512, 256, 512);
+    defer std.testing.allocator.free(stdout_response);
+    try std.testing.expectEqualStrings("RESP 189 23\nrelease-r1\naux-sidecar\n", stdout_response);
+
+    const stderr_response = try handleFramedRequest(std.testing.allocator, "REQ 190 WORKSPACESTDERR ops", 512, 256, 512);
+    defer std.testing.allocator.free(stderr_response);
+    try std.testing.expectEqualStrings("RESP 190 0\n", stderr_response);
+
+    const delete_response = try handleFramedRequest(std.testing.allocator, "REQ 191 WORKSPACEDELETE ops", 512, 256, 512);
+    defer std.testing.allocator.free(delete_response);
+    try std.testing.expectEqualStrings("RESP 191 20\nWORKSPACEDELETE ops\n", delete_response);
+
+    const list_after_delete = try handleFramedRequest(std.testing.allocator, "REQ 192 WORKSPACELIST", 512, 256, 512);
     defer std.testing.allocator.free(list_after_delete);
-    try std.testing.expectEqualStrings("RESP 187 0\n", list_after_delete);
+    try std.testing.expectEqualStrings("RESP 192 0\n", list_after_delete);
 
     try std.testing.expectError(error.FileNotFound, filesystem.statSummary("/runtime/workspaces/ops.txt"));
+    try std.testing.expectError(error.FileNotFound, filesystem.statSummary("/runtime/workspace-runs/ops"));
 }
 
 test "baremetal tool service persists and runs autorun requests" {
