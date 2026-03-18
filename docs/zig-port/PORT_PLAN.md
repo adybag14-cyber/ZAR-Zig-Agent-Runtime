@@ -2002,11 +2002,16 @@ Full-stack replacement execution reference:
     - host validation now proves RAM-disk and ATA-backed suite persistence plus suite-driven active-plan restoration across multiple apps
     - the broad live RTL8139 TCP proof now covers save -> list -> info -> apply -> run -> delete plus restored active-plan, autorun, and stdout readback on the persisted app-suite surface
   - current FS5.5 workspace slice is now locally closed on the same branch:
-    - `src/baremetal/workspace_runtime.zig` now persists bounded workspace definitions under `/runtime/workspaces/<name>.txt` with saved suite/trust/display/channel orchestration state plus `/runtime/workspace-runs/<name>/last_run.txt`, `history.log`, `stdout.log`, and `stderr.log` runtime receipts
-    - `src/baremetal/tool_exec.zig` now exposes `workspace-list`, `workspace-info`, `workspace-save`, `workspace-apply`, `workspace-run`, `workspace-state`, `workspace-history`, `workspace-stdout`, `workspace-stderr`, and `workspace-delete`
-    - `src/baremetal/tool_service.zig` now exposes `WORKSPACELIST`, `WORKSPACEINFO`, `WORKSPACESAVE`, `WORKSPACEAPPLY`, `WORKSPACERUN`, `WORKSPACESTATE`, `WORKSPACEHISTORY`, `WORKSPACESTDOUT`, `WORKSPACESTDERR`, and `WORKSPACEDELETE`
-    - host validation now proves RAM-disk and ATA-backed workspace persistence plus persisted runtime-receipt readback, restored canonical package script content, trust-bundle selection, display mode, and app-suite active-plan markers
-    - the broad live RTL8139 TCP proof now covers save -> list -> info -> apply -> run -> state -> history -> stdout -> stderr -> delete plus restored canonical package content, persisted runtime-receipt readback, and delete cleanup on the workspace surface
+    - `src/baremetal/workspace_runtime.zig` now persists bounded workspace definitions under `/runtime/workspaces/<name>.txt` with saved suite/trust/display/channel orchestration state plus `/runtime/workspace-runs/<name>/last_run.txt`, `history.log`, `stdout.log`, `stderr.log`, and the bounded workspace autorun registry `/runtime/workspace-runs/autorun.txt`
+    - `src/baremetal/tool_exec.zig` now exposes `workspace-list`, `workspace-info`, `workspace-save`, `workspace-apply`, `workspace-run`, `workspace-state`, `workspace-history`, `workspace-stdout`, `workspace-stderr`, `workspace-delete`, `workspace-autorun-list`, `workspace-autorun-add`, `workspace-autorun-remove`, and `workspace-autorun-run`
+    - `src/baremetal/tool_service.zig` now exposes `WORKSPACELIST`, `WORKSPACEINFO`, `WORKSPACESAVE`, `WORKSPACEAPPLY`, `WORKSPACERUN`, `WORKSPACESTATE`, `WORKSPACEHISTORY`, `WORKSPACESTDOUT`, `WORKSPACESTDERR`, `WORKSPACEDELETE`, `WORKSPACEAUTORUNLIST`, `WORKSPACEAUTORUNADD`, `WORKSPACEAUTORUNREMOVE`, and `WORKSPACEAUTORUNRUN`
+    - host validation now proves RAM-disk and ATA-backed workspace persistence plus workspace autorun registry persistence, persisted runtime-receipt readback, restored canonical package script content, trust-bundle selection, display mode, and app-suite active-plan markers
+    - the broad live RTL8139 TCP proof now covers save -> list -> info -> apply -> run -> state -> history -> stdout -> stderr -> delete plus workspace autorun add -> list -> run -> remove, persisted `/runtime/workspace-runs/autorun.txt` readback, restored canonical package content, persisted runtime-receipt readback, and delete cleanup on the workspace surface
+    - current local validation after the workspace-autorun follow-up fix is green:
+      - `zig build test --summary all` -> `380/380` passed
+      - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1 -TimeoutSeconds 120` -> pass
+      - parity gate -> pass (`union 141/141`, `events 19/19`)
+      - docs status gate -> pass
     - `build.zig` now runs the compiled native test executables directly on Windows, which avoids the current Zig master `--listen=-` test-runner hang while keeping the real hosted and baremetal-host test matrix intact
 
 

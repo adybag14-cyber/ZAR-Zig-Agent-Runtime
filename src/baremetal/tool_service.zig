@@ -85,6 +85,10 @@ pub const RequestOp = enum {
     workspace_stdout,
     workspace_stderr,
     workspace_delete,
+    workspace_autorun_list,
+    workspace_autorun_add,
+    workspace_autorun_remove,
+    workspace_autorun_run,
     app_run,
     app_delete,
     app_autorun_list,
@@ -236,6 +240,10 @@ pub const FramedRequest = struct {
         workspace_stdout: []const u8,
         workspace_stderr: []const u8,
         workspace_delete: []const u8,
+        workspace_autorun_list: void,
+        workspace_autorun_add: []const u8,
+        workspace_autorun_remove: []const u8,
+        workspace_autorun_run: void,
         app_run: []const u8,
         app_delete: []const u8,
         app_autorun_list: void,
@@ -1397,6 +1405,62 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         };
     }
 
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACEAUTORUNLIST")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .workspace_autorun_list = {} } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .workspace_autorun_list = {} } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACEAUTORUNADD")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .workspace_autorun_add = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .workspace_autorun_add = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACEAUTORUNREMOVE")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .workspace_autorun_remove = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .workspace_autorun_remove = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACEAUTORUNRUN")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .workspace_autorun_run = {} } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .workspace_autorun_run = {} } },
+            .consumed_len = request.len,
+        };
+    }
+
     if (std.ascii.eqlIgnoreCase(op_part.token, "APPRUN")) {
         if (op_part.rest.len == 0) return error.InvalidFrame;
         if (newline_index != null) {
@@ -1803,6 +1867,10 @@ fn handleFramedPayload(
         .workspace_stdout => |workspace_name| try handleWorkspaceStdoutRequest(allocator, workspace_name, payload_limit),
         .workspace_stderr => |workspace_name| try handleWorkspaceStderrRequest(allocator, workspace_name, payload_limit),
         .workspace_delete => |workspace_name| try handleWorkspaceDeleteRequest(allocator, workspace_name, payload_limit),
+        .workspace_autorun_list => try handleWorkspaceAutorunListRequest(allocator, payload_limit),
+        .workspace_autorun_add => |workspace_name| try handleWorkspaceAutorunAddRequest(allocator, workspace_name, payload_limit),
+        .workspace_autorun_remove => |workspace_name| try handleWorkspaceAutorunRemoveRequest(allocator, workspace_name, payload_limit),
+        .workspace_autorun_run => try handleWorkspaceAutorunRunRequest(allocator, stdout_limit, stderr_limit, payload_limit),
         .app_run => |package_name| try handleAppRunRequest(allocator, package_name, stdout_limit, stderr_limit, payload_limit),
         .app_delete => |package_name| try handleAppDeleteRequest(allocator, package_name, payload_limit),
         .app_autorun_list => try handleAppAutorunListRequest(allocator, payload_limit),
@@ -2545,6 +2613,41 @@ fn handleWorkspaceDeleteRequest(
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
+}
+
+fn handleWorkspaceAutorunListRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    return workspace_runtime.autorunListAlloc(allocator, payload_limit) catch |err| {
+        return formatOperationError(allocator, "WORKSPACEAUTORUNLIST", err, payload_limit);
+    };
+}
+
+fn handleWorkspaceAutorunAddRequest(allocator: std.mem.Allocator, workspace_name: []const u8, payload_limit: usize) Error![]u8 {
+    workspace_runtime.addAutorun(workspace_name, 0) catch |err| {
+        return formatOperationError(allocator, "WORKSPACEAUTORUNADD", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "WORKSPACEAUTORUNADD {s}\n", .{workspace_name});
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleWorkspaceAutorunRemoveRequest(allocator: std.mem.Allocator, workspace_name: []const u8, payload_limit: usize) Error![]u8 {
+    workspace_runtime.removeAutorun(workspace_name, 0) catch |err| {
+        return formatOperationError(allocator, "WORKSPACEAUTORUNREMOVE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "WORKSPACEAUTORUNREMOVE {s}\n", .{workspace_name});
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleWorkspaceAutorunRunRequest(
+    allocator: std.mem.Allocator,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    return handleCommandRequest(allocator, "workspace-autorun-run", stdout_limit, stderr_limit, payload_limit);
 }
 
 fn handleAppRunRequest(
@@ -3325,6 +3428,30 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
+    const workspace_autorun_list = try parseFramedRequest("REQ 162 WORKSPACEAUTORUNLIST");
+    switch (workspace_autorun_list.operation) {
+        .workspace_autorun_list => {},
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_autorun_add = try parseFramedRequest("REQ 163 WORKSPACEAUTORUNADD ops");
+    switch (workspace_autorun_add.operation) {
+        .workspace_autorun_add => |workspace_name| try std.testing.expectEqualStrings("ops", workspace_name),
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_autorun_remove = try parseFramedRequest("REQ 164 WORKSPACEAUTORUNREMOVE ops");
+    switch (workspace_autorun_remove.operation) {
+        .workspace_autorun_remove => |workspace_name| try std.testing.expectEqualStrings("ops", workspace_name),
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_autorun_run = try parseFramedRequest("REQ 165 WORKSPACEAUTORUNRUN");
+    switch (workspace_autorun_run.operation) {
+        .workspace_autorun_run => {},
+        else => return error.InvalidFrame,
+    }
+
     const app_run = try parseFramedRequest("REQ 41 APPRUN demo");
     switch (app_run.operation) {
         .app_run => |package_name| try std.testing.expectEqualStrings("demo", package_name),
@@ -4083,6 +4210,83 @@ test "baremetal tool service manages persisted workspaces" {
 
     try std.testing.expectError(error.FileNotFound, filesystem.statSummary("/runtime/workspaces/ops.txt"));
     try std.testing.expectError(error.FileNotFound, filesystem.statSummary("/runtime/workspace-runs/ops"));
+}
+
+test "baremetal tool service persists and runs workspace autorun requests" {
+    resetPersistentStateForTest();
+
+    try package_store.installScriptPackage("demo", "echo demo-workspace", 1);
+    try package_store.installScriptPackage("aux", "echo aux-workspace", 2);
+    try app_runtime.savePlan("demo", "boot", "", "", abi.display_connector_virtual, 1024, 768, false, 3);
+    try app_runtime.savePlan("aux", "sidecar", "", "", abi.display_connector_virtual, 800, 600, false, 4);
+    try app_runtime.saveSuite("demo-suite", "demo:boot", 5);
+    try app_runtime.saveSuite("aux-suite", "aux:sidecar", 6);
+
+    const save_ops_response = try handleFramedRequest(std.testing.allocator, "REQ 193 WORKSPACESAVE ops demo-suite none 1024 768", 512, 256, 512);
+    defer std.testing.allocator.free(save_ops_response);
+    try std.testing.expectEqualStrings("RESP 193 18\nWORKSPACESAVE ops\n", save_ops_response);
+
+    const save_sidecar_response = try handleFramedRequest(std.testing.allocator, "REQ 194 WORKSPACESAVE sidecar aux-suite none 800 600", 512, 256, 512);
+    defer std.testing.allocator.free(save_sidecar_response);
+    try std.testing.expectEqualStrings("RESP 194 22\nWORKSPACESAVE sidecar\n", save_sidecar_response);
+
+    const add_ops_response = try handleFramedRequest(std.testing.allocator, "REQ 195 WORKSPACEAUTORUNADD ops", 512, 256, 512);
+    defer std.testing.allocator.free(add_ops_response);
+    const add_ops_payload = "WORKSPACEAUTORUNADD ops\n";
+    const add_ops_expected = try std.fmt.allocPrint(std.testing.allocator, "RESP 195 {d}\n{s}", .{ add_ops_payload.len, add_ops_payload });
+    defer std.testing.allocator.free(add_ops_expected);
+    try std.testing.expectEqualStrings(add_ops_expected, add_ops_response);
+
+    const add_sidecar_response = try handleFramedRequest(std.testing.allocator, "REQ 196 WORKSPACEAUTORUNADD sidecar", 512, 256, 512);
+    defer std.testing.allocator.free(add_sidecar_response);
+    const add_sidecar_payload = "WORKSPACEAUTORUNADD sidecar\n";
+    const add_sidecar_expected = try std.fmt.allocPrint(std.testing.allocator, "RESP 196 {d}\n{s}", .{ add_sidecar_payload.len, add_sidecar_payload });
+    defer std.testing.allocator.free(add_sidecar_expected);
+    try std.testing.expectEqualStrings(add_sidecar_expected, add_sidecar_response);
+
+    const list_response = try handleFramedRequest(std.testing.allocator, "REQ 197 WORKSPACEAUTORUNLIST", 512, 256, 512);
+    defer std.testing.allocator.free(list_response);
+    const list_payload = "ops\nsidecar\n";
+    const list_expected = try std.fmt.allocPrint(std.testing.allocator, "RESP 197 {d}\n{s}", .{ list_payload.len, list_payload });
+    defer std.testing.allocator.free(list_expected);
+    try std.testing.expectEqualStrings(list_expected, list_response);
+
+    const run_response = try handleFramedRequest(std.testing.allocator, "REQ 198 WORKSPACEAUTORUNRUN", 512, 256, 512);
+    defer std.testing.allocator.free(run_response);
+    const run_payload = "demo-workspace\naux-workspace\n";
+    const run_expected = try std.fmt.allocPrint(std.testing.allocator, "RESP 198 {d}\n{s}", .{ run_payload.len, run_payload });
+    defer std.testing.allocator.free(run_expected);
+    try std.testing.expectEqualStrings(run_expected, run_response);
+
+    const sidecar_state = try workspace_runtime.stateAlloc(std.testing.allocator, "sidecar", 256);
+    defer std.testing.allocator.free(sidecar_state);
+    try std.testing.expect(std.mem.indexOf(u8, sidecar_state, "exit_code=0") != null);
+
+    const sidecar_stdout = try workspace_runtime.stdoutAlloc(std.testing.allocator, "sidecar", 256);
+    defer std.testing.allocator.free(sidecar_stdout);
+    try std.testing.expectEqualStrings("aux-workspace\n", sidecar_stdout);
+
+    const remove_ops_response = try handleFramedRequest(std.testing.allocator, "REQ 199 WORKSPACEAUTORUNREMOVE ops", 512, 256, 512);
+    defer std.testing.allocator.free(remove_ops_response);
+    const remove_ops_payload = "WORKSPACEAUTORUNREMOVE ops\n";
+    const remove_ops_expected = try std.fmt.allocPrint(std.testing.allocator, "RESP 199 {d}\n{s}", .{ remove_ops_payload.len, remove_ops_payload });
+    defer std.testing.allocator.free(remove_ops_expected);
+    try std.testing.expectEqualStrings(remove_ops_expected, remove_ops_response);
+
+    const updated_list_response = try handleFramedRequest(std.testing.allocator, "REQ 200 WORKSPACEAUTORUNLIST", 512, 256, 512);
+    defer std.testing.allocator.free(updated_list_response);
+    const updated_list_payload = "sidecar\n";
+    const updated_list_expected = try std.fmt.allocPrint(std.testing.allocator, "RESP 200 {d}\n{s}", .{ updated_list_payload.len, updated_list_payload });
+    defer std.testing.allocator.free(updated_list_expected);
+    try std.testing.expectEqualStrings(updated_list_expected, updated_list_response);
+
+    const delete_sidecar_response = try handleFramedRequest(std.testing.allocator, "REQ 201 WORKSPACEDELETE sidecar", 512, 256, 512);
+    defer std.testing.allocator.free(delete_sidecar_response);
+    try std.testing.expectEqualStrings("RESP 201 24\nWORKSPACEDELETE sidecar\n", delete_sidecar_response);
+
+    const final_list_response = try handleFramedRequest(std.testing.allocator, "REQ 202 WORKSPACEAUTORUNLIST", 512, 256, 512);
+    defer std.testing.allocator.free(final_list_response);
+    try std.testing.expectEqualStrings("RESP 202 0\n", final_list_response);
 }
 
 test "baremetal tool service persists and runs autorun requests" {

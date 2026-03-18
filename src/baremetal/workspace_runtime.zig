@@ -16,6 +16,8 @@ const root_dir = "/runtime/workspaces";
 const runtime_root_dir = "/runtime/workspace-runs";
 const max_workspace_bytes: usize = 1024;
 const max_history_bytes: usize = 1024;
+const max_autorun_bytes: usize = 1024;
+const autorun_list_path = "/runtime/workspace-runs/autorun.txt";
 
 pub const Error = filesystem.Error || app_runtime.Error || package_store.Error || trust_store.Error || std.mem.Allocator.Error || error{
     InvalidWorkspaceName,
@@ -29,6 +31,7 @@ pub const Error = filesystem.Error || app_runtime.Error || package_store.Error |
     WorkspaceHistoryNotFound,
     WorkspaceStdoutNotFound,
     WorkspaceStderrNotFound,
+    WorkspaceAutorunEntryNotFound,
 };
 
 const ChannelEntry = struct {
@@ -102,6 +105,10 @@ pub fn listAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
     }
 
     return out.toOwnedSlice(allocator);
+}
+
+pub fn autorunListAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
+    return readAutorunListAlloc(allocator, max_bytes);
 }
 
 pub fn infoAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
@@ -179,6 +186,10 @@ pub fn deleteWorkspace(name: []const u8, tick: u64) Error!void {
     };
     deleteState(name, tick) catch |err| switch (err) {
         error.WorkspaceStateNotFound => {},
+        else => return err,
+    };
+    removeAutorun(name, tick) catch |err| switch (err) {
+        error.WorkspaceAutorunEntryNotFound => {},
         else => return err,
     };
 }
@@ -281,6 +292,61 @@ pub fn writeLastRun(name: []const u8, exit_code: u8, stdout: []const u8, stderr:
         },
     ) catch return error.ResponseTooLarge;
     try appendHistoryLine(history_path, history_line, tick);
+}
+
+pub fn addAutorun(name: []const u8, tick: u64) Error!void {
+    _ = try loadWorkspace(name);
+
+    var existing_scratch: [max_autorun_bytes]u8 = undefined;
+    const existing = try loadAutorunListScratch(&existing_scratch);
+    if (containsAutorunName(existing, name)) return;
+
+    var rendered: [max_autorun_bytes + max_name_len + 2]u8 = undefined;
+    var len: usize = 0;
+    if (existing.len != 0) {
+        @memcpy(rendered[0..existing.len], existing);
+        len = existing.len;
+        if (rendered[len - 1] != '\n') {
+            rendered[len] = '\n';
+            len += 1;
+        }
+    }
+    @memcpy(rendered[len .. len + name.len], name);
+    len += name.len;
+    rendered[len] = '\n';
+    len += 1;
+
+    try filesystem.createDirPath(runtime_root_dir);
+    try filesystem.writeFile(autorun_list_path, rendered[0..len], tick);
+}
+
+pub fn removeAutorun(name: []const u8, tick: u64) Error!void {
+    try validateWorkspaceName(name);
+
+    var existing_scratch: [max_autorun_bytes]u8 = undefined;
+    const existing = try loadAutorunListScratch(&existing_scratch);
+
+    var rendered: [max_autorun_bytes]u8 = undefined;
+    var len: usize = 0;
+    var found = false;
+    var lines = std.mem.splitScalar(u8, existing, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (line.len == 0) continue;
+        if (std.mem.eql(u8, line, name)) {
+            found = true;
+            continue;
+        }
+        @memcpy(rendered[len .. len + line.len], line);
+        len += line.len;
+        rendered[len] = '\n';
+        len += 1;
+    }
+
+    if (!found) return error.WorkspaceAutorunEntryNotFound;
+
+    try filesystem.createDirPath(runtime_root_dir);
+    try filesystem.writeFile(autorun_list_path, rendered[0..len], tick);
 }
 
 pub fn deleteState(name: []const u8, tick: u64) Error!void {
@@ -511,6 +577,31 @@ fn copyComponent(storage: []u8, len_ptr: anytype, value: []const u8, comptime er
     len_ptr.* = @as(u8, @intCast(value.len));
 }
 
+fn readAutorunListAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
+    return filesystem.readFileAlloc(allocator, autorun_list_path, max_bytes) catch |err| switch (err) {
+        error.FileNotFound => allocator.dupe(u8, ""),
+        else => err,
+    };
+}
+
+fn loadAutorunListScratch(buffer: *[max_autorun_bytes]u8) Error![]const u8 {
+    var fba = std.heap.FixedBufferAllocator.init(buffer);
+    return filesystem.readFileAlloc(fba.allocator(), autorun_list_path, buffer.len) catch |err| switch (err) {
+        error.FileNotFound => "",
+        else => return err,
+    };
+}
+
+fn containsAutorunName(entries: []const u8, name: []const u8) bool {
+    var lines = std.mem.splitScalar(u8, entries, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (line.len == 0) continue;
+        if (std.mem.eql(u8, line, name)) return true;
+    }
+    return false;
+}
+
 fn appendHistoryLine(path: []const u8, line: []const u8, tick: u64) Error!void {
     var existing_scratch: [max_history_bytes]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&existing_scratch);
@@ -680,4 +771,31 @@ test "workspace runtime persists orchestrated workspaces on ata-backed storage" 
     const active_plan = try app_runtime.activePlanInfoAlloc(std.testing.allocator, "persisted", 256);
     defer std.testing.allocator.free(active_plan);
     try std.testing.expect(std.mem.indexOf(u8, active_plan, "active_plan=boot") != null);
+}
+
+test "workspace runtime persists autorun registry and clears stale entries" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    framebuffer_console.resetForTest();
+
+    try package_store.installScriptPackage("demo", "echo demo-workspace", 1);
+    try package_store.installScriptPackage("aux", "echo aux-workspace", 2);
+    try app_runtime.savePlan("demo", "boot", "", "", abi.display_connector_virtual, 1024, 768, false, 3);
+    try app_runtime.savePlan("aux", "sidecar", "", "", abi.display_connector_virtual, 800, 600, false, 4);
+    try app_runtime.saveSuite("demo-suite", "demo:boot", 5);
+    try app_runtime.saveSuite("aux-suite", "aux:sidecar", 6);
+    try saveWorkspace("ops", "demo-suite", "", 1024, 768, "", 7);
+    try saveWorkspace("sidecar", "aux-suite", "", 800, 600, "", 8);
+
+    try addAutorun("ops", 9);
+    try addAutorun("sidecar", 10);
+
+    const autorun = try autorunListAlloc(std.testing.allocator, 128);
+    defer std.testing.allocator.free(autorun);
+    try std.testing.expectEqualStrings("ops\nsidecar\n", autorun);
+
+    try deleteWorkspace("ops", 11);
+    const updated = try autorunListAlloc(std.testing.allocator, 128);
+    defer std.testing.allocator.free(updated);
+    try std.testing.expectEqualStrings("sidecar\n", updated);
 }
