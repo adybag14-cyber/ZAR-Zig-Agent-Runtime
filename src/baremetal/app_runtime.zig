@@ -11,6 +11,7 @@ const trust_store = @import("trust_store.zig");
 const root_dir = "/runtime/apps";
 const suite_root_dir = "/runtime/app-suites";
 const suite_release_root_dir = "/runtime/app-suite-releases";
+const suite_channel_root_dir = "/runtime/app-suite-release-channels";
 const max_history_bytes: usize = 1024;
 const max_autorun_bytes: usize = 1024;
 const max_plan_bytes: usize = 512;
@@ -35,6 +36,7 @@ pub const Error = filesystem.Error || package_store.Error || std.mem.Allocator.E
     AppSuiteEmpty,
     AppSuiteReleaseNotFound,
     AppSuiteReleaseAlreadyExists,
+    AppSuiteReleaseChannelNotFound,
     ResponseTooLarge,
 };
 
@@ -462,6 +464,71 @@ pub fn suiteReleaseInfoAlloc(
     return out.toOwnedSlice(allocator);
 }
 
+pub fn suiteChannelListAlloc(allocator: std.mem.Allocator, suite_name: []const u8, max_bytes: usize) Error![]u8 {
+    try validateSuiteName(suite_name);
+    if (!try suiteExists(suite_name)) return error.AppSuiteNotFound;
+
+    var records: [filesystem.max_entries]ReleaseRecord = undefined;
+    const record_count = try collectSuiteChannelRecords(suite_name, &records);
+    sortSuiteReleaseRecordsOldestFirst(records[0..record_count]);
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    for (records[0..record_count]) |record| {
+        const channel_name = record.name();
+        if (channel_name.len == 0) continue;
+        if (out.items.len + channel_name.len + 1 > max_bytes) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, channel_name);
+        try out.append(allocator, '\n');
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+pub fn setSuiteReleaseChannel(suite_name: []const u8, channel: []const u8, release: []const u8, tick: u64) Error!void {
+    try validateSuiteName(suite_name);
+    try package_store.validateChannelName(channel);
+    try package_store.validateReleaseName(release);
+    if (!try suiteExists(suite_name)) return error.AppSuiteNotFound;
+    if (!try suiteReleaseExists(suite_name, release)) return error.AppSuiteReleaseNotFound;
+
+    var channels_root_buf: [filesystem.max_path_len]u8 = undefined;
+    var channel_path_buf: [filesystem.max_path_len]u8 = undefined;
+    try filesystem.createDirPath(suiteChannelsRootPath(suite_name, &channels_root_buf));
+    try filesystem.writeFile(try suiteChannelPath(suite_name, channel, &channel_path_buf), release, tick);
+}
+
+pub fn activateSuiteReleaseChannel(suite_name: []const u8, channel: []const u8, tick: u64) Error!void {
+    var scratch: [package_store.max_release_len]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&scratch);
+    const release = try readSuiteChannelTargetAlloc(fba.allocator(), suite_name, channel, package_store.max_release_len);
+    try activateSuiteRelease(suite_name, release, tick);
+}
+
+pub fn suiteChannelInfoAlloc(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    channel: []const u8,
+    max_bytes: usize,
+) Error![]u8 {
+    try validateSuiteName(suite_name);
+    try package_store.validateChannelName(channel);
+    if (!try suiteExists(suite_name)) return error.AppSuiteNotFound;
+
+    const release = try readSuiteChannelTargetAlloc(allocator, suite_name, channel, package_store.max_release_len);
+    defer allocator.free(release);
+
+    const payload = try std.fmt.allocPrint(
+        allocator,
+        "suite={s}\nchannel={s}\nrelease={s}\n",
+        .{ suite_name, channel, release },
+    );
+    errdefer allocator.free(payload);
+    if (payload.len > max_bytes) return error.ResponseTooLarge;
+    return payload;
+}
+
 pub fn saveSuite(suite_name: []const u8, entries_spec: []const u8, tick: u64) Error!void {
     try validateSuiteName(suite_name);
 
@@ -579,6 +646,12 @@ pub fn deleteSuite(suite_name: []const u8, tick: u64) Error!void {
 
     var releases_root_buf: [filesystem.max_path_len]u8 = undefined;
     filesystem.deleteTree(suiteReleasesRootPath(suite_name, &releases_root_buf), tick) catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    };
+
+    var channels_root_buf: [filesystem.max_path_len]u8 = undefined;
+    filesystem.deleteTree(suiteChannelsRootPath(suite_name, &channels_root_buf), tick) catch |err| switch (err) {
         error.FileNotFound => {},
         else => return err,
     };
@@ -847,6 +920,10 @@ fn suiteReleasesRootPath(suite_name: []const u8, buffer: *[filesystem.max_path_l
     return std.fmt.bufPrint(buffer, "{s}/{s}", .{ suite_release_root_dir, suite_name }) catch unreachable;
 }
 
+fn suiteChannelsRootPath(suite_name: []const u8, buffer: *[filesystem.max_path_len]u8) []const u8 {
+    return std.fmt.bufPrint(buffer, "{s}/{s}", .{ suite_channel_root_dir, suite_name }) catch unreachable;
+}
+
 fn suiteReleaseDirPath(suite_name: []const u8, release: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
     try validateSuiteName(suite_name);
     try package_store.validateReleaseName(release);
@@ -865,6 +942,12 @@ fn suiteReleaseMetadataPath(suite_name: []const u8, release: []const u8, buffer:
     return std.fmt.bufPrint(buffer, "{s}/{s}/{s}/release.txt", .{ suite_release_root_dir, suite_name, release }) catch error.InvalidPath;
 }
 
+fn suiteChannelPath(suite_name: []const u8, channel: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validateSuiteName(suite_name);
+    try package_store.validateChannelName(channel);
+    return std.fmt.bufPrint(buffer, "{s}/{s}/{s}.txt", .{ suite_channel_root_dir, suite_name, channel }) catch error.InvalidPath;
+}
+
 fn suiteReleaseExists(suite_name: []const u8, release: []const u8) Error!bool {
     var release_path_buf: [filesystem.max_path_len]u8 = undefined;
     _ = filesystem.statSummary(try suiteReleasePath(suite_name, release, &release_path_buf)) catch |err| switch (err) {
@@ -872,6 +955,23 @@ fn suiteReleaseExists(suite_name: []const u8, release: []const u8) Error!bool {
         else => return err,
     };
     return true;
+}
+
+fn readSuiteChannelTargetAlloc(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    channel: []const u8,
+    max_bytes: usize,
+) Error![]u8 {
+    try validateSuiteName(suite_name);
+    try package_store.validateChannelName(channel);
+
+    var channel_path_buf: [filesystem.max_path_len]u8 = undefined;
+    const path = try suiteChannelPath(suite_name, channel, &channel_path_buf);
+    return filesystem.readFileAlloc(allocator, path, max_bytes) catch |err| switch (err) {
+        error.FileNotFound => error.AppSuiteReleaseChannelNotFound,
+        else => err,
+    };
 }
 
 fn activePlanNameAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
@@ -1102,6 +1202,32 @@ fn collectSuiteReleaseRecords(suite_name: []const u8, records: *[filesystem.max_
             .saved_seq = saved_seq,
         };
         @memcpy(records[count].name_storage[0..release_name.len], release_name);
+        count += 1;
+    }
+    return count;
+}
+
+fn collectSuiteChannelRecords(suite_name: []const u8, records: *[filesystem.max_entries]ReleaseRecord) Error!usize {
+    var channels_root_buf: [filesystem.max_path_len]u8 = undefined;
+    const channels_root = suiteChannelsRootPath(suite_name, &channels_root_buf);
+
+    var count: usize = 0;
+    var idx: u32 = 0;
+    while (idx < filesystem.max_entries) : (idx += 1) {
+        const record = filesystem.entry(idx);
+        if (record.kind != abi.filesystem_kind_file) continue;
+        const path = record.path[0..record.path_len];
+        const channel_name = directChildName(channels_root, path) orelse continue;
+        if (!std.mem.endsWith(u8, channel_name, ".txt")) continue;
+        const bare_channel_name = channel_name[0 .. channel_name.len - ".txt".len];
+        if (bare_channel_name.len == 0) continue;
+        if (findSuiteReleaseRecord(records[0..count], bare_channel_name) != null) continue;
+
+        records[count] = .{
+            .name_len = @intCast(bare_channel_name.len),
+            .saved_seq = 0,
+        };
+        @memcpy(records[count].name_storage[0..bare_channel_name.len], bare_channel_name);
         count += 1;
     }
     return count;
@@ -1729,6 +1855,58 @@ test "app runtime snapshots activates deletes and prunes app suite releases" {
     }
 }
 
+test "app runtime manages app suite release channels" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+
+    try package_store.installScriptPackage("demo", "echo suite-demo", 1);
+    try package_store.installScriptPackage("aux", "echo suite-aux", 2);
+    try savePlan("demo", "golden", "", "", abi.display_connector_virtual, 1280, 720, true, 3);
+    try savePlan("demo", "canary", "", "", abi.display_connector_virtual, 640, 400, false, 4);
+    try savePlan("aux", "sidecar", "", "", abi.display_connector_virtual, 800, 600, false, 5);
+    try saveSuite("duo", "demo:golden aux:sidecar", 6);
+    try snapshotSuiteRelease("duo", "golden", 7);
+
+    try saveSuite("duo", "demo:canary", 8);
+    try snapshotSuiteRelease("duo", "staging", 9);
+
+    try setSuiteReleaseChannel("duo", "stable", "golden", 10);
+
+    const channel_list = try suiteChannelListAlloc(std.testing.allocator, "duo", 64);
+    defer std.testing.allocator.free(channel_list);
+    try std.testing.expectEqualStrings("stable\n", channel_list);
+
+    const channel_info = try suiteChannelInfoAlloc(std.testing.allocator, "duo", "stable", 128);
+    defer std.testing.allocator.free(channel_info);
+    try std.testing.expect(std.mem.indexOf(u8, channel_info, "suite=duo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, channel_info, "channel=stable") != null);
+    try std.testing.expect(std.mem.indexOf(u8, channel_info, "release=golden") != null);
+
+    try setSuiteReleaseChannel("duo", "stable", "staging", 11);
+    try activateSuiteReleaseChannel("duo", "stable", 12);
+
+    const staging_suite = try suiteInfoAlloc(std.testing.allocator, "duo", 256);
+    defer std.testing.allocator.free(staging_suite);
+    try std.testing.expect(std.mem.indexOf(u8, staging_suite, "entry=demo:canary") != null);
+
+    try setSuiteReleaseChannel("duo", "stable", "golden", 13);
+    try activateSuiteReleaseChannel("duo", "stable", 14);
+
+    const restored_suite = try suiteInfoAlloc(std.testing.allocator, "duo", 256);
+    defer std.testing.allocator.free(restored_suite);
+    try std.testing.expect(std.mem.indexOf(u8, restored_suite, "entry=demo:golden") != null);
+    try std.testing.expect(std.mem.indexOf(u8, restored_suite, "entry=aux:sidecar") != null);
+
+    try deleteSuite("duo", 15);
+    try std.testing.expectError(error.AppSuiteNotFound, suiteChannelListAlloc(std.testing.allocator, "duo", 64));
+    if (filesystem.statSummary("/runtime/app-suite-release-channels/duo")) |_| {
+        return error.InvalidAppSuite;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    }
+}
+
 test "app runtime app suite releases persist on ata-backed storage" {
     storage_backend.resetForTest();
     filesystem.resetForTest();
@@ -1763,4 +1941,40 @@ test "app runtime app suite releases persist on ata-backed storage" {
     defer std.testing.allocator.free(restored_suite);
     try std.testing.expect(std.mem.indexOf(u8, restored_suite, "entry=demo:golden") != null);
     try std.testing.expect(std.mem.indexOf(u8, restored_suite, "entry=aux:sidecar") != null);
+}
+
+test "app runtime app suite release channels persist on ata-backed storage" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    ata_pio_disk.testEnableMockDevice(8192);
+    ata_pio_disk.testInstallMockMbrPartition(2048, 4096, 0x83);
+    defer ata_pio_disk.testDisableMockDevice();
+
+    try package_store.installScriptPackage("demo", "echo persisted-demo", 1);
+    try package_store.installScriptPackage("aux", "echo persisted-aux", 2);
+    try savePlan("demo", "golden", "", "", abi.display_connector_virtual, 1024, 768, true, 3);
+    try savePlan("demo", "canary", "", "", abi.display_connector_virtual, 640, 400, false, 4);
+    try savePlan("aux", "sidecar", "", "", abi.display_connector_virtual, 800, 600, false, 5);
+    try saveSuite("persisted", "demo:golden aux:sidecar", 6);
+    try snapshotSuiteRelease("persisted", "golden", 7);
+    try saveSuite("persisted", "demo:canary", 8);
+    try snapshotSuiteRelease("persisted", "staging", 9);
+    try setSuiteReleaseChannel("persisted", "stable", "golden", 10);
+
+    filesystem.resetForTest();
+
+    const channel_list = try suiteChannelListAlloc(std.testing.allocator, "persisted", 64);
+    defer std.testing.allocator.free(channel_list);
+    try std.testing.expectEqualStrings("stable\n", channel_list);
+
+    const channel_info = try suiteChannelInfoAlloc(std.testing.allocator, "persisted", "stable", 128);
+    defer std.testing.allocator.free(channel_info);
+    try std.testing.expect(std.mem.indexOf(u8, channel_info, "release=golden") != null);
+
+    try setSuiteReleaseChannel("persisted", "stable", "staging", 11);
+    try activateSuiteReleaseChannel("persisted", "stable", 12);
+
+    const staging_suite = try suiteInfoAlloc(std.testing.allocator, "persisted", 256);
+    defer std.testing.allocator.free(staging_suite);
+    try std.testing.expect(std.mem.indexOf(u8, staging_suite, "entry=demo:canary") != null);
 }
