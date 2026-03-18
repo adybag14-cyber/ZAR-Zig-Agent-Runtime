@@ -73,6 +73,12 @@ pub const RequestOp = enum {
     workspace_stdout,
     workspace_stderr,
     workspace_delete,
+    workspace_release_list,
+    workspace_release_info,
+    workspace_release_save,
+    workspace_release_activate,
+    workspace_release_delete,
+    workspace_release_prune,
     workspace_autorun_list,
     workspace_autorun_add,
     workspace_autorun_remove,
@@ -132,6 +138,16 @@ pub const DisplayModeRequest = struct {
 
 pub const PackageReleasePruneRequest = struct {
     package_name: []const u8,
+    keep: u32,
+};
+
+pub const WorkspaceReleaseRequest = struct {
+    workspace_name: []const u8,
+    release_name: []const u8,
+};
+
+pub const WorkspaceReleasePruneRequest = struct {
+    workspace_name: []const u8,
     keep: u32,
 };
 
@@ -228,6 +244,12 @@ pub const FramedRequest = struct {
         workspace_stdout: []const u8,
         workspace_stderr: []const u8,
         workspace_delete: []const u8,
+        workspace_release_list: []const u8,
+        workspace_release_info: WorkspaceReleaseRequest,
+        workspace_release_save: WorkspaceReleaseRequest,
+        workspace_release_activate: WorkspaceReleaseRequest,
+        workspace_release_delete: WorkspaceReleaseRequest,
+        workspace_release_prune: WorkspaceReleasePruneRequest,
         workspace_autorun_list: void,
         workspace_autorun_add: []const u8,
         workspace_autorun_remove: []const u8,
@@ -1284,6 +1306,135 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         }
         return .{
             .framed = .{ .request_id = request_id, .operation = .{ .workspace_delete = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACERELEASELIST")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .workspace_release_list = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .workspace_release_list = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACERELEASEINFO")) {
+        const workspace_name = try splitFirstToken(op_part.rest);
+        const release_name = try splitFirstToken(workspace_name.rest);
+        if (release_name.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .workspace_release_info = .{
+                .workspace_name = workspace_name.token,
+                .release_name = release_name.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACERELEASESAVE")) {
+        const workspace_name = try splitFirstToken(op_part.rest);
+        const release_name = try splitFirstToken(workspace_name.rest);
+        if (release_name.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .workspace_release_save = .{
+                .workspace_name = workspace_name.token,
+                .release_name = release_name.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACERELEASEACTIVATE")) {
+        const workspace_name = try splitFirstToken(op_part.rest);
+        const release_name = try splitFirstToken(workspace_name.rest);
+        if (release_name.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .workspace_release_activate = .{
+                .workspace_name = workspace_name.token,
+                .release_name = release_name.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACERELEASEDELETE")) {
+        const workspace_name = try splitFirstToken(op_part.rest);
+        const release_name = try splitFirstToken(workspace_name.rest);
+        if (release_name.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .workspace_release_delete = .{
+                .workspace_name = workspace_name.token,
+                .release_name = release_name.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACERELEASEPRUNE")) {
+        const workspace_name = try splitFirstToken(op_part.rest);
+        const keep = try splitFirstToken(workspace_name.rest);
+        if (keep.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .workspace_release_prune = .{
+                .workspace_name = workspace_name.token,
+                .keep = std.fmt.parseInt(u32, keep.token, 10) catch return error.InvalidFrame,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
             .consumed_len = request.len,
         };
     }
