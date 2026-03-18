@@ -92,7 +92,7 @@ jobs:
 
       - name: Docs status drift gate
         shell: pwsh
-        run: ./scripts/docs-status-check.ps1 -ParityJsonPath parity-go-zig.json -GitHubToken "${{ github.token }}"
+        run: ./scripts/docs-status-check.ps1 -ParityJsonPath parity-go-zig.json -ReleaseTag "${{ inputs.version }}" -GitHubToken "${{ github.token }}"
 
       - name: Package registry preflight
         shell: pwsh

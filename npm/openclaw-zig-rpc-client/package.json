@@ -1,6 +1,6 @@
 {
   "name": "@adybag14-cyber/openclaw-zig-rpc-client",
-  "version": "0.2.0-zig-edge.29",
+  "version": "0.2.0-zig-edge.30",
   "description": "Node.js RPC client for ZAR-Zig-Agent-Runtime gateway endpoints.",
   "main": "index.js",
   "types": "index.d.ts",

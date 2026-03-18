@@ -11,7 +11,7 @@ pip install openclaw-zig-rpc-client
 Release-wheel fallback:
 
 ```bash
-pip install "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases/download/v0.2.0-zig-edge.29/openclaw_zig_rpc_client-0.2.0.dev29-py3-none-any.whl"
+pip install "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases/download/v0.2.0-zig-edge.30/openclaw_zig_rpc_client-0.2.0.dev30-py3-none-any.whl"
 ```
 
 Run directly with `uvx` after publishing:
@@ -23,7 +23,7 @@ uvx --from openclaw-zig-rpc-client openclaw-zig-rpc health --base-url http://127
 Verified `uvx` Git fallback for the current edge tag:
 
 ```bash
-uvx --from "git+https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime@v0.2.0-zig-edge.29#subdirectory=python/openclaw-zig-rpc-client" openclaw-zig-rpc health --base-url http://127.0.0.1:8080
+uvx --from "git+https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime@v0.2.0-zig-edge.30#subdirectory=python/openclaw-zig-rpc-client" openclaw-zig-rpc health --base-url http://127.0.0.1:8080
 ```
 
 ## Python Usage
