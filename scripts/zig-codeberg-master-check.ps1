@@ -120,6 +120,37 @@ function Get-RemoteMasterHash {
     }
 }
 
+function Resolve-InstalledMirrorTarget {
+    param([string]$ZigExe)
+
+    $zigDir = Split-Path -Parent $ZigExe
+    $metadataPath = Join-Path $zigDir "mirror-release.json"
+    if (Test-Path $metadataPath) {
+        try {
+            $metadata = Get-Content $metadataPath -Raw | ConvertFrom-Json
+            $target = ([string]$metadata.target_commitish).ToLowerInvariant()
+            if ($target -match '^[0-9a-f]{12,40}$') {
+                return [PSCustomObject]@{
+                    Source = "mirror-release.json"
+                    TargetCommitish = $target
+                }
+            }
+        }
+        catch {
+        }
+    }
+
+    $dirName = Split-Path -Leaf $zigDir
+    if ($dirName -match '^upstream-([0-9a-f]{12,40})$') {
+        return [PSCustomObject]@{
+            Source = "install-dir"
+            TargetCommitish = $Matches[1].ToLowerInvariant()
+        }
+    }
+
+    return $null
+}
+
 function Get-GitHubMirrorReleaseInfo {
     param(
         [Parameter(Mandatory = $true)][string]$Owner,
@@ -200,8 +231,16 @@ if (-not $remoteInfo) {
 
 $localVersion = (& $zigExe version).Trim()
 $localHash = ""
+ $localHashSource = "version"
 if ($localVersion -match '\+([0-9a-fA-F]+)$') {
     $localHash = $Matches[1].ToLowerInvariant()
+}
+if ([string]::IsNullOrWhiteSpace($localHash)) {
+    $installedMirrorTarget = Resolve-InstalledMirrorTarget -ZigExe $zigExe
+    if ($installedMirrorTarget) {
+        $localHash = $installedMirrorTarget.TargetCommitish
+        $localHashSource = $installedMirrorTarget.Source
+    }
 }
 
 $mirrorInfo = Get-GitHubMirrorReleaseInfo -Owner $MirrorOwner -Repo $MirrorRepo -ReleaseTag $MirrorReleaseTag -Token $token
@@ -236,6 +275,7 @@ Write-Output "Local zig version:             $localVersion"
 Write-Output "Local zig path:                $zigExe"
 if ($localHash -ne "") {
     Write-Output "Local zig hash:                $localHash"
+    Write-Output "Local zig hash source:         $localHashSource"
 }
 Write-Output "Local matches remote:          $hashMatch"
 
@@ -257,6 +297,7 @@ $report = [PSCustomObject]@{
     local_zig_path = $zigExe
     local_zig_version = $localVersion
     local_zig_hash = $localHash
+    local_zig_hash_source = $localHashSource
     hash_match = $hashMatch
     github_mirror_repo = "$MirrorOwner/$MirrorRepo"
     github_mirror_release_tag = if ($mirrorInfo) { $mirrorInfo.ReleaseTag } else { $MirrorReleaseTag }

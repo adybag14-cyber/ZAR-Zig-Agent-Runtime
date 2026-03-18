@@ -136,7 +136,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-modes, display-set, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-modes, display-set, run-script, run-package, app-run");
         return;
     }
 
@@ -766,6 +766,203 @@ fn execute(
         return;
     }
 
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-plan-list")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-plan-list <name>");
+            return;
+        };
+        if (package_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-plan-list <name>");
+            return;
+        }
+        const listing = app_runtime.planListAlloc(allocator, package_name.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-plan-list failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(listing);
+        try stdout_buffer.appendSlice(listing);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-plan-info")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-plan-info <name> <plan>");
+            return;
+        };
+        const plan_name = parseFirstArg(package_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-plan-info <name> <plan>");
+            return;
+        };
+        if (plan_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-plan-info <name> <plan>");
+            return;
+        }
+        const info = app_runtime.planInfoAlloc(allocator, package_name.arg, plan_name.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-plan-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(info);
+        try stdout_buffer.appendSlice(info);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-plan-active")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-plan-active <name>");
+            return;
+        };
+        if (package_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-plan-active <name>");
+            return;
+        }
+        const info = app_runtime.activePlanInfoAlloc(allocator, package_name.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-plan-active failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(info);
+        try stdout_buffer.appendSlice(info);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-plan-save")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-plan-save <name> <plan> <release|none> <trust|none> <connector> <width> <height> <autorun>");
+            return;
+        };
+        const plan_name = parseFirstArg(package_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-plan-save <name> <plan> <release|none> <trust|none> <connector> <width> <height> <autorun>");
+            return;
+        };
+        const release_name = parseFirstArg(plan_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-plan-save <name> <plan> <release|none> <trust|none> <connector> <width> <height> <autorun>");
+            return;
+        };
+        const trust_name = parseFirstArg(release_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-plan-save <name> <plan> <release|none> <trust|none> <connector> <width> <height> <autorun>");
+            return;
+        };
+        const connector_arg = parseFirstArg(trust_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-plan-save <name> <plan> <release|none> <trust|none> <connector> <width> <height> <autorun>");
+            return;
+        };
+        const width_arg = parseFirstArg(connector_arg.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-plan-save <name> <plan> <release|none> <trust|none> <connector> <width> <height> <autorun>");
+            return;
+        };
+        const height_arg = parseFirstArg(width_arg.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-plan-save <name> <plan> <release|none> <trust|none> <connector> <width> <height> <autorun>");
+            return;
+        };
+        const autorun_arg = parseFirstArg(height_arg.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-plan-save <name> <plan> <release|none> <trust|none> <connector> <width> <height> <autorun>");
+            return;
+        };
+        if (autorun_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-plan-save <name> <plan> <release|none> <trust|none> <connector> <width> <height> <autorun>");
+            return;
+        }
+
+        const connector_type = package_store.parseConnectorType(connector_arg.arg) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-plan-save <name> <plan> <release|none> <trust|none> <connector> <width> <height> <autorun>");
+            return;
+        };
+        const width = std.fmt.parseInt(u16, width_arg.arg, 10) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-plan-save <name> <plan> <release|none> <trust|none> <connector> <width> <height> <autorun>");
+            return;
+        };
+        const height = std.fmt.parseInt(u16, height_arg.arg, 10) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-plan-save <name> <plan> <release|none> <trust|none> <connector> <width> <height> <autorun>");
+            return;
+        };
+        const autorun = parseBoolArg(autorun_arg.arg) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-plan-save <name> <plan> <release|none> <trust|none> <connector> <width> <height> <autorun>");
+            return;
+        };
+        const selected_release = if (std.ascii.eqlIgnoreCase(release_name.arg, "none")) "" else release_name.arg;
+        const selected_trust = if (std.ascii.eqlIgnoreCase(trust_name.arg, "none")) "" else trust_name.arg;
+
+        app_runtime.savePlan(package_name.arg, plan_name.arg, selected_release, selected_trust, connector_type, width, height, autorun, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-plan-save failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("app plan saved {s} {s}\n", .{ package_name.arg, plan_name.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-plan-apply")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-plan-apply <name> <plan>");
+            return;
+        };
+        const plan_name = parseFirstArg(package_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-plan-apply <name> <plan>");
+            return;
+        };
+        if (plan_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-plan-apply <name> <plan>");
+            return;
+        }
+        app_runtime.applyPlan(package_name.arg, plan_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-plan-apply failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("app plan applied {s} {s}\n", .{ package_name.arg, plan_name.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "app-plan-delete")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-plan-delete <name> <plan>");
+            return;
+        };
+        const plan_name = parseFirstArg(package_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "app-plan-delete <name> <plan>");
+            return;
+        };
+        if (plan_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: app-plan-delete <name> <plan>");
+            return;
+        }
+        app_runtime.deletePlan(package_name.arg, plan_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("app-plan-delete failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("app plan deleted {s} {s}\n", .{ package_name.arg, plan_name.arg });
+        return;
+    }
+
     if (std.ascii.eqlIgnoreCase(parsed.name, "app-delete")) {
         const arg = parseFirstArg(parsed.rest) catch |err| {
             exit_code.* = 2;
@@ -1188,6 +1385,16 @@ fn parseFirstArg(text: []const u8) Error!ParsedArg {
         .arg = trimmed[0..idx],
         .rest = trimLeftWhitespace(trimmed[idx..]),
     };
+}
+
+fn parseBoolArg(text: []const u8) Error!bool {
+    if (std.mem.eql(u8, text, "1") or std.ascii.eqlIgnoreCase(text, "true") or std.ascii.eqlIgnoreCase(text, "yes")) {
+        return true;
+    }
+    if (std.mem.eql(u8, text, "0") or std.ascii.eqlIgnoreCase(text, "false") or std.ascii.eqlIgnoreCase(text, "no")) {
+        return false;
+    }
+    return error.InvalidQuotedArgument;
 }
 
 fn trimLeftWhitespace(text: []const u8) []const u8 {

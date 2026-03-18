@@ -970,7 +970,7 @@ fn readTimestampCounter() u64 {
         : [low] "={eax}" (low),
           [high] "={edx}" (high),
         :
-        : "memory");
+        : .{ .memory = true });
     return (@as(u64, high) << 32) | low;
 }
 
@@ -979,9 +979,9 @@ fn pollIdlePause() void {
     var iterations: usize = 0;
     while (iterations < freestanding_poll_pause_iterations) : (iterations += 1) {
         if (builtin.cpu.arch == .x86_64) {
-            asm volatile ("pause" ::: "memory");
+            asm volatile ("pause" ::: .{ .memory = true });
         } else if (builtin.cpu.arch == .aarch64) {
-            asm volatile ("yield" ::: "memory");
+            asm volatile ("yield" ::: .{ .memory = true });
         } else {
             std.atomic.spinLoopHint();
         }

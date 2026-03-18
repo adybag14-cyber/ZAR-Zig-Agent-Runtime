@@ -161,7 +161,7 @@ $clang = Resolve-ClangExecutable
 $lld = Resolve-LldExecutable
 $compilerRt = Resolve-CompilerRtArchive
 $zigGlobalCacheDir = Resolve-ZigGlobalCacheDir
-$zigLocalCacheDir = if ($env:ZIG_LOCAL_CACHE_DIR -and $env:ZIG_LOCAL_CACHE_DIR.Trim().Length -gt 0) { $env:ZIG_LOCAL_CACHE_DIR } else { Join-Path $repo '.zig-cache' }
+$zigLocalCacheDir = if ($env:ZIG_LOCAL_CACHE_DIR -and $env:ZIG_LOCAL_CACHE_DIR.Trim().Length -gt 0) { $env:ZIG_LOCAL_CACHE_DIR } else { Join-Path $repo '.zig-cache-rtl8139-tcp-probe' }
 
 if ($null -eq $qemu) {
     Write-Output 'BAREMETAL_QEMU_AVAILABLE=False'
@@ -213,7 +213,7 @@ pub const ata_gpt_installer_probe: bool = false;
     & $zig build-obj `
         -fno-strip `
         -fsingle-threaded `
-        -ODebug `
+        -OReleaseSafe `
         -target x86_64-freestanding-none `
         -mcpu baseline `
         --dep build_options `

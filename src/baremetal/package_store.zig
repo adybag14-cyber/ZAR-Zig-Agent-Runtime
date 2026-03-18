@@ -522,6 +522,12 @@ pub fn releaseInfoAlloc(
     return payload;
 }
 
+pub fn releaseExistsAlloc(name: []const u8, release: []const u8) Error!bool {
+    try validatePackageName(name);
+    try validateReleaseName(release);
+    return releaseExists(name, release);
+}
+
 pub fn snapshotPackageRelease(name: []const u8, release: []const u8, tick: u64) Error!void {
     try validatePackageName(name);
     try validateReleaseName(release);

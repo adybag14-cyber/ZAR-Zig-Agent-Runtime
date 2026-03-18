@@ -520,7 +520,7 @@ fn read8(port: u16) u8 {
     return asm volatile ("inb %[dx], %[al]"
         : [al] "={al}" (-> u8),
         : [dx] "{dx}" (port),
-        : "memory");
+        : .{ .memory = true });
 }
 
 fn write8(port: u16, value: u8) void {
@@ -529,7 +529,7 @@ fn write8(port: u16, value: u8) void {
         :
         : [dx] "{dx}" (port),
           [al] "{al}" (value),
-        : "memory");
+        : .{ .memory = true });
 }
 
 fn read16(port: u16) u16 {
@@ -537,7 +537,7 @@ fn read16(port: u16) u16 {
     return asm volatile ("inw %[dx], %[ax]"
         : [ax] "={ax}" (-> u16),
         : [dx] "{dx}" (port),
-        : "memory");
+        : .{ .memory = true });
 }
 
 fn write16(port: u16, value: u16) void {
@@ -546,7 +546,7 @@ fn write16(port: u16, value: u16) void {
         :
         : [dx] "{dx}" (port),
           [ax] "{ax}" (value),
-        : "memory");
+        : .{ .memory = true });
 }
 
 fn read32(port: u16) u32 {
@@ -554,7 +554,7 @@ fn read32(port: u16) u32 {
     return asm volatile ("inl %[dx], %[eax]"
         : [eax] "={eax}" (-> u32),
         : [dx] "{dx}" (port),
-        : "memory");
+        : .{ .memory = true });
 }
 
 fn write32(port: u16, value: u32) void {
@@ -563,7 +563,7 @@ fn write32(port: u16, value: u32) void {
         :
         : [dx] "{dx}" (port),
           [eax] "{eax}" (value),
-        : "memory");
+        : .{ .memory = true });
 }
 
 test "rtl8139 mock init and loopback send path exports stable state" {

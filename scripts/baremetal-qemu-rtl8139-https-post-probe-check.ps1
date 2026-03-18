@@ -161,7 +161,7 @@ $clang = Resolve-ClangExecutable
 $lld = Resolve-LldExecutable
 $compilerRt = Resolve-CompilerRtArchive
 $zigGlobalCacheDir = Resolve-ZigGlobalCacheDir
-$zigLocalCacheDir = if ($env:ZIG_LOCAL_CACHE_DIR -and $env:ZIG_LOCAL_CACHE_DIR.Trim().Length -gt 0) { $env:ZIG_LOCAL_CACHE_DIR } else { Join-Path $repo '.zig-cache' }
+$zigLocalCacheDir = if ($env:ZIG_LOCAL_CACHE_DIR -and $env:ZIG_LOCAL_CACHE_DIR.Trim().Length -gt 0) { $env:ZIG_LOCAL_CACHE_DIR } else { Join-Path $repo '.zig-cache-rtl8139-https-post-probe' }
 
 if ($null -eq $qemu) {
     Write-Output 'BAREMETAL_QEMU_AVAILABLE=False'

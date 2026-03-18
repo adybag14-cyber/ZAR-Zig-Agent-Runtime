@@ -275,11 +275,11 @@ fn notifyQueue(device: pci.VirtioGpuDevice, queue_notify_off: u16) void {
 }
 
 fn fence() void {
-    asm volatile ("" ::: "memory");
+    asm volatile ("" ::: .{ .memory = true });
 }
 
 fn pause() void {
-    asm volatile ("pause" ::: "memory");
+    asm volatile ("pause" ::: .{ .memory = true });
 }
 
 fn readDeviceFeature(device: pci.VirtioGpuDevice, select: u32) u32 {

@@ -257,7 +257,7 @@ fn parseBoolEnvOrDefault(
     };
     const source = std.mem.trim(u8, raw, " \t\r\n");
     if (source.len == 0) return fallback;
-    var trimmed = try allocator.dupe(u8, source);
+    const trimmed = try allocator.dupe(u8, source);
     defer allocator.free(trimmed);
     for (trimmed) |*ch| ch.* = std.ascii.toLower(ch.*);
     if (trimmed.len == 0) return fallback;
