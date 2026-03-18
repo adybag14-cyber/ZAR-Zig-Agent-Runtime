@@ -16,7 +16,7 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
   - Original OpenClaw beta baseline (`v2026.3.13-beta.1`): `100/100` covered
   - Union baseline: `141/141` covered (`MISSING_IN_ZIG=0`)
 - Latest local validation: `zig build test --summary all` -> `380/380` passed
-- Current edge release target tag: `v0.2.0-zig-edge.30`
+- Current edge release target tag: `v0.2.0-zig-edge.31`
 - License posture: repo-wide `GPL-2.0-only` with Linux-style SPDX headers on repo-owned source and script files
 - Toolchain policy: Codeberg `master` is canonical; `adybag14-cyber/zig` publishes rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
 - CI policy: keep hosted build/test/parity/docs on Zig `master`, but pin the freestanding bare-metal compile/probe lane to the known-good Linux build `0.16.0-dev.2736+3b515fbed` until the upstream Linux `master` compiler crash on `zig build baremetal -Doptimize=ReleaseFast` is resolved.
