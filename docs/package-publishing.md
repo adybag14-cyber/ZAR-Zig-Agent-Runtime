@@ -71,15 +71,15 @@ If neither public path succeeds, the workflow falls back to GitHub Packages and 
 
 Current state observed during `v0.2.0-zig-edge.31`:
 
-- `npm-release` completed successfully
+- `npm-release` reaches the real npmjs publish path with `NPM_TOKEN`
 - the tarball was attached to the GitHub prerelease
-- the GitHub Packages fallback path executed successfully
 - public npmjs visibility for `@adybag14-cyber/openclaw-zig-rpc-client@0.2.0-zig-edge.31` still returns `404 Not Found`
+- the latest publish attempt fails with `EOTP` because npm requires an authenticator one-time password for publish
 
 That means the public npmjs side still needs one of:
 
-1. the `@adybag14-cyber` scope/package provisioned on npmjs with publish permission for this repo/workflow
-2. a valid `NPM_TOKEN` configured in repo secrets
+1. an npm automation/publish token that is not blocked by account 2FA publish requirements
+2. account-side npm configuration that allows this token to publish without interactive OTP
 
 Reference:
 
@@ -96,7 +96,7 @@ If neither public path succeeds, the workflow still attaches the wheel and sdist
 
 Current state observed during `v0.2.0-zig-edge.31`:
 
-- `python-release` completed successfully
+- `python-release` now normalizes `v0.2.0-zig-edge.31` to the PEP 440 Python version `0.2.0.dev31`
 - the wheel and sdist were attached to the GitHub prerelease
 - public PyPI visibility for `openclaw-zig-rpc-client==0.2.0.dev31` still returns `404 Not Found`
 - trusted publishing still fails with `invalid-publisher`
@@ -108,14 +108,14 @@ That means PyPI does not yet have a matching trusted publisher entry for:
 - ref: `refs/heads/main`
 - environment: `pypi`
 
-Exact claims emitted by the latest trusted-publish attempt (`python-release` run `23109251947`):
+Exact claims emitted by the latest trusted-publish attempt on `main`:
 
 - `sub`: `repo:adybag14-cyber/ZAR-Zig-Agent-Runtime:environment:pypi`
 - `repository`: `adybag14-cyber/ZAR-Zig-Agent-Runtime`
 - `repository_owner`: `adybag14-cyber`
-- `workflow_ref`: `adybag14-cyber/ZAR-Zig-Agent-Runtime/.github/workflows/python-release.yml@refs/heads/fs55-ethernet-integration`
-- `job_workflow_ref`: `adybag14-cyber/ZAR-Zig-Agent-Runtime/.github/workflows/python-release.yml@refs/heads/fs55-ethernet-integration`
-- `ref`: `refs/heads/fs55-ethernet-integration`
+- `workflow_ref`: `adybag14-cyber/ZAR-Zig-Agent-Runtime/.github/workflows/python-release.yml@refs/heads/main`
+- `job_workflow_ref`: `adybag14-cyber/ZAR-Zig-Agent-Runtime/.github/workflows/python-release.yml@refs/heads/main`
+- `ref`: `refs/heads/main`
 - `environment`: `pypi`
 
 Fix either by:
