@@ -154,7 +154,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-delete, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-modes, display-set, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-modes, display-set, run-script, run-package, app-run");
         return;
     }
 
@@ -1372,6 +1372,122 @@ fn execute(
             return;
         };
         try stdout_buffer.appendFmt("workspace applied {s}\n", .{arg.arg});
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-run")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-run <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-run <name>");
+            return;
+        }
+        const suite_name = workspace_runtime.suiteNameAlloc(allocator, arg.arg, 128) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-run failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(suite_name);
+
+        workspace_runtime.applyWorkspace(arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-run failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try runSuiteProfiles(suite_name, "workspace-run", stdout_buffer, stderr_buffer, exit_code, allocator, depth);
+        workspace_runtime.writeLastRun(arg.arg, exit_code.*, stdout_buffer.list.items, stderr_buffer.list.items, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-run failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-state")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-state <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-state <name>");
+            return;
+        }
+        const state = workspace_runtime.stateAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-state failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(state);
+        try stdout_buffer.appendSlice(state);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-history")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-history <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-history <name>");
+            return;
+        }
+        const history = workspace_runtime.historyAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-history failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(history);
+        try stdout_buffer.appendSlice(history);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-stdout")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-stdout <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-stdout <name>");
+            return;
+        }
+        const stdout = workspace_runtime.stdoutAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-stdout failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(stdout);
+        try stdout_buffer.appendSlice(stdout);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-stderr")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-stderr <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-stderr <name>");
+            return;
+        }
+        const stderr = workspace_runtime.stderrAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-stderr failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(stderr);
+        try stdout_buffer.appendSlice(stderr);
         return;
     }
 
@@ -2652,7 +2768,7 @@ test "baremetal tool exec saves applies and deletes workspaces" {
     try std.testing.expectEqual(@as(u8, 0), workspace_list.exit_code);
     try std.testing.expectEqualStrings("ops\n", workspace_list.stdout);
 
-    var workspace_info = try runCapture(std.testing.allocator, "workspace-info ops", 256, 256);
+    var workspace_info = try runCapture(std.testing.allocator, "workspace-info ops", 512, 256);
     defer workspace_info.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), workspace_info.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, workspace_info.stdout, "suite=duo") != null);
@@ -2698,10 +2814,32 @@ test "baremetal tool exec saves applies and deletes workspaces" {
     try std.testing.expectEqual(@as(u8, 0), aux_active.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, aux_active.stdout, "active_plan=sidecar") != null);
 
-    var package_run = try runCapture(std.testing.allocator, "run-package demo", 256, 256);
-    defer package_run.deinit(std.testing.allocator);
-    try std.testing.expectEqual(@as(u8, 0), package_run.exit_code);
-    try std.testing.expectEqualStrings("release-r1\n", package_run.stdout);
+    var workspace_run = try runCapture(std.testing.allocator, "workspace-run ops", 256, 256);
+    defer workspace_run.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), workspace_run.exit_code);
+    try std.testing.expectEqualStrings("release-r1\naux-sidecar\n", workspace_run.stdout);
+
+    var workspace_state = try runCapture(std.testing.allocator, "workspace-state ops", 256, 256);
+    defer workspace_state.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), workspace_state.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, workspace_state.stdout, "workspace=ops") != null);
+    try std.testing.expect(std.mem.indexOf(u8, workspace_state.stdout, "suite=duo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, workspace_state.stdout, "exit_code=0") != null);
+
+    var workspace_history = try runCapture(std.testing.allocator, "workspace-history ops", 256, 256);
+    defer workspace_history.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), workspace_history.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, workspace_history.stdout, "workspace=ops") != null);
+
+    var workspace_stdout = try runCapture(std.testing.allocator, "workspace-stdout ops", 256, 256);
+    defer workspace_stdout.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), workspace_stdout.exit_code);
+    try std.testing.expectEqualStrings("release-r1\naux-sidecar\n", workspace_stdout.stdout);
+
+    var workspace_stderr = try runCapture(std.testing.allocator, "workspace-stderr ops", 256, 256);
+    defer workspace_stderr.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), workspace_stderr.exit_code);
+    try std.testing.expectEqualStrings("", workspace_stderr.stdout);
 
     var delete_workspace = try runCapture(std.testing.allocator, "workspace-delete ops", 256, 256);
     defer delete_workspace.deinit(std.testing.allocator);
