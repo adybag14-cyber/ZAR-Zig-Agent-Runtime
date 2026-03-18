@@ -134,7 +134,7 @@ pub const RuntimeState = struct {
         if (self.persistent) try self.persist();
     }
 
-    pub fn getSession(self: *RuntimeState, session_id: []const u8) ?SessionSnapshot {
+    pub fn getSession(self: *const RuntimeState, session_id: []const u8) ?SessionSnapshot {
         const value = self.sessions.get(session_id) orelse return null;
         return .{
             .id = session_id,
@@ -370,6 +370,15 @@ fn resolveStatePath(allocator: std.mem.Allocator, state_root: []const u8) ![]u8 
     if (trimmed.len == 0) return allocator.dupe(u8, "memory://runtime-state");
     if (isMemoryScheme(trimmed)) return allocator.dupe(u8, trimmed);
     if (std.mem.endsWith(u8, trimmed, ".json")) return allocator.dupe(u8, trimmed);
+    if (std.mem.startsWith(u8, trimmed, "/")) {
+        var logical_root = trimmed;
+        while (logical_root.len > 1 and logical_root[logical_root.len - 1] == '/') {
+            logical_root = logical_root[0 .. logical_root.len - 1];
+        }
+        return std.fmt.allocPrint(allocator, "{s}/runtime-state.json", .{
+            if (logical_root.len == 0) "/" else logical_root,
+        });
+    }
     return std.fs.path.join(allocator, &.{ trimmed, "runtime-state.json" });
 }
 

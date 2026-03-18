@@ -9,6 +9,9 @@ fn readFileAllocHosted(
     path: []const u8,
     max_bytes: usize,
 ) ![]u8 {
+    if (shouldUseBaremetalFilesystem(path)) {
+        return baremetal_filesystem.readFileAlloc(allocator, path, max_bytes);
+    }
     return std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(max_bytes));
 }
 
@@ -24,6 +27,9 @@ fn readFileAllocBaremetal(
 pub const readFileAlloc = if (builtin.os.tag == .freestanding) readFileAllocBaremetal else readFileAllocHosted;
 
 fn writeFileHosted(io: std.Io, path: []const u8, data: []const u8) !void {
+    if (shouldUseBaremetalFilesystem(path)) {
+        return baremetal_filesystem.writeFile(path, data, 0);
+    }
     try std.Io.Dir.cwd().writeFile(io, .{
         .sub_path = path,
         .data = data,
@@ -37,6 +43,9 @@ fn writeFileBaremetal(_: std.Io, path: []const u8, data: []const u8) !void {
 pub const writeFile = if (builtin.os.tag == .freestanding) writeFileBaremetal else writeFileHosted;
 
 fn createDirPathHosted(io: std.Io, path: []const u8) !void {
+    if (shouldUseBaremetalFilesystem(path)) {
+        return baremetal_filesystem.createDirPath(path);
+    }
     try std.Io.Dir.cwd().createDirPath(io, path);
 }
 
@@ -47,6 +56,9 @@ fn createDirPathBaremetal(_: std.Io, path: []const u8) !void {
 pub const createDirPath = if (builtin.os.tag == .freestanding) createDirPathBaremetal else createDirPathHosted;
 
 fn statNoFollowHosted(io: std.Io, path: []const u8) !std.Io.Dir.Stat {
+    if (shouldUseBaremetalFilesystem(path)) {
+        return baremetal_filesystem.statNoFollow(path);
+    }
     return std.Io.Dir.cwd().statFile(io, path, .{ .follow_symlinks = false });
 }
 
@@ -55,3 +67,7 @@ fn statNoFollowBaremetal(_: std.Io, path: []const u8) !std.Io.Dir.Stat {
 }
 
 pub const statNoFollow = if (builtin.os.tag == .freestanding) statNoFollowBaremetal else statNoFollowHosted;
+
+fn shouldUseBaremetalFilesystem(path: []const u8) bool {
+    return builtin.is_test and std.mem.startsWith(u8, path, "/");
+}

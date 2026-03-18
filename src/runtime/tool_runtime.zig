@@ -2,6 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const config = @import("../config.zig");
 const pal = @import("../pal/mod.zig");
+const envelope = @import("../protocol/envelope.zig");
 const state = @import("state.zig");
 const time_util = @import("../util/time.zig");
 
@@ -10,10 +11,12 @@ pub const InputError = error{
     MissingCommand,
     MissingPath,
     MissingContent,
+    MissingSessionId,
     CommandDenied,
     PathAccessDenied,
     PathTraversalDetected,
     PathSymlinkDisallowed,
+    SessionNotFound,
 };
 
 pub const ExecResult = struct {
@@ -127,6 +130,64 @@ pub const ToolRuntime = struct {
         };
     }
 
+    pub fn snapshotTextAlloc(self: *const ToolRuntime, allocator: std.mem.Allocator) ![]u8 {
+        const runtime_snapshot = self.snapshot();
+        return std.fmt.allocPrint(
+            allocator,
+            "state_path={s}\npersisted={d}\nsessions={d}\nqueue_depth={d}\nleased_jobs={d}\nrecovery_backlog={d}\n",
+            .{
+                runtime_snapshot.statePath,
+                @intFromBool(runtime_snapshot.persisted),
+                runtime_snapshot.sessions,
+                runtime_snapshot.queueDepth,
+                runtime_snapshot.leasedJobs,
+                runtime_snapshot.recoveryBacklog,
+            },
+        );
+    }
+
+    pub fn sessionListTextAlloc(self: *const ToolRuntime, allocator: std.mem.Allocator) ![]u8 {
+        var session_ids: std.ArrayList([]const u8) = .empty;
+        defer session_ids.deinit(allocator);
+
+        var iterator = self.runtime_state.sessions.iterator();
+        while (iterator.next()) |entry| {
+            try session_ids.append(allocator, entry.key_ptr.*);
+        }
+
+        std.mem.sort([]const u8, session_ids.items, {}, struct {
+            fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
+                return std.mem.lessThan(u8, lhs, rhs);
+            }
+        }.lessThan);
+
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(allocator);
+        for (session_ids.items) |session_id| {
+            try output.appendSlice(allocator, session_id);
+            try output.append(allocator, '\n');
+        }
+        return output.toOwnedSlice(allocator);
+    }
+
+    pub fn sessionInfoTextAlloc(
+        self: *const ToolRuntime,
+        allocator: std.mem.Allocator,
+        session_id: []const u8,
+    ) ![]u8 {
+        const session = self.runtime_state.getSession(session_id) orelse return error.SessionNotFound;
+        return std.fmt.allocPrint(
+            allocator,
+            "id={s}\ncreated_unix_ms={d}\nupdated_unix_ms={d}\nlast_message={s}\n",
+            .{
+                session.id,
+                session.created_unix_ms,
+                session.updated_unix_ms,
+                session.last_message,
+            },
+        );
+    }
+
     pub fn configureRuntimePolicy(
         self: *ToolRuntime,
         runtime_cfg: config.RuntimeConfig,
@@ -186,6 +247,145 @@ pub const ToolRuntime = struct {
         const content = try getRequiredString(params, "content", null, error.MissingContent);
         const session_id = getOptionalString(params, "sessionId", default_session_id);
         return self.fileWrite(allocator, session_id, path, content);
+    }
+
+    pub fn handleRpcFrameAlloc(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        frame_json: []const u8,
+    ) ![]u8 {
+        var request = envelope.parseRequest(allocator, frame_json) catch |err| {
+            return envelope.encodeError(allocator, "0", .{
+                .code = rpcErrorCode(err),
+                .message = @errorName(err),
+            });
+        };
+        defer request.deinit(allocator);
+
+        if (std.mem.eql(u8, request.method, "exec.run")) {
+            var exec_result = self.execRunFromFrame(allocator, frame_json) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{
+                    .code = rpcErrorCode(err),
+                    .message = @errorName(err),
+                });
+            };
+            defer exec_result.deinit(allocator);
+            return envelope.encodeResult(allocator, request.id, .{
+                .ok = exec_result.ok,
+                .status = exec_result.status,
+                .state = exec_result.state,
+                .jobId = exec_result.jobId,
+                .sessionId = exec_result.sessionId,
+                .command = exec_result.command,
+                .exitCode = exec_result.exitCode,
+                .stdout = exec_result.stdout,
+                .stderr = exec_result.stderr,
+            });
+        }
+
+        if (std.mem.eql(u8, request.method, "file.read")) {
+            var read_result = self.fileReadFromFrame(allocator, frame_json) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{
+                    .code = rpcErrorCode(err),
+                    .message = @errorName(err),
+                });
+            };
+            defer read_result.deinit(allocator);
+            return envelope.encodeResult(allocator, request.id, .{
+                .ok = read_result.ok,
+                .status = read_result.status,
+                .state = read_result.state,
+                .jobId = read_result.jobId,
+                .sessionId = read_result.sessionId,
+                .path = read_result.path,
+                .bytes = read_result.bytes,
+                .content = read_result.content,
+            });
+        }
+
+        if (std.mem.eql(u8, request.method, "file.write")) {
+            var write_result = self.fileWriteFromFrame(allocator, frame_json) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{
+                    .code = rpcErrorCode(err),
+                    .message = @errorName(err),
+                });
+            };
+            defer write_result.deinit(allocator);
+            return envelope.encodeResult(allocator, request.id, .{
+                .ok = write_result.ok,
+                .status = write_result.status,
+                .state = write_result.state,
+                .jobId = write_result.jobId,
+                .sessionId = write_result.sessionId,
+                .path = write_result.path,
+                .bytes = write_result.bytes,
+                .createdDirs = write_result.createdDirs,
+            });
+        }
+
+        if (std.mem.eql(u8, request.method, "runtime.snapshot")) {
+            const runtime_snapshot = self.snapshot();
+            return envelope.encodeResult(allocator, request.id, .{
+                .statePath = runtime_snapshot.statePath,
+                .persisted = runtime_snapshot.persisted,
+                .sessions = runtime_snapshot.sessions,
+                .queueDepth = runtime_snapshot.queueDepth,
+                .leasedJobs = runtime_snapshot.leasedJobs,
+                .recoveryBacklog = runtime_snapshot.recoveryBacklog,
+            });
+        }
+
+        if (std.mem.eql(u8, request.method, "runtime.session.list")) {
+            var sessions: std.ArrayList(state.SessionSnapshot) = .empty;
+            defer sessions.deinit(allocator);
+
+            var iterator = self.runtime_state.sessions.iterator();
+            while (iterator.next()) |entry| {
+                try sessions.append(allocator, .{
+                    .id = entry.key_ptr.*,
+                    .created_unix_ms = entry.value_ptr.created_unix_ms,
+                    .updated_unix_ms = entry.value_ptr.updated_unix_ms,
+                    .last_message = entry.value_ptr.last_message,
+                });
+            }
+
+            std.mem.sort(state.SessionSnapshot, sessions.items, {}, struct {
+                fn lessThan(_: void, lhs: state.SessionSnapshot, rhs: state.SessionSnapshot) bool {
+                    return std.mem.lessThan(u8, lhs.id, rhs.id);
+                }
+            }.lessThan);
+
+            return envelope.encodeResult(allocator, request.id, .{
+                .sessions = sessions.items,
+            });
+        }
+
+        if (std.mem.eql(u8, request.method, "runtime.session.get")) {
+            const session_id = parseSessionIdFromFrame(allocator, frame_json) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{
+                    .code = rpcErrorCode(err),
+                    .message = @errorName(err),
+                });
+            };
+            defer allocator.free(session_id);
+            const session = self.runtime_state.getSession(session_id) orelse {
+                return envelope.encodeError(allocator, request.id, .{
+                    .code = rpcErrorCode(error.SessionNotFound),
+                    .message = @errorName(error.SessionNotFound),
+                });
+            };
+            return envelope.encodeResult(allocator, request.id, .{
+                .id = session.id,
+                .createdUnixMs = session.created_unix_ms,
+                .updatedUnixMs = session.updated_unix_ms,
+                .lastMessage = session.last_message,
+            });
+        }
+
+        return envelope.encodeError(allocator, request.id, .{
+            .code = -32601,
+            .message = "MethodNotFound",
+        });
     }
 
     fn execRun(
@@ -597,6 +797,37 @@ fn getOptionalU32(
     return default_value;
 }
 
+fn parseSessionIdFromFrame(allocator: std.mem.Allocator, frame_json: []const u8) ![]const u8 {
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+    defer parsed.deinit();
+
+    const params = try getParamsObject(parsed.value);
+    const session_id = try getRequiredString(params, "sessionId", "session", error.MissingSessionId);
+    return allocator.dupe(u8, session_id);
+}
+
+fn rpcErrorCode(err: anyerror) i64 {
+    return switch (err) {
+        error.InvalidFrame,
+        error.InvalidMethod,
+        error.InvalidId,
+        => -32600,
+        error.InvalidParamsFrame,
+        error.MissingCommand,
+        error.MissingPath,
+        error.MissingContent,
+        error.MissingSessionId,
+        => -32602,
+        error.CommandDenied => -32010,
+        error.PathAccessDenied,
+        error.PathTraversalDetected,
+        error.PathSymlinkDisallowed,
+        => -32011,
+        error.SessionNotFound => -32044,
+        else => -32000,
+    };
+}
+
 fn nowUnixMilliseconds(io: std.Io) i64 {
     _ = io;
     return time_util.nowMs();
@@ -796,4 +1027,114 @@ test "tool runtime snapshot exposes queue and persistence posture" {
     try std.testing.expectEqual(@as(usize, 1), snapshot.queueDepth);
     try std.testing.expectEqual(@as(usize, 1), snapshot.leasedJobs);
     try std.testing.expectEqual(@as(usize, 2), snapshot.recoveryBacklog);
+}
+
+test "tool runtime snapshot and session queries expose deterministic text" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const io = testingHostedIo();
+    const root = try tmp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const test_path = try std.fs.path.join(allocator, &.{ root, "runtime-query.txt" });
+    defer allocator.free(test_path);
+
+    var runtime = ToolRuntime.init(std.heap.page_allocator, testingToolIo());
+    defer runtime.deinit();
+    try runtime.configureStatePersistence(root);
+
+    var write_result = try runtime.fileWrite(allocator, "sess-query", test_path, "query-data");
+    defer write_result.deinit(allocator);
+    try std.testing.expect(write_result.ok);
+
+    const snapshot_text = try runtime.snapshotTextAlloc(allocator);
+    defer allocator.free(snapshot_text);
+    try std.testing.expect(std.mem.indexOf(u8, snapshot_text, "state_path=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, snapshot_text, "sessions=1") != null);
+
+    const sessions_text = try runtime.sessionListTextAlloc(allocator);
+    defer allocator.free(sessions_text);
+    try std.testing.expectEqualStrings("sess-query\n", sessions_text);
+
+    const session_text = try runtime.sessionInfoTextAlloc(allocator, "sess-query");
+    defer allocator.free(session_text);
+    try std.testing.expect(std.mem.indexOf(u8, session_text, "id=sess-query") != null);
+    try std.testing.expect(std.mem.indexOf(u8, session_text, "last_message=file.write:") != null);
+}
+
+test "tool runtime RPC frame bridge serves file exec and session methods" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const io = testingHostedIo();
+    const root = try tmp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const test_path = try std.fs.path.join(allocator, &.{ root, "runtime-rpc.txt" });
+    defer allocator.free(test_path);
+    const json_test_path = try std.mem.replaceOwned(u8, allocator, test_path, "\\", "\\\\");
+    defer allocator.free(json_test_path);
+
+    var runtime = ToolRuntime.init(std.heap.page_allocator, testingToolIo());
+    defer runtime.deinit();
+    try runtime.configureStatePersistence(root);
+    runtime.exec_enabled = true;
+    runtime.exec_allowlist = if (builtin.os.tag == .windows) "echo" else "printf";
+
+    const write_frame = try std.fmt.allocPrint(
+        allocator,
+        "{{\"id\":\"rt-write\",\"method\":\"file.write\",\"params\":{{\"sessionId\":\"sess-rpc\",\"path\":\"{s}\",\"content\":\"rpc-data\"}}}}",
+        .{json_test_path},
+    );
+    defer allocator.free(write_frame);
+    const write_response = try runtime.handleRpcFrameAlloc(allocator, write_frame);
+    defer allocator.free(write_response);
+    try std.testing.expect(std.mem.indexOf(u8, write_response, "\"id\":\"rt-write\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, write_response, "\"bytes\":8") != null);
+
+    const read_frame = try std.fmt.allocPrint(
+        allocator,
+        "{{\"id\":\"rt-read\",\"method\":\"file.read\",\"params\":{{\"sessionId\":\"sess-rpc\",\"path\":\"{s}\"}}}}",
+        .{json_test_path},
+    );
+    defer allocator.free(read_frame);
+    const read_response = try runtime.handleRpcFrameAlloc(allocator, read_frame);
+    defer allocator.free(read_response);
+    try std.testing.expect(std.mem.indexOf(u8, read_response, "\"content\":\"rpc-data\"") != null);
+
+    const exec_command = if (builtin.os.tag == .windows) "echo rpc-bridge" else "printf rpc-bridge";
+    const exec_frame = try std.fmt.allocPrint(
+        allocator,
+        "{{\"id\":\"rt-exec\",\"method\":\"exec.run\",\"params\":{{\"sessionId\":\"sess-rpc\",\"command\":\"{s}\",\"timeoutMs\":1000}}}}",
+        .{exec_command},
+    );
+    defer allocator.free(exec_frame);
+    const exec_response = runtime.handleRpcFrameAlloc(allocator, exec_frame) catch return error.SkipZigTest;
+    defer allocator.free(exec_response);
+    try std.testing.expect(std.mem.indexOf(u8, exec_response, "\"id\":\"rt-exec\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, exec_response, "rpc-bridge") != null);
+
+    const snapshot_response = try runtime.handleRpcFrameAlloc(
+        allocator,
+        "{\"id\":\"rt-snapshot\",\"method\":\"runtime.snapshot\",\"params\":{}}",
+    );
+    defer allocator.free(snapshot_response);
+    try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"id\":\"rt-snapshot\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"sessions\":1") != null);
+
+    const list_response = try runtime.handleRpcFrameAlloc(
+        allocator,
+        "{\"id\":\"rt-list\",\"method\":\"runtime.session.list\",\"params\":{}}",
+    );
+    defer allocator.free(list_response);
+    try std.testing.expect(std.mem.indexOf(u8, list_response, "\"id\":\"sess-rpc\"") != null);
+
+    const session_response = try runtime.handleRpcFrameAlloc(
+        allocator,
+        "{\"id\":\"rt-session\",\"method\":\"runtime.session.get\",\"params\":{\"sessionId\":\"sess-rpc\"}}",
+    );
+    defer allocator.free(session_response);
+    try std.testing.expect(std.mem.indexOf(u8, session_response, "\"id\":\"rt-session\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, session_response, "\"lastMessage\"") != null);
 }

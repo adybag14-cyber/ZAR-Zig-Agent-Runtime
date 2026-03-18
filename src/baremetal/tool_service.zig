@@ -7,6 +7,7 @@ const display_output = @import("display_output.zig");
 const filesystem = @import("filesystem.zig");
 const framebuffer_console = @import("framebuffer_console.zig");
 const package_store = @import("package_store.zig");
+const runtime_bridge = @import("runtime_bridge.zig");
 const storage_backend = @import("storage_backend.zig");
 const trust_store = @import("trust_store.zig");
 const tool_exec = @import("tool_exec.zig");
@@ -72,6 +73,10 @@ pub const RequestOp = enum {
     trust_active,
     trust_select,
     trust_delete,
+    runtime_snapshot,
+    runtime_sessions,
+    runtime_session,
+    runtime_call,
 };
 
 pub const PutRequest = struct {
@@ -162,6 +167,10 @@ pub const FramedRequest = struct {
         trust_active: void,
         trust_select: []const u8,
         trust_delete: []const u8,
+        runtime_snapshot: void,
+        runtime_sessions: void,
+        runtime_session: []const u8,
+        runtime_call: []const u8,
     },
 };
 
@@ -1045,6 +1054,65 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         };
     }
 
+    if (std.ascii.eqlIgnoreCase(op_part.token, "RUNTIMESNAPSHOT")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .runtime_snapshot = {} } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .runtime_snapshot = {} } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "RUNTIMESESSIONS")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .runtime_sessions = {} } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .runtime_sessions = {} } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "RUNTIMESESSION")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .runtime_session = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .runtime_session = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "RUNTIMECALL")) {
+        const length_part = try splitFirstToken(op_part.rest);
+        if (length_part.rest.len != 0) return error.InvalidFrame;
+        const body_len = std.fmt.parseUnsigned(usize, length_part.token, 10) catch return error.InvalidFrame;
+        const body_start = newline_index orelse return error.InvalidFrame;
+        const payload_start = body_start + 1;
+        if (trimmed.len < payload_start + body_len) return error.InvalidFrame;
+        const body_payload = trimmed[payload_start .. payload_start + body_len];
+        return .{
+            .framed = .{
+                .request_id = request_id,
+                .operation = .{ .runtime_call = body_payload },
+            },
+            .consumed_len = prefix_len + payload_start + body_len,
+        };
+    }
+
     if (std.ascii.eqlIgnoreCase(op_part.token, "PKGPUT")) {
         const name_part = try splitFirstToken(op_part.rest);
         const path_part = try splitFirstToken(name_part.rest);
@@ -1176,6 +1244,10 @@ fn handleFramedPayload(
         .trust_active => try handleTrustActiveRequest(allocator, payload_limit),
         .trust_select => |trust_name| try handleTrustSelectRequest(allocator, trust_name, payload_limit),
         .trust_delete => |trust_name| try handleTrustDeleteRequest(allocator, trust_name, payload_limit),
+        .runtime_snapshot => try handleRuntimeSnapshotRequest(allocator, payload_limit),
+        .runtime_sessions => try handleRuntimeSessionsRequest(allocator, payload_limit),
+        .runtime_session => |session_id| try handleRuntimeSessionRequest(allocator, session_id, payload_limit),
+        .runtime_call => |frame_json| try handleRuntimeCallRequest(allocator, frame_json, payload_limit),
     };
 }
 
@@ -1746,6 +1818,50 @@ fn handleTrustDeleteRequest(allocator: std.mem.Allocator, trust_name: []const u8
         return formatOperationError(allocator, "TRUSTDELETE", err, payload_limit);
     };
     const response = try std.fmt.allocPrint(allocator, "DELETED {s}\n", .{trust_name});
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleRuntimeSnapshotRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    const response = runtime_bridge.snapshotAlloc(allocator) catch |err| {
+        return formatOperationError(allocator, "RUNTIMESNAPSHOT", err, payload_limit);
+    };
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleRuntimeSessionsRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    const response = runtime_bridge.sessionListAlloc(allocator) catch |err| {
+        return formatOperationError(allocator, "RUNTIMESESSIONS", err, payload_limit);
+    };
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleRuntimeSessionRequest(
+    allocator: std.mem.Allocator,
+    session_id: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    const response = runtime_bridge.sessionInfoAlloc(allocator, session_id) catch |err| {
+        return formatOperationError(allocator, "RUNTIMESESSION", err, payload_limit);
+    };
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleRuntimeCallRequest(
+    allocator: std.mem.Allocator,
+    frame_json: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    const response = runtime_bridge.handleRpcFrameAlloc(allocator, frame_json) catch |err| {
+        return formatOperationError(allocator, "RUNTIMECALL", err, payload_limit);
+    };
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
@@ -2747,6 +2863,73 @@ test "baremetal tool service handles batched trust requests" {
     defer std.testing.allocator.free(expected);
 
     try std.testing.expectEqualStrings(expected, batch_response);
+}
+
+test "baremetal tool service bridges persisted runtime queries and rpc calls" {
+    resetPersistentStateForTest();
+
+    const runtime_write_frame =
+        "{\"id\":\"svc-write\",\"method\":\"file.write\",\"params\":{\"sessionId\":\"svc-runtime\",\"path\":\"/runtime/tmp/service-runtime.txt\",\"content\":\"service-runtime-data\"}}";
+    const runtime_write_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 57 RUNTIMECALL {d}\n{s}",
+        .{ runtime_write_frame.len, runtime_write_frame },
+    );
+    defer std.testing.allocator.free(runtime_write_request);
+
+    const runtime_write_response = try handleFramedRequest(std.testing.allocator, runtime_write_request, 512, 256, 768);
+    defer std.testing.allocator.free(runtime_write_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_write_response, "RESP 57 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_write_response, "\"id\":\"svc-write\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_write_response, "\"path\":\"/runtime/tmp/service-runtime.txt\"") != null);
+
+    const runtime_exec_frame =
+        "{\"id\":\"svc-exec\",\"method\":\"exec.run\",\"params\":{\"sessionId\":\"svc-runtime\",\"command\":\"echo service-runtime\",\"timeoutMs\":1000}}";
+    const runtime_exec_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 58 RUNTIMECALL {d}\n{s}",
+        .{ runtime_exec_frame.len, runtime_exec_frame },
+    );
+    defer std.testing.allocator.free(runtime_exec_request);
+
+    const runtime_exec_response = try handleFramedRequest(std.testing.allocator, runtime_exec_request, 512, 256, 768);
+    defer std.testing.allocator.free(runtime_exec_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_exec_response, "RESP 58 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_exec_response, "\"id\":\"svc-exec\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_exec_response, "\"stdout\"") != null);
+
+    const runtime_read_frame =
+        "{\"id\":\"svc-read\",\"method\":\"file.read\",\"params\":{\"sessionId\":\"svc-runtime\",\"path\":\"/runtime/tmp/service-runtime.txt\"}}";
+    const runtime_read_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 59 RUNTIMECALL {d}\n{s}",
+        .{ runtime_read_frame.len, runtime_read_frame },
+    );
+    defer std.testing.allocator.free(runtime_read_request);
+
+    const runtime_read_response = try handleFramedRequest(std.testing.allocator, runtime_read_request, 512, 256, 768);
+    defer std.testing.allocator.free(runtime_read_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_read_response, "RESP 59 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_read_response, "\"content\":\"service-runtime-data\"") != null);
+
+    const runtime_snapshot_response = try handleFramedRequest(std.testing.allocator, "REQ 60 RUNTIMESNAPSHOT", 512, 256, 512);
+    defer std.testing.allocator.free(runtime_snapshot_response);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_snapshot_response, "state_path=/runtime/state/runtime-state.json") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_snapshot_response, "sessions=1") != null);
+
+    const runtime_sessions_response = try handleFramedRequest(std.testing.allocator, "REQ 61 RUNTIMESESSIONS", 512, 256, 512);
+    defer std.testing.allocator.free(runtime_sessions_response);
+    try std.testing.expectEqualStrings("RESP 61 12\nsvc-runtime\n", runtime_sessions_response);
+
+    const runtime_session_response = try handleFramedRequest(std.testing.allocator, "REQ 62 RUNTIMESESSION svc-runtime", 512, 256, 512);
+    defer std.testing.allocator.free(runtime_session_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_session_response, "RESP 62 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_session_response, "id=svc-runtime") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_session_response, "last_message=file.read:/runtime/tmp/service-runtime.txt") != null);
+
+    const state_payload = try filesystem.readFileAlloc(std.testing.allocator, "/runtime/state/runtime-state.json", 2048);
+    defer std.testing.allocator.free(state_payload);
+    try std.testing.expect(std.mem.indexOf(u8, state_payload, "svc-runtime") != null);
 }
 
 test "baremetal tool service installs default runtime layout and returns manifest" {
