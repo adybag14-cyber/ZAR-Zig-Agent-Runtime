@@ -497,7 +497,8 @@ pub const BaremetalFilesystemEntry = extern struct {
     byte_len: u32,
     checksum: u32,
     modified_tick: u64,
-    path: [96]u8,
+    // 224 bytes keeps the full entry at 256 bytes total.
+    path: [224]u8,
 };
 
 pub const BaremetalKeyboardState = extern struct {
