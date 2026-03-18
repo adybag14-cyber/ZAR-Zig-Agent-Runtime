@@ -67,12 +67,22 @@ pub fn build(b: *std.Build) void {
     const tests = b.addTest(.{
         .root_module = root_module,
     });
-    const run_tests = b.addRunArtifact(tests);
+    const run_tests = if (target.result.os.tag == .windows) blk: {
+        const run = b.addSystemCommand(&.{ "cmd.exe", "/c" });
+        run.setName("run hosted tests");
+        run.addFileArg(tests.getEmittedBin());
+        break :blk run;
+    } else b.addRunArtifact(tests);
     test_step.dependOn(&run_tests.step);
     const baremetal_tests = b.addTest(.{
         .root_module = baremetal_test_module,
     });
-    const run_baremetal_tests = b.addRunArtifact(baremetal_tests);
+    const run_baremetal_tests = if (target.result.os.tag == .windows) blk: {
+        const run = b.addSystemCommand(&.{ "cmd.exe", "/c" });
+        run.setName("run baremetal-host tests");
+        run.addFileArg(baremetal_tests.getEmittedBin());
+        break :blk run;
+    } else b.addRunArtifact(baremetal_tests);
     test_step.dependOn(&run_baremetal_tests.step);
 
     const baremetal_target = b.resolveTargetQuery(.{

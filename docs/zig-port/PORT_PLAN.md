@@ -1994,5 +1994,12 @@ Full-stack replacement execution reference:
     - `src/baremetal/tool_exec.zig` now exposes `app-plan-list`, `app-plan-info`, `app-plan-active`, `app-plan-save`, `app-plan-apply`, and `app-plan-delete`
     - `src/baremetal/tool_service.zig` now exposes `APPPLANLIST`, `APPPLANINFO`, `APPPLANACTIVE`, `APPPLANSAVE`, `APPPLANAPPLY`, and `APPPLANDELETE`
     - the broad live RTL8139 TCP proof now covers save -> list -> info -> apply -> delete plus restored release/trust/display/autorun state readback on the persisted app-plan surface
+  - current FS5.5 app-suite slice is now locally closed on the same branch:
+    - `src/baremetal/app_runtime.zig` now persists bounded app-suite definitions under `/runtime/app-suites/<suite>.txt` with one `package:plan` entry per line
+    - `src/baremetal/tool_exec.zig` now exposes `app-suite-list`, `app-suite-info`, `app-suite-save`, `app-suite-apply`, `app-suite-run`, and `app-suite-delete`
+    - `src/baremetal/tool_service.zig` now exposes `APPSUITELIST`, `APPSUITEINFO`, `APPSUITESAVE`, `APPSUITEAPPLY`, `APPSUITERUN`, and `APPSUITEDELETE`
+    - host validation now proves RAM-disk and ATA-backed suite persistence plus suite-driven active-plan restoration across multiple apps
+    - the broad live RTL8139 TCP proof now covers save -> list -> info -> apply -> run -> delete plus restored active-plan, autorun, and stdout readback on the persisted app-suite surface
+    - `build.zig` now runs the compiled native test executables directly on Windows, which avoids the current Zig master `--listen=-` test-runner hang while keeping the real hosted and baremetal-host test matrix intact
 
 

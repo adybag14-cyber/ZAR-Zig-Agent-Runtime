@@ -3024,17 +3024,21 @@ fn exchangeTcpProbeServiceRequest(
         response_limit,
     ) catch return error.ToolServiceFailed;
 
-    const reply = server.buildPayload(response) catch |err| return mapTcpSessionProbeError(err);
-    _ = try sendTcpProbeSegment(destination_ip, source_ip, server.local_port, server.remote_port, reply);
-    try pollTcpProbePacket(eth, &scratch.packet_storage);
-    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, server.local_port, server.remote_port, reply);
-    client.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    var response_offset: usize = 0;
+    while (response_offset < response.len) {
+        const reply = server.buildPayloadChunk(response[response_offset..]) catch |err| return mapTcpSessionProbeError(err);
+        _ = try sendTcpProbeSegment(destination_ip, source_ip, server.local_port, server.remote_port, reply);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, server.local_port, server.remote_port, reply);
+        client.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+        response_offset += reply.payload.len;
 
-    const ack = client.buildAck() catch |err| return mapTcpSessionProbeError(err);
-    _ = try sendTcpProbeSegment(source_ip, destination_ip, client.local_port, client.remote_port, ack);
-    try pollTcpProbePacket(eth, &scratch.packet_storage);
-    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, client.local_port, client.remote_port, ack);
-    server.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+        const ack = client.buildAck() catch |err| return mapTcpSessionProbeError(err);
+        _ = try sendTcpProbeSegment(source_ip, destination_ip, client.local_port, client.remote_port, ack);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, client.local_port, client.remote_port, ack);
+        server.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    }
 
     return response;
 }
@@ -3432,6 +3436,16 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const app_plan_autorun_list_request_id: u32 = 105;
     const app_plan_delete_request_id: u32 = 106;
     const app_plan_list_after_delete_request_id: u32 = 107;
+    const app_suite_name = "duo";
+    const app_suite_aux_plan_name = "sidecar";
+    const app_suite_aux_plan_save_request_id: u32 = 108;
+    const app_suite_save_request_id: u32 = 109;
+    const app_suite_list_request_id: u32 = 110;
+    const app_suite_info_request_id: u32 = 111;
+    const app_suite_apply_request_id: u32 = 112;
+    const app_suite_run_request_id: u32 = 113;
+    const app_suite_delete_request_id: u32 = 114;
+    const app_suite_list_after_delete_request_id: u32 = 115;
     const uninstall_request_id: u32 = 79;
     const uninstall_list_request_id: u32 = 80;
     const retransmit_interval_ticks: u64 = 4;
@@ -3449,7 +3463,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     };
     var table = tcp_protocol.SessionTable(2).init();
     const client_a = table.createClient(flow_a, 0x0102_0304, 4096) catch return error.SessionStateMismatch;
-    const client_b = table.createClient(flow_b, 0x1112_1314, 64) catch return error.SessionStateMismatch;
+    var client_b = table.createClient(flow_b, 0x1112_1314, 64) catch return error.SessionStateMismatch;
     var server_a = tcp_protocol.Session.initServer(flow_a.remote_port, flow_a.local_port, 0xA0B0_C0D0, 8192);
     var server_b = tcp_protocol.Session.initServer(flow_b.remote_port, flow_b.local_port, 0xB0C0_D0E0, 6144);
     const scratch = &rtl8139_tcp_probe_scratch;
@@ -6311,6 +6325,210 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const app_plan_restored_output_readback = filesystem.readFileAlloc(service_fba.allocator(), package_output_path, 64) catch return error.ToolServiceFailed;
     if (!std.mem.eql(u8, app_plan_restored_output_readback, package_output_expected)) return error.ToolServiceResponseMismatch;
+
+    var app_suite_aux_plan_request_buffer: [96]u8 = undefined;
+    const app_suite_aux_plan_request = std.fmt.bufPrint(
+        &app_suite_aux_plan_request_buffer,
+        "REQ {d} APPPLANSAVE {s} {s} none none virtual 800 600 0",
+        .{ app_suite_aux_plan_save_request_id, autorun_package_name, app_suite_aux_plan_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_aux_plan_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_aux_plan_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, app_suite_aux_plan_response, "RESP 108 24\nAPPPLANSAVE aux sidecar\n")) return error.ToolServiceResponseMismatch;
+
+    var app_suite_save_request_buffer: [128]u8 = undefined;
+    const app_suite_save_request = std.fmt.bufPrint(
+        &app_suite_save_request_buffer,
+        "REQ {d} APPSUITESAVE {s} {s}:{s} {s}:{s}",
+        .{ app_suite_save_request_id, app_suite_name, package_name, app_plan_name, autorun_package_name, app_suite_aux_plan_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_save_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_save_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, app_suite_save_response, "RESP 109 17\nAPPSUITESAVE duo\n")) return error.ToolServiceResponseMismatch;
+
+    var app_suite_list_request_buffer: [64]u8 = undefined;
+    const app_suite_list_request = std.fmt.bufPrint(
+        &app_suite_list_request_buffer,
+        "REQ {d} APPSUITELIST",
+        .{app_suite_list_request_id},
+    ) catch return error.ToolServiceFailed;
+    const app_suite_list_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_list_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, app_suite_list_response, "RESP 110 4\nduo\n")) return error.ToolServiceResponseMismatch;
+
+    var app_suite_info_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const app_suite_info_path = std.fmt.bufPrint(&app_suite_info_path_buffer, "/runtime/app-suites/{s}.txt", .{app_suite_name}) catch return error.ToolServiceFailed;
+    var app_suite_info_payload_buffer: [256]u8 = undefined;
+    const app_suite_info_payload_expected = std.fmt.bufPrint(
+        &app_suite_info_payload_buffer,
+        "suite={s}\npath={s}\nentry={s}:{s}\nentry={s}:{s}\n",
+        .{ app_suite_name, app_suite_info_path, package_name, app_plan_name, autorun_package_name, app_suite_aux_plan_name },
+    ) catch return error.ToolServiceFailed;
+    var app_suite_info_response_buffer: [320]u8 = undefined;
+    const app_suite_info_response_expected = std.fmt.bufPrint(
+        &app_suite_info_response_buffer,
+        "RESP {d} {d}\n{s}",
+        .{ app_suite_info_request_id, app_suite_info_payload_expected.len, app_suite_info_payload_expected },
+    ) catch return error.ToolServiceFailed;
+    var app_suite_info_request_buffer: [64]u8 = undefined;
+    const app_suite_info_request = std.fmt.bufPrint(
+        &app_suite_info_request_buffer,
+        "REQ {d} APPSUITEINFO {s}",
+        .{ app_suite_info_request_id, app_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_info_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_info_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, app_suite_info_response, app_suite_info_response_expected)) return error.ToolServiceResponseMismatch;
+
+    var app_suite_apply_request_buffer: [64]u8 = undefined;
+    const app_suite_apply_request = std.fmt.bufPrint(
+        &app_suite_apply_request_buffer,
+        "REQ {d} APPSUITEAPPLY {s}",
+        .{ app_suite_apply_request_id, app_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_apply_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_apply_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, app_suite_apply_response, "RESP 112 18\nAPPSUITEAPPLY duo\n")) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_suite_demo_active_readback = filesystem.readFileAlloc(service_fba.allocator(), "/runtime/apps/demo/active_plan.txt", 32) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, app_suite_demo_active_readback, app_plan_name)) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_suite_aux_active_readback = filesystem.readFileAlloc(service_fba.allocator(), "/runtime/apps/aux/active_plan.txt", 32) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, app_suite_aux_active_readback, app_suite_aux_plan_name)) return error.ToolServiceResponseMismatch;
+
+    var app_suite_run_request_buffer: [64]u8 = undefined;
+    const app_suite_run_request = std.fmt.bufPrint(
+        &app_suite_run_request_buffer,
+        "REQ {d} APPSUITERUN {s}",
+        .{ app_suite_run_request_id, app_suite_name },
+    ) catch return error.ToolServiceFailed;
+    var app_suite_run_response_buffer: [160]u8 = undefined;
+    const app_suite_run_payload_expected = std.fmt.bufPrint(
+        &app_suite_run_response_buffer,
+        "{s}{s}",
+        .{ package_run_stdout, autorun_run_stdout },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_run_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_run_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, app_suite_run_response, "RESP 113 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, app_suite_run_response, app_suite_run_payload_expected) == null) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_suite_demo_stdout_readback = filesystem.readFileAlloc(service_fba.allocator(), "/runtime/apps/demo/stdout.log", 128) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, app_suite_demo_stdout_readback, package_run_stdout)) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_suite_aux_stdout_readback = filesystem.readFileAlloc(service_fba.allocator(), "/runtime/apps/aux/stdout.log", 64) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, app_suite_aux_stdout_readback, autorun_run_stdout)) return error.ToolServiceResponseMismatch;
+
+    var app_suite_delete_request_buffer: [64]u8 = undefined;
+    const app_suite_delete_request = std.fmt.bufPrint(
+        &app_suite_delete_request_buffer,
+        "REQ {d} APPSUITEDELETE {s}",
+        .{ app_suite_delete_request_id, app_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_delete_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_delete_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, app_suite_delete_response, "RESP 114 19\nAPPSUITEDELETE duo\n")) return error.ToolServiceResponseMismatch;
+
+    var app_suite_list_after_delete_request_buffer: [64]u8 = undefined;
+    const app_suite_list_after_delete_request = std.fmt.bufPrint(
+        &app_suite_list_after_delete_request_buffer,
+        "REQ {d} APPSUITELIST",
+        .{app_suite_list_after_delete_request_id},
+    ) catch return error.ToolServiceFailed;
+    const app_suite_list_after_delete_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_list_after_delete_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, app_suite_list_after_delete_response, "RESP 115 0\n")) return error.ToolServiceResponseMismatch;
+
+    if (filesystem.statSummary(app_suite_info_path)) |_| {
+        return error.ToolServiceResponseMismatch;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return error.ToolServiceFailed,
+    }
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const app_plan_delete_batch_request = std.fmt.bufPrint(

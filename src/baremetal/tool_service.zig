@@ -68,6 +68,12 @@ pub const RequestOp = enum {
     app_plan_save,
     app_plan_apply,
     app_plan_delete,
+    app_suite_list,
+    app_suite_info,
+    app_suite_save,
+    app_suite_apply,
+    app_suite_run,
+    app_suite_delete,
     app_run,
     app_delete,
     app_autorun_list,
@@ -143,6 +149,11 @@ pub const AppPlanSaveRequest = struct {
     autorun: bool,
 };
 
+pub const AppSuiteSaveRequest = struct {
+    suite_name: []const u8,
+    entries_spec: []const u8,
+};
+
 pub const FramedRequest = struct {
     request_id: u32,
     operation: union(RequestOp) {
@@ -189,6 +200,12 @@ pub const FramedRequest = struct {
         app_plan_save: AppPlanSaveRequest,
         app_plan_apply: NamedValueRequest,
         app_plan_delete: NamedValueRequest,
+        app_suite_list: void,
+        app_suite_info: []const u8,
+        app_suite_save: AppSuiteSaveRequest,
+        app_suite_apply: []const u8,
+        app_suite_run: []const u8,
+        app_suite_delete: []const u8,
         app_run: []const u8,
         app_delete: []const u8,
         app_autorun_list: void,
@@ -1103,6 +1120,98 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         };
     }
 
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPSUITELIST")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .app_suite_list = {} } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .app_suite_list = {} } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPSUITEINFO")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .app_suite_info = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .app_suite_info = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPSUITESAVE")) {
+        const suite_name_part = try splitFirstToken(op_part.rest);
+        if (suite_name_part.rest.len == 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .app_suite_save = .{
+                .suite_name = suite_name_part.token,
+                .entries_spec = suite_name_part.rest,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPSUITEAPPLY")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .app_suite_apply = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .app_suite_apply = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPSUITERUN")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .app_suite_run = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .app_suite_run = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPSUITEDELETE")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .app_suite_delete = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .app_suite_delete = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
     if (std.ascii.eqlIgnoreCase(op_part.token, "APPRUN")) {
         if (op_part.rest.len == 0) return error.InvalidFrame;
         if (newline_index != null) {
@@ -1493,6 +1602,12 @@ fn handleFramedPayload(
         .app_plan_save => |plan_request| try handleAppPlanSaveRequest(allocator, plan_request, payload_limit),
         .app_plan_apply => |plan_request| try handleAppPlanApplyRequest(allocator, plan_request.package_name, plan_request.value, payload_limit),
         .app_plan_delete => |plan_request| try handleAppPlanDeleteRequest(allocator, plan_request.package_name, plan_request.value, payload_limit),
+        .app_suite_list => try handleAppSuiteListRequest(allocator, payload_limit),
+        .app_suite_info => |suite_name| try handleAppSuiteInfoRequest(allocator, suite_name, payload_limit),
+        .app_suite_save => |suite_request| try handleAppSuiteSaveRequest(allocator, suite_request, payload_limit),
+        .app_suite_apply => |suite_name| try handleAppSuiteApplyRequest(allocator, suite_name, payload_limit),
+        .app_suite_run => |suite_name| try handleAppSuiteRunRequest(allocator, suite_name, stdout_limit, stderr_limit, payload_limit),
+        .app_suite_delete => |suite_name| try handleAppSuiteDeleteRequest(allocator, suite_name, payload_limit),
         .app_run => |package_name| try handleAppRunRequest(allocator, package_name, stdout_limit, stderr_limit, payload_limit),
         .app_delete => |package_name| try handleAppDeleteRequest(allocator, package_name, payload_limit),
         .app_autorun_list => try handleAppAutorunListRequest(allocator, payload_limit),
@@ -2050,6 +2165,76 @@ fn handleAppPlanDeleteRequest(
         return formatOperationError(allocator, "APPPLANDELETE", err, payload_limit);
     };
     const response = try std.fmt.allocPrint(allocator, "APPPLANDELETE {s} {s}\n", .{ package_name, plan_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleAppSuiteListRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    return app_runtime.suiteListAlloc(allocator, payload_limit) catch |err| {
+        return formatOperationError(allocator, "APPSUITELIST", err, payload_limit);
+    };
+}
+
+fn handleAppSuiteInfoRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return app_runtime.suiteInfoAlloc(allocator, suite_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "APPSUITEINFO", err, payload_limit);
+    };
+}
+
+fn handleAppSuiteSaveRequest(
+    allocator: std.mem.Allocator,
+    request: AppSuiteSaveRequest,
+    payload_limit: usize,
+) Error![]u8 {
+    app_runtime.saveSuite(request.suite_name, request.entries_spec, 0) catch |err| {
+        return formatOperationError(allocator, "APPSUITESAVE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "APPSUITESAVE {s}\n", .{request.suite_name});
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleAppSuiteApplyRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    app_runtime.applySuite(suite_name, 0) catch |err| {
+        return formatOperationError(allocator, "APPSUITEAPPLY", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "APPSUITEAPPLY {s}\n", .{suite_name});
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleAppSuiteRunRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    var command_buf: [96]u8 = undefined;
+    const command = std.fmt.bufPrint(&command_buf, "app-suite-run {s}", .{suite_name}) catch return error.InvalidFrame;
+    return handleCommandRequest(allocator, command, stdout_limit, stderr_limit, payload_limit);
+}
+
+fn handleAppSuiteDeleteRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    app_runtime.deleteSuite(suite_name, 0) catch |err| {
+        return formatOperationError(allocator, "APPSUITEDELETE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "APPSUITEDELETE {s}\n", .{suite_name});
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
@@ -2727,6 +2912,45 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
+    const app_suite_list = try parseFramedRequest("REQ 146 APPSUITELIST");
+    switch (app_suite_list.operation) {
+        .app_suite_list => {},
+        else => return error.InvalidFrame,
+    }
+
+    const app_suite_info = try parseFramedRequest("REQ 147 APPSUITEINFO duo");
+    switch (app_suite_info.operation) {
+        .app_suite_info => |suite_name| try std.testing.expectEqualStrings("duo", suite_name),
+        else => return error.InvalidFrame,
+    }
+
+    const app_suite_save = try parseFramedRequest("REQ 148 APPSUITESAVE duo demo:golden aux:sidecar");
+    switch (app_suite_save.operation) {
+        .app_suite_save => |payload| {
+            try std.testing.expectEqualStrings("duo", payload.suite_name);
+            try std.testing.expectEqualStrings("demo:golden aux:sidecar", payload.entries_spec);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const app_suite_apply = try parseFramedRequest("REQ 149 APPSUITEAPPLY duo");
+    switch (app_suite_apply.operation) {
+        .app_suite_apply => |suite_name| try std.testing.expectEqualStrings("duo", suite_name),
+        else => return error.InvalidFrame,
+    }
+
+    const app_suite_run = try parseFramedRequest("REQ 150 APPSUITERUN duo");
+    switch (app_suite_run.operation) {
+        .app_suite_run => |suite_name| try std.testing.expectEqualStrings("duo", suite_name),
+        else => return error.InvalidFrame,
+    }
+
+    const app_suite_delete = try parseFramedRequest("REQ 151 APPSUITEDELETE duo");
+    switch (app_suite_delete.operation) {
+        .app_suite_delete => |suite_name| try std.testing.expectEqualStrings("duo", suite_name),
+        else => return error.InvalidFrame,
+    }
+
     const app_run = try parseFramedRequest("REQ 41 APPRUN demo");
     switch (app_run.operation) {
         .app_run => |package_name| try std.testing.expectEqualStrings("demo", package_name),
@@ -3315,6 +3539,66 @@ test "baremetal tool service manages persisted app plans" {
     try std.testing.expectEqualStrings("RESP 169 0\n", list_after_delete);
 
     try std.testing.expectError(error.FileNotFound, filesystem.statSummary("/runtime/apps/demo/active_plan.txt"));
+}
+
+test "baremetal tool service manages persisted app suites" {
+    resetPersistentStateForTest();
+
+    try package_store.installScriptPackage("demo", "echo suite-demo", 1);
+    try package_store.installScriptPackage("aux", "echo suite-aux", 2);
+
+    const save_demo_plan = try handleFramedRequest(std.testing.allocator, "REQ 170 APPPLANSAVE demo golden none none virtual 1280 720 1", 512, 256, 512);
+    defer std.testing.allocator.free(save_demo_plan);
+    try std.testing.expectEqualStrings("RESP 170 24\nAPPPLANSAVE demo golden\n", save_demo_plan);
+
+    const save_aux_plan = try handleFramedRequest(std.testing.allocator, "REQ 171 APPPLANSAVE aux sidecar none none virtual 800 600 0", 512, 256, 512);
+    defer std.testing.allocator.free(save_aux_plan);
+    try std.testing.expectEqualStrings("RESP 171 24\nAPPPLANSAVE aux sidecar\n", save_aux_plan);
+
+    const save_suite = try handleFramedRequest(std.testing.allocator, "REQ 172 APPSUITESAVE duo demo:golden aux:sidecar", 512, 256, 512);
+    defer std.testing.allocator.free(save_suite);
+    try std.testing.expectEqualStrings("RESP 172 17\nAPPSUITESAVE duo\n", save_suite);
+
+    const suite_list = try handleFramedRequest(std.testing.allocator, "REQ 173 APPSUITELIST", 512, 256, 512);
+    defer std.testing.allocator.free(suite_list);
+    try std.testing.expectEqualStrings("RESP 173 4\nduo\n", suite_list);
+
+    const suite_info = try handleFramedRequest(std.testing.allocator, "REQ 174 APPSUITEINFO duo", 512, 256, 512);
+    defer std.testing.allocator.free(suite_info);
+    try std.testing.expect(std.mem.startsWith(u8, suite_info, "RESP 174 "));
+    try std.testing.expect(std.mem.indexOf(u8, suite_info, "suite=duo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info, "entry=demo:golden") != null);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info, "entry=aux:sidecar") != null);
+
+    const apply_suite = try handleFramedRequest(std.testing.allocator, "REQ 175 APPSUITEAPPLY duo", 512, 256, 512);
+    defer std.testing.allocator.free(apply_suite);
+    try std.testing.expectEqualStrings("RESP 175 18\nAPPSUITEAPPLY duo\n", apply_suite);
+
+    const demo_active = try handleFramedRequest(std.testing.allocator, "REQ 176 APPPLANACTIVE demo", 512, 256, 512);
+    defer std.testing.allocator.free(demo_active);
+    try std.testing.expect(std.mem.indexOf(u8, demo_active, "active_plan=golden") != null);
+
+    const aux_active = try handleFramedRequest(std.testing.allocator, "REQ 177 APPPLANACTIVE aux", 512, 256, 512);
+    defer std.testing.allocator.free(aux_active);
+    try std.testing.expect(std.mem.indexOf(u8, aux_active, "active_plan=sidecar") != null);
+
+    const autorun_response = try handleFramedRequest(std.testing.allocator, "REQ 178 APPAUTORUNLIST", 512, 256, 512);
+    defer std.testing.allocator.free(autorun_response);
+    try std.testing.expectEqualStrings("RESP 178 5\ndemo\n", autorun_response);
+
+    const run_suite = try handleFramedRequest(std.testing.allocator, "REQ 179 APPSUITERUN duo", 512, 256, 512);
+    defer std.testing.allocator.free(run_suite);
+    try std.testing.expect(std.mem.startsWith(u8, run_suite, "RESP 179 "));
+    try std.testing.expect(std.mem.indexOf(u8, run_suite, "suite-demo\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, run_suite, "suite-aux\n") != null);
+
+    const delete_suite = try handleFramedRequest(std.testing.allocator, "REQ 180 APPSUITEDELETE duo", 512, 256, 512);
+    defer std.testing.allocator.free(delete_suite);
+    try std.testing.expectEqualStrings("RESP 180 19\nAPPSUITEDELETE duo\n", delete_suite);
+
+    const suite_list_after_delete = try handleFramedRequest(std.testing.allocator, "REQ 181 APPSUITELIST", 512, 256, 512);
+    defer std.testing.allocator.free(suite_list_after_delete);
+    try std.testing.expectEqualStrings("RESP 181 0\n", suite_list_after_delete);
 }
 
 test "baremetal tool service persists and runs autorun requests" {
