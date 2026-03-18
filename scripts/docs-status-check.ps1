@@ -27,6 +27,28 @@ function Assert-Contains {
     }
 }
 
+function Get-BranchReleaseTag {
+    param(
+        [string]$PackageJsonPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PackageJsonPath) -or -not (Test-Path $PackageJsonPath)) {
+        return $null
+    }
+
+    try {
+        $packageJson = Get-Content -Path $PackageJsonPath -Raw | ConvertFrom-Json
+        $packageVersion = [string]$packageJson.version
+        if (-not [string]::IsNullOrWhiteSpace($packageVersion) -and $packageVersion -match '^\d+\.\d+\.\d+-zig-edge\.\d+$') {
+            return ('v' + $packageVersion)
+        }
+    } catch {
+        Write-Warning ("Unable to infer branch release tag from {0}: {1}" -f $PackageJsonPath, $_.Exception.Message)
+    }
+
+    return $null
+}
+
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Push-Location $repoRoot
 try {
@@ -57,6 +79,9 @@ try {
     $originalBetaRef = $report.baseline.originalBeta.ref
 
     $releaseTag = $ReleaseTag
+    if ([string]::IsNullOrWhiteSpace($releaseTag)) {
+        $releaseTag = Get-BranchReleaseTag -PackageJsonPath "npm/openclaw-zig-rpc-client/package.json"
+    }
     if ([string]::IsNullOrWhiteSpace($releaseTag)) {
         $releaseHeaders = @{
             "User-Agent" = "openclaw-zig-docs-status-check"
