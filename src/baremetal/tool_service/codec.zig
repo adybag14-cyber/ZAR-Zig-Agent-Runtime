@@ -69,6 +69,10 @@ pub const RequestOp = enum {
     app_suite_release_activate,
     app_suite_release_delete,
     app_suite_release_prune,
+    app_suite_channel_list,
+    app_suite_channel_info,
+    app_suite_channel_set,
+    app_suite_channel_activate,
     workspace_list,
     workspace_info,
     workspace_save,
@@ -204,6 +208,17 @@ pub const AppSuiteReleasePruneRequest = struct {
     keep: u32,
 };
 
+pub const AppSuiteChannelRequest = struct {
+    suite_name: []const u8,
+    value: []const u8,
+};
+
+pub const AppSuiteChannelSetRequest = struct {
+    suite_name: []const u8,
+    channel: []const u8,
+    release: []const u8,
+};
+
 pub const WorkspaceSaveRequest = struct {
     name: []const u8,
     suite_name: []const u8,
@@ -271,6 +286,10 @@ pub const FramedRequest = struct {
         app_suite_release_activate: AppSuiteReleaseRequest,
         app_suite_release_delete: AppSuiteReleaseRequest,
         app_suite_release_prune: AppSuiteReleasePruneRequest,
+        app_suite_channel_list: []const u8,
+        app_suite_channel_info: AppSuiteChannelRequest,
+        app_suite_channel_set: AppSuiteChannelSetRequest,
+        app_suite_channel_activate: AppSuiteChannelRequest,
         workspace_list: void,
         workspace_info: []const u8,
         workspace_save: WorkspaceSaveRequest,
@@ -1312,6 +1331,91 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
             .operation = .{ .app_suite_release_prune = .{
                 .suite_name = suite_name_part.token,
                 .keep = keep,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPSUITECHANNELLIST")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .app_suite_channel_list = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .app_suite_channel_list = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPSUITECHANNELINFO")) {
+        const suite_name_part = try splitFirstToken(op_part.rest);
+        const channel_name_part = try splitFirstToken(suite_name_part.rest);
+        if (channel_name_part.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .app_suite_channel_info = .{
+                .suite_name = suite_name_part.token,
+                .value = channel_name_part.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPSUITECHANNELSET")) {
+        const suite_name_part = try splitFirstToken(op_part.rest);
+        const channel_name_part = try splitFirstToken(suite_name_part.rest);
+        const release_name_part = try splitFirstToken(channel_name_part.rest);
+        if (release_name_part.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .app_suite_channel_set = .{
+                .suite_name = suite_name_part.token,
+                .channel = channel_name_part.token,
+                .release = release_name_part.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPSUITECHANNELACTIVATE")) {
+        const suite_name_part = try splitFirstToken(op_part.rest);
+        const channel_name_part = try splitFirstToken(suite_name_part.rest);
+        if (channel_name_part.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .app_suite_channel_activate = .{
+                .suite_name = suite_name_part.token,
+                .value = channel_name_part.token,
             } },
         };
         if (newline_index != null) {

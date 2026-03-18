@@ -2007,6 +2007,12 @@ Full-stack replacement execution reference:
     - `src/baremetal/tool_service.zig` now exposes `APPSUITERELEASELIST`, `APPSUITERELEASEINFO`, `APPSUITERELEASESAVE`, `APPSUITERELEASEACTIVATE`, `APPSUITERELEASEDELETE`, and `APPSUITERELEASEPRUNE`
     - host validation now proves RAM-disk and ATA-backed app-suite-release persistence with deterministic `saved_seq` / `saved_tick` metadata
     - the broad live RTL8139 TCP proof now covers save -> mutate -> list -> info -> activate -> delete -> prune plus restored suite readback on the persisted app-suite-release surface
+  - current FS5.5 app-suite-release-channel slice is now locally closed on the same branch:
+    - `src/baremetal/app_runtime.zig` now persists bounded app-suite release-channel targets under `/runtime/app-suite-release-channels/<suite>/<channel>.txt`, with `suiteChannelListAlloc`, `suiteChannelInfoAlloc`, `setSuiteReleaseChannel`, and `activateSuiteReleaseChannel`
+    - `src/baremetal/tool_exec.zig` now exposes `app-suite-release-channel-list`, `app-suite-release-channel-info`, `app-suite-release-channel-set`, and `app-suite-release-channel-activate`
+    - `src/baremetal/tool_service.zig` now exposes `APPSUITECHANNELLIST`, `APPSUITECHANNELINFO`, `APPSUITECHANNELSET`, and `APPSUITECHANNELACTIVATE`
+    - host validation now proves RAM-disk and ATA-backed app-suite-release-channel persistence plus restored suite info through channel activation
+    - the broad live RTL8139 TCP proof now covers set -> persisted channel-target readback -> list -> info -> activate plus restored suite readback through the selected suite release channel
   - current FS5.5 workspace slice is now locally closed on the same branch:
     - `src/baremetal/workspace_runtime.zig` now persists bounded workspace definitions under `/runtime/workspaces/<name>.txt` with saved suite/trust/display/channel orchestration state plus `/runtime/workspace-runs/<name>/last_run.txt`, `history.log`, `stdout.log`, `stderr.log`, the bounded workspace autorun registry `/runtime/workspace-runs/autorun.txt`, and versioned release snapshots under `/runtime/workspace-releases/<name>/<release>/workspace.txt` plus `release.txt`
     - `src/baremetal/tool_exec.zig` now exposes `workspace-list`, `workspace-info`, `workspace-save`, `workspace-apply`, `workspace-run`, `workspace-state`, `workspace-history`, `workspace-stdout`, `workspace-stderr`, `workspace-delete`, `workspace-release-list`, `workspace-release-info`, `workspace-release-save`, `workspace-release-activate`, `workspace-release-delete`, `workspace-release-prune`, `workspace-autorun-list`, `workspace-autorun-add`, `workspace-autorun-remove`, and `workspace-autorun-run`
@@ -2019,12 +2025,12 @@ Full-stack replacement execution reference:
     - host validation now also proves RAM-disk and ATA-backed workspace release-channel persistence plus restored workspace info through channel activation
     - the broad live RTL8139 TCP proof now also covers workspace release channel set -> info -> list -> activate, persisted channel-target readback, and restored workspace info through the selected workspace release channel
     - `src/baremetal/filesystem.zig` now carries a `96`-entry filesystem budget so the deeper FS5.5 package/trust/app/workspace release surface no longer fails with live-service `NoSpace`
-    - current local validation after the app-suite-release slice is green:
-      - `zig build test --summary all` -> `385/385` passed
+    - current local validation after the app-suite-release-channel slice is green:
+      - `zig build test --summary all` -> `387/387` passed
       - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1 -TimeoutSeconds 120` -> pass
       - parity gate -> pass (`union 141/141`, `events 19/19`)
       - docs status gate -> pass
-      - the real regressions fixed during the slice were stale framed payload-length expectations on the new `APPSUITERELEASEDELETE` and `APPSUITERELEASEPRUNE` receipts; the runtime, CLI, typed service, and live proof now match the current app-suite-release contract
+      - the real regressions fixed during the slice were a stale live fallback snapshot that still targeted `demo:golden` instead of `demo:canary`, plus downstream workspace and app-plan-delete expectations that still assumed the pre-channel state; the runtime, CLI, typed service, and live proof now match the current app-suite-release-channel contract
     - `build.zig` now runs the compiled native test executables directly on Windows, which avoids the current Zig master `--listen=-` test-runner hang while keeping the real hosted and baremetal-host test matrix intact
 
 

@@ -3424,6 +3424,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const autorun_remove_request_id: u32 = 75;
     const autorun_list_after_remove_request_id: u32 = 76;
     const app_plan_name = "golden";
+    const app_plan_canary_name = "canary";
     const app_plan_save_request_id: u32 = 95;
     const app_plan_list_request_id: u32 = 96;
     const app_plan_info_request_id: u32 = 97;
@@ -3437,6 +3438,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const app_plan_autorun_list_request_id: u32 = 105;
     const app_plan_delete_request_id: u32 = 106;
     const app_plan_list_after_delete_request_id: u32 = 107;
+    const app_plan_canary_save_request_id: u32 = 203;
     const app_suite_name = "duo";
     const app_suite_aux_plan_name = "sidecar";
     const app_suite_aux_plan_save_request_id: u32 = 108;
@@ -3500,6 +3502,11 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const app_suite_release_save_fallback_request_id: u32 = 164;
     const app_suite_release_prune_request_id: u32 = 165;
     const app_suite_release_list_final_request_id: u32 = 166;
+    const app_suite_channel_set_request_id: u32 = 167;
+    const app_suite_channel_list_request_id: u32 = 168;
+    const app_suite_channel_info_request_id: u32 = 169;
+    const app_suite_channel_activate_request_id: u32 = 170;
+    const app_suite_channel_restored_info_request_id: u32 = 171;
     const uninstall_request_id: u32 = 79;
     const uninstall_list_request_id: u32 = 80;
     const retransmit_interval_ticks: u64 = 4;
@@ -6380,6 +6387,26 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const app_plan_restored_output_readback = filesystem.readFileAlloc(service_fba.allocator(), package_output_path, 64) catch return error.ToolServiceFailed;
     if (!std.mem.eql(u8, app_plan_restored_output_readback, package_output_expected)) return error.ToolServiceResponseMismatch;
 
+    var app_plan_canary_save_request_buffer: [160]u8 = undefined;
+    const app_plan_canary_save_request = std.fmt.bufPrint(
+        &app_plan_canary_save_request_buffer,
+        "REQ {d} APPPLANSAVE {s} {s} none none virtual 640 400 0",
+        .{ app_plan_canary_save_request_id, package_name, app_plan_canary_name },
+    ) catch return error.ToolServiceFailed;
+    const app_plan_canary_save_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_plan_canary_save_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, app_plan_canary_save_response, "RESP 203 24\nAPPPLANSAVE demo canary\n")) return error.ToolServiceResponseMismatch;
+
     var app_suite_aux_plan_request_buffer: [96]u8 = undefined;
     const app_suite_aux_plan_request = std.fmt.bufPrint(
         &app_suite_aux_plan_request_buffer,
@@ -6770,7 +6797,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const app_suite_mutate_fallback_request = std.fmt.bufPrint(
         &app_suite_mutate_fallback_request_buffer,
         "REQ {d} APPSUITESAVE {s} {s}:{s} {s}:{s}",
-        .{ app_suite_mutate_fallback_request_id, app_suite_name, package_name, app_plan_name, autorun_package_name, app_suite_aux_plan_name },
+        .{ app_suite_mutate_fallback_request_id, app_suite_name, package_name, app_plan_canary_name, autorun_package_name, app_suite_aux_plan_name },
     ) catch return error.ToolServiceFailed;
     const app_suite_mutate_fallback_response = try exchangeTcpProbeServiceRequest(
         eth,
@@ -6847,6 +6874,120 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         512,
     );
     if (!std.mem.eql(u8, app_suite_release_list_final_response, "RESP 166 9\nfallback\n")) return error.ToolServiceResponseMismatch;
+
+    var app_suite_channel_set_request_buffer: [128]u8 = undefined;
+    const app_suite_channel_set_request = std.fmt.bufPrint(
+        &app_suite_channel_set_request_buffer,
+        "REQ {d} APPSUITECHANNELSET {s} stable fallback",
+        .{ app_suite_channel_set_request_id, app_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_channel_set_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_channel_set_request,
+        512,
+        256,
+        512,
+    );
+    if (std.mem.indexOf(u8, app_suite_channel_set_response, "APPSUITECHANNELSET duo stable fallback\n") == null) return error.ToolServiceResponseMismatch;
+
+    var app_suite_channel_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const app_suite_channel_path = std.fmt.bufPrint(
+        &app_suite_channel_path_buffer,
+        "/runtime/app-suite-release-channels/{s}/stable.txt",
+        .{app_suite_name},
+    ) catch return error.ToolServiceFailed;
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_suite_channel_readback = filesystem.readFileAlloc(service_fba.allocator(), app_suite_channel_path, 64) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, std.mem.trim(u8, app_suite_channel_readback, "\r\n\t "), "fallback")) return error.ToolServiceResponseMismatch;
+
+    var app_suite_channel_list_request_buffer: [96]u8 = undefined;
+    const app_suite_channel_list_request = std.fmt.bufPrint(
+        &app_suite_channel_list_request_buffer,
+        "REQ {d} APPSUITECHANNELLIST {s}",
+        .{ app_suite_channel_list_request_id, app_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_channel_list_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_channel_list_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, app_suite_channel_list_response, "RESP 168 7\nstable\n")) return error.ToolServiceResponseMismatch;
+
+    var app_suite_channel_info_request_buffer: [128]u8 = undefined;
+    const app_suite_channel_info_request = std.fmt.bufPrint(
+        &app_suite_channel_info_request_buffer,
+        "REQ {d} APPSUITECHANNELINFO {s} stable",
+        .{ app_suite_channel_info_request_id, app_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_channel_info_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_channel_info_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, app_suite_channel_info_response, "RESP 169 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, app_suite_channel_info_response, "suite=duo") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, app_suite_channel_info_response, "channel=stable") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, app_suite_channel_info_response, "release=fallback") == null) return error.ToolServiceResponseMismatch;
+
+    var app_suite_channel_activate_request_buffer: [128]u8 = undefined;
+    const app_suite_channel_activate_request = std.fmt.bufPrint(
+        &app_suite_channel_activate_request_buffer,
+        "REQ {d} APPSUITECHANNELACTIVATE {s} stable",
+        .{ app_suite_channel_activate_request_id, app_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_channel_activate_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_channel_activate_request,
+        512,
+        256,
+        512,
+    );
+    if (std.mem.indexOf(u8, app_suite_channel_activate_response, "APPSUITECHANNELACTIVATE duo stable\n") == null) return error.ToolServiceResponseMismatch;
+
+    var app_suite_channel_restored_info_request_buffer: [96]u8 = undefined;
+    const app_suite_channel_restored_info_request = std.fmt.bufPrint(
+        &app_suite_channel_restored_info_request_buffer,
+        "REQ {d} APPSUITEINFO {s}",
+        .{ app_suite_channel_restored_info_request_id, app_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_channel_restored_info_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_channel_restored_info_request,
+        512,
+        256,
+        512,
+    );
+    if (std.mem.indexOf(u8, app_suite_channel_restored_info_response, "entry=demo:canary") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, app_suite_channel_restored_info_response, "entry=aux:sidecar") == null) return error.ToolServiceResponseMismatch;
 
     var workspace_save_request_buffer: [160]u8 = undefined;
     const workspace_save_request = std.fmt.bufPrint(
@@ -7462,7 +7603,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const workspace_demo_active_readback = filesystem.readFileAlloc(service_fba.allocator(), "/runtime/apps/demo/active_plan.txt", 32) catch return error.ToolServiceFailed;
-    if (!std.mem.eql(u8, workspace_demo_active_readback, app_plan_name)) return error.ToolServiceResponseMismatch;
+    if (!std.mem.eql(u8, workspace_demo_active_readback, app_plan_canary_name)) return error.ToolServiceResponseMismatch;
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const workspace_aux_active_readback = filesystem.readFileAlloc(service_fba.allocator(), "/runtime/apps/aux/active_plan.txt", 32) catch return error.ToolServiceFailed;
@@ -7913,8 +8054,8 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     ) catch return error.ToolServiceFailed;
     const app_plan_delete_batch_response_expected = std.fmt.bufPrint(
         &scratch.service_batch_response_expected_buffer,
-        "RESP {d} 26\nAPPPLANDELETE {s} {s}\nRESP {d} 0\n",
-        .{ app_plan_delete_request_id, package_name, app_plan_name, app_plan_list_after_delete_request_id },
+        "RESP {d} 26\nAPPPLANDELETE {s} {s}\nRESP {d} 7\n{s}\n",
+        .{ app_plan_delete_request_id, package_name, app_plan_name, app_plan_list_after_delete_request_id, app_plan_canary_name },
     ) catch return error.ToolServiceFailed;
     if (!std.mem.eql(u8, app_plan_delete_batch_response, app_plan_delete_batch_response_expected)) return error.ToolServiceResponseMismatch;
 
@@ -7946,12 +8087,9 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         error.FileNotFound => {},
         else => return error.ToolServiceFailed,
     }
-    if (filesystem.statSummary("/runtime/apps/demo/active_plan.txt")) |_| {
-        return error.ToolServiceResponseMismatch;
-    } else |err| switch (err) {
-        error.FileNotFound => {},
-        else => return error.ToolServiceFailed,
-    }
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_plan_active_after_delete = filesystem.readFileAlloc(service_fba.allocator(), "/runtime/apps/demo/active_plan.txt", 32) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, app_plan_active_after_delete, app_plan_canary_name)) return error.ToolServiceResponseMismatch;
     qemuDebugWrite("T90\n");
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);

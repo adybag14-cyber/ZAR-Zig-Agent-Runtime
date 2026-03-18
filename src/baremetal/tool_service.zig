@@ -33,6 +33,8 @@ pub const PackageReleasePruneRequest = codec.PackageReleasePruneRequest;
 pub const PackageChannelSetRequest = codec.PackageChannelSetRequest;
 pub const AppPlanSaveRequest = codec.AppPlanSaveRequest;
 pub const AppSuiteSaveRequest = codec.AppSuiteSaveRequest;
+pub const AppSuiteChannelRequest = codec.AppSuiteChannelRequest;
+pub const AppSuiteChannelSetRequest = codec.AppSuiteChannelSetRequest;
 pub const WorkspaceSaveRequest = codec.WorkspaceSaveRequest;
 pub const WorkspaceReleaseRequest = codec.WorkspaceReleaseRequest;
 pub const WorkspaceReleasePruneRequest = codec.WorkspaceReleasePruneRequest;
@@ -230,6 +232,10 @@ fn handleFramedPayload(
         .app_suite_release_activate => |request| try handleAppSuiteReleaseActivateRequest(allocator, request.suite_name, request.release_name, payload_limit),
         .app_suite_release_delete => |request| try handleAppSuiteReleaseDeleteRequest(allocator, request.suite_name, request.release_name, payload_limit),
         .app_suite_release_prune => |request| try handleAppSuiteReleasePruneRequest(allocator, request.suite_name, request.keep, payload_limit),
+        .app_suite_channel_list => |suite_name| try handleAppSuiteChannelListRequest(allocator, suite_name, payload_limit),
+        .app_suite_channel_info => |request| try handleAppSuiteChannelInfoRequest(allocator, request.suite_name, request.value, payload_limit),
+        .app_suite_channel_set => |request| try handleAppSuiteChannelSetRequest(allocator, request.suite_name, request.channel, request.release, payload_limit),
+        .app_suite_channel_activate => |request| try handleAppSuiteChannelActivateRequest(allocator, request.suite_name, request.value, payload_limit),
         .workspace_list => try handleWorkspaceListRequest(allocator, payload_limit),
         .workspace_info => |workspace_name| try handleWorkspaceInfoRequest(allocator, workspace_name, payload_limit),
         .workspace_save => |workspace_request| try handleWorkspaceSaveRequest(allocator, workspace_request, payload_limit),
@@ -967,6 +973,58 @@ fn handleAppSuiteReleasePruneRequest(
         "APPSUITERELEASEPRUNE {s} keep={d} deleted={d} kept={d}\n",
         .{ suite_name, keep, prune.deleted_count, prune.kept_count },
     );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleAppSuiteChannelListRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return app_runtime.suiteChannelListAlloc(allocator, suite_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "APPSUITECHANNELLIST", err, payload_limit);
+    };
+}
+
+fn handleAppSuiteChannelInfoRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    channel_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return app_runtime.suiteChannelInfoAlloc(allocator, suite_name, channel_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "APPSUITECHANNELINFO", err, payload_limit);
+    };
+}
+
+fn handleAppSuiteChannelSetRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    channel_name: []const u8,
+    release_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    app_runtime.setSuiteReleaseChannel(suite_name, channel_name, release_name, 0) catch |err| {
+        return formatOperationError(allocator, "APPSUITECHANNELSET", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "APPSUITECHANNELSET {s} {s} {s}\n", .{ suite_name, channel_name, release_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleAppSuiteChannelActivateRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    channel_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    app_runtime.activateSuiteReleaseChannel(suite_name, channel_name, 0) catch |err| {
+        return formatOperationError(allocator, "APPSUITECHANNELACTIVATE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "APPSUITECHANNELACTIVATE {s} {s}\n", .{ suite_name, channel_name });
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
@@ -2019,6 +2077,40 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
+    const app_suite_channel_list = try parseFramedRequest("REQ 182 APPSUITECHANNELLIST duo");
+    switch (app_suite_channel_list.operation) {
+        .app_suite_channel_list => |suite_name| try std.testing.expectEqualStrings("duo", suite_name),
+        else => return error.InvalidFrame,
+    }
+
+    const app_suite_channel_info = try parseFramedRequest("REQ 183 APPSUITECHANNELINFO duo stable");
+    switch (app_suite_channel_info.operation) {
+        .app_suite_channel_info => |payload| {
+            try std.testing.expectEqualStrings("duo", payload.suite_name);
+            try std.testing.expectEqualStrings("stable", payload.value);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const app_suite_channel_set = try parseFramedRequest("REQ 184 APPSUITECHANNELSET duo stable golden");
+    switch (app_suite_channel_set.operation) {
+        .app_suite_channel_set => |payload| {
+            try std.testing.expectEqualStrings("duo", payload.suite_name);
+            try std.testing.expectEqualStrings("stable", payload.channel);
+            try std.testing.expectEqualStrings("golden", payload.release);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const app_suite_channel_activate = try parseFramedRequest("REQ 185 APPSUITECHANNELACTIVATE duo stable");
+    switch (app_suite_channel_activate.operation) {
+        .app_suite_channel_activate => |payload| {
+            try std.testing.expectEqualStrings("duo", payload.suite_name);
+            try std.testing.expectEqualStrings("stable", payload.value);
+        },
+        else => return error.InvalidFrame,
+    }
+
     const workspace_list = try parseFramedRequest("REQ 152 WORKSPACELIST");
     switch (workspace_list.operation) {
         .workspace_list => {},
@@ -2919,6 +3011,30 @@ test "baremetal tool service manages app suite releases" {
     const release_list_after_prune = try handleFramedRequest(std.testing.allocator, "REQ 197 APPSUITERELEASELIST duo", 512, 256, 512);
     defer std.testing.allocator.free(release_list_after_prune);
     try std.testing.expectEqualStrings("RESP 197 9\nfallback\n", release_list_after_prune);
+
+    const set_release_channel = try handleFramedRequest(std.testing.allocator, "REQ 198 APPSUITECHANNELSET duo stable fallback", 512, 256, 512);
+    defer std.testing.allocator.free(set_release_channel);
+    try std.testing.expectEqualStrings("RESP 198 39\nAPPSUITECHANNELSET duo stable fallback\n", set_release_channel);
+
+    const list_release_channels = try handleFramedRequest(std.testing.allocator, "REQ 199 APPSUITECHANNELLIST duo", 512, 256, 512);
+    defer std.testing.allocator.free(list_release_channels);
+    try std.testing.expectEqualStrings("RESP 199 7\nstable\n", list_release_channels);
+
+    const release_channel_info = try handleFramedRequest(std.testing.allocator, "REQ 200 APPSUITECHANNELINFO duo stable", 512, 256, 512);
+    defer std.testing.allocator.free(release_channel_info);
+    try std.testing.expect(std.mem.startsWith(u8, release_channel_info, "RESP 200 "));
+    try std.testing.expect(std.mem.indexOf(u8, release_channel_info, "suite=duo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_channel_info, "channel=stable") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_channel_info, "release=fallback") != null);
+
+    const activate_release_channel = try handleFramedRequest(std.testing.allocator, "REQ 201 APPSUITECHANNELACTIVATE duo stable", 512, 256, 512);
+    defer std.testing.allocator.free(activate_release_channel);
+    try std.testing.expectEqualStrings("RESP 201 35\nAPPSUITECHANNELACTIVATE duo stable\n", activate_release_channel);
+
+    const suite_info_after_channel = try handleFramedRequest(std.testing.allocator, "REQ 202 APPSUITEINFO duo", 512, 256, 512);
+    defer std.testing.allocator.free(suite_info_after_channel);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info_after_channel, "entry=demo:canary") != null);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info_after_channel, "entry=aux:sidecar") != null);
 }
 
 test "baremetal tool service manages persisted workspaces" {
