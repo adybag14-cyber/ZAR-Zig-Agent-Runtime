@@ -8,6 +8,7 @@ const trust_store = @import("trust_store.zig");
 
 pub const max_name_len: usize = 32;
 pub const max_release_len: usize = 32;
+pub const max_channel_len: usize = 32;
 pub const default_display_width: u16 = 640;
 pub const default_display_height: u16 = 400;
 pub const default_connector_type: u8 = abi.display_connector_none;
@@ -17,12 +18,14 @@ const release_copy_max_bytes: usize = storage_backend.block_size * 8;
 pub const Error = filesystem.Error || trust_store.Error || std.mem.Allocator.Error || error{
     InvalidPackageName,
     InvalidReleaseName,
+    InvalidChannelName,
     InvalidPackagePath,
     InvalidPackageMetadata,
     InvalidDisplayConnector,
     PackageNotFound,
     PackageReleaseNotFound,
     PackageReleaseAlreadyExists,
+    PackageChannelNotFound,
     ResponseTooLarge,
 };
 
@@ -518,6 +521,59 @@ pub fn releaseExistsAlloc(name: []const u8, release: []const u8) Error!bool {
     return releaseExists(name, release);
 }
 
+pub fn channelListAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
+    try validatePackageName(name);
+    if (!try packageExists(name)) return error.PackageNotFound;
+    var records: [filesystem.max_entries]ReleaseRecord = undefined;
+    const record_count = try collectChannelRecords(name, &records);
+    sortReleaseRecordsOldestFirst(records[0..record_count]);
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    for (records[0..record_count]) |record| {
+        const channel_name = record.name();
+        if (channel_name.len == 0) continue;
+        if (out.items.len + channel_name.len + 1 > max_bytes) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, channel_name);
+        try out.append(allocator, '\n');
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+pub fn setPackageReleaseChannel(name: []const u8, channel: []const u8, release: []const u8, tick: u64) Error!void {
+    try validatePackageName(name);
+    try validateChannelName(channel);
+    try validateReleaseName(release);
+    if (!try releaseExists(name, release)) return error.PackageReleaseNotFound;
+
+    var channels_root_buf: [filesystem.max_path_len]u8 = undefined;
+    var channel_path_buf: [filesystem.max_path_len]u8 = undefined;
+    try filesystem.createDirPath(channelsRootPath(name, &channels_root_buf));
+    try filesystem.writeFile(try channelPath(name, channel, &channel_path_buf), release, tick);
+}
+
+pub fn activatePackageReleaseChannel(name: []const u8, channel: []const u8, tick: u64) Error!void {
+    var scratch: [128]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&scratch);
+    const release = try readChannelTargetAlloc(fba.allocator(), name, channel, max_release_len);
+    try activatePackageRelease(name, release, tick);
+}
+
+pub fn channelInfoAlloc(allocator: std.mem.Allocator, name: []const u8, channel: []const u8, max_bytes: usize) Error![]u8 {
+    try validatePackageName(name);
+    try validateChannelName(channel);
+    if (!try packageExists(name)) return error.PackageNotFound;
+    const release = try readChannelTargetAlloc(allocator, name, channel, max_release_len);
+    defer allocator.free(release);
+
+    const payload = try std.fmt.allocPrint(allocator, "name={s}\nchannel={s}\nrelease={s}\n", .{ name, channel, release });
+    errdefer allocator.free(payload);
+    if (payload.len > max_bytes) return error.ResponseTooLarge;
+    return payload;
+}
+
 pub fn snapshotPackageRelease(name: []const u8, release: []const u8, tick: u64) Error!void {
     try validatePackageName(name);
     try validateReleaseName(release);
@@ -646,6 +702,14 @@ pub fn validateReleaseName(name: []const u8) Error!void {
     }
 }
 
+pub fn validateChannelName(name: []const u8) Error!void {
+    if (name.len == 0 or name.len > max_channel_len) return error.InvalidChannelName;
+    for (name) |char| {
+        if (std.ascii.isAlphanumeric(char) or char == '-' or char == '_' or char == '.') continue;
+        return error.InvalidChannelName;
+    }
+}
+
 fn validatePackageRelativePath(relative_path: []const u8) Error!void {
     if (relative_path.len == 0 or relative_path.len >= filesystem.max_path_len) return error.InvalidPackagePath;
     if (relative_path[0] == '/' or relative_path[relative_path.len - 1] == '/') return error.InvalidPackagePath;
@@ -668,6 +732,16 @@ fn packageRootPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) []con
 
 fn releasesRootPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) []const u8 {
     return std.fmt.bufPrint(buffer, "/packages/{s}/releases", .{name}) catch unreachable;
+}
+
+fn channelsRootPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) []const u8 {
+    return std.fmt.bufPrint(buffer, "/packages/{s}/channels", .{name}) catch unreachable;
+}
+
+fn channelPath(name: []const u8, channel: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validatePackageName(name);
+    try validateChannelName(channel);
+    return std.fmt.bufPrint(buffer, "/packages/{s}/channels/{s}.txt", .{ name, channel }) catch error.InvalidPath;
 }
 
 fn packageBinPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) []const u8 {
@@ -953,6 +1027,34 @@ fn relativeTreePath(root: []const u8, candidate: []const u8) ?[]const u8 {
     return candidate[root.len + 1 ..];
 }
 
+fn fileListingName(line: []const u8) ?[]const u8 {
+    if (!std.mem.startsWith(u8, line, "file ")) return null;
+    const remainder = line["file ".len..];
+    const last_space = std.mem.lastIndexOfScalar(u8, remainder, ' ') orelse return null;
+    if (last_space == 0) return null;
+    return remainder[0..last_space];
+}
+
+fn readChannelTargetAlloc(allocator: std.mem.Allocator, name: []const u8, channel: []const u8, max_bytes: usize) Error![]u8 {
+    try validatePackageName(name);
+    try validateChannelName(channel);
+    if (!try packageExists(name)) return error.PackageNotFound;
+
+    var channel_path_buf: [filesystem.max_path_len]u8 = undefined;
+    const raw = filesystem.readFileAlloc(allocator, try channelPath(name, channel, &channel_path_buf), max_bytes) catch |err| switch (err) {
+        error.FileNotFound => return error.PackageChannelNotFound,
+        else => return err,
+    };
+    errdefer allocator.free(raw);
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    try validateReleaseName(trimmed);
+    if (!try releaseExists(name, trimmed)) return error.PackageReleaseNotFound;
+    if (trimmed.len == raw.len) return raw;
+    const normalized = try allocator.dupe(u8, trimmed);
+    allocator.free(raw);
+    return normalized;
+}
+
 fn collectReleaseRecords(name: []const u8, records: *[filesystem.max_entries]ReleaseRecord) Error!usize {
     var releases_buf: [filesystem.max_path_len]u8 = undefined;
     const releases_root = releasesRootPath(name, &releases_buf);
@@ -986,6 +1088,32 @@ fn collectReleaseRecords(name: []const u8, records: *[filesystem.max_entries]Rel
             .saved_seq = saved_seq,
         };
         @memcpy(records[count].name_storage[0..release_name.len], release_name);
+        count += 1;
+    }
+
+    return count;
+}
+
+fn collectChannelRecords(name: []const u8, records: *[filesystem.max_entries]ReleaseRecord) Error!usize {
+    var channels_root_buf: [filesystem.max_path_len]u8 = undefined;
+    const channels_root = channelsRootPath(name, &channels_root_buf);
+
+    var count: usize = 0;
+    var idx: u32 = 0;
+    while (idx < filesystem.max_entries) : (idx += 1) {
+        const record = filesystem.entry(idx);
+        if (record.kind != abi.filesystem_kind_file) continue;
+        const path = record.path[0..record.path_len];
+        const channel_file = directChildName(channels_root, path) orelse continue;
+        if (!std.mem.endsWith(u8, channel_file, ".txt")) continue;
+        const channel_name = channel_file[0 .. channel_file.len - ".txt".len];
+        if (channel_name.len == 0) continue;
+        if (findReleaseRecord(records[0..count], channel_name) != null) continue;
+
+        records[count].name_len = channel_name.len;
+        @memset(&records[count].name_storage, 0);
+        @memcpy(records[count].name_storage[0..channel_name.len], channel_name);
+        records[count].saved_seq = 0;
         count += 1;
     }
 
@@ -1487,12 +1615,13 @@ test "package store persists package releases on ata-backed storage" {
     try installScriptPackage("persisted", "echo release-one", 1);
     try installPackageAsset("persisted", "config/app.json", "{\"mode\":\"release-one\"}", 2);
     try snapshotPackageRelease("persisted", "golden", 3);
+    try setPackageReleaseChannel("persisted", "stable", "golden", 4);
 
-    try installScriptPackage("persisted", "echo release-two", 4);
-    try installPackageAsset("persisted", "config/app.json", "{\"mode\":\"release-two\"}", 5);
+    try installScriptPackage("persisted", "echo release-two", 5);
+    try installPackageAsset("persisted", "config/app.json", "{\"mode\":\"release-two\"}", 6);
 
     filesystem.resetForTest();
-    try activatePackageRelease("persisted", "golden", 6);
+    try activatePackageReleaseChannel("persisted", "stable", 7);
 
     var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
     const canonical_entrypoint = try entrypointPath("persisted", &entrypoint_buf);
@@ -1507,6 +1636,10 @@ test "package store persists package releases on ata-backed storage" {
     const release_listing = try releaseListAlloc(std.testing.allocator, "persisted", 64);
     defer std.testing.allocator.free(release_listing);
     try std.testing.expectEqualStrings("golden\n", release_listing);
+
+    const channel_info = try channelInfoAlloc(std.testing.allocator, "persisted", "stable", 128);
+    defer std.testing.allocator.free(channel_info);
+    try std.testing.expect(std.mem.indexOf(u8, channel_info, "release=golden") != null);
 }
 
 test "package store reports, deletes, and prunes persisted package releases" {
@@ -1548,5 +1681,24 @@ test "package store reports, deletes, and prunes persisted package releases" {
     defer std.testing.allocator.free(listing_after_prune);
     try std.testing.expectEqualStrings("r3\n", listing_after_prune);
 
-    try std.testing.expectError(error.PackageReleaseNotFound, activatePackageRelease("demo", "r1", 12));
+    try setPackageReleaseChannel("demo", "stable", "r3", 12);
+
+    const channel_listing = try channelListAlloc(std.testing.allocator, "demo", 64);
+    defer std.testing.allocator.free(channel_listing);
+    try std.testing.expectEqualStrings("stable\n", channel_listing);
+
+    const channel_info = try channelInfoAlloc(std.testing.allocator, "demo", "stable", 128);
+    defer std.testing.allocator.free(channel_info);
+    try std.testing.expect(std.mem.indexOf(u8, channel_info, "release=r3") != null);
+
+    try installScriptPackage("demo", "echo release-channel-mutated", 13);
+    try activatePackageReleaseChannel("demo", "stable", 14);
+
+    var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    const canonical_entrypoint = try entrypointPath("demo", &entrypoint_buf);
+    const restored_script = try filesystem.readFileAlloc(std.testing.allocator, canonical_entrypoint, 64);
+    defer std.testing.allocator.free(restored_script);
+    try std.testing.expectEqualStrings("echo release-three", restored_script);
+
+    try std.testing.expectError(error.PackageReleaseNotFound, activatePackageRelease("demo", "r1", 15));
 }

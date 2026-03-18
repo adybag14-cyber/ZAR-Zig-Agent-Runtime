@@ -606,6 +606,108 @@ fn execute(
         return;
     }
 
+    if (std.ascii.eqlIgnoreCase(parsed.name, "package-release-channel-list")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-channel-list <name>");
+            return;
+        };
+        if (package_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-release-channel-list <name>");
+            return;
+        }
+        const listing = package_store.channelListAlloc(allocator, package_name.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("package-release-channel-list failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(listing);
+        try stdout_buffer.appendSlice(listing);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "package-release-channel-info")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-channel-info <name> <channel>");
+            return;
+        };
+        const channel_name = parseFirstArg(package_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-channel-info <name> <channel>");
+            return;
+        };
+        if (channel_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-release-channel-info <name> <channel>");
+            return;
+        }
+        const info = package_store.channelInfoAlloc(allocator, package_name.arg, channel_name.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("package-release-channel-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(info);
+        try stdout_buffer.appendSlice(info);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "package-release-channel-set")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-channel-set <name> <channel> <release>");
+            return;
+        };
+        const channel_name = parseFirstArg(package_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-channel-set <name> <channel> <release>");
+            return;
+        };
+        const release_name = parseFirstArg(channel_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-channel-set <name> <channel> <release>");
+            return;
+        };
+        if (release_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-release-channel-set <name> <channel> <release>");
+            return;
+        }
+        package_store.setPackageReleaseChannel(package_name.arg, channel_name.arg, release_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("package-release-channel-set failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("package release channel set {s} {s} {s}\n", .{ package_name.arg, channel_name.arg, release_name.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "package-release-channel-activate")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-channel-activate <name> <channel>");
+            return;
+        };
+        const channel_name = parseFirstArg(package_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-channel-activate <name> <channel>");
+            return;
+        };
+        if (channel_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-release-channel-activate <name> <channel>");
+            return;
+        }
+        package_store.activatePackageReleaseChannel(package_name.arg, channel_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("package-release-channel-activate failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("package release channel activated {s} {s}\n", .{ package_name.arg, channel_name.arg });
+        return;
+    }
+
     if (std.ascii.eqlIgnoreCase(parsed.name, "app-list")) {
         if (parsed.rest.len != 0) {
             exit_code.* = 2;
