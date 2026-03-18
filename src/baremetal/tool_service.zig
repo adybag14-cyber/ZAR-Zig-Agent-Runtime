@@ -212,7 +212,7 @@ pub fn handleCommandRequest(
     const trimmed = std.mem.trim(u8, request, " \t\r\n");
     if (trimmed.len == 0) return error.EmptyRequest;
 
-    var result = try tool_exec.runCapture(allocator, trimmed, stdout_limit, stderr_limit);
+    var result = try tool_exec.runCaptureSilent(allocator, trimmed, stdout_limit, stderr_limit);
     defer result.deinit(allocator);
 
     if (result.exit_code == 0 and result.stderr.len == 0) {

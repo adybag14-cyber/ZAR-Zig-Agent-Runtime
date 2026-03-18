@@ -189,6 +189,7 @@ $bootSource = Join-Path $repo 'scripts\baremetal\pvh_boot.S'
 $linkerScript = Join-Path $repo 'scripts\baremetal\pvh_lld.ld'
 $stdoutPath = Join-Path $releaseDir 'qemu-rtl8139-tcp-probe.stdout.log'
 $stderrPath = Join-Path $releaseDir 'qemu-rtl8139-tcp-probe.stderr.log'
+$debugLogPath = Join-Path $releaseDir 'qemu-rtl8139-tcp-probe.debug.log'
 
 if (-not $SkipBuild) {
     New-Item -ItemType Directory -Force -Path $zigGlobalCacheDir | Out-Null
@@ -245,6 +246,7 @@ if (-not (Test-Path $artifact)) {
 New-RawDiskImage -Path $diskImage -SizeMiB $DiskSizeMiB
 if (Test-Path $stdoutPath) { Remove-Item -Force $stdoutPath }
 if (Test-Path $stderrPath) { Remove-Item -Force $stderrPath }
+if (Test-Path $debugLogPath) { Remove-Item -Force $debugLogPath }
 
 $qemuArgs = @(
     '-kernel', $artifact,
@@ -256,6 +258,8 @@ $qemuArgs = @(
     '-monitor', 'none',
     '-netdev', 'user,id=n0,restrict=on',
     '-device', 'rtl8139,netdev=n0',
+    '-debugcon', "file:$debugLogPath",
+    '-global', 'isa-debugcon.iobase=0xe9',
     '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04'
 )
 
@@ -280,7 +284,17 @@ $stderrTask = $proc.StandardError.ReadToEndAsync()
 
 if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
     try { $proc.Kill($true) } catch {}
-    throw "QEMU RTL8139 TCP probe timed out after $TimeoutSeconds seconds."
+    $proc.WaitForExit()
+    $stdout = $stdoutTask.GetAwaiter().GetResult()
+    $stderr = $stderrTask.GetAwaiter().GetResult()
+    Set-Content -Path $stdoutPath -Value $stdout -Encoding Ascii
+    Set-Content -Path $stderrPath -Value $stderr -Encoding Ascii
+    $debugTail = if (Test-Path $debugLogPath) { (Get-Content $debugLogPath -Raw) } else { '' }
+    if ([string]::IsNullOrEmpty($debugTail)) {
+        throw "QEMU RTL8139 TCP probe timed out after $TimeoutSeconds seconds."
+    }
+    $debugTail = $debugTail.Trim()
+    throw "QEMU RTL8139 TCP probe timed out after $TimeoutSeconds seconds. Last debug stages: $debugTail"
 }
 
 $proc.WaitForExit()
@@ -300,6 +314,7 @@ Write-Output 'BAREMETAL_QEMU_RTL8139_TCP_PROBE=pass'
 Write-Output ("BAREMETAL_QEMU_RTL8139_TCP_PROBE_CODE=0x{0:X2}" -f $expectedProbeCode)
 Write-Output "BAREMETAL_QEMU_RTL8139_TCP_STDOUT=$stdoutPath"
 Write-Output "BAREMETAL_QEMU_RTL8139_TCP_STDERR=$stderrPath"
+Write-Output "BAREMETAL_QEMU_RTL8139_TCP_DEBUG=$debugLogPath"
 
 
 

@@ -369,9 +369,6 @@ pub fn loadLaunchProfile(name: []const u8, entrypoint_buffer: *[filesystem.max_p
             if (value.len > trust_store.max_name_len) return error.InvalidPackageMetadata;
             @memset(&profile.trust_bundle_storage, 0);
             if (value.len > 0) {
-                var scratch: [512]u8 = undefined;
-                var trust_fba = std.heap.FixedBufferAllocator.init(&scratch);
-                _ = try trust_store.infoAlloc(trust_fba.allocator(), value, scratch.len);
                 @memcpy(profile.trust_bundle_storage[0..value.len], value);
             }
             profile.trust_bundle_len = @intCast(value.len);
@@ -443,22 +440,15 @@ pub fn listPackagesAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![
 pub fn releaseListAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
     try validatePackageName(name);
     if (!try packageExists(name)) return error.PackageNotFound;
-
-    var releases_buf: [filesystem.max_path_len]u8 = undefined;
-    const releases_root = releasesRootPath(name, &releases_buf);
-    const raw_listing = filesystem.listDirectoryAlloc(allocator, releases_root, release_list_scan_max_bytes) catch |err| switch (err) {
-        error.FileNotFound => return allocator.alloc(u8, 0),
-        else => return err,
-    };
-    defer allocator.free(raw_listing);
+    var records: [filesystem.max_entries]ReleaseRecord = undefined;
+    const record_count = try collectReleaseRecords(name, &records);
+    sortReleaseRecordsOldestFirst(records[0..record_count]);
 
     var out = std.ArrayList(u8).empty;
     defer out.deinit(allocator);
 
-    var lines = std.mem.splitScalar(u8, raw_listing, '\n');
-    while (lines.next()) |line| {
-        if (!std.mem.startsWith(u8, line, "dir ")) continue;
-        const release_name = line["dir ".len..];
+    for (records[0..record_count]) |record| {
+        const release_name = record.name();
         if (release_name.len == 0) continue;
         if (out.items.len + release_name.len + 1 > max_bytes) return error.ResponseTooLarge;
         try out.appendSlice(allocator, release_name);
@@ -919,62 +909,63 @@ fn copyFilePath(source_path: []const u8, destination_path: []const u8, tick: u64
 
 fn copyTreeUnderPrefix(source_prefix: []const u8, destination_prefix: []const u8, tick: u64) Error!void {
     try filesystem.createDirPath(destination_prefix);
+    var saw_matching_entry = false;
 
-    var list_scratch: [release_list_scan_max_bytes]u8 = undefined;
-    var list_fba = std.heap.FixedBufferAllocator.init(&list_scratch);
-    const listing = filesystem.listDirectoryAlloc(list_fba.allocator(), source_prefix, list_scratch.len) catch |err| switch (err) {
-        error.FileNotFound => return,
-        else => return err,
-    };
+    var idx: u32 = 0;
+    while (idx < filesystem.max_entries) : (idx += 1) {
+        const record = filesystem.entry(idx);
+        if (record.kind != abi.filesystem_kind_directory) continue;
+        const path = record.path[0..record.path_len];
+        const relative = relativeTreePath(source_prefix, path) orelse continue;
+        saw_matching_entry = true;
+        if (relative.len == 0) continue;
 
-    var lines = std.mem.splitScalar(u8, listing, '\n');
-    while (lines.next()) |line| {
-        if (std.mem.startsWith(u8, line, "dir ")) {
-            const child_name = line["dir ".len..];
-            if (child_name.len == 0) continue;
-            var child_source_buf: [filesystem.max_path_len]u8 = undefined;
-            var child_destination_buf: [filesystem.max_path_len]u8 = undefined;
-            const child_source = std.fmt.bufPrint(&child_source_buf, "{s}/{s}", .{ source_prefix, child_name }) catch return error.InvalidPath;
-            const child_destination = std.fmt.bufPrint(&child_destination_buf, "{s}/{s}", .{ destination_prefix, child_name }) catch return error.InvalidPath;
-            try copyTreeUnderPrefix(child_source, child_destination, tick);
-            continue;
-        }
-        if (std.mem.startsWith(u8, line, "file ")) {
-            const child_name = fileListingName(line) orelse return error.InvalidPackageMetadata;
-            var child_source_buf: [filesystem.max_path_len]u8 = undefined;
-            var child_destination_buf: [filesystem.max_path_len]u8 = undefined;
-            const child_source = std.fmt.bufPrint(&child_source_buf, "{s}/{s}", .{ source_prefix, child_name }) catch return error.InvalidPath;
-            const child_destination = std.fmt.bufPrint(&child_destination_buf, "{s}/{s}", .{ destination_prefix, child_name }) catch return error.InvalidPath;
-            try copyFilePath(child_source, child_destination, tick);
-        }
+        var destination_buf: [filesystem.max_path_len]u8 = undefined;
+        const destination_path = std.fmt.bufPrint(&destination_buf, "{s}/{s}", .{ destination_prefix, relative }) catch return error.InvalidPath;
+        try filesystem.createDirPath(destination_path);
+    }
+
+    idx = 0;
+    while (idx < filesystem.max_entries) : (idx += 1) {
+        const record = filesystem.entry(idx);
+        if (record.kind != abi.filesystem_kind_file) continue;
+        const path = record.path[0..record.path_len];
+        const relative = relativeTreePath(source_prefix, path) orelse continue;
+        saw_matching_entry = true;
+
+        var destination_buf: [filesystem.max_path_len]u8 = undefined;
+        const destination_path = std.fmt.bufPrint(&destination_buf, "{s}/{s}", .{ destination_prefix, relative }) catch return error.InvalidPath;
+        try copyFilePath(path, destination_path, tick);
+    }
+
+    if (!saw_matching_entry) {
+        _ = filesystem.statSummary(source_prefix) catch |err| switch (err) {
+            error.FileNotFound => return,
+            else => return err,
+        };
     }
 }
 
-fn fileListingName(line: []const u8) ?[]const u8 {
-    if (!std.mem.startsWith(u8, line, "file ")) return null;
-    const remainder = line["file ".len..];
-    const last_space = std.mem.lastIndexOfScalar(u8, remainder, ' ') orelse return null;
-    if (last_space == 0) return null;
-    return remainder[0..last_space];
+fn relativeTreePath(root: []const u8, candidate: []const u8) ?[]const u8 {
+    if (!std.mem.startsWith(u8, candidate, root)) return null;
+    if (candidate.len == root.len) return "";
+    if (candidate.len <= root.len or candidate[root.len] != '/') return null;
+    return candidate[root.len + 1 ..];
 }
 
 fn collectReleaseRecords(name: []const u8, records: *[filesystem.max_entries]ReleaseRecord) Error!usize {
     var releases_buf: [filesystem.max_path_len]u8 = undefined;
     const releases_root = releasesRootPath(name, &releases_buf);
 
-    var listing_scratch: [release_list_scan_max_bytes]u8 = undefined;
-    var listing_fba = std.heap.FixedBufferAllocator.init(&listing_scratch);
-    const raw_listing = filesystem.listDirectoryAlloc(listing_fba.allocator(), releases_root, listing_scratch.len) catch |err| switch (err) {
-        error.FileNotFound => return 0,
-        else => return err,
-    };
-
     var count: usize = 0;
-    var lines = std.mem.splitScalar(u8, raw_listing, '\n');
-    while (lines.next()) |line| {
-        if (!std.mem.startsWith(u8, line, "dir ")) continue;
-        const release_name = line["dir ".len..];
+    var idx: u32 = 0;
+    while (idx < filesystem.max_entries) : (idx += 1) {
+        const record = filesystem.entry(idx);
+        if (record.kind != abi.filesystem_kind_directory) continue;
+        const path = record.path[0..record.path_len];
+        const release_name = directChildName(releases_root, path) orelse continue;
         if (release_name.len == 0) continue;
+        if (findReleaseRecord(records[0..count], release_name) != null) continue;
 
         var saved_seq: u32 = 0;
         var metadata_path_buf: [filesystem.max_path_len]u8 = undefined;
@@ -999,6 +990,41 @@ fn collectReleaseRecords(name: []const u8, records: *[filesystem.max_entries]Rel
     }
 
     return count;
+}
+
+fn findReleaseRecord(records: []const ReleaseRecord, release_name: []const u8) ?usize {
+    for (records, 0..) |record, index| {
+        if (std.mem.eql(u8, record.name(), release_name)) return index;
+    }
+    return null;
+}
+
+fn directChildName(parent: []const u8, candidate: []const u8) ?[]const u8 {
+    if (!std.mem.startsWith(u8, candidate, parent)) return null;
+    if (candidate.len <= parent.len or candidate[parent.len] != '/') return null;
+    const rest = candidate[parent.len + 1 ..];
+    if (rest.len == 0) return null;
+    const end_index = std.mem.indexOfScalar(u8, rest, '/') orelse rest.len;
+    if (end_index == 0) return null;
+    return rest[0..end_index];
+}
+
+fn sortReleaseRecordsOldestFirst(records: []ReleaseRecord) void {
+    var i: usize = 0;
+    while (i < records.len) : (i += 1) {
+        var best_index = i;
+        var j: usize = i + 1;
+        while (j < records.len) : (j += 1) {
+            if (records[j].saved_seq < records[best_index].saved_seq) {
+                best_index = j;
+                continue;
+            }
+            if (records[j].saved_seq == records[best_index].saved_seq and std.mem.lessThan(u8, records[j].name(), records[best_index].name())) {
+                best_index = j;
+            }
+        }
+        if (best_index != i) std.mem.swap(ReleaseRecord, &records[i], &records[best_index]);
+    }
 }
 
 fn sortReleaseRecordsNewestFirst(records: []ReleaseRecord) void {
