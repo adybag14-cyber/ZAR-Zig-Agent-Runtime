@@ -15,6 +15,7 @@ pub const max_workspace_entries: usize = 8;
 const root_dir = "/runtime/workspaces";
 const runtime_root_dir = "/runtime/workspace-runs";
 const release_root_dir = "/runtime/workspace-releases";
+const channel_root_dir = "/runtime/workspace-release-channels";
 const max_workspace_bytes: usize = 1024;
 const max_history_bytes: usize = 1024;
 const max_autorun_bytes: usize = 1024;
@@ -36,6 +37,7 @@ pub const Error = filesystem.Error || app_runtime.Error || package_store.Error |
     WorkspaceAutorunEntryNotFound,
     WorkspaceReleaseNotFound,
     WorkspaceReleaseAlreadyExists,
+    WorkspaceReleaseChannelNotFound,
 };
 
 pub const ReleasePruneResult = struct {
@@ -212,6 +214,71 @@ pub fn releaseInfoAlloc(
         );
     }
     return out.toOwnedSlice(allocator);
+}
+
+pub fn channelListAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
+    try validateWorkspaceName(name);
+    if (!try workspaceExists(name)) return error.WorkspaceNotFound;
+
+    var records: [filesystem.max_entries]ReleaseRecord = undefined;
+    const record_count = try collectChannelRecords(name, &records);
+    sortReleaseRecordsOldestFirst(records[0..record_count]);
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    for (records[0..record_count]) |record| {
+        const channel_name = record.name();
+        if (channel_name.len == 0) continue;
+        if (out.items.len + channel_name.len + 1 > max_bytes) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, channel_name);
+        try out.append(allocator, '\n');
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+pub fn setWorkspaceReleaseChannel(name: []const u8, channel: []const u8, release: []const u8, tick: u64) Error!void {
+    try validateWorkspaceName(name);
+    try package_store.validateChannelName(channel);
+    try package_store.validateReleaseName(release);
+    if (!try workspaceExists(name)) return error.WorkspaceNotFound;
+    if (!try releaseExists(name, release)) return error.WorkspaceReleaseNotFound;
+
+    var channels_root_buffer: [filesystem.max_path_len]u8 = undefined;
+    var channel_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    try filesystem.createDirPath(channelsRootPath(name, &channels_root_buffer));
+    try filesystem.writeFile(try channelPath(name, channel, &channel_path_buffer), release, tick);
+}
+
+pub fn activateWorkspaceReleaseChannel(name: []const u8, channel: []const u8, tick: u64) Error!void {
+    var scratch: [package_store.max_release_len]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&scratch);
+    const release = try readChannelTargetAlloc(fba.allocator(), name, channel, package_store.max_release_len);
+    try activateWorkspaceRelease(name, release, tick);
+}
+
+pub fn channelInfoAlloc(
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    channel: []const u8,
+    max_bytes: usize,
+) Error![]u8 {
+    try validateWorkspaceName(name);
+    try package_store.validateChannelName(channel);
+    if (!try workspaceExists(name)) return error.WorkspaceNotFound;
+
+    const release = try readChannelTargetAlloc(allocator, name, channel, package_store.max_release_len);
+    defer allocator.free(release);
+
+    const payload = try std.fmt.allocPrint(
+        allocator,
+        "workspace={s}\nchannel={s}\nrelease={s}\n",
+        .{ name, channel, release },
+    );
+    errdefer allocator.free(payload);
+    if (payload.len > max_bytes) return error.ResponseTooLarge;
+    return payload;
 }
 
 pub fn infoAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
@@ -545,6 +612,10 @@ fn releasesRootPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) []co
     return std.fmt.bufPrint(buffer, "{s}/{s}", .{ release_root_dir, name }) catch unreachable;
 }
 
+fn channelsRootPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) []const u8 {
+    return std.fmt.bufPrint(buffer, "{s}/{s}", .{ channel_root_dir, name }) catch unreachable;
+}
+
 fn releaseDirPath(name: []const u8, release: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
     try validateWorkspaceName(name);
     try package_store.validateReleaseName(release);
@@ -561,6 +632,12 @@ fn releaseMetadataPath(name: []const u8, release: []const u8, buffer: *[filesyst
     try validateWorkspaceName(name);
     try package_store.validateReleaseName(release);
     return std.fmt.bufPrint(buffer, "{s}/{s}/{s}/release.txt", .{ release_root_dir, name, release }) catch error.InvalidPath;
+}
+
+fn channelPath(name: []const u8, channel: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validateWorkspaceName(name);
+    try package_store.validateChannelName(channel);
+    return std.fmt.bufPrint(buffer, "{s}/{s}/{s}.txt", .{ channel_root_dir, name, channel }) catch error.InvalidPath;
 }
 
 pub fn statePath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
@@ -903,6 +980,51 @@ fn collectReleaseRecords(name: []const u8, records: *[filesystem.max_entries]Rel
     return count;
 }
 
+fn collectChannelRecords(name: []const u8, records: *[filesystem.max_entries]ReleaseRecord) Error!usize {
+    var channels_root_buffer: [filesystem.max_path_len]u8 = undefined;
+    const channels_root = channelsRootPath(name, &channels_root_buffer);
+
+    var count: usize = 0;
+    var idx: u32 = 0;
+    while (idx < filesystem.max_entries) : (idx += 1) {
+        const record = filesystem.entry(idx);
+        if (record.kind != abi.filesystem_kind_file) continue;
+        const path = record.path[0..record.path_len];
+        const channel_name_with_ext = directChildName(channels_root, path) orelse continue;
+        if (!std.mem.endsWith(u8, channel_name_with_ext, ".txt")) continue;
+        const channel_name = channel_name_with_ext[0 .. channel_name_with_ext.len - ".txt".len];
+        if (channel_name.len == 0) continue;
+        if (findReleaseRecord(records[0..count], channel_name) != null) continue;
+
+        records[count] = .{
+            .name_len = @intCast(channel_name.len),
+            .saved_seq = 0,
+        };
+        @memcpy(records[count].name_storage[0..channel_name.len], channel_name);
+        count += 1;
+    }
+    return count;
+}
+
+fn readChannelTargetAlloc(allocator: std.mem.Allocator, name: []const u8, channel: []const u8, max_bytes: usize) Error![]u8 {
+    try validateWorkspaceName(name);
+    try package_store.validateChannelName(channel);
+    if (!try workspaceExists(name)) return error.WorkspaceNotFound;
+
+    var channel_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const raw = filesystem.readFileAlloc(allocator, try channelPath(name, channel, &channel_path_buffer), max_bytes) catch |err| switch (err) {
+        error.FileNotFound => return error.WorkspaceReleaseChannelNotFound,
+        else => return err,
+    };
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    if (trimmed.len != raw.len) {
+        const normalized = try allocator.dupe(u8, trimmed);
+        allocator.free(raw);
+        return normalized;
+    }
+    return raw;
+}
+
 fn findReleaseRecord(records: []const ReleaseRecord, release_name: []const u8) ?usize {
     for (records, 0..) |record, index| {
         if (std.mem.eql(u8, record.name(), release_name)) return index;
@@ -1224,4 +1346,59 @@ test "workspace runtime snapshots activates deletes and prunes workspace release
 
     try deleteWorkspace("ops", 22);
     try std.testing.expectError(error.WorkspaceNotFound, releaseListAlloc(std.testing.allocator, "ops", 64));
+}
+
+test "workspace runtime manages release channels" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    framebuffer_console.resetForTest();
+
+    try trust_store.installBundle("root-a", "root-a-cert", 1);
+    try trust_store.installBundle("root-b", "root-b-cert", 2);
+    try package_store.installScriptPackage("demo", "echo release-r1", 3);
+    try package_store.snapshotPackageRelease("demo", "r1", 4);
+    try package_store.installScriptPackage("demo", "echo release-r2", 5);
+    try package_store.snapshotPackageRelease("demo", "r2", 6);
+    try package_store.setPackageReleaseChannel("demo", "stable", "r1", 7);
+    try package_store.activatePackageReleaseChannel("demo", "stable", 8);
+    try app_runtime.savePlan("demo", "boot", "", "root-a", abi.display_connector_virtual, 1024, 768, false, 9);
+    try app_runtime.saveSuite("demo-suite", "demo:boot", 10);
+    try saveWorkspace("ops", "demo-suite", "root-a", 1024, 768, "demo:stable:r1", 11);
+
+    try snapshotWorkspaceRelease("ops", "golden", 12);
+
+    try package_store.setPackageReleaseChannel("demo", "stable", "r2", 13);
+    try package_store.activatePackageReleaseChannel("demo", "stable", 14);
+    try saveWorkspace("ops", "demo-suite", "root-b", 640, 400, "demo:stable:r2", 15);
+    try snapshotWorkspaceRelease("ops", "staging", 16);
+
+    try setWorkspaceReleaseChannel("ops", "stable", "golden", 17);
+
+    const channel_list = try channelListAlloc(std.testing.allocator, "ops", 64);
+    defer std.testing.allocator.free(channel_list);
+    try std.testing.expectEqualStrings("stable\n", channel_list);
+
+    const golden_info = try channelInfoAlloc(std.testing.allocator, "ops", "stable", 128);
+    defer std.testing.allocator.free(golden_info);
+    try std.testing.expect(std.mem.indexOf(u8, golden_info, "workspace=ops") != null);
+    try std.testing.expect(std.mem.indexOf(u8, golden_info, "channel=stable") != null);
+    try std.testing.expect(std.mem.indexOf(u8, golden_info, "release=golden") != null);
+
+    try setWorkspaceReleaseChannel("ops", "stable", "staging", 18);
+    try activateWorkspaceReleaseChannel("ops", "stable", 19);
+
+    const staging_info = try infoAlloc(std.testing.allocator, "ops", 512);
+    defer std.testing.allocator.free(staging_info);
+    try std.testing.expect(std.mem.indexOf(u8, staging_info, "trust_bundle=root-b") != null);
+    try std.testing.expect(std.mem.indexOf(u8, staging_info, "display=640x400") != null);
+    try std.testing.expect(std.mem.indexOf(u8, staging_info, "channel=demo:stable:r2") != null);
+
+    try setWorkspaceReleaseChannel("ops", "stable", "golden", 20);
+    try activateWorkspaceReleaseChannel("ops", "stable", 21);
+
+    const restored_info = try infoAlloc(std.testing.allocator, "ops", 512);
+    defer std.testing.allocator.free(restored_info);
+    try std.testing.expect(std.mem.indexOf(u8, restored_info, "trust_bundle=root-a") != null);
+    try std.testing.expect(std.mem.indexOf(u8, restored_info, "display=1024x768") != null);
+    try std.testing.expect(std.mem.indexOf(u8, restored_info, "channel=demo:stable:r1") != null);
 }

@@ -36,6 +36,8 @@ pub const AppSuiteSaveRequest = codec.AppSuiteSaveRequest;
 pub const WorkspaceSaveRequest = codec.WorkspaceSaveRequest;
 pub const WorkspaceReleaseRequest = codec.WorkspaceReleaseRequest;
 pub const WorkspaceReleasePruneRequest = codec.WorkspaceReleasePruneRequest;
+pub const WorkspaceChannelRequest = codec.WorkspaceChannelRequest;
+pub const WorkspaceChannelSetRequest = codec.WorkspaceChannelSetRequest;
 pub const FramedRequest = codec.FramedRequest;
 const ConsumedRequest = codec.ConsumedRequest;
 
@@ -238,6 +240,10 @@ fn handleFramedPayload(
         .workspace_release_activate => |request| try handleWorkspaceReleaseActivateRequest(allocator, request.workspace_name, request.release_name, payload_limit),
         .workspace_release_delete => |request| try handleWorkspaceReleaseDeleteRequest(allocator, request.workspace_name, request.release_name, payload_limit),
         .workspace_release_prune => |request| try handleWorkspaceReleasePruneRequest(allocator, request.workspace_name, request.keep, payload_limit),
+        .workspace_channel_list => |workspace_name| try handleWorkspaceChannelListRequest(allocator, workspace_name, payload_limit),
+        .workspace_channel_info => |request| try handleWorkspaceChannelInfoRequest(allocator, request.workspace_name, request.value, payload_limit),
+        .workspace_channel_set => |request| try handleWorkspaceChannelSetRequest(allocator, request.workspace_name, request.channel, request.release, payload_limit),
+        .workspace_channel_activate => |request| try handleWorkspaceChannelActivateRequest(allocator, request.workspace_name, request.value, payload_limit),
         .workspace_autorun_list => try handleWorkspaceAutorunListRequest(allocator, payload_limit),
         .workspace_autorun_add => |workspace_name| try handleWorkspaceAutorunAddRequest(allocator, workspace_name, payload_limit),
         .workspace_autorun_remove => |workspace_name| try handleWorkspaceAutorunRemoveRequest(allocator, workspace_name, payload_limit),
@@ -1067,6 +1073,58 @@ fn handleWorkspaceReleasePruneRequest(
         "WORKSPACERELEASEPRUNE {s} keep={d} deleted={d} kept={d}\n",
         .{ workspace_name, keep, prune.deleted_count, prune.kept_count },
     );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleWorkspaceChannelListRequest(
+    allocator: std.mem.Allocator,
+    workspace_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return workspace_runtime.channelListAlloc(allocator, workspace_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "WORKSPACECHANNELLIST", err, payload_limit);
+    };
+}
+
+fn handleWorkspaceChannelInfoRequest(
+    allocator: std.mem.Allocator,
+    workspace_name: []const u8,
+    channel_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return workspace_runtime.channelInfoAlloc(allocator, workspace_name, channel_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "WORKSPACECHANNELINFO", err, payload_limit);
+    };
+}
+
+fn handleWorkspaceChannelSetRequest(
+    allocator: std.mem.Allocator,
+    workspace_name: []const u8,
+    channel_name: []const u8,
+    release_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    workspace_runtime.setWorkspaceReleaseChannel(workspace_name, channel_name, release_name, 0) catch |err| {
+        return formatOperationError(allocator, "WORKSPACECHANNELSET", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "WORKSPACECHANNELSET {s} {s} {s}\n", .{ workspace_name, channel_name, release_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleWorkspaceChannelActivateRequest(
+    allocator: std.mem.Allocator,
+    workspace_name: []const u8,
+    channel_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    workspace_runtime.activateWorkspaceReleaseChannel(workspace_name, channel_name, 0) catch |err| {
+        return formatOperationError(allocator, "WORKSPACECHANNELACTIVATE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "WORKSPACECHANNELACTIVATE {s} {s}\n", .{ workspace_name, channel_name });
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
@@ -1936,6 +1994,40 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
+    const workspace_channel_list = try parseFramedRequest("REQ 172 WORKSPACECHANNELLIST ops");
+    switch (workspace_channel_list.operation) {
+        .workspace_channel_list => |workspace_name| try std.testing.expectEqualStrings("ops", workspace_name),
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_channel_info = try parseFramedRequest("REQ 173 WORKSPACECHANNELINFO ops stable");
+    switch (workspace_channel_info.operation) {
+        .workspace_channel_info => |payload| {
+            try std.testing.expectEqualStrings("ops", payload.workspace_name);
+            try std.testing.expectEqualStrings("stable", payload.value);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_channel_set = try parseFramedRequest("REQ 174 WORKSPACECHANNELSET ops stable golden");
+    switch (workspace_channel_set.operation) {
+        .workspace_channel_set => |payload| {
+            try std.testing.expectEqualStrings("ops", payload.workspace_name);
+            try std.testing.expectEqualStrings("stable", payload.channel);
+            try std.testing.expectEqualStrings("golden", payload.release);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_channel_activate = try parseFramedRequest("REQ 175 WORKSPACECHANNELACTIVATE ops stable");
+    switch (workspace_channel_activate.operation) {
+        .workspace_channel_activate => |payload| {
+            try std.testing.expectEqualStrings("ops", payload.workspace_name);
+            try std.testing.expectEqualStrings("stable", payload.value);
+        },
+        else => return error.InvalidFrame,
+    }
+
     const workspace_autorun_list = try parseFramedRequest("REQ 162 WORKSPACEAUTORUNLIST");
     switch (workspace_autorun_list.operation) {
         .workspace_autorun_list => {},
@@ -2678,6 +2770,43 @@ test "baremetal tool service manages persisted workspaces" {
     try std.testing.expect(std.mem.indexOf(u8, release_info_response, "trust_bundle=root-b") != null);
     try std.testing.expect(std.mem.indexOf(u8, release_info_response, "display=640x400") != null);
     try std.testing.expect(std.mem.indexOf(u8, release_info_response, "channel=demo:stable:r2") != null);
+
+    const channel_set_staging_response = try handleFramedRequest(std.testing.allocator, "REQ 1852 WORKSPACECHANNELSET ops stable staging", 512, 256, 512);
+    defer std.testing.allocator.free(channel_set_staging_response);
+    try std.testing.expect(std.mem.startsWith(u8, channel_set_staging_response, "RESP 1852 "));
+    try std.testing.expect(std.mem.indexOf(u8, channel_set_staging_response, "WORKSPACECHANNELSET ops stable staging\n") != null);
+
+    const channel_list_response = try handleFramedRequest(std.testing.allocator, "REQ 1853 WORKSPACECHANNELLIST ops", 512, 256, 512);
+    defer std.testing.allocator.free(channel_list_response);
+    try std.testing.expectEqualStrings("RESP 1853 7\nstable\n", channel_list_response);
+
+    const channel_info_response = try handleFramedRequest(std.testing.allocator, "REQ 1854 WORKSPACECHANNELINFO ops stable", 512, 256, 512);
+    defer std.testing.allocator.free(channel_info_response);
+    try std.testing.expect(std.mem.startsWith(u8, channel_info_response, "RESP 1854 "));
+    try std.testing.expect(std.mem.indexOf(u8, channel_info_response, "workspace=ops") != null);
+    try std.testing.expect(std.mem.indexOf(u8, channel_info_response, "channel=stable") != null);
+    try std.testing.expect(std.mem.indexOf(u8, channel_info_response, "release=staging") != null);
+
+    const channel_activate_staging_response = try handleFramedRequest(std.testing.allocator, "REQ 1855 WORKSPACECHANNELACTIVATE ops stable", 512, 256, 512);
+    defer std.testing.allocator.free(channel_activate_staging_response);
+    try std.testing.expect(std.mem.startsWith(u8, channel_activate_staging_response, "RESP 1855 "));
+    try std.testing.expect(std.mem.indexOf(u8, channel_activate_staging_response, "WORKSPACECHANNELACTIVATE ops stable\n") != null);
+
+    const staging_info_response = try handleFramedRequest(std.testing.allocator, "REQ 1856 WORKSPACEINFO ops", 512, 256, 512);
+    defer std.testing.allocator.free(staging_info_response);
+    try std.testing.expect(std.mem.indexOf(u8, staging_info_response, "trust_bundle=root-b") != null);
+    try std.testing.expect(std.mem.indexOf(u8, staging_info_response, "display=640x400") != null);
+    try std.testing.expect(std.mem.indexOf(u8, staging_info_response, "channel=demo:stable:r2") != null);
+
+    const channel_set_golden_response = try handleFramedRequest(std.testing.allocator, "REQ 1857 WORKSPACECHANNELSET ops stable golden", 512, 256, 512);
+    defer std.testing.allocator.free(channel_set_golden_response);
+    try std.testing.expect(std.mem.startsWith(u8, channel_set_golden_response, "RESP 1857 "));
+    try std.testing.expect(std.mem.indexOf(u8, channel_set_golden_response, "WORKSPACECHANNELSET ops stable golden\n") != null);
+
+    const channel_activate_golden_response = try handleFramedRequest(std.testing.allocator, "REQ 1858 WORKSPACECHANNELACTIVATE ops stable", 512, 256, 512);
+    defer std.testing.allocator.free(channel_activate_golden_response);
+    try std.testing.expect(std.mem.startsWith(u8, channel_activate_golden_response, "RESP 1858 "));
+    try std.testing.expect(std.mem.indexOf(u8, channel_activate_golden_response, "WORKSPACECHANNELACTIVATE ops stable\n") != null);
 
     const release_activate_response = try handleFramedRequest(std.testing.allocator, "REQ 1846 WORKSPACERELEASEACTIVATE ops golden", 512, 256, 512);
     defer std.testing.allocator.free(release_activate_response);

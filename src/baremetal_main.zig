@@ -3480,6 +3480,14 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const workspace_release_list_final_request_id: u32 = 144;
     const workspace_release_mutate_request_id: u32 = 145;
     const workspace_release_restored_info_request_id: u32 = 146;
+    const workspace_channel_set_staging_request_id: u32 = 147;
+    const workspace_channel_list_request_id: u32 = 148;
+    const workspace_channel_info_request_id: u32 = 149;
+    const workspace_channel_activate_staging_request_id: u32 = 150;
+    const workspace_channel_set_golden_request_id: u32 = 151;
+    const workspace_channel_activate_golden_request_id: u32 = 152;
+    const workspace_channel_staging_info_request_id: u32 = 153;
+    const workspace_channel_restored_info_request_id: u32 = 154;
     const uninstall_request_id: u32 = 79;
     const uninstall_list_request_id: u32 = 80;
     const retransmit_interval_ticks: u64 = 4;
@@ -6768,6 +6776,196 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     if (std.mem.indexOf(u8, workspace_release_info_response, "trust_bundle=none") == null) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, workspace_release_info_response, "display=640x400") == null) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, workspace_release_info_response, "channel=demo:stable:r3") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_channel_set_staging_request_buffer: [128]u8 = undefined;
+    const workspace_channel_set_staging_request = std.fmt.bufPrint(
+        &workspace_channel_set_staging_request_buffer,
+        "REQ {d} WORKSPACECHANNELSET {s} stable staging",
+        .{ workspace_channel_set_staging_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_channel_set_staging_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_channel_set_staging_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_channel_set_staging_response, "RESP 147 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_channel_set_staging_response, "WORKSPACECHANNELSET ops stable staging\n") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_channel_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const workspace_channel_path = std.fmt.bufPrint(
+        &workspace_channel_path_buffer,
+        "/runtime/workspace-release-channels/{s}/stable.txt",
+        .{workspace_name},
+    ) catch return error.ToolServiceFailed;
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const workspace_channel_staging_readback = filesystem.readFileAlloc(service_fba.allocator(), workspace_channel_path, 64) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, std.mem.trim(u8, workspace_channel_staging_readback, "\r\n\t "), "staging")) return error.ToolServiceResponseMismatch;
+
+    var workspace_channel_list_request_buffer: [112]u8 = undefined;
+    const workspace_channel_list_request = std.fmt.bufPrint(
+        &workspace_channel_list_request_buffer,
+        "REQ {d} WORKSPACECHANNELLIST {s}",
+        .{ workspace_channel_list_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_channel_list_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_channel_list_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_channel_list_response, "RESP 148 7\nstable\n")) return error.ToolServiceResponseMismatch;
+
+    var workspace_channel_info_request_buffer: [128]u8 = undefined;
+    const workspace_channel_info_request = std.fmt.bufPrint(
+        &workspace_channel_info_request_buffer,
+        "REQ {d} WORKSPACECHANNELINFO {s} stable",
+        .{ workspace_channel_info_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_channel_info_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_channel_info_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_channel_info_response, "RESP 149 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_channel_info_response, "workspace=ops") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_channel_info_response, "channel=stable") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_channel_info_response, "release=staging") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_channel_activate_staging_request_buffer: [128]u8 = undefined;
+    const workspace_channel_activate_staging_request = std.fmt.bufPrint(
+        &workspace_channel_activate_staging_request_buffer,
+        "REQ {d} WORKSPACECHANNELACTIVATE {s} stable",
+        .{ workspace_channel_activate_staging_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_channel_activate_staging_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_channel_activate_staging_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_channel_activate_staging_response, "RESP 150 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_channel_activate_staging_response, "WORKSPACECHANNELACTIVATE ops stable\n") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_channel_staging_info_request_buffer: [64]u8 = undefined;
+    const workspace_channel_staging_info_request = std.fmt.bufPrint(
+        &workspace_channel_staging_info_request_buffer,
+        "REQ {d} WORKSPACEINFO {s}",
+        .{ workspace_channel_staging_info_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_channel_staging_info_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_channel_staging_info_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_channel_staging_info_response, "RESP 153 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_channel_staging_info_response, "trust_bundle=none") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_channel_staging_info_response, "display=640x400") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_channel_staging_info_response, "channel=demo:stable:r3") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_channel_set_golden_request_buffer: [128]u8 = undefined;
+    const workspace_channel_set_golden_request = std.fmt.bufPrint(
+        &workspace_channel_set_golden_request_buffer,
+        "REQ {d} WORKSPACECHANNELSET {s} stable golden",
+        .{ workspace_channel_set_golden_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_channel_set_golden_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_channel_set_golden_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_channel_set_golden_response, "RESP 151 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_channel_set_golden_response, "WORKSPACECHANNELSET ops stable golden\n") == null) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const workspace_channel_golden_readback = filesystem.readFileAlloc(service_fba.allocator(), workspace_channel_path, 64) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, std.mem.trim(u8, workspace_channel_golden_readback, "\r\n\t "), "golden")) return error.ToolServiceResponseMismatch;
+
+    var workspace_channel_activate_golden_request_buffer: [128]u8 = undefined;
+    const workspace_channel_activate_golden_request = std.fmt.bufPrint(
+        &workspace_channel_activate_golden_request_buffer,
+        "REQ {d} WORKSPACECHANNELACTIVATE {s} stable",
+        .{ workspace_channel_activate_golden_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_channel_activate_golden_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_channel_activate_golden_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_channel_activate_golden_response, "RESP 152 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_channel_activate_golden_response, "WORKSPACECHANNELACTIVATE ops stable\n") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_channel_restored_info_response_buffer: [640]u8 = undefined;
+    const workspace_channel_restored_info_response_expected = std.fmt.bufPrint(
+        &workspace_channel_restored_info_response_buffer,
+        "RESP {d} {d}\n{s}",
+        .{ workspace_channel_restored_info_request_id, workspace_info_payload_expected.len, workspace_info_payload_expected },
+    ) catch return error.ToolServiceFailed;
+    var workspace_channel_restored_info_request_buffer: [64]u8 = undefined;
+    const workspace_channel_restored_info_request = std.fmt.bufPrint(
+        &workspace_channel_restored_info_request_buffer,
+        "REQ {d} WORKSPACEINFO {s}",
+        .{ workspace_channel_restored_info_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_channel_restored_info_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_channel_restored_info_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_channel_restored_info_response, workspace_channel_restored_info_response_expected)) return error.ToolServiceResponseMismatch;
 
     var workspace_release_activate_request_buffer: [112]u8 = undefined;
     const workspace_release_activate_request = std.fmt.bufPrint(
