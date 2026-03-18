@@ -95,11 +95,29 @@ pub fn runCapture(
     stdout_limit: usize,
     stderr_limit: usize,
 ) Error!Result {
-    var stdout_buffer = OutputBuffer.init(allocator, stdout_limit, true);
-    errdefer stdout_buffer.deinit();
-    var stderr_buffer = OutputBuffer.init(allocator, stderr_limit, true);
-    errdefer stderr_buffer.deinit();
+    return runCaptureWithMirror(allocator, command, stdout_limit, stderr_limit, true);
+}
 
+pub fn runCaptureSilent(
+    allocator: std.mem.Allocator,
+    command: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+) Error!Result {
+    return runCaptureWithMirror(allocator, command, stdout_limit, stderr_limit, false);
+}
+
+fn runCaptureWithMirror(
+    allocator: std.mem.Allocator,
+    command: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    mirror: bool,
+) Error!Result {
+    var stdout_buffer = OutputBuffer.init(allocator, stdout_limit, mirror);
+    errdefer stdout_buffer.deinit();
+    var stderr_buffer = OutputBuffer.init(allocator, stderr_limit, mirror);
+    errdefer stderr_buffer.deinit();
     var exit_code: u8 = 0;
     try filesystem.init();
 
@@ -112,7 +130,6 @@ pub fn runCapture(
             .stderr = try stderr_buffer.toOwnedSlice(),
         };
     };
-
     execute(parsed, &stdout_buffer, &stderr_buffer, &exit_code, allocator, 0) catch |err| {
         exit_code = 1;
         try stderr_buffer.appendFmt("{s}\n", .{@errorName(err)});
@@ -586,6 +603,108 @@ fn execute(
             "package release pruned {s} keep={d} deleted={d} kept={d}\n",
             .{ package_name.arg, keep, prune.deleted_count, prune.kept_count },
         );
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "package-release-channel-list")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-channel-list <name>");
+            return;
+        };
+        if (package_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-release-channel-list <name>");
+            return;
+        }
+        const listing = package_store.channelListAlloc(allocator, package_name.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("package-release-channel-list failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(listing);
+        try stdout_buffer.appendSlice(listing);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "package-release-channel-info")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-channel-info <name> <channel>");
+            return;
+        };
+        const channel_name = parseFirstArg(package_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-channel-info <name> <channel>");
+            return;
+        };
+        if (channel_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-release-channel-info <name> <channel>");
+            return;
+        }
+        const info = package_store.channelInfoAlloc(allocator, package_name.arg, channel_name.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("package-release-channel-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(info);
+        try stdout_buffer.appendSlice(info);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "package-release-channel-set")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-channel-set <name> <channel> <release>");
+            return;
+        };
+        const channel_name = parseFirstArg(package_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-channel-set <name> <channel> <release>");
+            return;
+        };
+        const release_name = parseFirstArg(channel_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-channel-set <name> <channel> <release>");
+            return;
+        };
+        if (release_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-release-channel-set <name> <channel> <release>");
+            return;
+        }
+        package_store.setPackageReleaseChannel(package_name.arg, channel_name.arg, release_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("package-release-channel-set failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("package release channel set {s} {s} {s}\n", .{ package_name.arg, channel_name.arg, release_name.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "package-release-channel-activate")) {
+        const package_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-channel-activate <name> <channel>");
+            return;
+        };
+        const channel_name = parseFirstArg(package_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "package-release-channel-activate <name> <channel>");
+            return;
+        };
+        if (channel_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: package-release-channel-activate <name> <channel>");
+            return;
+        }
+        package_store.activatePackageReleaseChannel(package_name.arg, channel_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("package-release-channel-activate failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("package release channel activated {s} {s}\n", .{ package_name.arg, channel_name.arg });
         return;
     }
 
@@ -1338,6 +1457,18 @@ fn ensureDisplayReady() void {
     }
 }
 
+fn ensureDisplayReadyForMode(width: u16, height: u16) error{UnsupportedMode}!void {
+    if (display_output.statePtr().backend == abi.display_backend_none) {
+        try framebuffer_console.prepareMode(width, height);
+        return;
+    }
+
+    const framebuffer_state = framebuffer_console.statePtr();
+    if (framebuffer_state.width != width or framebuffer_state.height != height) {
+        try framebuffer_console.prepareMode(width, height);
+    }
+}
+
 fn displayControllerName(value: u8) []const u8 {
     return switch (value) {
         abi.display_controller_bochs_bga => "bochs-bga",
@@ -1433,20 +1564,25 @@ fn runLaunchProfile(
             return;
         };
     }
-
-    ensureDisplayReady();
-    if (profile.connector_type != abi.display_connector_none and display_output.statePtr().connector_type != profile.connector_type) {
-        exit_code.* = 1;
-        try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(error.DisplayConnectorMismatch) });
-        return;
-    }
-
-    framebuffer_console.setMode(profile.display_width, profile.display_height) catch |err| {
+    ensureDisplayReadyForMode(profile.display_width, profile.display_height) catch |err| {
         exit_code.* = 1;
         try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
         return;
     };
-
+    const display_state = display_output.statePtr();
+    if (profile.connector_type != abi.display_connector_none and display_state.connector_type != profile.connector_type) {
+        exit_code.* = 1;
+        try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(error.DisplayConnectorMismatch) });
+        return;
+    }
+    const framebuffer_state = framebuffer_console.statePtr();
+    if (framebuffer_state.width != profile.display_width or framebuffer_state.height != profile.display_height) {
+        framebuffer_console.setMode(profile.display_width, profile.display_height) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+            return;
+        };
+    }
     const stdout_before = stdout_buffer.list.items.len;
     const stderr_before = stderr_buffer.list.items.len;
     try executeScriptPath(profile.entrypoint, operation, stdout_buffer, stderr_buffer, exit_code, allocator, depth);
@@ -1508,6 +1644,15 @@ fn executeScriptPath(
     };
     defer allocator.free(script);
 
+    try filesystem.beginDeferredPersist();
+    var finish_deferred_persist = true;
+    defer if (finish_deferred_persist) {
+        filesystem.endDeferredPersist() catch |err| {
+            exit_code.* = 1;
+            stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) }) catch {};
+        };
+    };
+
     var lines = std.mem.splitScalar(u8, script, '\n');
     while (lines.next()) |raw_line| {
         const line = std.mem.trim(u8, raw_line, " \t\r");
@@ -1521,6 +1666,9 @@ fn executeScriptPath(
         try execute(nested, stdout_buffer, stderr_buffer, exit_code, allocator, depth + 1);
         if (exit_code.* != 0) return;
     }
+
+    try filesystem.endDeferredPersist();
+    finish_deferred_persist = false;
 }
 
 fn writeCommandError(stderr_buffer: *OutputBuffer, err: anyerror, usage: []const u8) Error!void {

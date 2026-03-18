@@ -79,6 +79,7 @@ const BaremetalWakeQueueCountSnapshot = extern struct {
 const multiboot2_magic: u32 = 0xE85250D6;
 const multiboot2_architecture_i386: u32 = 0;
 const qemu_debug_exit_port: u16 = 0xF4;
+const qemu_debug_console_port: u16 = 0xE9;
 const qemu_boot_ok_code: u8 = 0x2A;
 const qemu_ata_storage_probe_ok_code: u8 = 0x34;
 const qemu_rtl8139_probe_ok_code: u8 = 0x36;
@@ -3297,6 +3298,7 @@ fn rtl8139TcpProbeLoopbackHook(frame: []const u8) void {
 }
 
 fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
+    qemuDebugWrite("T00\n");
     rtl8139.initDetailed() catch |err| return switch (err) {
         error.UnsupportedPlatform => error.UnsupportedPlatform,
         error.DeviceNotFound => error.DeviceNotFound,
@@ -3312,6 +3314,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     if (eth.initialized == 0) return error.InitFlagMismatch;
     if (!builtin.is_test and eth.hardware_backed == 0) return error.HardwareBackedMismatch;
     if (eth.io_base == 0) return error.IoBaseMismatch;
+    qemuDebugWrite("T01\n");
     rtl8139.installProbeSendHook(rtl8139TcpProbeLoopbackHook);
     defer rtl8139.installProbeSendHook(null);
     const source_ip = [4]u8{ 192, 168, 56, 10 };
@@ -3360,13 +3363,26 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const package_release_delete_request_id: u32 = 92;
     const package_release_prune_request = "REQ 93 PKGRELEASEPRUNE demo 1";
     const package_release_final_list_request = "REQ 94 PKGRELEASELIST demo";
+    const package_channel_name = "stable";
+    const package_channel_set_request_id: u32 = 95;
+    const package_channel_info_request = "REQ 96 PKGCHANNELINFO demo stable";
+    const package_channel_list_request = "REQ 97 PKGCHANNELLIST demo";
+    const package_channel_mutated_install_request_id: u32 = 98;
+    const package_channel_mutated_run_request = "REQ 99 PKGRUN demo";
+    const package_channel_mutated_asset_put_request_id: u32 = 100;
+    const package_channel_activate_request_id: u32 = 101;
+    const package_channel_restored_run_request = "REQ 102 PKGRUN demo";
+    const package_channel_restored_asset_get_request = "REQ 103 PKGGET demo config/app.json";
     const package_script_body = "mkdir /pkg/out\nwrite-file /pkg/out/result.txt pkg-service-data\necho pkg-service-ok";
     const package_run_stdout = "created /pkg/out\nwrote 16 bytes to /pkg/out/result.txt\npkg-service-ok\n";
     const package_mutated_script_body = "mkdir /pkg/out\nwrite-file /pkg/out/result.txt pkg-service-mutated\necho pkg-service-mutated";
     const package_mutated_asset_body = "{\"mode\":\"mutated\"}";
+    const package_channel_mutated_script_body = "mkdir /pkg/out\nwrite-file /pkg/out/result.txt pkg-channel-mutated\necho pkg-channel-mutated";
+    const package_channel_mutated_asset_body = "{\"mode\":\"channel-mutated\"}";
     const package_output_path = "/pkg/out/result.txt";
     const package_output_expected = "pkg-service-data";
     const package_output_mutated_expected = "pkg-service-mutated";
+    const package_output_channel_mutated_expected = "pkg-channel-mutated";
     const autorun_package_name = "aux";
     const autorun_package_script_body = "echo aux-autorun";
     const autorun_run_stdout = "aux-autorun\n";
@@ -3514,6 +3530,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     if (mapped_a_payload_ack != client_a) return error.SessionStateMismatch;
     mapped_a_payload_ack.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
     if (client_a.retransmit.armed()) return error.RetransmitNotCleared;
+    qemuDebugWrite("T10\n");
 
     const syn_b = client_b.buildSyn() catch |err| return mapTcpSessionProbeError(err);
     _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, syn_b);
@@ -3572,6 +3589,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     mapped_b_reopen.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
     if (client_b.remote_window != reopen_window_update_b.window_size) return error.WindowUpdateMismatch;
     if (server_b.congestionWindowBytes() != tcp_protocol.initial_congestion_window_bytes) return error.CongestionWindowMismatch;
+    qemuDebugWrite("T20\n");
 
     const congestion_warmup = server_b.buildPayloadChunk("ABCD") catch |err| return mapTcpSessionProbeError(err);
     _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, congestion_warmup);
@@ -3644,6 +3662,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, congestion_retry_ack);
     server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
     if (server_b.retransmit.armed()) return error.RetransmitNotCleared;
+    qemuDebugWrite("T30\n");
 
     const service_request_short_payload = client_b.buildPayload(service_request_short) catch |err| return mapTcpSessionProbeError(err);
     _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, service_request_short_payload);
@@ -3790,6 +3809,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     try pollTcpProbePacket(eth, &scratch.packet_storage);
     try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, service_reply_put_ack);
     server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    qemuDebugWrite("T40\n");
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const service_script_readback = filesystem.readFileAlloc(service_fba.allocator(), service_script_path, 128) catch return error.ToolServiceFailed;
@@ -3832,6 +3852,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     try pollTcpProbePacket(eth, &scratch.packet_storage);
     try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_install_reply_ack);
     server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    qemuDebugWrite("T41\n");
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const package_script_readback = filesystem.readFileAlloc(service_fba.allocator(), package_entrypoint, 160) catch return error.ToolServiceFailed;
@@ -3868,6 +3889,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     try pollTcpProbePacket(eth, &scratch.packet_storage);
     try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_list_reply_ack);
     server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    qemuDebugWrite("T42\n");
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const package_info_request_payload = client_b.buildPayload(package_info_request) catch |err| return mapTcpSessionProbeError(err);
@@ -3911,6 +3933,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
     }
     if (package_info_response_offset != package_info_response.len) return error.PayloadMismatch;
+    qemuDebugWrite("T43\n");
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const package_app_request_payload = client_b.buildPayload(package_app_request) catch |err| return mapTcpSessionProbeError(err);
@@ -3984,6 +4007,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     try pollTcpProbePacket(eth, &scratch.packet_storage);
     try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_display_reply_ack);
     server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    qemuDebugWrite("T44\n");
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const package_app_updated = package_store.appManifestAlloc(service_fba.allocator(), package_name, 256) catch return error.ToolServiceFailed;
@@ -4033,6 +4057,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     try pollTcpProbePacket(eth, &scratch.packet_storage);
     try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_asset_put_reply_ack);
     server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    qemuDebugWrite("T45\n");
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const package_asset_readback = filesystem.readFileAlloc(service_fba.allocator(), package_asset_path, 128) catch return error.ToolServiceFailed;
@@ -4049,7 +4074,9 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     try pollTcpProbePacket(eth, &scratch.packet_storage);
     try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_release_save_request_payload);
     server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    qemuDebugWrite("T45A\n");
 
+    qemuDebugWrite("T45B\n");
     const package_release_save_response = tool_service.handleFramedRequest(
         service_fba.allocator(),
         scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
@@ -4057,6 +4084,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         256,
         512,
     ) catch return error.ToolServiceFailed;
+    qemuDebugWrite("T45C\n");
     const package_release_save_payload_expected = std.fmt.allocPrint(service_fba.allocator(), "PKGRELEASESAVE {s} {s}\n", .{
         package_name,
         package_release_name,
@@ -4081,6 +4109,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     try pollTcpProbePacket(eth, &scratch.packet_storage);
     try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_release_save_reply_ack);
     server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    qemuDebugWrite("T46\n");
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const package_mutated_install_request = std.fmt.allocPrint(service_fba.allocator(), "REQ {d} PKG {s} {d}\n{s}", .{
@@ -4168,6 +4197,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const package_mutated_asset_readback = filesystem.readFileAlloc(service_fba.allocator(), package_asset_path, 128) catch return error.ToolServiceFailed;
     if (!std.mem.eql(u8, package_mutated_asset_readback, package_mutated_asset_body)) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("T47\n");
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const package_release_save_two_request = std.fmt.allocPrint(service_fba.allocator(), "REQ {d} PKGRELEASESAVE {s} {s}", .{
@@ -4253,6 +4283,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
     }
     if (package_release_info_response_offset != package_release_info_response.len) return error.PayloadMismatch;
+    qemuDebugWrite("T48\n");
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const package_mutated_run_request_payload = client_b.buildPayload(package_mutated_run_request) catch |err| return mapTcpSessionProbeError(err);
@@ -4292,6 +4323,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
     }
     if (package_mutated_run_response_offset != package_mutated_run_response.len) return error.PayloadMismatch;
+    qemuDebugWrite("T48A\n");
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const package_output_mutated_readback = filesystem.readFileAlloc(service_fba.allocator(), package_output_path, 64) catch return error.ToolServiceFailed;
@@ -4326,6 +4358,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     try pollTcpProbePacket(eth, &scratch.packet_storage);
     try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_release_list_reply_ack);
     server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    qemuDebugWrite("T48B\n");
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const package_release_activate_request = std.fmt.allocPrint(service_fba.allocator(), "REQ {d} PKGRELEASEACTIVATE {s} {s}", .{
@@ -4338,6 +4371,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     try pollTcpProbePacket(eth, &scratch.packet_storage);
     try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_release_activate_request_payload);
     server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    qemuDebugWrite("T48C\n");
 
     const package_release_activate_response = tool_service.handleFramedRequest(
         service_fba.allocator(),
@@ -4346,6 +4380,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         256,
         512,
     ) catch return error.ToolServiceFailed;
+    qemuDebugWrite("T48D\n");
     const package_release_activate_payload_expected = std.fmt.allocPrint(service_fba.allocator(), "PKGRELEASEACTIVATE {s} {s}\n", .{
         package_name,
         package_release_name,
@@ -4451,6 +4486,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const package_restored_asset_readback = filesystem.readFileAlloc(service_fba.allocator(), package_asset_path, 128) catch return error.ToolServiceFailed;
     if (!std.mem.eql(u8, package_restored_asset_readback, package_asset_body)) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("T49\n");
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const package_release_save_three_request = std.fmt.allocPrint(service_fba.allocator(), "REQ {d} PKGRELEASESAVE {s} {s}", .{
@@ -4599,10 +4635,367 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     try pollTcpProbePacket(eth, &scratch.packet_storage);
     try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_release_final_list_reply_ack);
     server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    qemuDebugWrite("T60\n");
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const package_post_prune_asset_readback = filesystem.readFileAlloc(service_fba.allocator(), package_asset_path, 128) catch return error.ToolServiceFailed;
     if (!std.mem.eql(u8, package_post_prune_asset_readback, package_asset_body)) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const package_channel_set_request = std.fmt.allocPrint(service_fba.allocator(), "REQ {d} PKGCHANNELSET {s} {s} {s}", .{
+        package_channel_set_request_id,
+        package_name,
+        package_channel_name,
+        package_release_three_name,
+    }) catch return error.ToolServiceFailed;
+    const package_channel_set_request_payload = client_b.buildPayload(package_channel_set_request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_set_request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_set_request_payload);
+    server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const package_channel_set_response = tool_service.handleFramedRequest(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        512,
+        256,
+        512,
+    ) catch return error.ToolServiceFailed;
+    const package_channel_set_payload_expected = std.fmt.allocPrint(service_fba.allocator(), "PKGCHANNELSET {s} {s} {s}\n", .{
+        package_name,
+        package_channel_name,
+        package_release_three_name,
+    }) catch return error.ToolServiceFailed;
+    const package_channel_set_response_expected = std.fmt.allocPrint(service_fba.allocator(), "RESP {d} {d}\n{s}", .{
+        package_channel_set_request_id,
+        package_channel_set_payload_expected.len,
+        package_channel_set_payload_expected,
+    }) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, package_channel_set_response, package_channel_set_response_expected)) return error.ToolServiceResponseMismatch;
+
+    const package_channel_set_reply = server_b.buildPayload(package_channel_set_response) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, package_channel_set_reply);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, package_channel_set_reply);
+    const mapped_b_package_channel_set_reply = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+    if (mapped_b_package_channel_set_reply != client_b) return error.SessionStateMismatch;
+    mapped_b_package_channel_set_reply.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const package_channel_set_reply_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_set_reply_ack);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_set_reply_ack);
+    server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const package_channel_info_request_payload = client_b.buildPayload(package_channel_info_request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_info_request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_info_request_payload);
+    server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const package_channel_info_response = tool_service.handleFramedRequest(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        512,
+        256,
+        512,
+    ) catch return error.ToolServiceFailed;
+    if (!std.mem.startsWith(u8, package_channel_info_response, "RESP 96 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, package_channel_info_response, "channel=stable") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, package_channel_info_response, "release=r3") == null) return error.ToolServiceResponseMismatch;
+
+    const package_channel_info_reply = server_b.buildPayload(package_channel_info_response) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, package_channel_info_reply);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, package_channel_info_reply);
+    const mapped_b_package_channel_info_reply = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+    if (mapped_b_package_channel_info_reply != client_b) return error.SessionStateMismatch;
+    mapped_b_package_channel_info_reply.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const package_channel_info_reply_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_info_reply_ack);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_info_reply_ack);
+    server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const package_channel_list_request_payload = client_b.buildPayload(package_channel_list_request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_list_request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_list_request_payload);
+    server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const package_channel_list_response = tool_service.handleFramedRequest(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        512,
+        256,
+        512,
+    ) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, package_channel_list_response, "RESP 97 7\nstable\n")) return error.ToolServiceResponseMismatch;
+
+    const package_channel_list_reply = server_b.buildPayload(package_channel_list_response) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, package_channel_list_reply);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, package_channel_list_reply);
+    const mapped_b_package_channel_list_reply = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+    if (mapped_b_package_channel_list_reply != client_b) return error.SessionStateMismatch;
+    mapped_b_package_channel_list_reply.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const package_channel_list_reply_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_list_reply_ack);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_list_reply_ack);
+    server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    qemuDebugWrite("T60A\n");
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const package_channel_mutated_install_request = std.fmt.allocPrint(service_fba.allocator(), "REQ {d} PKG {s} {d}\n{s}", .{
+        package_channel_mutated_install_request_id,
+        package_name,
+        package_channel_mutated_script_body.len,
+        package_channel_mutated_script_body,
+    }) catch return error.ToolServiceFailed;
+    const package_channel_mutated_install_request_payload = client_b.buildPayload(package_channel_mutated_install_request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_mutated_install_request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_mutated_install_request_payload);
+    server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const package_channel_mutated_install_response = tool_service.handleFramedRequest(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        512,
+        256,
+        512,
+    ) catch return error.ToolServiceFailed;
+    if (std.mem.indexOf(u8, package_channel_mutated_install_response, "INSTALLED demo -> /packages/demo/bin/main.oc\n") == null) return error.ToolServiceResponseMismatch;
+
+    const package_channel_mutated_install_reply = server_b.buildPayload(package_channel_mutated_install_response) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, package_channel_mutated_install_reply);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, package_channel_mutated_install_reply);
+    const mapped_b_package_channel_mutated_install_reply = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+    if (mapped_b_package_channel_mutated_install_reply != client_b) return error.SessionStateMismatch;
+    mapped_b_package_channel_mutated_install_reply.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const package_channel_mutated_install_reply_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_mutated_install_reply_ack);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_mutated_install_reply_ack);
+    server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const package_channel_mutated_asset_put_request = std.fmt.allocPrint(service_fba.allocator(), "REQ {d} PKGPUT {s} {s} {d}\n{s}", .{
+        package_channel_mutated_asset_put_request_id,
+        package_name,
+        package_asset_relative_path,
+        package_channel_mutated_asset_body.len,
+        package_channel_mutated_asset_body,
+    }) catch return error.ToolServiceFailed;
+    const package_channel_mutated_asset_put_request_payload = client_b.buildPayload(package_channel_mutated_asset_put_request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_mutated_asset_put_request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_mutated_asset_put_request_payload);
+    server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const package_channel_mutated_asset_put_response = tool_service.handleFramedRequest(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        512,
+        256,
+        512,
+    ) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, package_channel_mutated_asset_put_response, "RESP 100 52\nASSET demo -> /packages/demo/assets/config/app.json\n")) return error.ToolServiceResponseMismatch;
+
+    const package_channel_mutated_asset_put_reply = server_b.buildPayload(package_channel_mutated_asset_put_response) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, package_channel_mutated_asset_put_reply);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, package_channel_mutated_asset_put_reply);
+    const mapped_b_package_channel_mutated_asset_put_reply = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+    if (mapped_b_package_channel_mutated_asset_put_reply != client_b) return error.SessionStateMismatch;
+    mapped_b_package_channel_mutated_asset_put_reply.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const package_channel_mutated_asset_put_reply_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_mutated_asset_put_reply_ack);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_mutated_asset_put_reply_ack);
+    server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const package_channel_mutated_run_request_payload = client_b.buildPayload(package_channel_mutated_run_request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_mutated_run_request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_mutated_run_request_payload);
+    server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const package_channel_mutated_run_response = tool_service.handleFramedRequest(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        512,
+        256,
+        512,
+    ) catch return error.ToolServiceFailed;
+    if (!std.mem.startsWith(u8, package_channel_mutated_run_response, "RESP 99 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, package_channel_mutated_run_response, "pkg-channel-mutated\n") == null) return error.ToolServiceResponseMismatch;
+
+    var package_channel_mutated_run_response_offset: usize = 0;
+    while (package_channel_mutated_run_response_offset < package_channel_mutated_run_response.len) {
+        const package_channel_mutated_run_reply_chunk = server_b.buildPayloadChunk(package_channel_mutated_run_response[package_channel_mutated_run_response_offset..]) catch |err| return mapTcpSessionProbeError(err);
+        const expected_chunk = package_channel_mutated_run_response[package_channel_mutated_run_response_offset .. package_channel_mutated_run_response_offset + package_channel_mutated_run_reply_chunk.payload.len];
+        _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, package_channel_mutated_run_reply_chunk);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, package_channel_mutated_run_reply_chunk);
+        if (!std.mem.eql(u8, package_channel_mutated_run_reply_chunk.payload, expected_chunk)) return error.PayloadMismatch;
+        const mapped_b_package_channel_mutated_run_reply = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+        if (mapped_b_package_channel_mutated_run_reply != client_b) return error.SessionStateMismatch;
+        mapped_b_package_channel_mutated_run_reply.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+        package_channel_mutated_run_response_offset += package_channel_mutated_run_reply_chunk.payload.len;
+
+        const package_channel_mutated_run_reply_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+        _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_mutated_run_reply_ack);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_mutated_run_reply_ack);
+        server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    }
+    if (package_channel_mutated_run_response_offset != package_channel_mutated_run_response.len) return error.PayloadMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const package_channel_mutated_output_readback = filesystem.readFileAlloc(service_fba.allocator(), package_output_path, 64) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, package_channel_mutated_output_readback, package_output_channel_mutated_expected)) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("T60B\n");
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const package_channel_activate_request = std.fmt.allocPrint(service_fba.allocator(), "REQ {d} PKGCHANNELACTIVATE {s} {s}", .{
+        package_channel_activate_request_id,
+        package_name,
+        package_channel_name,
+    }) catch return error.ToolServiceFailed;
+    const package_channel_activate_request_payload = client_b.buildPayload(package_channel_activate_request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_activate_request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_activate_request_payload);
+    server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const package_channel_activate_response = tool_service.handleFramedRequest(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        512,
+        256,
+        512,
+    ) catch return error.ToolServiceFailed;
+    const package_channel_activate_payload_expected = std.fmt.allocPrint(service_fba.allocator(), "PKGCHANNELACTIVATE {s} {s}\n", .{
+        package_name,
+        package_channel_name,
+    }) catch return error.ToolServiceFailed;
+    const package_channel_activate_response_expected = std.fmt.allocPrint(service_fba.allocator(), "RESP {d} {d}\n{s}", .{
+        package_channel_activate_request_id,
+        package_channel_activate_payload_expected.len,
+        package_channel_activate_payload_expected,
+    }) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, package_channel_activate_response, package_channel_activate_response_expected)) return error.ToolServiceResponseMismatch;
+
+    const package_channel_activate_reply = server_b.buildPayload(package_channel_activate_response) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, package_channel_activate_reply);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, package_channel_activate_reply);
+    const mapped_b_package_channel_activate_reply = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+    if (mapped_b_package_channel_activate_reply != client_b) return error.SessionStateMismatch;
+    mapped_b_package_channel_activate_reply.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const package_channel_activate_reply_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_activate_reply_ack);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_activate_reply_ack);
+    server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const package_channel_restored_run_request_payload = client_b.buildPayload(package_channel_restored_run_request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_restored_run_request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_restored_run_request_payload);
+    server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const package_channel_restored_run_response = tool_service.handleFramedRequest(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        512,
+        256,
+        512,
+    ) catch return error.ToolServiceFailed;
+    if (!std.mem.startsWith(u8, package_channel_restored_run_response, "RESP 102 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, package_channel_restored_run_response, "pkg-service-ok\n") == null) return error.ToolServiceResponseMismatch;
+
+    var package_channel_restored_run_response_offset: usize = 0;
+    while (package_channel_restored_run_response_offset < package_channel_restored_run_response.len) {
+        const package_channel_restored_run_reply_chunk = server_b.buildPayloadChunk(package_channel_restored_run_response[package_channel_restored_run_response_offset..]) catch |err| return mapTcpSessionProbeError(err);
+        const expected_chunk = package_channel_restored_run_response[package_channel_restored_run_response_offset .. package_channel_restored_run_response_offset + package_channel_restored_run_reply_chunk.payload.len];
+        _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, package_channel_restored_run_reply_chunk);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, package_channel_restored_run_reply_chunk);
+        if (!std.mem.eql(u8, package_channel_restored_run_reply_chunk.payload, expected_chunk)) return error.PayloadMismatch;
+        const mapped_b_package_channel_restored_run_reply = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+        if (mapped_b_package_channel_restored_run_reply != client_b) return error.SessionStateMismatch;
+        mapped_b_package_channel_restored_run_reply.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+        package_channel_restored_run_response_offset += package_channel_restored_run_reply_chunk.payload.len;
+
+        const package_channel_restored_run_reply_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+        _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_restored_run_reply_ack);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_restored_run_reply_ack);
+        server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    }
+    if (package_channel_restored_run_response_offset != package_channel_restored_run_response.len) return error.PayloadMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const package_channel_restored_output_readback = filesystem.readFileAlloc(service_fba.allocator(), package_output_path, 64) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, package_channel_restored_output_readback, package_output_expected)) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const package_channel_restored_asset_get_request_payload = client_b.buildPayload(package_channel_restored_asset_get_request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_restored_asset_get_request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_restored_asset_get_request_payload);
+    server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const package_channel_restored_asset_get_response = tool_service.handleFramedRequest(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        512,
+        256,
+        512,
+    ) catch return error.ToolServiceFailed;
+    const package_channel_restored_asset_get_response_expected = std.fmt.allocPrint(service_fba.allocator(), "RESP 103 {d}\n{s}", .{
+        package_asset_body.len,
+        package_asset_body,
+    }) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, package_channel_restored_asset_get_response, package_channel_restored_asset_get_response_expected)) return error.ToolServiceResponseMismatch;
+
+    const package_channel_restored_asset_get_reply = server_b.buildPayload(package_channel_restored_asset_get_response) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, package_channel_restored_asset_get_reply);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, package_channel_restored_asset_get_reply);
+    const mapped_b_package_channel_restored_asset_get_reply = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+    if (mapped_b_package_channel_restored_asset_get_reply != client_b) return error.SessionStateMismatch;
+    mapped_b_package_channel_restored_asset_get_reply.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const package_channel_restored_asset_get_reply_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_restored_asset_get_reply_ack);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_restored_asset_get_reply_ack);
+    server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    client_b.local_window = 512;
+    const package_channel_window_reopen_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_window_reopen_ack);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_channel_window_reopen_ack);
+    server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    if (server_b.remote_window != client_b.local_window) return error.WindowUpdateMismatch;
+    qemuDebugWrite("T60C\n");
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const package_asset_list_request_payload = client_b.buildPayload(package_asset_list_request) catch |err| return mapTcpSessionProbeError(err);
@@ -4633,6 +5026,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     try pollTcpProbePacket(eth, &scratch.packet_storage);
     try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, package_asset_list_reply_ack);
     server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    qemuDebugWrite("T50\n");
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const package_asset_get_request_payload = client_b.buildPayload(package_asset_get_request) catch |err| return mapTcpSessionProbeError(err);
@@ -5212,6 +5606,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
     }
     if (trust_final_active_response_offset != trust_final_active_response.len) return error.PayloadMismatch;
+    qemuDebugWrite("T70\n");
 
     client_b.local_window = 48;
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
@@ -5570,6 +5965,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const autorun_aux_stdout_readback = filesystem.readFileAlloc(service_fba.allocator(), "/runtime/apps/aux/stdout.log", 64) catch return error.ToolServiceFailed;
     if (!std.mem.eql(u8, autorun_aux_stdout_readback, autorun_run_stdout)) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("T80\n");
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const app_plan_batch_service_request = std.fmt.bufPrint(
@@ -5982,6 +6378,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         error.FileNotFound => {},
         else => return error.ToolServiceFailed,
     }
+    qemuDebugWrite("T90\n");
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const uninstall_service_request = std.fmt.bufPrint(&scratch.service_batch_request_buffer, "REQ {d} APPDELETE {s}\nREQ {d} APPLIST", .{
@@ -6035,6 +6432,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         error.FileNotFound => {},
         else => return error.ToolServiceFailed,
     }
+    qemuDebugWrite("TA0\n");
 
     const client_fin_a = client_a.buildFinWithTimeout(probe_tick, retransmit_interval_ticks) catch |err| return mapTcpSessionProbeError(err);
     if (!client_a.retransmit.armed() or client_a.retransmit.kind != .fin) return error.RetransmitMissing;
@@ -6137,6 +6535,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     if (eth.last_rx_len != expected_final_ack_frame_len_b) return error.FrameLengthMismatch;
 
     if (eth.tx_packets < 20 or eth.rx_packets < 20) return error.CounterMismatch;
+    qemuDebugWrite("TFF\n");
 }
 
 fn runRtl8139RuntimeServiceProbe() Rtl8139TcpProbeError!void {
@@ -8829,6 +9228,18 @@ fn qemuExit(code: u8) noreturn {
     out8(qemu_debug_exit_port, code);
     while (true) {
         asm volatile ("hlt");
+    }
+}
+
+fn qemuDebugWriteByte(byte: u8) void {
+    if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86_64) return;
+    out8(qemu_debug_console_port, byte);
+}
+
+fn qemuDebugWrite(bytes: []const u8) void {
+    if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86_64) return;
+    for (bytes) |byte| {
+        qemuDebugWriteByte(byte);
     }
 }
 

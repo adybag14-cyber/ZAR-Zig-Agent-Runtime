@@ -13,6 +13,7 @@ pub const entry_table_lba: u32 = superblock_lba + 1;
 
 var state: abi.BaremetalFilesystemState = undefined;
 var entries: [max_entries]abi.BaremetalFilesystemEntry = std.mem.zeroes([max_entries]abi.BaremetalFilesystemEntry);
+var deferred_persist_depth: u32 = 0;
 
 const entry_table_bytes = @sizeOf(@TypeOf(entries));
 comptime {
@@ -72,6 +73,7 @@ pub fn resetForTest() void {
         .last_modified_tick = 0,
     };
     @memset(&entries, std.mem.zeroes(abi.BaremetalFilesystemEntry));
+    deferred_persist_depth = 0;
 }
 
 pub fn invalidateForBackendChange() void {
@@ -80,6 +82,9 @@ pub fn invalidateForBackendChange() void {
 
 pub fn init() Error!void {
     storage_backend.init();
+    if (state.mounted != 0 and state.formatted != 0 and state.active_backend == storage_backend.activeBackend()) {
+        return;
+    }
     if (try loadExisting()) return;
     try format();
 }
@@ -91,6 +96,19 @@ pub fn formatActiveBackend() Error!void {
 
 pub fn statePtr() *const abi.BaremetalFilesystemState {
     return &state;
+}
+
+pub fn beginDeferredPersist() Error!void {
+    try init();
+    deferred_persist_depth +%= 1;
+}
+
+pub fn endDeferredPersist() Error!void {
+    if (deferred_persist_depth == 0) return;
+    deferred_persist_depth -= 1;
+    if (deferred_persist_depth == 0 and state.dirty != 0) {
+        try persistAll();
+    }
 }
 
 pub fn entry(index: u32) abi.BaremetalFilesystemEntry {
@@ -125,7 +143,7 @@ pub fn createDirPath(path: []const u8) Error!void {
     }
 
     recountState();
-    try persistAll();
+    try maybePersistAll();
 }
 
 pub fn writeFile(path: []const u8, data: []const u8, tick: u64) Error!void {
@@ -157,7 +175,7 @@ pub fn writeFile(path: []const u8, data: []const u8, tick: u64) Error!void {
     state.last_modified_tick = tick;
     state.dirty = 1;
     recountState();
-    try persistAll();
+    try maybePersistAll();
 }
 
 pub fn deleteFile(path: []const u8, tick: u64) Error!void {
@@ -177,7 +195,7 @@ pub fn deleteFile(path: []const u8, tick: u64) Error!void {
     state.last_modified_tick = tick;
     state.dirty = 1;
     recountState();
-    try persistAll();
+    try maybePersistAll();
 }
 
 pub fn deleteTree(path: []const u8, tick: u64) Error!void {
@@ -207,7 +225,7 @@ pub fn deleteTree(path: []const u8, tick: u64) Error!void {
     state.last_modified_tick = tick;
     state.dirty = 1;
     recountState();
-    try persistAll();
+    try maybePersistAll();
 }
 
 pub fn readFileAlloc(allocator: std.mem.Allocator, path: []const u8, max_bytes: usize) Error![]u8 {
@@ -451,6 +469,11 @@ fn persistAll() Error!void {
     try persistState();
     try persistEntries();
     try storage_backend.flush();
+}
+
+fn maybePersistAll() Error!void {
+    if (deferred_persist_depth != 0) return;
+    try persistAll();
 }
 
 fn persistState() Error!void {
@@ -700,6 +723,34 @@ test "filesystem persists path-based files on the ata backend" {
     const stat = try statNoFollow("/tools/cache/tool.txt");
     try std.testing.expectEqual(@as(std.Io.File.Kind, .file), stat.kind);
     try std.testing.expectEqual(@as(u64, 4), stat.size);
+}
+
+test "filesystem init preserves deferred in-memory state on the active backend" {
+    storage_backend.resetForTest();
+    resetForTest();
+    @import("ata_pio_disk.zig").testEnableMockDevice(8192);
+    @import("ata_pio_disk.zig").testInstallMockMbrPartition(2048, 4096, 0x83);
+    defer @import("ata_pio_disk.zig").testDisableMockDevice();
+
+    try init();
+    try beginDeferredPersist();
+    defer endDeferredPersist() catch {};
+    try createDirPath("/runtime/state");
+    try writeFile("/runtime/state/deferred.txt", "edge", 101);
+    try std.testing.expectEqual(@as(u8, 1), state.dirty);
+
+    try init();
+    const before_flush = try readFileAlloc(std.testing.allocator, "/runtime/state/deferred.txt", 64);
+    defer std.testing.allocator.free(before_flush);
+    try std.testing.expectEqualStrings("edge", before_flush);
+    try std.testing.expectEqual(@as(u8, 1), state.dirty);
+
+    try endDeferredPersist();
+    resetForTest();
+    try init();
+    const reloaded = try readFileAlloc(std.testing.allocator, "/runtime/state/deferred.txt", 64);
+    defer std.testing.allocator.free(reloaded);
+    try std.testing.expectEqualStrings("edge", reloaded);
 }
 
 test "filesystem lists direct child entries only" {

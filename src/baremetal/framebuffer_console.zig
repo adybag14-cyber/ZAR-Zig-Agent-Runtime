@@ -371,7 +371,9 @@ fn initCommon(mode: Mode, clear_on_init: bool) bool {
         .width = state.width,
         .height = state.height,
     });
-    if (clear_on_init) clear();
+    if (clear_on_init) {
+        clear();
+    }
     return state.hardware_backed != 0;
 }
 
@@ -393,6 +395,10 @@ pub fn initForProbeMode(width: u16, height: u16) bool {
     const mode = modeByDimensions(width, height) orelse return false;
     _ = initCommon(mode, false);
     return true;
+}
+
+pub fn prepareMode(width: u16, height: u16) error{UnsupportedMode}!void {
+    if (!initForProbeMode(width, height)) return error.UnsupportedMode;
 }
 
 pub fn setMode(width: u16, height: u16) error{UnsupportedMode}!void {

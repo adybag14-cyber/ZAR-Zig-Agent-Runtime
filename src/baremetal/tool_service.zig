@@ -50,6 +50,10 @@ pub const RequestOp = enum {
     package_release_activate,
     package_release_delete,
     package_release_prune,
+    package_channel_list,
+    package_channel_info,
+    package_channel_set,
+    package_channel_activate,
     app_list,
     app_info,
     app_state,
@@ -122,6 +126,12 @@ pub const PackageReleasePruneRequest = struct {
     keep: u32,
 };
 
+pub const PackageChannelSetRequest = struct {
+    package_name: []const u8,
+    channel: []const u8,
+    release: []const u8,
+};
+
 pub const AppPlanSaveRequest = struct {
     package_name: []const u8,
     plan_name: []const u8,
@@ -161,6 +171,10 @@ pub const FramedRequest = struct {
         package_release_activate: NamedValueRequest,
         package_release_delete: NamedValueRequest,
         package_release_prune: PackageReleasePruneRequest,
+        package_channel_list: []const u8,
+        package_channel_info: NamedValueRequest,
+        package_channel_set: PackageChannelSetRequest,
+        package_channel_activate: NamedValueRequest,
         app_list: void,
         app_info: []const u8,
         app_state: []const u8,
@@ -212,7 +226,7 @@ pub fn handleCommandRequest(
     const trimmed = std.mem.trim(u8, request, " \t\r\n");
     if (trimmed.len == 0) return error.EmptyRequest;
 
-    var result = try tool_exec.runCapture(allocator, trimmed, stdout_limit, stderr_limit);
+    var result = try tool_exec.runCaptureSilent(allocator, trimmed, stdout_limit, stderr_limit);
     defer result.deinit(allocator);
 
     if (result.exit_code == 0 and result.stderr.len == 0) {
@@ -728,6 +742,91 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
             .operation = .{ .package_release_prune = .{
                 .package_name = package_name_part.token,
                 .keep = std.fmt.parseInt(u32, keep_part.token, 10) catch return error.InvalidFrame,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "PKGCHANNELLIST")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .package_channel_list = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .package_channel_list = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "PKGCHANNELINFO")) {
+        const package_name_part = try splitFirstToken(op_part.rest);
+        const channel_name_part = try splitFirstToken(package_name_part.rest);
+        if (channel_name_part.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .package_channel_info = .{
+                .package_name = package_name_part.token,
+                .value = channel_name_part.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "PKGCHANNELSET")) {
+        const package_name_part = try splitFirstToken(op_part.rest);
+        const channel_name_part = try splitFirstToken(package_name_part.rest);
+        const release_name_part = try splitFirstToken(channel_name_part.rest);
+        if (release_name_part.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .package_channel_set = .{
+                .package_name = package_name_part.token,
+                .channel = channel_name_part.token,
+                .release = release_name_part.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "PKGCHANNELACTIVATE")) {
+        const package_name_part = try splitFirstToken(op_part.rest);
+        const channel_name_part = try splitFirstToken(package_name_part.rest);
+        if (channel_name_part.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .package_channel_activate = .{
+                .package_name = package_name_part.token,
+                .value = channel_name_part.token,
             } },
         };
         if (newline_index != null) {
@@ -1376,6 +1475,10 @@ fn handleFramedPayload(
         .package_release_activate => |release_request| try handlePackageReleaseActivateRequest(allocator, release_request.package_name, release_request.value, payload_limit),
         .package_release_delete => |release_request| try handlePackageReleaseDeleteRequest(allocator, release_request.package_name, release_request.value, payload_limit),
         .package_release_prune => |release_request| try handlePackageReleasePruneRequest(allocator, release_request.package_name, release_request.keep, payload_limit),
+        .package_channel_list => |package_name| try handlePackageChannelListRequest(allocator, package_name, payload_limit),
+        .package_channel_info => |channel_request| try handlePackageChannelInfoRequest(allocator, channel_request.package_name, channel_request.value, payload_limit),
+        .package_channel_set => |channel_request| try handlePackageChannelSetRequest(allocator, channel_request.package_name, channel_request.channel, channel_request.release, payload_limit),
+        .package_channel_activate => |channel_request| try handlePackageChannelActivateRequest(allocator, channel_request.package_name, channel_request.value, payload_limit),
         .app_list => try handleAppListRequest(allocator, payload_limit),
         .app_info => |package_name| try handleAppInfoRequest(allocator, package_name, payload_limit),
         .app_state => |package_name| try handleAppStateRequest(allocator, package_name, payload_limit),
@@ -1740,6 +1843,54 @@ fn handlePackageReleasePruneRequest(
         "PKGRELEASEPRUNE {s} keep={d} deleted={d} kept={d}\n",
         .{ package_name, keep, prune.deleted_count, prune.kept_count },
     );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handlePackageChannelListRequest(allocator: std.mem.Allocator, package_name: []const u8, payload_limit: usize) Error![]u8 {
+    return package_store.channelListAlloc(allocator, package_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "PKGCHANNELLIST", err, payload_limit);
+    };
+}
+
+fn handlePackageChannelInfoRequest(
+    allocator: std.mem.Allocator,
+    package_name: []const u8,
+    channel_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return package_store.channelInfoAlloc(allocator, package_name, channel_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "PKGCHANNELINFO", err, payload_limit);
+    };
+}
+
+fn handlePackageChannelSetRequest(
+    allocator: std.mem.Allocator,
+    package_name: []const u8,
+    channel_name: []const u8,
+    release_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    package_store.setPackageReleaseChannel(package_name, channel_name, release_name, 0) catch |err| {
+        return formatOperationError(allocator, "PKGCHANNELSET", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "PKGCHANNELSET {s} {s} {s}\n", .{ package_name, channel_name, release_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handlePackageChannelActivateRequest(
+    allocator: std.mem.Allocator,
+    package_name: []const u8,
+    channel_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    package_store.activatePackageReleaseChannel(package_name, channel_name, 0) catch |err| {
+        return formatOperationError(allocator, "PKGCHANNELACTIVATE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "PKGCHANNELACTIVATE {s} {s}\n", .{ package_name, channel_name });
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
@@ -2374,6 +2525,40 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
+    const pkg_channel_list = try parseFramedRequest("REQ 132 PKGCHANNELLIST demo");
+    switch (pkg_channel_list.operation) {
+        .package_channel_list => |package_name| try std.testing.expectEqualStrings("demo", package_name),
+        else => return error.InvalidFrame,
+    }
+
+    const pkg_channel_info = try parseFramedRequest("REQ 133 PKGCHANNELINFO demo stable");
+    switch (pkg_channel_info.operation) {
+        .package_channel_info => |payload| {
+            try std.testing.expectEqualStrings("demo", payload.package_name);
+            try std.testing.expectEqualStrings("stable", payload.value);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const pkg_channel_set = try parseFramedRequest("REQ 134 PKGCHANNELSET demo stable r1");
+    switch (pkg_channel_set.operation) {
+        .package_channel_set => |payload| {
+            try std.testing.expectEqualStrings("demo", payload.package_name);
+            try std.testing.expectEqualStrings("stable", payload.channel);
+            try std.testing.expectEqualStrings("r1", payload.release);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const pkg_channel_activate = try parseFramedRequest("REQ 135 PKGCHANNELACTIVATE demo stable");
+    switch (pkg_channel_activate.operation) {
+        .package_channel_activate => |payload| {
+            try std.testing.expectEqualStrings("demo", payload.package_name);
+            try std.testing.expectEqualStrings("stable", payload.value);
+        },
+        else => return error.InvalidFrame,
+    }
+
     const display_info = try parseFramedRequest("REQ 26 DISPLAYINFO");
     switch (display_info.operation) {
         .display_info => {},
@@ -2898,6 +3083,35 @@ test "baremetal tool service manages persisted package releases" {
     const list_after_prune = try handleFramedRequest(std.testing.allocator, "REQ 106 PKGRELEASELIST demo", 512, 256, 512);
     defer std.testing.allocator.free(list_after_prune);
     try std.testing.expectEqualStrings("RESP 106 3\nr3\n", list_after_prune);
+
+    const channel_set_response = try handleFramedRequest(std.testing.allocator, "REQ 107 PKGCHANNELSET demo stable r3", 512, 256, 512);
+    defer std.testing.allocator.free(channel_set_response);
+    try std.testing.expectEqualStrings("RESP 107 29\nPKGCHANNELSET demo stable r3\n", channel_set_response);
+
+    const channel_info_response = try handleFramedRequest(std.testing.allocator, "REQ 108 PKGCHANNELINFO demo stable", 512, 256, 512);
+    defer std.testing.allocator.free(channel_info_response);
+    try std.testing.expect(std.mem.startsWith(u8, channel_info_response, "RESP 108 "));
+    try std.testing.expect(std.mem.indexOf(u8, channel_info_response, "channel=stable") != null);
+    try std.testing.expect(std.mem.indexOf(u8, channel_info_response, "release=r3") != null);
+
+    const channel_list_response = try handleFramedRequest(std.testing.allocator, "REQ 109 PKGCHANNELLIST demo", 512, 256, 512);
+    defer std.testing.allocator.free(channel_list_response);
+    try std.testing.expectEqualStrings("RESP 109 7\nstable\n", channel_list_response);
+
+    const channel_mutate_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 110 PKG demo {d}\n{s}", .{ mutated_script.len, mutated_script });
+    defer std.testing.allocator.free(channel_mutate_request);
+    const channel_mutate_response = try handleFramedRequest(std.testing.allocator, channel_mutate_request, 512, 256, 512);
+    defer std.testing.allocator.free(channel_mutate_response);
+    try std.testing.expect(std.mem.indexOf(u8, channel_mutate_response, "INSTALLED demo -> /packages/demo/bin/main.oc\n") != null);
+
+    const channel_activate_response = try handleFramedRequest(std.testing.allocator, "REQ 111 PKGCHANNELACTIVATE demo stable", 512, 256, 512);
+    defer std.testing.allocator.free(channel_activate_response);
+    try std.testing.expectEqualStrings("RESP 111 31\nPKGCHANNELACTIVATE demo stable\n", channel_activate_response);
+
+    const channel_restored_run_response = try handleFramedRequest(std.testing.allocator, "REQ 112 PKGRUN demo", 512, 256, 512);
+    defer std.testing.allocator.free(channel_restored_run_response);
+    try std.testing.expect(std.mem.startsWith(u8, channel_restored_run_response, "RESP 112 "));
+    try std.testing.expect(std.mem.indexOf(u8, channel_restored_run_response, "release-original\n") != null);
 
     const script_readback = try filesystem.readFileAlloc(std.testing.allocator, "/packages/demo/bin/main.oc", 128);
     defer std.testing.allocator.free(script_readback);
