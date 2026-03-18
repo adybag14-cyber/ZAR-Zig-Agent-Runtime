@@ -11,7 +11,7 @@ npm install @adybag14-cyber/openclaw-zig-rpc-client
 GitHub release tarball fallback for the current edge tag:
 
 ```bash
-npm install "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases/download/v0.2.0-zig-edge.29/adybag14-cyber-openclaw-zig-rpc-client-0.2.0-zig-edge.29.tgz"
+npm install "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases/download/v0.2.0-zig-edge.31/adybag14-cyber-openclaw-zig-rpc-client-0.2.0-zig-edge.31.tgz"
 ```
 
 ## Usage

@@ -303,7 +303,7 @@ try {
         $state = Get-WorkflowConclusionSummary -Workflow $workflow
         $line = "- ``$($workflow.name)``: ``$state``"
         if ($workflow.runId) {
-            $line += " (`$($workflow.runId)`)"
+            $line += " ($($workflow.runId))"
         }
         if (-not [string]::IsNullOrWhiteSpace($workflow.displayTitle)) {
             $line += " - $($workflow.displayTitle)"

@@ -3,6 +3,7 @@
 param(
     [string]$ParityJsonPath = ".\release\parity-go-zig.json",
     [switch]$RefreshParity,
+    [string]$ReleaseTag = "",
     [string]$GitHubToken = $env:GITHUB_TOKEN
 )
 
@@ -24,6 +25,28 @@ function Assert-Contains {
     if (-not $text.Contains($Token)) {
         $Failures.Value += "$Path missing '$Label' token: $Token"
     }
+}
+
+function Get-BranchReleaseTag {
+    param(
+        [string]$PackageJsonPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PackageJsonPath) -or -not (Test-Path $PackageJsonPath)) {
+        return $null
+    }
+
+    try {
+        $packageJson = Get-Content -Path $PackageJsonPath -Raw | ConvertFrom-Json
+        $packageVersion = [string]$packageJson.version
+        if (-not [string]::IsNullOrWhiteSpace($packageVersion) -and $packageVersion -match '^\d+\.\d+\.\d+-zig-edge\.\d+$') {
+            return ('v' + $packageVersion)
+        }
+    } catch {
+        Write-Warning ("Unable to infer branch release tag from {0}: {1}" -f $PackageJsonPath, $_.Exception.Message)
+    }
+
+    return $null
 }
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
@@ -55,30 +78,35 @@ try {
     $originalRef = $report.baseline.original.ref
     $originalBetaRef = $report.baseline.originalBeta.ref
 
-    $releaseTag = $null
-    $releaseHeaders = @{
-        "User-Agent" = "openclaw-zig-docs-status-check"
-        "Accept" = "application/vnd.github+json"
+    $releaseTag = $ReleaseTag
+    if ([string]::IsNullOrWhiteSpace($releaseTag)) {
+        $releaseTag = Get-BranchReleaseTag -PackageJsonPath "npm/openclaw-zig-rpc-client/package.json"
     }
-    if ($GitHubToken) {
-        $releaseHeaders["Authorization"] = "Bearer $GitHubToken"
-    }
-    try {
-        $releases = Invoke-RestMethod -Headers $releaseHeaders -Uri "https://api.github.com/repos/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases?per_page=20"
-        if ($releases) {
-            foreach ($candidate in $releases) {
-                if ($candidate.draft) {
-                    continue
-                }
-                $tag = [string]$candidate.tag_name
-                if (-not [string]::IsNullOrWhiteSpace($tag) -and $tag -match '^v\d+\.\d+\.\d+-zig-edge\.\d+$') {
-                    $releaseTag = $tag
-                    break
+    if ([string]::IsNullOrWhiteSpace($releaseTag)) {
+        $releaseHeaders = @{
+            "User-Agent" = "openclaw-zig-docs-status-check"
+            "Accept" = "application/vnd.github+json"
+        }
+        if ($GitHubToken) {
+            $releaseHeaders["Authorization"] = "Bearer $GitHubToken"
+        }
+        try {
+            $releases = Invoke-RestMethod -Headers $releaseHeaders -Uri "https://api.github.com/repos/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases?per_page=20"
+            if ($releases) {
+                foreach ($candidate in $releases) {
+                    if ($candidate.draft) {
+                        continue
+                    }
+                    $tag = [string]$candidate.tag_name
+                    if (-not [string]::IsNullOrWhiteSpace($tag) -and $tag -match '^v\d+\.\d+\.\d+-zig-edge\.\d+$') {
+                        $releaseTag = $tag
+                        break
+                    }
                 }
             }
+        } catch {
+            Write-Warning "Unable to resolve latest GitHub edge release tag via GitHub API. Release-tag docs checks will be skipped."
         }
-    } catch {
-        Write-Warning "Unable to resolve latest GitHub edge release tag via GitHub API. Release-tag docs checks will be skipped."
     }
 
     $failures = @()
@@ -105,9 +133,9 @@ try {
     Assert-Contains -Path "docs/operations.md" -Token ('ZIG_EVENTS_COUNT=' + $counts.zigEvents) -Label "docs/operations zig events token" -Failures ([ref]$failures)
 
     if ($releaseTag) {
-        Assert-Contains -Path "README.md" -Token ('Latest published edge release tag: `' + $releaseTag + '`') -Label "README release tag token" -Failures ([ref]$failures)
-        Assert-Contains -Path "docs/index.md" -Token ('Latest published edge release tag: `' + $releaseTag + '`') -Label "docs/index release tag token" -Failures ([ref]$failures)
-        Assert-Contains -Path "docs/operations.md" -Token ('Latest published edge release: `' + $releaseTag + '`') -Label "docs/operations release tag token" -Failures ([ref]$failures)
+        Assert-Contains -Path "README.md" -Token ('Current edge release target tag: `' + $releaseTag + '`') -Label "README release tag token" -Failures ([ref]$failures)
+        Assert-Contains -Path "docs/index.md" -Token ('Current edge release target tag: `' + $releaseTag + '`') -Label "docs/index release tag token" -Failures ([ref]$failures)
+        Assert-Contains -Path "docs/operations.md" -Token ('Current edge release target: `' + $releaseTag + '`') -Label "docs/operations release tag token" -Failures ([ref]$failures)
     }
 
     if ($failures.Count -gt 0) {

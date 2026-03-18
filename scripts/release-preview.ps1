@@ -173,9 +173,9 @@ $docsStatusScript = Join-Path $repoRoot "scripts\docs-status-check.ps1"
 if (Test-Path $docsStatusScript) {
     try {
         if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
-            & $docsStatusScript -ParityJsonPath $parityJsonPath -GitHubToken $env:GITHUB_TOKEN
+            & $docsStatusScript -ParityJsonPath $parityJsonPath -ReleaseTag $Version -GitHubToken $env:GITHUB_TOKEN
         } else {
-            & $docsStatusScript -ParityJsonPath $parityJsonPath
+            & $docsStatusScript -ParityJsonPath $parityJsonPath -ReleaseTag $Version
         }
         if (-not $?) {
             throw "docs status drift gate failed."

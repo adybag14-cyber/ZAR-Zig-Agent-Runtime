@@ -10,9 +10,9 @@ All published package surfaces now carry `GPL-2.0-only` metadata and a package-l
 
 ## Current Edge Release
 
-- GitHub prerelease tag: `v0.2.0-zig-edge.29`
-- npm package version: `0.2.0-zig-edge.29`
-- Python package version: `0.2.0.dev29`
+- GitHub edge release target tag: `v0.2.0-zig-edge.31`
+- npm package version: `0.2.0-zig-edge.31`
+- Python package version: `0.2.0.dev31`
 
 ## Install Paths
 
@@ -21,13 +21,13 @@ All published package surfaces now carry `GPL-2.0-only` metadata and a package-l
 Preferred when npmjs is configured:
 
 ```bash
-npm install @adybag14-cyber/openclaw-zig-rpc-client@0.2.0-zig-edge.29
+npm install @adybag14-cyber/openclaw-zig-rpc-client@0.2.0-zig-edge.31
 ```
 
 Fallback from the GitHub release tarball:
 
 ```bash
-npm install "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases/download/v0.2.0-zig-edge.29/adybag14-cyber-openclaw-zig-rpc-client-0.2.0-zig-edge.29.tgz"
+npm install "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases/download/v0.2.0-zig-edge.31/adybag14-cyber-openclaw-zig-rpc-client-0.2.0-zig-edge.31.tgz"
 ```
 
 ### pip
@@ -35,13 +35,13 @@ npm install "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases/do
 Preferred when PyPI is configured:
 
 ```bash
-pip install openclaw-zig-rpc-client==0.2.0.dev29
+pip install openclaw-zig-rpc-client==0.2.0.dev31
 ```
 
 Fallback from the GitHub release wheel:
 
 ```bash
-pip install "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases/download/v0.2.0-zig-edge.29/openclaw_zig_rpc_client-0.2.0.dev29-py3-none-any.whl"
+pip install "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases/download/v0.2.0-zig-edge.31/openclaw_zig_rpc_client-0.2.0.dev31-py3-none-any.whl"
 ```
 
 ### uvx
@@ -55,7 +55,7 @@ uvx --from openclaw-zig-rpc-client openclaw-zig-rpc health --base-url http://127
 Git fallback verified locally against the release tag:
 
 ```bash
-uvx --from "git+https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime@v0.2.0-zig-edge.29#subdirectory=python/openclaw-zig-rpc-client" openclaw-zig-rpc health --base-url http://127.0.0.1:8080
+uvx --from "git+https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime@v0.2.0-zig-edge.31#subdirectory=python/openclaw-zig-rpc-client" openclaw-zig-rpc health --base-url http://127.0.0.1:8080
 ```
 
 ## Registry Configuration Requirements
@@ -69,12 +69,12 @@ The workflow supports two public-publish paths:
 
 If neither public path succeeds, the workflow falls back to GitHub Packages and still attaches the tarball to the GitHub release.
 
-Current state observed during `v0.2.0-zig-edge.29`:
+Current state observed during `v0.2.0-zig-edge.31`:
 
 - `npm-release` completed successfully
 - the tarball was attached to the GitHub prerelease
 - the GitHub Packages fallback path executed successfully
-- public npmjs visibility for `@adybag14-cyber/openclaw-zig-rpc-client@0.2.0-zig-edge.29` still returns `404 Not Found`
+- public npmjs visibility for `@adybag14-cyber/openclaw-zig-rpc-client@0.2.0-zig-edge.31` still returns `404 Not Found`
 
 That means the public npmjs side still needs one of:
 
@@ -94,11 +94,11 @@ The workflow supports two public-publish paths:
 
 If neither public path succeeds, the workflow still attaches the wheel and sdist to the GitHub release.
 
-Current state observed during `v0.2.0-zig-edge.29`:
+Current state observed during `v0.2.0-zig-edge.31`:
 
 - `python-release` completed successfully
 - the wheel and sdist were attached to the GitHub prerelease
-- public PyPI visibility for `openclaw-zig-rpc-client==0.2.0.dev29` still returns `404 Not Found`
+- public PyPI visibility for `openclaw-zig-rpc-client==0.2.0.dev31` still returns `404 Not Found`
 - trusted publishing still fails with `invalid-publisher`
 
 That means PyPI does not yet have a matching trusted publisher entry for:
@@ -147,11 +147,11 @@ Local/operator check:
 
 ```powershell
 pwsh ./scripts/package-registry-status.ps1 `
-  -ReleaseTag v0.2.0-zig-edge.29 `
+  -ReleaseTag v0.2.0-zig-edge.31 `
   -NpmPackageName @adybag14-cyber/openclaw-zig-rpc-client `
-  -NpmVersion 0.2.0-zig-edge.29 `
+  -NpmVersion 0.2.0-zig-edge.31 `
   -PythonPackageName openclaw-zig-rpc-client `
-  -PythonVersion 0.2.0.dev29 `
+  -PythonVersion 0.2.0.dev31 `
   -OutputJsonPath ./release/package-registry-status.json
 ```
 
@@ -168,7 +168,7 @@ Local/operator snapshot:
 
 ```powershell
 pwsh ./scripts/release-status.ps1 `
-  -ReleaseTag v0.2.0-zig-edge.29 `
+  -ReleaseTag v0.2.0-zig-edge.31 `
   -OutputJsonPath ./release/release-status.json `
   -OutputMarkdownPath ./release/release-status.md
 ```
@@ -186,4 +186,3 @@ This emits:
 ## Operator Rule
 
 For edge releases, GitHub release assets are the source of truth when public registries are not yet configured. Do not block a validated edge cut on registry-side configuration drift.
-
