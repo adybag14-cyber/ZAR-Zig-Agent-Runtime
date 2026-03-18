@@ -224,6 +224,12 @@ fn handleFramedPayload(
         .app_suite_apply => |suite_name| try handleAppSuiteApplyRequest(allocator, suite_name, payload_limit),
         .app_suite_run => |suite_name| try handleAppSuiteRunRequest(allocator, suite_name, stdout_limit, stderr_limit, payload_limit),
         .app_suite_delete => |suite_name| try handleAppSuiteDeleteRequest(allocator, suite_name, payload_limit),
+        .app_suite_release_list => |suite_name| try handleAppSuiteReleaseListRequest(allocator, suite_name, payload_limit),
+        .app_suite_release_info => |request| try handleAppSuiteReleaseInfoRequest(allocator, request.suite_name, request.release_name, payload_limit),
+        .app_suite_release_save => |request| try handleAppSuiteReleaseSaveRequest(allocator, request.suite_name, request.release_name, payload_limit),
+        .app_suite_release_activate => |request| try handleAppSuiteReleaseActivateRequest(allocator, request.suite_name, request.release_name, payload_limit),
+        .app_suite_release_delete => |request| try handleAppSuiteReleaseDeleteRequest(allocator, request.suite_name, request.release_name, payload_limit),
+        .app_suite_release_prune => |request| try handleAppSuiteReleasePruneRequest(allocator, request.suite_name, request.keep, payload_limit),
         .workspace_list => try handleWorkspaceListRequest(allocator, payload_limit),
         .workspace_info => |workspace_name| try handleWorkspaceInfoRequest(allocator, workspace_name, payload_limit),
         .workspace_save => |workspace_request| try handleWorkspaceSaveRequest(allocator, workspace_request, payload_limit),
@@ -875,6 +881,92 @@ fn handleAppSuiteDeleteRequest(
         return formatOperationError(allocator, "APPSUITEDELETE", err, payload_limit);
     };
     const response = try std.fmt.allocPrint(allocator, "APPSUITEDELETE {s}\n", .{suite_name});
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleAppSuiteReleaseListRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return app_runtime.suiteReleaseListAlloc(allocator, suite_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "APPSUITERELEASELIST", err, payload_limit);
+    };
+}
+
+fn handleAppSuiteReleaseInfoRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    release_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return app_runtime.suiteReleaseInfoAlloc(allocator, suite_name, release_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "APPSUITERELEASEINFO", err, payload_limit);
+    };
+}
+
+fn handleAppSuiteReleaseSaveRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    release_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    app_runtime.snapshotSuiteRelease(suite_name, release_name, 0) catch |err| {
+        return formatOperationError(allocator, "APPSUITERELEASESAVE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "APPSUITERELEASESAVE {s} {s}\n", .{ suite_name, release_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleAppSuiteReleaseActivateRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    release_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    app_runtime.activateSuiteRelease(suite_name, release_name, 0) catch |err| {
+        return formatOperationError(allocator, "APPSUITERELEASEACTIVATE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "APPSUITERELEASEACTIVATE {s} {s}\n", .{ suite_name, release_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleAppSuiteReleaseDeleteRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    release_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    app_runtime.deleteSuiteRelease(suite_name, release_name, 0) catch |err| {
+        return formatOperationError(allocator, "APPSUITERELEASEDELETE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "APPSUITERELEASEDELETE {s} {s}\n", .{ suite_name, release_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleAppSuiteReleasePruneRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    keep: u32,
+    payload_limit: usize,
+) Error![]u8 {
+    const keep_usize: usize = @intCast(keep);
+    const prune = app_runtime.pruneSuiteReleases(suite_name, keep_usize, 0) catch |err| {
+        return formatOperationError(allocator, "APPSUITERELEASEPRUNE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "APPSUITERELEASEPRUNE {s} keep={d} deleted={d} kept={d}\n",
+        .{ suite_name, keep, prune.deleted_count, prune.kept_count },
+    );
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
@@ -1876,6 +1968,57 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
+    const app_suite_release_list = try parseFramedRequest("REQ 176 APPSUITERELEASELIST duo");
+    switch (app_suite_release_list.operation) {
+        .app_suite_release_list => |suite_name| try std.testing.expectEqualStrings("duo", suite_name),
+        else => return error.InvalidFrame,
+    }
+
+    const app_suite_release_info = try parseFramedRequest("REQ 177 APPSUITERELEASEINFO duo golden");
+    switch (app_suite_release_info.operation) {
+        .app_suite_release_info => |payload| {
+            try std.testing.expectEqualStrings("duo", payload.suite_name);
+            try std.testing.expectEqualStrings("golden", payload.release_name);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const app_suite_release_save = try parseFramedRequest("REQ 178 APPSUITERELEASESAVE duo golden");
+    switch (app_suite_release_save.operation) {
+        .app_suite_release_save => |payload| {
+            try std.testing.expectEqualStrings("duo", payload.suite_name);
+            try std.testing.expectEqualStrings("golden", payload.release_name);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const app_suite_release_activate = try parseFramedRequest("REQ 179 APPSUITERELEASEACTIVATE duo golden");
+    switch (app_suite_release_activate.operation) {
+        .app_suite_release_activate => |payload| {
+            try std.testing.expectEqualStrings("duo", payload.suite_name);
+            try std.testing.expectEqualStrings("golden", payload.release_name);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const app_suite_release_delete = try parseFramedRequest("REQ 180 APPSUITERELEASEDELETE duo golden");
+    switch (app_suite_release_delete.operation) {
+        .app_suite_release_delete => |payload| {
+            try std.testing.expectEqualStrings("duo", payload.suite_name);
+            try std.testing.expectEqualStrings("golden", payload.release_name);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const app_suite_release_prune = try parseFramedRequest("REQ 181 APPSUITERELEASEPRUNE duo 1");
+    switch (app_suite_release_prune.operation) {
+        .app_suite_release_prune => |payload| {
+            try std.testing.expectEqualStrings("duo", payload.suite_name);
+            try std.testing.expectEqual(@as(u32, 1), payload.keep);
+        },
+        else => return error.InvalidFrame,
+    }
+
     const workspace_list = try parseFramedRequest("REQ 152 WORKSPACELIST");
     switch (workspace_list.operation) {
         .workspace_list => {},
@@ -2700,6 +2843,82 @@ test "baremetal tool service manages persisted app suites" {
     const suite_list_after_delete = try handleFramedRequest(std.testing.allocator, "REQ 181 APPSUITELIST", 512, 256, 512);
     defer std.testing.allocator.free(suite_list_after_delete);
     try std.testing.expectEqualStrings("RESP 181 0\n", suite_list_after_delete);
+}
+
+test "baremetal tool service manages app suite releases" {
+    resetPersistentStateForTest();
+
+    try package_store.installScriptPackage("demo", "echo suite-demo", 1);
+    try package_store.installScriptPackage("aux", "echo suite-aux", 2);
+
+    const save_demo_plan = try handleFramedRequest(std.testing.allocator, "REQ 182 APPPLANSAVE demo golden none none virtual 1280 720 1", 512, 256, 512);
+    defer std.testing.allocator.free(save_demo_plan);
+    try std.testing.expectEqualStrings("RESP 182 24\nAPPPLANSAVE demo golden\n", save_demo_plan);
+
+    const save_demo_canary = try handleFramedRequest(std.testing.allocator, "REQ 183 APPPLANSAVE demo canary none none virtual 640 400 0", 512, 256, 512);
+    defer std.testing.allocator.free(save_demo_canary);
+    try std.testing.expectEqualStrings("RESP 183 24\nAPPPLANSAVE demo canary\n", save_demo_canary);
+
+    const save_aux_plan = try handleFramedRequest(std.testing.allocator, "REQ 184 APPPLANSAVE aux sidecar none none virtual 800 600 0", 512, 256, 512);
+    defer std.testing.allocator.free(save_aux_plan);
+    try std.testing.expectEqualStrings("RESP 184 24\nAPPPLANSAVE aux sidecar\n", save_aux_plan);
+
+    const save_suite = try handleFramedRequest(std.testing.allocator, "REQ 185 APPSUITESAVE duo demo:golden aux:sidecar", 512, 256, 512);
+    defer std.testing.allocator.free(save_suite);
+    try std.testing.expectEqualStrings("RESP 185 17\nAPPSUITESAVE duo\n", save_suite);
+
+    const save_release_golden = try handleFramedRequest(std.testing.allocator, "REQ 186 APPSUITERELEASESAVE duo golden", 512, 256, 512);
+    defer std.testing.allocator.free(save_release_golden);
+    try std.testing.expectEqualStrings("RESP 186 31\nAPPSUITERELEASESAVE duo golden\n", save_release_golden);
+
+    const mutate_suite = try handleFramedRequest(std.testing.allocator, "REQ 187 APPSUITESAVE duo demo:canary", 512, 256, 512);
+    defer std.testing.allocator.free(mutate_suite);
+    try std.testing.expectEqualStrings("RESP 187 17\nAPPSUITESAVE duo\n", mutate_suite);
+
+    const save_release_staging = try handleFramedRequest(std.testing.allocator, "REQ 188 APPSUITERELEASESAVE duo staging", 512, 256, 512);
+    defer std.testing.allocator.free(save_release_staging);
+    try std.testing.expectEqualStrings("RESP 188 32\nAPPSUITERELEASESAVE duo staging\n", save_release_staging);
+
+    const release_list = try handleFramedRequest(std.testing.allocator, "REQ 189 APPSUITERELEASELIST duo", 512, 256, 512);
+    defer std.testing.allocator.free(release_list);
+    try std.testing.expectEqualStrings("RESP 189 15\ngolden\nstaging\n", release_list);
+
+    const release_info = try handleFramedRequest(std.testing.allocator, "REQ 190 APPSUITERELEASEINFO duo staging", 512, 256, 512);
+    defer std.testing.allocator.free(release_info);
+    try std.testing.expect(std.mem.startsWith(u8, release_info, "RESP 190 "));
+    try std.testing.expect(std.mem.indexOf(u8, release_info, "suite=duo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info, "release=staging") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info, "saved_seq=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info, "entry=demo:canary") != null);
+
+    const activate_release = try handleFramedRequest(std.testing.allocator, "REQ 191 APPSUITERELEASEACTIVATE duo golden", 512, 256, 512);
+    defer std.testing.allocator.free(activate_release);
+    try std.testing.expectEqualStrings("RESP 191 35\nAPPSUITERELEASEACTIVATE duo golden\n", activate_release);
+
+    const restored_suite_info = try handleFramedRequest(std.testing.allocator, "REQ 192 APPSUITEINFO duo", 512, 256, 512);
+    defer std.testing.allocator.free(restored_suite_info);
+    try std.testing.expect(std.mem.indexOf(u8, restored_suite_info, "entry=demo:golden") != null);
+    try std.testing.expect(std.mem.indexOf(u8, restored_suite_info, "entry=aux:sidecar") != null);
+
+    const delete_release = try handleFramedRequest(std.testing.allocator, "REQ 193 APPSUITERELEASEDELETE duo staging", 512, 256, 512);
+    defer std.testing.allocator.free(delete_release);
+    try std.testing.expectEqualStrings("RESP 193 34\nAPPSUITERELEASEDELETE duo staging\n", delete_release);
+
+    const mutate_fallback = try handleFramedRequest(std.testing.allocator, "REQ 194 APPSUITESAVE duo demo:canary aux:sidecar", 512, 256, 512);
+    defer std.testing.allocator.free(mutate_fallback);
+    try std.testing.expectEqualStrings("RESP 194 17\nAPPSUITESAVE duo\n", mutate_fallback);
+
+    const save_release_fallback = try handleFramedRequest(std.testing.allocator, "REQ 195 APPSUITERELEASESAVE duo fallback", 512, 256, 512);
+    defer std.testing.allocator.free(save_release_fallback);
+    try std.testing.expectEqualStrings("RESP 195 33\nAPPSUITERELEASESAVE duo fallback\n", save_release_fallback);
+
+    const prune_release = try handleFramedRequest(std.testing.allocator, "REQ 196 APPSUITERELEASEPRUNE duo 1", 512, 256, 512);
+    defer std.testing.allocator.free(prune_release);
+    try std.testing.expectEqualStrings("RESP 196 49\nAPPSUITERELEASEPRUNE duo keep=1 deleted=1 kept=1\n", prune_release);
+
+    const release_list_after_prune = try handleFramedRequest(std.testing.allocator, "REQ 197 APPSUITERELEASELIST duo", 512, 256, 512);
+    defer std.testing.allocator.free(release_list_after_prune);
+    try std.testing.expectEqualStrings("RESP 197 9\nfallback\n", release_list_after_prune);
 }
 
 test "baremetal tool service manages persisted workspaces" {

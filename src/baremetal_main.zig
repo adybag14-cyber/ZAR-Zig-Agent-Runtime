@@ -3488,6 +3488,18 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const workspace_channel_activate_golden_request_id: u32 = 152;
     const workspace_channel_staging_info_request_id: u32 = 153;
     const workspace_channel_restored_info_request_id: u32 = 154;
+    const app_suite_release_save_golden_request_id: u32 = 155;
+    const app_suite_mutate_staging_request_id: u32 = 156;
+    const app_suite_release_save_staging_request_id: u32 = 157;
+    const app_suite_release_list_request_id: u32 = 158;
+    const app_suite_release_info_request_id: u32 = 159;
+    const app_suite_release_activate_request_id: u32 = 160;
+    const app_suite_release_restored_info_request_id: u32 = 161;
+    const app_suite_release_delete_request_id: u32 = 162;
+    const app_suite_mutate_fallback_request_id: u32 = 163;
+    const app_suite_release_save_fallback_request_id: u32 = 164;
+    const app_suite_release_prune_request_id: u32 = 165;
+    const app_suite_release_list_final_request_id: u32 = 166;
     const uninstall_request_id: u32 = 79;
     const uninstall_list_request_id: u32 = 80;
     const retransmit_interval_ticks: u64 = 4;
@@ -6462,6 +6474,207 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     );
     if (!std.mem.eql(u8, app_suite_info_response, app_suite_info_response_expected)) return error.ToolServiceResponseMismatch;
 
+    var app_suite_body_expected_buffer: [128]u8 = undefined;
+    const app_suite_body_expected = std.fmt.bufPrint(
+        &app_suite_body_expected_buffer,
+        "suite={s}\nentry={s}:{s}\nentry={s}:{s}\n",
+        .{ app_suite_name, package_name, app_plan_name, autorun_package_name, app_suite_aux_plan_name },
+    ) catch return error.ToolServiceFailed;
+    var app_suite_release_golden_request_buffer: [96]u8 = undefined;
+    const app_suite_release_golden_request = std.fmt.bufPrint(
+        &app_suite_release_golden_request_buffer,
+        "REQ {d} APPSUITERELEASESAVE {s} golden",
+        .{ app_suite_release_save_golden_request_id, app_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_release_golden_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_release_golden_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, app_suite_release_golden_response, "RESP 155 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, app_suite_release_golden_response, "APPSUITERELEASESAVE duo golden\n") == null) return error.ToolServiceResponseMismatch;
+
+    var app_suite_release_golden_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const app_suite_release_golden_path = std.fmt.bufPrint(
+        &app_suite_release_golden_path_buffer,
+        "/runtime/app-suite-releases/{s}/golden/suite.txt",
+        .{app_suite_name},
+    ) catch return error.ToolServiceFailed;
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_suite_release_golden_readback = filesystem.readFileAlloc(service_fba.allocator(), app_suite_release_golden_path, 128) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, app_suite_release_golden_readback, app_suite_body_expected)) return error.ToolServiceResponseMismatch;
+
+    var app_suite_release_golden_metadata_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const app_suite_release_golden_metadata_path = std.fmt.bufPrint(
+        &app_suite_release_golden_metadata_path_buffer,
+        "/runtime/app-suite-releases/{s}/golden/release.txt",
+        .{app_suite_name},
+    ) catch return error.ToolServiceFailed;
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_suite_release_golden_metadata = filesystem.readFileAlloc(service_fba.allocator(), app_suite_release_golden_metadata_path, 128) catch return error.ToolServiceFailed;
+    if (std.mem.indexOf(u8, app_suite_release_golden_metadata, "release=golden") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, app_suite_release_golden_metadata, "saved_seq=1") == null) return error.ToolServiceResponseMismatch;
+
+    var app_suite_mutate_staging_request_buffer: [96]u8 = undefined;
+    const app_suite_mutate_staging_request = std.fmt.bufPrint(
+        &app_suite_mutate_staging_request_buffer,
+        "REQ {d} APPSUITESAVE {s} {s}:{s}",
+        .{ app_suite_mutate_staging_request_id, app_suite_name, autorun_package_name, app_suite_aux_plan_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_mutate_staging_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_mutate_staging_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, app_suite_mutate_staging_response, "RESP 156 17\nAPPSUITESAVE duo\n")) return error.ToolServiceResponseMismatch;
+
+    var app_suite_release_staging_request_buffer: [96]u8 = undefined;
+    const app_suite_release_staging_request = std.fmt.bufPrint(
+        &app_suite_release_staging_request_buffer,
+        "REQ {d} APPSUITERELEASESAVE {s} staging",
+        .{ app_suite_release_save_staging_request_id, app_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_release_staging_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_release_staging_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, app_suite_release_staging_response, "RESP 157 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, app_suite_release_staging_response, "APPSUITERELEASESAVE duo staging\n") == null) return error.ToolServiceResponseMismatch;
+
+    var app_suite_release_staging_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const app_suite_release_staging_path = std.fmt.bufPrint(
+        &app_suite_release_staging_path_buffer,
+        "/runtime/app-suite-releases/{s}/staging/suite.txt",
+        .{app_suite_name},
+    ) catch return error.ToolServiceFailed;
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_suite_release_staging_readback = filesystem.readFileAlloc(service_fba.allocator(), app_suite_release_staging_path, 128) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, app_suite_release_staging_readback, "suite=duo\nentry=aux:sidecar\n")) return error.ToolServiceResponseMismatch;
+
+    var app_suite_release_staging_metadata_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const app_suite_release_staging_metadata_path = std.fmt.bufPrint(
+        &app_suite_release_staging_metadata_path_buffer,
+        "/runtime/app-suite-releases/{s}/staging/release.txt",
+        .{app_suite_name},
+    ) catch return error.ToolServiceFailed;
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_suite_release_staging_metadata = filesystem.readFileAlloc(service_fba.allocator(), app_suite_release_staging_metadata_path, 128) catch return error.ToolServiceFailed;
+    if (std.mem.indexOf(u8, app_suite_release_staging_metadata, "release=staging") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, app_suite_release_staging_metadata, "saved_seq=2") == null) return error.ToolServiceResponseMismatch;
+
+    var app_suite_release_list_request_buffer: [96]u8 = undefined;
+    const app_suite_release_list_request = std.fmt.bufPrint(
+        &app_suite_release_list_request_buffer,
+        "REQ {d} APPSUITERELEASELIST {s}",
+        .{ app_suite_release_list_request_id, app_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_release_list_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_release_list_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, app_suite_release_list_response, "RESP 158 15\ngolden\nstaging\n")) return error.ToolServiceResponseMismatch;
+
+    var app_suite_release_info_request_buffer: [96]u8 = undefined;
+    const app_suite_release_info_request = std.fmt.bufPrint(
+        &app_suite_release_info_request_buffer,
+        "REQ {d} APPSUITERELEASEINFO {s} staging",
+        .{ app_suite_release_info_request_id, app_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_release_info_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_release_info_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, app_suite_release_info_response, "RESP 159 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, app_suite_release_info_response, "suite=duo") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, app_suite_release_info_response, "release=staging") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, app_suite_release_info_response, "saved_seq=2") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, app_suite_release_info_response, "entry=aux:sidecar") == null) return error.ToolServiceResponseMismatch;
+
+    var app_suite_release_activate_request_buffer: [96]u8 = undefined;
+    const app_suite_release_activate_request = std.fmt.bufPrint(
+        &app_suite_release_activate_request_buffer,
+        "REQ {d} APPSUITERELEASEACTIVATE {s} golden",
+        .{ app_suite_release_activate_request_id, app_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_release_activate_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_release_activate_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, app_suite_release_activate_response, "RESP 160 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, app_suite_release_activate_response, "APPSUITERELEASEACTIVATE duo golden\n") == null) return error.ToolServiceResponseMismatch;
+
+    var app_suite_release_restored_info_response_buffer: [320]u8 = undefined;
+    const app_suite_release_restored_info_response_expected = std.fmt.bufPrint(
+        &app_suite_release_restored_info_response_buffer,
+        "RESP {d} {d}\n{s}",
+        .{ app_suite_release_restored_info_request_id, app_suite_info_payload_expected.len, app_suite_info_payload_expected },
+    ) catch return error.ToolServiceFailed;
+    var app_suite_release_restored_info_request_buffer: [64]u8 = undefined;
+    const app_suite_release_restored_info_request = std.fmt.bufPrint(
+        &app_suite_release_restored_info_request_buffer,
+        "REQ {d} APPSUITEINFO {s}",
+        .{ app_suite_release_restored_info_request_id, app_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_release_restored_info_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_release_restored_info_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, app_suite_release_restored_info_response, app_suite_release_restored_info_response_expected)) return error.ToolServiceResponseMismatch;
+
     var app_suite_apply_request_buffer: [64]u8 = undefined;
     const app_suite_apply_request = std.fmt.bufPrint(
         &app_suite_apply_request_buffer,
@@ -6524,6 +6737,116 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const app_suite_aux_stdout_readback = filesystem.readFileAlloc(service_fba.allocator(), "/runtime/apps/aux/stdout.log", 64) catch return error.ToolServiceFailed;
     if (!std.mem.eql(u8, app_suite_aux_stdout_readback, autorun_run_stdout)) return error.ToolServiceResponseMismatch;
+
+    var app_suite_release_delete_request_buffer: [96]u8 = undefined;
+    const app_suite_release_delete_request = std.fmt.bufPrint(
+        &app_suite_release_delete_request_buffer,
+        "REQ {d} APPSUITERELEASEDELETE {s} staging",
+        .{ app_suite_release_delete_request_id, app_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_release_delete_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_release_delete_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, app_suite_release_delete_response, "RESP 162 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, app_suite_release_delete_response, "APPSUITERELEASEDELETE duo staging\n") == null) return error.ToolServiceResponseMismatch;
+
+    if (filesystem.statSummary(app_suite_release_staging_path)) |_| {
+        return error.ToolServiceResponseMismatch;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return error.ToolServiceFailed,
+    }
+
+    var app_suite_mutate_fallback_request_buffer: [96]u8 = undefined;
+    const app_suite_mutate_fallback_request = std.fmt.bufPrint(
+        &app_suite_mutate_fallback_request_buffer,
+        "REQ {d} APPSUITESAVE {s} {s}:{s} {s}:{s}",
+        .{ app_suite_mutate_fallback_request_id, app_suite_name, package_name, app_plan_name, autorun_package_name, app_suite_aux_plan_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_mutate_fallback_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_mutate_fallback_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, app_suite_mutate_fallback_response, "RESP 163 17\nAPPSUITESAVE duo\n")) return error.ToolServiceResponseMismatch;
+
+    var app_suite_release_save_fallback_request_buffer: [96]u8 = undefined;
+    const app_suite_release_save_fallback_request = std.fmt.bufPrint(
+        &app_suite_release_save_fallback_request_buffer,
+        "REQ {d} APPSUITERELEASESAVE {s} fallback",
+        .{ app_suite_release_save_fallback_request_id, app_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_release_save_fallback_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_release_save_fallback_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, app_suite_release_save_fallback_response, "RESP 164 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, app_suite_release_save_fallback_response, "APPSUITERELEASESAVE duo fallback\n") == null) return error.ToolServiceResponseMismatch;
+
+    var app_suite_release_prune_request_buffer: [96]u8 = undefined;
+    const app_suite_release_prune_request = std.fmt.bufPrint(
+        &app_suite_release_prune_request_buffer,
+        "REQ {d} APPSUITERELEASEPRUNE {s} 1",
+        .{ app_suite_release_prune_request_id, app_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_release_prune_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_release_prune_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, app_suite_release_prune_response, "RESP 165 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, app_suite_release_prune_response, "APPSUITERELEASEPRUNE duo keep=1 deleted=1 kept=1\n") == null) return error.ToolServiceResponseMismatch;
+
+    var app_suite_release_list_final_request_buffer: [96]u8 = undefined;
+    const app_suite_release_list_final_request = std.fmt.bufPrint(
+        &app_suite_release_list_final_request_buffer,
+        "REQ {d} APPSUITERELEASELIST {s}",
+        .{ app_suite_release_list_final_request_id, app_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const app_suite_release_list_final_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        app_suite_release_list_final_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, app_suite_release_list_final_response, "RESP 166 9\nfallback\n")) return error.ToolServiceResponseMismatch;
 
     var workspace_save_request_buffer: [160]u8 = undefined;
     const workspace_save_request = std.fmt.bufPrint(
