@@ -670,7 +670,7 @@ fn readPort8(port: u16) u8 {
     return asm volatile ("inb %[dx], %[al]"
         : [al] "={al}" (-> u8),
         : [dx] "{dx}" (port),
-        : "memory");
+        : .{ .memory = true });
 }
 
 fn writePort8(port: u16, value: u8) void {
@@ -679,7 +679,7 @@ fn writePort8(port: u16, value: u8) void {
         :
         : [dx] "{dx}" (port),
           [al] "{al}" (value),
-        : "memory");
+        : .{ .memory = true });
 }
 
 fn readPort16(port: u16) u16 {
@@ -687,7 +687,7 @@ fn readPort16(port: u16) u16 {
     return asm volatile ("inw %[dx], %[ax]"
         : [ax] "={ax}" (-> u16),
         : [dx] "{dx}" (port),
-        : "memory");
+        : .{ .memory = true });
 }
 
 fn writePort16(port: u16, value: u16) void {
@@ -696,7 +696,7 @@ fn writePort16(port: u16, value: u16) void {
         :
         : [dx] "{dx}" (port),
           [ax] "{ax}" (value),
-        : "memory");
+        : .{ .memory = true });
 }
 
 test "ata pio mock device mounts and exposes identify-backed capacity" {

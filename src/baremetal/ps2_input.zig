@@ -190,7 +190,7 @@ fn readPort(port: u16) u8 {
     return asm volatile ("inb %[dx], %[al]"
         : [al] "={al}" (-> u8),
         : [dx] "{dx}" (port),
-        : "memory");
+        : .{ .memory = true });
 }
 
 fn writePort(port: u16, value: u8) void {
@@ -199,7 +199,7 @@ fn writePort(port: u16, value: u8) void {
         :
         : [dx] "{dx}" (port),
           [al] "{al}" (value),
-        : "memory");
+        : .{ .memory = true });
 }
 
 fn waitControllerInputClear() bool {

@@ -20,11 +20,16 @@ The Zig OpenClaw port uses Codeberg `master` for freshness decisions, but the Gi
 
 ## Current Snapshot
 
-- Local Zig version: `0.16.0-dev.2703+0a412853a`
-- Current Codeberg `master`: `f16eb18ce8c24ed743aae1faa4980052cb9f4f36`
-- Current GitHub mirror `latest-master` target: `f16eb18ce8c24ed743aae1faa4980052cb9f4f36`
-- Current GitHub mirror Windows asset digest: `3103b272d64a93a8fdce0ca7f3c8856bf8a33c1d42d745fdbfbec2ca9fb69642`
-- Current status: local toolchain hash does **not** match the current Codeberg/mirror target
+- Local Zig version string: `0.16.0`
+- Local installed mirror target (from `current\mirror-release.json`): `47d2e5de90faec1221f61255c36e2be81c9e3db3`
+- Current Codeberg `master`: `f8997aca8f62eef4968e4abf817ece4eb4e91c38`
+- Current GitHub mirror `latest-master` target: `47d2e5de90faec1221f61255c36e2be81c9e3db3`
+- Current GitHub mirror Windows asset digest: `b54c6772a0cfa410ff880f914def1fd2c6c3f2c178e9d378257d04861344a4e0`
+- Current status: local install matches the published GitHub mirror target, but both trail current Codeberg `master`
+- Current validation note:
+  - hosted master-Zig matrix is green on the local Windows lane: `706/707` passed (`1 skipped`)
+  - live `RTL8139 TCP` and `RTL8139 HTTPS` QEMU probes pass on the current stable `ReleaseSafe` local probe lane
+  - the broad `RTL8139 TCP` `Debug` QEMU probe still times out on this local master-Zig toolchain and remains an upstream/local-toolchain investigation item
 
 ## Required Checks
 
@@ -40,6 +45,7 @@ From the `ZAR-Zig-Agent-Runtime` working tree:
 
 - latest Codeberg `master` commit hash
 - local Zig toolchain version/hash
+- local hash source (`version` or installed mirror metadata)
 - whether the local toolchain matches Codeberg `master`
 - GitHub mirror release target commitish
 - whether the mirror release matches Codeberg `master`

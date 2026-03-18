@@ -125,7 +125,7 @@ fn writePort16(port: u16, value: u16) void {
         :
         : [dx] "{dx}" (port),
           [ax] "{ax}" (value),
-        : "memory");
+        : .{ .memory = true });
 }
 
 fn readPort16(port: u16) u16 {
@@ -133,7 +133,7 @@ fn readPort16(port: u16) u16 {
     return asm volatile ("inw %[dx], %[ax]"
         : [ax] "={ax}" (-> u16),
         : [dx] "{dx}" (port),
-        : "memory");
+        : .{ .memory = true });
 }
 
 fn bgaWriteReg(index: u16, value: u16) void {

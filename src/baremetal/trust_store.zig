@@ -50,6 +50,16 @@ pub fn bundlePath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error!
     return std.fmt.bufPrint(buffer, "{s}/{s}.der", .{ bundles_dir, name }) catch error.InvalidPath;
 }
 
+pub fn bundleExists(name: []const u8) Error!bool {
+    var path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const path = try bundlePath(name, &path_buffer);
+    _ = filesystem.statSummary(path) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => return err,
+    };
+    return true;
+}
+
 pub fn listBundlesAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
     try filesystem.init();
 

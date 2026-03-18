@@ -2396,7 +2396,7 @@ const CompatState = struct {
     fn ackPendingNodeWork(self: *CompatState, node_id: []const u8, ids: []const []const u8) usize {
         const normalized_node_id = std.mem.trim(u8, node_id, " \t\r\n");
         const idx = self.findPendingNodeWorkStateIndex(normalized_node_id) orelse return 0;
-        var state = &self.pending_node_work_states.items[idx];
+        const state = &self.pending_node_work_states.items[idx];
         self.prunePendingNodeWorkState(state, time_util.nowMs());
         var removed_count: usize = 0;
         var write_idx: usize = 0;
@@ -2428,7 +2428,7 @@ const CompatState = struct {
     fn countPendingNodeWorkItems(self: *CompatState, node_id: []const u8) usize {
         const normalized_node_id = std.mem.trim(u8, node_id, " \t\r\n");
         const idx = self.findPendingNodeWorkStateIndex(normalized_node_id) orelse return 0;
-        var state = &self.pending_node_work_states.items[idx];
+        const state = &self.pending_node_work_states.items[idx];
         self.prunePendingNodeWorkState(state, time_util.nowMs());
         return state.items.items.len;
     }
@@ -2454,7 +2454,7 @@ const CompatState = struct {
         defer explicit_items.deinit(allocator);
 
         if (self.findPendingNodeWorkStateIndex(normalized_node_id)) |idx| {
-            var state = &self.pending_node_work_states.items[idx];
+            const state = &self.pending_node_work_states.items[idx];
             revision = state.revision;
             self.prunePendingNodeWorkState(state, now_ms);
             for (state.items.items) |entry| {
@@ -10016,7 +10016,7 @@ fn deliverTelegramMessageBatch(
                 }
             }
             const reply_to = if (idx == 0) reply_to_message_id else null;
-            var chunk_delivery = try telegram_bot_api.sendMessageWithEndpoint(
+            const chunk_delivery = try telegram_bot_api.sendMessageWithEndpoint(
                 allocator,
                 api_endpoint,
                 token,

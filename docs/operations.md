@@ -734,4 +734,8 @@ Policy:
 - Use Codeberg `master` as the canonical freshness target.
 - Use `adybag14-cyber/zig` `latest-master` when the goal is a fast Windows toolchain refresh.
 - Use `adybag14-cyber/zig` `upstream-<sha>` when the goal is reproducible CI, bisects, or release recreation.
+- Current Windows local state:
+  - `current` resolves to `toolchains/zig-master/upstream-47d2e5de90fa`
+  - Codeberg `master` is currently ahead (`f8997aca8f62eef4968e4abf817ece4eb4e91c38`)
+  - hosted master-Zig validation is green locally, but the broad live RTL8139 TCP `Debug` QEMU probe still times out; keep the stable local probe lane on `ReleaseSafe` until that upstream/local-toolchain hang is understood
 

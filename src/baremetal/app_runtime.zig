@@ -11,6 +11,7 @@ const trust_store = @import("trust_store.zig");
 const root_dir = "/runtime/apps";
 const max_history_bytes: usize = 1024;
 const max_autorun_bytes: usize = 1024;
+const max_plan_bytes: usize = 512;
 const autorun_list_path = "/runtime/apps/autorun.txt";
 
 pub const Error = filesystem.Error || package_store.Error || std.mem.Allocator.Error || error{
@@ -19,7 +20,42 @@ pub const Error = filesystem.Error || package_store.Error || std.mem.Allocator.E
     AppStdoutNotFound,
     AppStderrNotFound,
     AppAutorunEntryNotFound,
+    AppPlanNotFound,
+    AppActivePlanNotSet,
+    InvalidAppPlanName,
+    InvalidAppPlan,
     ResponseTooLarge,
+};
+
+const AppPlan = struct {
+    package_name_len: u8 = 0,
+    package_name_storage: [package_store.max_name_len]u8 = [_]u8{0} ** package_store.max_name_len,
+    plan_name_len: u8 = 0,
+    plan_name_storage: [package_store.max_release_len]u8 = [_]u8{0} ** package_store.max_release_len,
+    release_name_len: u8 = 0,
+    release_name_storage: [package_store.max_release_len]u8 = [_]u8{0} ** package_store.max_release_len,
+    trust_bundle_len: u8 = 0,
+    trust_bundle_storage: [trust_store.max_name_len]u8 = [_]u8{0} ** trust_store.max_name_len,
+    display_width: u16 = package_store.default_display_width,
+    display_height: u16 = package_store.default_display_height,
+    connector_type: u8 = package_store.default_connector_type,
+    autorun: bool = false,
+
+    fn packageName(self: *const @This()) []const u8 {
+        return self.package_name_storage[0..self.package_name_len];
+    }
+
+    fn planName(self: *const @This()) []const u8 {
+        return self.plan_name_storage[0..self.plan_name_len];
+    }
+
+    fn releaseName(self: *const @This()) []const u8 {
+        return self.release_name_storage[0..self.release_name_len];
+    }
+
+    fn trustBundle(self: *const @This()) []const u8 {
+        return self.trust_bundle_storage[0..self.trust_bundle_len];
+    }
 };
 
 pub fn listAppsAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
@@ -83,6 +119,146 @@ pub fn removeAutorun(name: []const u8, tick: u64) Error!void {
 
     try filesystem.createDirPath(root_dir);
     try filesystem.writeFile(autorun_list_path, rendered[0..len], tick);
+}
+
+pub fn planListAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
+    try ensurePackageInstalled(name);
+
+    var plans_dir_buf: [filesystem.max_path_len]u8 = undefined;
+    const plans_dir = try plansDirPath(name, &plans_dir_buf);
+    const raw_listing = filesystem.listDirectoryAlloc(allocator, plans_dir, max_plan_bytes) catch |err| switch (err) {
+        error.FileNotFound => return allocator.alloc(u8, 0),
+        else => return err,
+    };
+    defer allocator.free(raw_listing);
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    var lines = std.mem.splitScalar(u8, raw_listing, '\n');
+    while (lines.next()) |line| {
+        if (!std.mem.startsWith(u8, line, "file ")) continue;
+        const file_part = std.mem.splitScalar(u8, line["file ".len..], ' ');
+        var part_iter = file_part;
+        const file_name = part_iter.next() orelse continue;
+        if (!std.mem.endsWith(u8, file_name, ".txt")) continue;
+        const plan_name = file_name[0 .. file_name.len - ".txt".len];
+        if (plan_name.len == 0) continue;
+        if (out.items.len + plan_name.len + 1 > max_bytes) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, plan_name);
+        try out.append(allocator, '\n');
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+pub fn planInfoAlloc(allocator: std.mem.Allocator, name: []const u8, plan_name: []const u8, max_bytes: usize) Error![]u8 {
+    const plan = try loadPlan(name, plan_name);
+
+    var path_buf: [filesystem.max_path_len]u8 = undefined;
+    const path = try planPath(name, plan_name, &path_buf);
+    return renderPlanAlloc(allocator, plan, path, null, max_bytes);
+}
+
+pub fn activePlanInfoAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
+    const active_plan_name = try activePlanNameAlloc(allocator, name, package_store.max_release_len);
+    defer allocator.free(active_plan_name);
+
+    const plan = try loadPlan(name, active_plan_name);
+    var path_buf: [filesystem.max_path_len]u8 = undefined;
+    const path = try planPath(name, active_plan_name, &path_buf);
+    return renderPlanAlloc(allocator, plan, path, active_plan_name, max_bytes);
+}
+
+pub fn savePlan(
+    name: []const u8,
+    plan_name: []const u8,
+    release_name: []const u8,
+    trust_bundle: []const u8,
+    connector_type: u8,
+    display_width: u16,
+    display_height: u16,
+    autorun: bool,
+    tick: u64,
+) Error!void {
+    try ensurePackageInstalled(name);
+    try validatePlanName(plan_name);
+    try validatePlanInputs(name, release_name, trust_bundle, connector_type, display_width, display_height);
+
+    var app_dir_buf: [filesystem.max_path_len]u8 = undefined;
+    var plans_dir_buf: [filesystem.max_path_len]u8 = undefined;
+    var plan_path_buf: [filesystem.max_path_len]u8 = undefined;
+    const app_dir = try appDirPath(name, &app_dir_buf);
+    const plans_dir = try plansDirPath(name, &plans_dir_buf);
+    const path = try planPath(name, plan_name, &plan_path_buf);
+
+    try filesystem.createDirPath(root_dir);
+    try filesystem.createDirPath(app_dir);
+    try filesystem.createDirPath(plans_dir);
+
+    var body: [256]u8 = undefined;
+    const rendered = std.fmt.bufPrint(
+        &body,
+        "package={s}\nplan={s}\nrelease={s}\ntrust_bundle={s}\nconnector={s}\ndisplay_width={d}\ndisplay_height={d}\nautorun={d}\n",
+        .{
+            name,
+            plan_name,
+            if (release_name.len == 0) "none" else release_name,
+            if (trust_bundle.len == 0) "none" else trust_bundle,
+            package_store.connectorNameFromType(connector_type),
+            display_width,
+            display_height,
+            @intFromBool(autorun),
+        },
+    ) catch return error.InvalidPath;
+    try filesystem.writeFile(path, rendered, tick);
+}
+
+pub fn applyPlan(name: []const u8, plan_name: []const u8, tick: u64) Error!void {
+    const plan = try loadPlan(name, plan_name);
+
+    if (plan.releaseName().len != 0) {
+        try package_store.activatePackageRelease(name, plan.releaseName(), tick);
+    }
+    try package_store.configureDisplayMode(name, plan.display_width, plan.display_height, tick);
+    try package_store.configureConnectorType(name, plan.connector_type, tick);
+    try package_store.configureTrustBundle(name, plan.trustBundle(), tick);
+    if (plan.autorun) {
+        try addAutorun(name, tick);
+    } else {
+        removeAutorun(name, tick) catch |err| switch (err) {
+            error.AppAutorunEntryNotFound => {},
+            else => return err,
+        };
+    }
+
+    try setActivePlan(name, plan_name, tick);
+}
+
+pub fn deletePlan(name: []const u8, plan_name: []const u8, tick: u64) Error!void {
+    try ensurePackageInstalled(name);
+    try validatePlanName(plan_name);
+
+    var plan_path_buf: [filesystem.max_path_len]u8 = undefined;
+    const path = try planPath(name, plan_name, &plan_path_buf);
+    filesystem.deleteFile(path, tick) catch |err| switch (err) {
+        error.FileNotFound => return error.AppPlanNotFound,
+        else => return err,
+    };
+
+    var active_name_buf: [package_store.max_release_len]u8 = undefined;
+    const active_name = loadActivePlanNameScratch(name, &active_name_buf) catch |err| switch (err) {
+        error.AppActivePlanNotSet => null,
+        else => return err,
+    };
+    if (active_name) |selected| {
+        if (std.mem.eql(u8, selected, plan_name)) {
+            clearActivePlan(name, tick) catch |err| switch (err) {
+                error.AppActivePlanNotSet => {},
+                else => return err,
+            };
+        }
+    }
 }
 
 pub fn infoAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
@@ -258,6 +434,243 @@ pub fn stderrPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error!
 fn appDirPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
     try package_store.validatePackageName(name);
     return std.fmt.bufPrint(buffer, "{s}/{s}", .{ root_dir, name }) catch error.InvalidPath;
+}
+
+fn plansDirPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try package_store.validatePackageName(name);
+    return std.fmt.bufPrint(buffer, "{s}/{s}/plans", .{ root_dir, name }) catch error.InvalidPath;
+}
+
+fn planPath(name: []const u8, plan_name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try package_store.validatePackageName(name);
+    try validatePlanName(plan_name);
+    return std.fmt.bufPrint(buffer, "{s}/{s}/plans/{s}.txt", .{ root_dir, name, plan_name }) catch error.InvalidPath;
+}
+
+fn activePlanPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try package_store.validatePackageName(name);
+    return std.fmt.bufPrint(buffer, "{s}/{s}/active_plan.txt", .{ root_dir, name }) catch error.InvalidPath;
+}
+
+fn ensurePackageInstalled(name: []const u8) Error!void {
+    var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    _ = try package_store.loadLaunchProfile(name, &entrypoint_buf);
+}
+
+fn validatePlanName(name: []const u8) Error!void {
+    if (name.len == 0 or name.len > package_store.max_release_len) return error.InvalidAppPlanName;
+    for (name) |char| {
+        if (std.ascii.isAlphanumeric(char) or char == '-' or char == '_' or char == '.') continue;
+        return error.InvalidAppPlanName;
+    }
+}
+
+fn validatePlanInputs(
+    package_name: []const u8,
+    release_name: []const u8,
+    trust_bundle: []const u8,
+    connector_type: u8,
+    display_width: u16,
+    display_height: u16,
+) Error!void {
+    if (display_width == 0 or display_height == 0) return error.InvalidAppPlan;
+    if (release_name.len != 0 and !try package_store.releaseExistsAlloc(package_name, release_name)) {
+        return error.PackageReleaseNotFound;
+    }
+    if (trust_bundle.len != 0 and !try trust_store.bundleExists(trust_bundle)) {
+        return error.TrustBundleNotFound;
+    }
+    _ = package_store.parseConnectorType(package_store.connectorNameFromType(connector_type)) catch return error.InvalidDisplayConnector;
+}
+
+fn setActivePlan(name: []const u8, plan_name: []const u8, tick: u64) Error!void {
+    var active_path_buf: [filesystem.max_path_len]u8 = undefined;
+    const path = try activePlanPath(name, &active_path_buf);
+    try filesystem.writeFile(path, plan_name, tick);
+}
+
+fn clearActivePlan(name: []const u8, tick: u64) Error!void {
+    var active_path_buf: [filesystem.max_path_len]u8 = undefined;
+    const path = try activePlanPath(name, &active_path_buf);
+    filesystem.deleteFile(path, tick) catch |err| switch (err) {
+        error.FileNotFound => return error.AppActivePlanNotSet,
+        else => return err,
+    };
+}
+
+fn activePlanNameAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
+    var active_path_buf: [filesystem.max_path_len]u8 = undefined;
+    const path = try activePlanPath(name, &active_path_buf);
+    return filesystem.readFileAlloc(allocator, path, max_bytes) catch |err| switch (err) {
+        error.FileNotFound => error.AppActivePlanNotSet,
+        else => err,
+    };
+}
+
+fn loadActivePlanNameScratch(name: []const u8, buffer: *[package_store.max_release_len]u8) Error!?[]const u8 {
+    var fba = std.heap.FixedBufferAllocator.init(buffer);
+    const active_name = activePlanNameAlloc(fba.allocator(), name, buffer.len) catch |err| switch (err) {
+        error.AppActivePlanNotSet => return null,
+        else => return err,
+    };
+    try validatePlanName(active_name);
+    return active_name;
+}
+
+fn initPlan(package_name: []const u8, plan_name: []const u8) Error!AppPlan {
+    var plan = AppPlan{};
+    try copyPlanComponent(plan.package_name_storage[0..], &plan.package_name_len, package_name, error.InvalidPackageName);
+    try copyPlanComponent(plan.plan_name_storage[0..], &plan.plan_name_len, plan_name, error.InvalidAppPlanName);
+    return plan;
+}
+
+fn loadPlan(name: []const u8, plan_name: []const u8) Error!AppPlan {
+    try ensurePackageInstalled(name);
+    try validatePlanName(plan_name);
+
+    var path_buf: [filesystem.max_path_len]u8 = undefined;
+    var body_storage: [max_plan_bytes]u8 = undefined;
+    const path = try planPath(name, plan_name, &path_buf);
+    var fba = std.heap.FixedBufferAllocator.init(&body_storage);
+    const body = filesystem.readFileAlloc(fba.allocator(), path, body_storage.len) catch |err| switch (err) {
+        error.FileNotFound => return error.AppPlanNotFound,
+        else => return err,
+    };
+    return parsePlan(name, plan_name, body);
+}
+
+fn parsePlan(name: []const u8, plan_name: []const u8, body: []const u8) Error!AppPlan {
+    var plan = try initPlan(name, plan_name);
+    var saw_release = false;
+    var saw_trust = false;
+    var saw_connector = false;
+    var saw_width = false;
+    var saw_height = false;
+    var saw_autorun = false;
+
+    var lines = std.mem.splitScalar(u8, body, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (line.len == 0) continue;
+
+        if (std.mem.startsWith(u8, line, "package=")) {
+            if (!std.mem.eql(u8, line["package=".len..], name)) return error.InvalidAppPlan;
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "plan=")) {
+            if (!std.mem.eql(u8, line["plan=".len..], plan_name)) return error.InvalidAppPlan;
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "release=")) {
+            const value = line["release=".len..];
+            saw_release = true;
+            if (std.mem.eql(u8, value, "none")) {
+                plan.release_name_len = 0;
+            } else {
+                try package_store.validateReleaseName(value);
+                try copyPlanComponent(plan.release_name_storage[0..], &plan.release_name_len, value, error.InvalidReleaseName);
+            }
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "trust_bundle=")) {
+            const value = line["trust_bundle=".len..];
+            saw_trust = true;
+            if (std.mem.eql(u8, value, "none")) {
+                plan.trust_bundle_len = 0;
+            } else {
+                try copyPlanComponent(plan.trust_bundle_storage[0..], &plan.trust_bundle_len, value, error.InvalidTrustName);
+            }
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "connector=")) {
+            plan.connector_type = try package_store.parseConnectorType(line["connector=".len..]);
+            saw_connector = true;
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "display_width=")) {
+            plan.display_width = std.fmt.parseInt(u16, line["display_width=".len..], 10) catch return error.InvalidAppPlan;
+            if (plan.display_width == 0) return error.InvalidAppPlan;
+            saw_width = true;
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "display_height=")) {
+            plan.display_height = std.fmt.parseInt(u16, line["display_height=".len..], 10) catch return error.InvalidAppPlan;
+            if (plan.display_height == 0) return error.InvalidAppPlan;
+            saw_height = true;
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "autorun=")) {
+            plan.autorun = try parsePlanBool(line["autorun=".len..]);
+            saw_autorun = true;
+            continue;
+        }
+
+        return error.InvalidAppPlan;
+    }
+
+    if (!saw_release or !saw_trust or !saw_connector or !saw_width or !saw_height or !saw_autorun) {
+        return error.InvalidAppPlan;
+    }
+
+    return plan;
+}
+
+fn renderPlanAlloc(
+    allocator: std.mem.Allocator,
+    plan: AppPlan,
+    path: []const u8,
+    active_name: ?[]const u8,
+    max_bytes: usize,
+) Error![]u8 {
+    const response = if (active_name) |active| try std.fmt.allocPrint(
+        allocator,
+        "active_plan={s}\npackage={s}\nplan={s}\nrelease={s}\ntrust_bundle={s}\nconnector={s}\ndisplay_width={d}\ndisplay_height={d}\nautorun={d}\npath={s}\n",
+        .{
+            active,
+            plan.packageName(),
+            plan.planName(),
+            if (plan.releaseName().len == 0) "none" else plan.releaseName(),
+            if (plan.trustBundle().len == 0) "none" else plan.trustBundle(),
+            package_store.connectorNameFromType(plan.connector_type),
+            plan.display_width,
+            plan.display_height,
+            @intFromBool(plan.autorun),
+            path,
+        },
+    ) else try std.fmt.allocPrint(
+        allocator,
+        "package={s}\nplan={s}\nrelease={s}\ntrust_bundle={s}\nconnector={s}\ndisplay_width={d}\ndisplay_height={d}\nautorun={d}\npath={s}\n",
+        .{
+            plan.packageName(),
+            plan.planName(),
+            if (plan.releaseName().len == 0) "none" else plan.releaseName(),
+            if (plan.trustBundle().len == 0) "none" else plan.trustBundle(),
+            package_store.connectorNameFromType(plan.connector_type),
+            plan.display_width,
+            plan.display_height,
+            @intFromBool(plan.autorun),
+            path,
+        },
+    );
+    errdefer allocator.free(response);
+    if (response.len > max_bytes) return error.ResponseTooLarge;
+    return response;
+}
+
+fn parsePlanBool(value: []const u8) Error!bool {
+    if (std.mem.eql(u8, value, "1") or std.ascii.eqlIgnoreCase(value, "true") or std.ascii.eqlIgnoreCase(value, "yes")) {
+        return true;
+    }
+    if (std.mem.eql(u8, value, "0") or std.ascii.eqlIgnoreCase(value, "false") or std.ascii.eqlIgnoreCase(value, "no")) {
+        return false;
+    }
+    return error.InvalidAppPlan;
+}
+
+fn copyPlanComponent(storage: []u8, len_ptr: anytype, value: []const u8, comptime err_value: Error) Error!void {
+    if (value.len > storage.len) return err_value;
+    @memcpy(storage[0..value.len], value);
+    len_ptr.* = @intCast(value.len);
 }
 
 fn readAutorunListAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
@@ -459,4 +872,83 @@ test "app runtime persists autorun registry on ata-backed storage" {
     const updated = try autorunListAlloc(std.testing.allocator, 128);
     defer std.testing.allocator.free(updated);
     try std.testing.expectEqualStrings("demo\n", updated);
+}
+
+test "app runtime saves, applies, and deletes named app plans on ram disk" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+
+    try trust_store.installBundle("root-a", "cert-a", 1);
+    try package_store.installScriptPackage("demo", "echo stable", 2);
+    try package_store.configureDisplayMode("demo", 1280, 720, 3);
+    try package_store.configureConnectorType("demo", abi.display_connector_virtual, 4);
+    try package_store.configureTrustBundle("demo", "root-a", 5);
+    try package_store.snapshotPackageRelease("demo", "stable", 6);
+    try package_store.installScriptPackage("demo", "echo drift", 7);
+
+    try savePlan("demo", "golden", "stable", "root-a", abi.display_connector_virtual, 1280, 720, true, 8);
+
+    const plan_list = try planListAlloc(std.testing.allocator, "demo", 128);
+    defer std.testing.allocator.free(plan_list);
+    try std.testing.expectEqualStrings("golden\n", plan_list);
+
+    const plan_info = try planInfoAlloc(std.testing.allocator, "demo", "golden", 256);
+    defer std.testing.allocator.free(plan_info);
+    try std.testing.expect(std.mem.indexOf(u8, plan_info, "release=stable") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_info, "trust_bundle=root-a") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_info, "autorun=1") != null);
+
+    try applyPlan("demo", "golden", 9);
+
+    var entrypoint_buf: [filesystem.max_path_len]u8 = undefined;
+    const profile = try package_store.loadLaunchProfile("demo", &entrypoint_buf);
+    try std.testing.expectEqualStrings("root-a", profile.trustBundle());
+    try std.testing.expectEqual(@as(u16, 1280), profile.display_width);
+    try std.testing.expectEqual(@as(u16, 720), profile.display_height);
+    try std.testing.expectEqual(@as(u8, abi.display_connector_virtual), profile.connector_type);
+
+    const autorun = try autorunListAlloc(std.testing.allocator, 64);
+    defer std.testing.allocator.free(autorun);
+    try std.testing.expectEqualStrings("demo\n", autorun);
+
+    const active = try activePlanInfoAlloc(std.testing.allocator, "demo", 256);
+    defer std.testing.allocator.free(active);
+    try std.testing.expect(std.mem.indexOf(u8, active, "active_plan=golden") != null);
+
+    const entrypoint = try filesystem.readFileAlloc(std.testing.allocator, profile.entrypoint, 64);
+    defer std.testing.allocator.free(entrypoint);
+    try std.testing.expectEqualStrings("echo stable", entrypoint);
+
+    try deletePlan("demo", "golden", 10);
+    try std.testing.expectError(error.AppPlanNotFound, planInfoAlloc(std.testing.allocator, "demo", "golden", 256));
+    try std.testing.expectError(error.AppActivePlanNotSet, activePlanInfoAlloc(std.testing.allocator, "demo", 256));
+}
+
+test "app runtime app plans persist on ata-backed storage" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    ata_pio_disk.testEnableMockDevice(8192);
+    ata_pio_disk.testInstallMockMbrPartition(2048, 4096, 0x83);
+    defer ata_pio_disk.testDisableMockDevice();
+
+    try trust_store.installBundle("persisted-root", "cert-root", 1);
+    try package_store.installScriptPackage("persisted", "echo stable-persisted", 2);
+    try package_store.snapshotPackageRelease("persisted", "stable", 3);
+    try savePlan("persisted", "boot", "stable", "persisted-root", abi.display_connector_virtual, 1024, 768, true, 4);
+    try applyPlan("persisted", "boot", 5);
+
+    filesystem.resetForTest();
+
+    const plan_list = try planListAlloc(std.testing.allocator, "persisted", 128);
+    defer std.testing.allocator.free(plan_list);
+    try std.testing.expectEqualStrings("boot\n", plan_list);
+
+    const active = try activePlanInfoAlloc(std.testing.allocator, "persisted", 256);
+    defer std.testing.allocator.free(active);
+    try std.testing.expect(std.mem.indexOf(u8, active, "active_plan=boot") != null);
+    try std.testing.expect(std.mem.indexOf(u8, active, "release=stable") != null);
+
+    const autorun = try autorunListAlloc(std.testing.allocator, 64);
+    defer std.testing.allocator.free(autorun);
+    try std.testing.expectEqualStrings("persisted\n", autorun);
 }

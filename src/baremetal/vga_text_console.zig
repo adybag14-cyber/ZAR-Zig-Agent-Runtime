@@ -41,7 +41,7 @@ fn writePort(port: u16, value: u8) void {
         :
         : [dx] "{dx}" (port),
           [al] "{al}" (value),
-        : "memory");
+        : .{ .memory = true });
 }
 
 fn setCell(index: usize, value: u16) void {

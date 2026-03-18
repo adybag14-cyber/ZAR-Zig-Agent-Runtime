@@ -75,7 +75,7 @@ fn readPort32(port: u16) u32 {
     return asm volatile ("inl %[dx], %[eax]"
         : [eax] "={eax}" (-> u32),
         : [dx] "{dx}" (port),
-        : "memory");
+        : .{ .memory = true });
 }
 
 fn writePort32(port: u16, value: u32) void {
@@ -84,7 +84,7 @@ fn writePort32(port: u16, value: u32) void {
         :
         : [dx] "{dx}" (port),
           [eax] "{eax}" (value),
-        : "memory");
+        : .{ .memory = true });
 }
 
 fn configAddress(bus: u8, device: u8, function: u8, offset: u8) u32 {

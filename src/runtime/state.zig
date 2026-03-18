@@ -542,7 +542,7 @@ test "runtime state restart replay preserves leased jobs that were dequeued but 
 
         const normalized_path = try std.fs.path.join(allocator, &.{ root, "runtime-state.json" });
         defer allocator.free(normalized_path);
-        const raw = try std.Io.Dir.cwd().readFileAlloc(io, normalized_path, allocator, .limited(4 * 1024 * 1024));
+        const raw = try pal_fs.readFileAlloc(io, allocator, normalized_path, 4 * 1024 * 1024);
         defer allocator.free(raw);
 
         var parsed = try std.json.parseFromSlice(PersistedState, allocator, raw, .{});

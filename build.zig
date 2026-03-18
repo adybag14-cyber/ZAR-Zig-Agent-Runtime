@@ -18,6 +18,9 @@ pub fn build(b: *std.Build) void {
     const baremetal_rtl8139_dhcp_probe = b.option(bool, "baremetal-rtl8139-dhcp-probe", "Enable the RTL8139 DHCP validation path in the freestanding image") orelse false;
     const baremetal_rtl8139_dns_probe = b.option(bool, "baremetal-rtl8139-dns-probe", "Enable the RTL8139 DNS validation path in the freestanding image") orelse false;
     const baremetal_rtl8139_gateway_probe = b.option(bool, "baremetal-rtl8139-gateway-probe", "Enable the RTL8139 gateway-routing validation path in the freestanding image") orelse false;
+    const baremetal_rtl8139_http_post_probe = b.option(bool, "baremetal-rtl8139-http-post-probe", "Enable the RTL8139 HTTP POST validation path in the freestanding image") orelse false;
+    const baremetal_rtl8139_https_post_probe = b.option(bool, "baremetal-rtl8139-https-post-probe", "Enable the RTL8139 HTTPS POST validation path in the freestanding image") orelse false;
+    const baremetal_rtl8139_runtime_service_probe = b.option(bool, "baremetal-rtl8139-runtime-service-probe", "Enable the RTL8139 runtime-service validation path in the freestanding image") orelse false;
     const baremetal_tool_exec_probe = b.option(bool, "baremetal-tool-exec-probe", "Enable the bare-metal tool execution validation path in the freestanding image") orelse false;
     const baremetal_tool_runtime_probe = b.option(bool, "baremetal-tool-runtime-probe", "Enable the bare-metal tool runtime validation path in the freestanding image") orelse false;
     const root_module = b.createModule(.{
@@ -57,32 +60,20 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    if (target.result.os.tag == .windows) {
-        // Work around a Zig master Windows build-runner regression around `--listen`.
-        const test_cmd = b.addSystemCommand(&.{
-            b.graph.zig_exe,
-            "test",
-            "src/main.zig",
-        });
-        test_step.dependOn(&test_cmd.step);
-        const baremetal_test_cmd = b.addSystemCommand(&.{
-            b.graph.zig_exe,
-            "test",
-            "src/baremetal_main.zig",
-        });
-        test_step.dependOn(&baremetal_test_cmd.step);
-    } else {
-        const tests = b.addTest(.{
-            .root_module = root_module,
-        });
-        const run_tests = b.addRunArtifact(tests);
-        test_step.dependOn(&run_tests.step);
-        const baremetal_tests = b.addTest(.{
-            .root_module = baremetal_test_module,
-        });
-        const run_baremetal_tests = b.addRunArtifact(baremetal_tests);
-        test_step.dependOn(&run_baremetal_tests.step);
-    }
+    // The older Windows system-command workaround for `zig test` is no longer safe:
+    // newer master builds can report `All 0 tests passed` through that path even when
+    // the codebase contains hundreds of tests. Keep the normal build-runner test flow
+    // here so the validation surface remains real on Windows.
+    const tests = b.addTest(.{
+        .root_module = root_module,
+    });
+    const run_tests = b.addRunArtifact(tests);
+    test_step.dependOn(&run_tests.step);
+    const baremetal_tests = b.addTest(.{
+        .root_module = baremetal_test_module,
+    });
+    const run_baremetal_tests = b.addRunArtifact(baremetal_tests);
+    test_step.dependOn(&run_baremetal_tests.step);
 
     const baremetal_target = b.resolveTargetQuery(.{
         .cpu_arch = .x86_64,
@@ -109,6 +100,9 @@ pub fn build(b: *std.Build) void {
     baremetal_options.addOption(bool, "rtl8139_dhcp_probe", baremetal_rtl8139_dhcp_probe);
     baremetal_options.addOption(bool, "rtl8139_dns_probe", baremetal_rtl8139_dns_probe);
     baremetal_options.addOption(bool, "rtl8139_gateway_probe", baremetal_rtl8139_gateway_probe);
+    baremetal_options.addOption(bool, "rtl8139_http_post_probe", baremetal_rtl8139_http_post_probe);
+    baremetal_options.addOption(bool, "rtl8139_https_post_probe", baremetal_rtl8139_https_post_probe);
+    baremetal_options.addOption(bool, "rtl8139_runtime_service_probe", baremetal_rtl8139_runtime_service_probe);
     baremetal_options.addOption(bool, "tool_exec_probe", baremetal_tool_exec_probe);
     baremetal_options.addOption(bool, "tool_runtime_probe", baremetal_tool_runtime_probe);
     baremetal_module.addOptions("build_options", baremetal_options);

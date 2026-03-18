@@ -5,7 +5,9 @@ const storage_backend = @import("storage_backend.zig");
 const tool_layout = @import("tool_layout.zig");
 
 pub const max_entries: usize = 64;
-pub const max_path_len: usize = 96;
+// Keep filesystem paths large enough for hosted absolute temp/workspace roots while
+// still leaving each persisted entry at a tidy 256-byte ABI footprint.
+pub const max_path_len: usize = 224;
 pub const superblock_lba: u32 = tool_layout.slot_data_lba + @as(u32, tool_layout.slot_count * tool_layout.slot_block_capacity);
 pub const entry_table_lba: u32 = superblock_lba + 1;
 
@@ -767,4 +769,19 @@ test "filesystem recursively deletes directory trees and persists the removal" {
     const reloaded_listing = try listDirectoryAlloc(std.testing.allocator, "/packages", 64);
     defer std.testing.allocator.free(reloaded_listing);
     try std.testing.expectEqualStrings("", reloaded_listing);
+}
+
+test "filesystem accepts longer hosted-style absolute paths within budget" {
+    storage_backend.resetForTest();
+    resetForTest();
+    try init();
+
+    const long_path =
+        "/home/runner/work/ZAR-Zig-Agent-Runtime/ZAR-Zig-Agent-Runtime/.zig-cache/runtime-state/sessions/sess-phase3/runtime-file.txt";
+    try createDirPath("/home/runner/work/ZAR-Zig-Agent-Runtime/ZAR-Zig-Agent-Runtime/.zig-cache/runtime-state/sessions/sess-phase3");
+    try writeFile(long_path, "phase3-data", 11);
+
+    const content = try readFileAlloc(std.testing.allocator, long_path, 64);
+    defer std.testing.allocator.free(content);
+    try std.testing.expectEqualStrings("phase3-data", content);
 }

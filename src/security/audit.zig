@@ -656,7 +656,7 @@ test "security audit warns when bind is not loopback" {
 
 test "doctor includes docker binary check" {
     const allocator = std.testing.allocator;
-    var cfg = config.defaults();
+    const cfg = config.defaults();
     var runtime_guard = try guard.Guard.init(allocator, cfg.security);
     defer runtime_guard.deinit();
 

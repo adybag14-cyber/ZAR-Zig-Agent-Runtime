@@ -1974,5 +1974,21 @@ Full-stack replacement execution reference:
     - parity gate -> pass (`union 141/141`, `events 19/19`)
     - docs status gate -> pass
     - the real regressions fixed during the slice were a dangling `sessionId` slice in `runtime.session.get`, Windows-hosted path separator drift for the logical `/runtime/state` contract, and hosted-test PAL filesystem leakage that kept the runtime bridge off the persisted bare-metal filesystem surface
+  - current local validation after the master-Zig Windows refresh + app-plan slice is green:
+    - local Windows GitHub mirror install target is now `47d2e5de90faec1221f61255c36e2be81c9e3db3` via `toolchains/zig-master/current`
+    - current Codeberg `master` is newer (`f8997aca8f62eef4968e4abf817ece4eb4e91c38`), so freshness mismatch remains explicit
+    - `build.zig` no longer uses the stale Windows system-command workaround that produced fake-green `All 0 tests passed`; the normal test runner path is restored
+    - `scripts/zig-codeberg-master-check.ps1` now resolves local hash identity from installed mirror metadata when `zig version` is too coarse to include a commit suffix
+    - `zig build test --summary all` on the refreshed local master toolchain -> `706/707` passed (`1 skipped`)
+    - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1 -TimeoutSeconds 120` -> pass on the stable local `ReleaseSafe` probe lane
+    - `scripts/baremetal-qemu-rtl8139-https-post-probe-check.ps1 -TimeoutSeconds 120` -> pass on the same refreshed toolchain
+    - parity gate -> pass (`union 141/141`, `events 19/19`)
+    - docs status gate -> pass
+    - the remaining local master-Zig gap is a `Debug`-only timeout on the broad live RTL8139 TCP QEMU probe; project correctness is green, but the upstream/local-toolchain hang is still open
+  - current FS5.5 app-plan slice is now locally closed on the same branch:
+    - `src/baremetal/app_runtime.zig` now persists bounded app plans under `/runtime/apps/<name>/plans/<plan>.txt` with active-plan selection via `/runtime/apps/<name>/active_plan.txt`
+    - `src/baremetal/tool_exec.zig` now exposes `app-plan-list`, `app-plan-info`, `app-plan-active`, `app-plan-save`, `app-plan-apply`, and `app-plan-delete`
+    - `src/baremetal/tool_service.zig` now exposes `APPPLANLIST`, `APPPLANINFO`, `APPPLANACTIVE`, `APPPLANSAVE`, `APPPLANAPPLY`, and `APPPLANDELETE`
+    - the broad live RTL8139 TCP proof now covers save -> list -> info -> apply -> delete plus restored release/trust/display/autorun state readback on the persisted app-plan surface
 
 

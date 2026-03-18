@@ -58,6 +58,12 @@ pub const RequestOp = enum {
     app_stderr,
     app_trust,
     app_connector,
+    app_plan_list,
+    app_plan_info,
+    app_plan_active,
+    app_plan_save,
+    app_plan_apply,
+    app_plan_delete,
     app_run,
     app_delete,
     app_autorun_list,
@@ -116,6 +122,17 @@ pub const PackageReleasePruneRequest = struct {
     keep: u32,
 };
 
+pub const AppPlanSaveRequest = struct {
+    package_name: []const u8,
+    plan_name: []const u8,
+    release_name: []const u8,
+    trust_bundle: []const u8,
+    connector_type: u8,
+    width: u16,
+    height: u16,
+    autorun: bool,
+};
+
 pub const FramedRequest = struct {
     request_id: u32,
     operation: union(RequestOp) {
@@ -152,6 +169,12 @@ pub const FramedRequest = struct {
         app_stderr: []const u8,
         app_trust: NamedValueRequest,
         app_connector: NamedValueRequest,
+        app_plan_list: []const u8,
+        app_plan_info: NamedValueRequest,
+        app_plan_active: []const u8,
+        app_plan_save: AppPlanSaveRequest,
+        app_plan_apply: NamedValueRequest,
+        app_plan_delete: NamedValueRequest,
         app_run: []const u8,
         app_delete: []const u8,
         app_autorun_list: void,
@@ -849,6 +872,138 @@ fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         };
     }
 
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPPLANLIST")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .app_plan_list = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .app_plan_list = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPPLANINFO")) {
+        const package_name_part = try splitFirstToken(op_part.rest);
+        const plan_name_part = try splitFirstToken(package_name_part.rest);
+        if (plan_name_part.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .app_plan_info = .{
+                .package_name = package_name_part.token,
+                .value = plan_name_part.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPPLANACTIVE")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .app_plan_active = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .app_plan_active = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPPLANSAVE")) {
+        const package_name_part = try splitFirstToken(op_part.rest);
+        const plan_name_part = try splitFirstToken(package_name_part.rest);
+        const release_name_part = try splitFirstToken(plan_name_part.rest);
+        const trust_name_part = try splitFirstToken(release_name_part.rest);
+        const connector_part = try splitFirstToken(trust_name_part.rest);
+        const width_part = try splitFirstToken(connector_part.rest);
+        const height_part = try splitFirstToken(width_part.rest);
+        const autorun_part = try splitFirstToken(height_part.rest);
+        if (autorun_part.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .app_plan_save = .{
+                .package_name = package_name_part.token,
+                .plan_name = plan_name_part.token,
+                .release_name = if (std.ascii.eqlIgnoreCase(release_name_part.token, "none")) "" else release_name_part.token,
+                .trust_bundle = if (std.ascii.eqlIgnoreCase(trust_name_part.token, "none")) "" else trust_name_part.token,
+                .connector_type = package_store.parseConnectorType(connector_part.token) catch return error.InvalidFrame,
+                .width = std.fmt.parseInt(u16, width_part.token, 10) catch return error.InvalidFrame,
+                .height = std.fmt.parseInt(u16, height_part.token, 10) catch return error.InvalidFrame,
+                .autorun = parseBooleanToken(autorun_part.token) catch return error.InvalidFrame,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPPLANAPPLY")) {
+        const package_name_part = try splitFirstToken(op_part.rest);
+        const plan_name_part = try splitFirstToken(package_name_part.rest);
+        if (plan_name_part.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .app_plan_apply = .{
+                .package_name = package_name_part.token,
+                .value = plan_name_part.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "APPPLANDELETE")) {
+        const package_name_part = try splitFirstToken(op_part.rest);
+        const plan_name_part = try splitFirstToken(package_name_part.rest);
+        if (plan_name_part.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .app_plan_delete = .{
+                .package_name = package_name_part.token,
+                .value = plan_name_part.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
     if (std.ascii.eqlIgnoreCase(op_part.token, "APPRUN")) {
         if (op_part.rest.len == 0) return error.InvalidFrame;
         if (newline_index != null) {
@@ -1229,6 +1384,12 @@ fn handleFramedPayload(
         .app_stderr => |package_name| try handleAppStderrRequest(allocator, package_name, payload_limit),
         .app_trust => |app_request| try handleAppTrustRequest(allocator, app_request.package_name, app_request.value, payload_limit),
         .app_connector => |app_request| try handleAppConnectorRequest(allocator, app_request.package_name, app_request.value, payload_limit),
+        .app_plan_list => |package_name| try handleAppPlanListRequest(allocator, package_name, payload_limit),
+        .app_plan_info => |plan_request| try handleAppPlanInfoRequest(allocator, plan_request.package_name, plan_request.value, payload_limit),
+        .app_plan_active => |package_name| try handleAppPlanActiveRequest(allocator, package_name, payload_limit),
+        .app_plan_save => |plan_request| try handleAppPlanSaveRequest(allocator, plan_request, payload_limit),
+        .app_plan_apply => |plan_request| try handleAppPlanApplyRequest(allocator, plan_request.package_name, plan_request.value, payload_limit),
+        .app_plan_delete => |plan_request| try handleAppPlanDeleteRequest(allocator, plan_request.package_name, plan_request.value, payload_limit),
         .app_run => |package_name| try handleAppRunRequest(allocator, package_name, stdout_limit, stderr_limit, payload_limit),
         .app_delete => |package_name| try handleAppDeleteRequest(allocator, package_name, payload_limit),
         .app_autorun_list => try handleAppAutorunListRequest(allocator, payload_limit),
@@ -1261,6 +1422,16 @@ fn splitFirstToken(text: []const u8) Error!TokenSplit {
         .token = trimmed[0..idx],
         .rest = trimLeftWhitespace(trimmed[idx..]),
     };
+}
+
+fn parseBooleanToken(text: []const u8) Error!bool {
+    if (std.mem.eql(u8, text, "1") or std.ascii.eqlIgnoreCase(text, "true") or std.ascii.eqlIgnoreCase(text, "yes")) {
+        return true;
+    }
+    if (std.mem.eql(u8, text, "0") or std.ascii.eqlIgnoreCase(text, "false") or std.ascii.eqlIgnoreCase(text, "no")) {
+        return false;
+    }
+    return error.InvalidFrame;
 }
 
 fn formatFramedResponse(
@@ -1647,6 +1818,87 @@ fn handleAppConnectorRequest(
         "APPCONNECTOR {s} {s}\n",
         .{ package_name, package_store.connectorNameFromType(connector_type) },
     );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleAppPlanListRequest(allocator: std.mem.Allocator, package_name: []const u8, payload_limit: usize) Error![]u8 {
+    return app_runtime.planListAlloc(allocator, package_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "APPPLANLIST", err, payload_limit);
+    };
+}
+
+fn handleAppPlanInfoRequest(
+    allocator: std.mem.Allocator,
+    package_name: []const u8,
+    plan_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return app_runtime.planInfoAlloc(allocator, package_name, plan_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "APPPLANINFO", err, payload_limit);
+    };
+}
+
+fn handleAppPlanActiveRequest(
+    allocator: std.mem.Allocator,
+    package_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return app_runtime.activePlanInfoAlloc(allocator, package_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "APPPLANACTIVE", err, payload_limit);
+    };
+}
+
+fn handleAppPlanSaveRequest(
+    allocator: std.mem.Allocator,
+    request: AppPlanSaveRequest,
+    payload_limit: usize,
+) Error![]u8 {
+    app_runtime.savePlan(
+        request.package_name,
+        request.plan_name,
+        request.release_name,
+        request.trust_bundle,
+        request.connector_type,
+        request.width,
+        request.height,
+        request.autorun,
+        0,
+    ) catch |err| {
+        return formatOperationError(allocator, "APPPLANSAVE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "APPPLANSAVE {s} {s}\n", .{ request.package_name, request.plan_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleAppPlanApplyRequest(
+    allocator: std.mem.Allocator,
+    package_name: []const u8,
+    plan_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    app_runtime.applyPlan(package_name, plan_name, 0) catch |err| {
+        return formatOperationError(allocator, "APPPLANAPPLY", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "APPPLANAPPLY {s} {s}\n", .{ package_name, plan_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleAppPlanDeleteRequest(
+    allocator: std.mem.Allocator,
+    package_name: []const u8,
+    plan_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    app_runtime.deletePlan(package_name, plan_name, 0) catch |err| {
+        return formatOperationError(allocator, "APPPLANDELETE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "APPPLANDELETE {s} {s}\n", .{ package_name, plan_name });
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
@@ -2236,6 +2488,60 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
+    const app_plan_list = try parseFramedRequest("REQ 140 APPPLANLIST demo");
+    switch (app_plan_list.operation) {
+        .app_plan_list => |package_name| try std.testing.expectEqualStrings("demo", package_name),
+        else => return error.InvalidFrame,
+    }
+
+    const app_plan_info = try parseFramedRequest("REQ 141 APPPLANINFO demo golden");
+    switch (app_plan_info.operation) {
+        .app_plan_info => |payload| {
+            try std.testing.expectEqualStrings("demo", payload.package_name);
+            try std.testing.expectEqualStrings("golden", payload.value);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const app_plan_active = try parseFramedRequest("REQ 142 APPPLANACTIVE demo");
+    switch (app_plan_active.operation) {
+        .app_plan_active => |package_name| try std.testing.expectEqualStrings("demo", package_name),
+        else => return error.InvalidFrame,
+    }
+
+    const app_plan_save = try parseFramedRequest("REQ 143 APPPLANSAVE demo golden r3 fs55-root virtual 1280 720 1");
+    switch (app_plan_save.operation) {
+        .app_plan_save => |payload| {
+            try std.testing.expectEqualStrings("demo", payload.package_name);
+            try std.testing.expectEqualStrings("golden", payload.plan_name);
+            try std.testing.expectEqualStrings("r3", payload.release_name);
+            try std.testing.expectEqualStrings("fs55-root", payload.trust_bundle);
+            try std.testing.expectEqual(@as(u8, abi.display_connector_virtual), payload.connector_type);
+            try std.testing.expectEqual(@as(u16, 1280), payload.width);
+            try std.testing.expectEqual(@as(u16, 720), payload.height);
+            try std.testing.expect(payload.autorun);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const app_plan_apply = try parseFramedRequest("REQ 144 APPPLANAPPLY demo golden");
+    switch (app_plan_apply.operation) {
+        .app_plan_apply => |payload| {
+            try std.testing.expectEqualStrings("demo", payload.package_name);
+            try std.testing.expectEqualStrings("golden", payload.value);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const app_plan_delete = try parseFramedRequest("REQ 145 APPPLANDELETE demo golden");
+    switch (app_plan_delete.operation) {
+        .app_plan_delete => |payload| {
+            try std.testing.expectEqualStrings("demo", payload.package_name);
+            try std.testing.expectEqualStrings("golden", payload.value);
+        },
+        else => return error.InvalidFrame,
+    }
+
     const app_run = try parseFramedRequest("REQ 41 APPRUN demo");
     switch (app_run.operation) {
         .app_run => |package_name| try std.testing.expectEqualStrings("demo", package_name),
@@ -2732,6 +3038,69 @@ test "baremetal tool service configures and runs app lifecycle requests" {
     const app_stderr_response = try handleFramedRequest(std.testing.allocator, "REQ 59 APPSTDERR demo", 512, 256, 512);
     defer std.testing.allocator.free(app_stderr_response);
     try std.testing.expectEqualStrings("RESP 59 0\n", app_stderr_response);
+}
+
+test "baremetal tool service manages persisted app plans" {
+    resetPersistentStateForTest();
+
+    try trust_store.installBundle("fs55-root", "root-cert", 1);
+    try package_store.installScriptPackage("demo", "echo stable-plan", 2);
+    try package_store.configureDisplayMode("demo", 1280, 720, 3);
+    try package_store.configureConnectorType("demo", abi.display_connector_virtual, 4);
+    try package_store.configureTrustBundle("demo", "fs55-root", 5);
+    try package_store.snapshotPackageRelease("demo", "stable", 6);
+    try package_store.installScriptPackage("demo", "echo drift-plan", 7);
+
+    const save_response = try handleFramedRequest(std.testing.allocator, "REQ 160 APPPLANSAVE demo golden stable fs55-root virtual 1280 720 1", 512, 256, 512);
+    defer std.testing.allocator.free(save_response);
+    try std.testing.expectEqualStrings("RESP 160 24\nAPPPLANSAVE demo golden\n", save_response);
+
+    const list_response = try handleFramedRequest(std.testing.allocator, "REQ 161 APPPLANLIST demo", 512, 256, 512);
+    defer std.testing.allocator.free(list_response);
+    try std.testing.expectEqualStrings("RESP 161 7\ngolden\n", list_response);
+
+    const info_response = try handleFramedRequest(std.testing.allocator, "REQ 162 APPPLANINFO demo golden", 512, 256, 512);
+    defer std.testing.allocator.free(info_response);
+    try std.testing.expect(std.mem.startsWith(u8, info_response, "RESP 162 "));
+    try std.testing.expect(std.mem.indexOf(u8, info_response, "release=stable") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_response, "trust_bundle=fs55-root") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_response, "autorun=1") != null);
+
+    const apply_response = try handleFramedRequest(std.testing.allocator, "REQ 163 APPPLANAPPLY demo golden", 512, 256, 512);
+    defer std.testing.allocator.free(apply_response);
+    try std.testing.expectEqualStrings("RESP 163 25\nAPPPLANAPPLY demo golden\n", apply_response);
+
+    const active_response = try handleFramedRequest(std.testing.allocator, "REQ 164 APPPLANACTIVE demo", 512, 256, 512);
+    defer std.testing.allocator.free(active_response);
+    try std.testing.expect(std.mem.startsWith(u8, active_response, "RESP 164 "));
+    try std.testing.expect(std.mem.indexOf(u8, active_response, "active_plan=golden") != null);
+
+    const app_info_response = try handleFramedRequest(std.testing.allocator, "REQ 165 APPINFO demo", 512, 256, 512);
+    defer std.testing.allocator.free(app_info_response);
+    try std.testing.expect(std.mem.startsWith(u8, app_info_response, "RESP 165 "));
+    try std.testing.expect(std.mem.indexOf(u8, app_info_response, "display_width=1280") != null);
+    try std.testing.expect(std.mem.indexOf(u8, app_info_response, "display_height=720") != null);
+    try std.testing.expect(std.mem.indexOf(u8, app_info_response, "connector=virtual") != null);
+    try std.testing.expect(std.mem.indexOf(u8, app_info_response, "trust_bundle=fs55-root") != null);
+
+    const autorun_response = try handleFramedRequest(std.testing.allocator, "REQ 166 APPAUTORUNLIST", 512, 256, 512);
+    defer std.testing.allocator.free(autorun_response);
+    try std.testing.expectEqualStrings("RESP 166 5\ndemo\n", autorun_response);
+
+    const app_run_response = try handleFramedRequest(std.testing.allocator, "REQ 167 APPRUN demo", 512, 256, 512);
+    defer std.testing.allocator.free(app_run_response);
+    try std.testing.expect(std.mem.startsWith(u8, app_run_response, "RESP 167 "));
+    try std.testing.expect(std.mem.indexOf(u8, app_run_response, "stable-plan\n") != null);
+
+    const delete_response = try handleFramedRequest(std.testing.allocator, "REQ 168 APPPLANDELETE demo golden", 512, 256, 512);
+    defer std.testing.allocator.free(delete_response);
+    try std.testing.expectEqualStrings("RESP 168 26\nAPPPLANDELETE demo golden\n", delete_response);
+
+    const list_after_delete = try handleFramedRequest(std.testing.allocator, "REQ 169 APPPLANLIST demo", 512, 256, 512);
+    defer std.testing.allocator.free(list_after_delete);
+    try std.testing.expectEqualStrings("RESP 169 0\n", list_after_delete);
+
+    try std.testing.expectError(error.FileNotFound, filesystem.statSummary("/runtime/apps/demo/active_plan.txt"));
 }
 
 test "baremetal tool service persists and runs autorun requests" {

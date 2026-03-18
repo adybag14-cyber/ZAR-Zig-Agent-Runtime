@@ -3402,6 +3402,20 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const autorun_run_request_id: u32 = 74;
     const autorun_remove_request_id: u32 = 75;
     const autorun_list_after_remove_request_id: u32 = 76;
+    const app_plan_name = "golden";
+    const app_plan_save_request_id: u32 = 95;
+    const app_plan_list_request_id: u32 = 96;
+    const app_plan_info_request_id: u32 = 97;
+    const app_plan_mutated_install_request_id: u32 = 98;
+    const app_plan_mutated_asset_put_request_id: u32 = 99;
+    const app_plan_mutated_run_request_id: u32 = 100;
+    const app_plan_apply_request_id: u32 = 101;
+    const app_plan_active_request_id: u32 = 102;
+    const app_plan_app_info_request_id: u32 = 103;
+    const app_plan_run_request_id: u32 = 104;
+    const app_plan_autorun_list_request_id: u32 = 105;
+    const app_plan_delete_request_id: u32 = 106;
+    const app_plan_list_after_delete_request_id: u32 = 107;
     const uninstall_request_id: u32 = 79;
     const uninstall_list_request_id: u32 = 80;
     const retransmit_interval_ticks: u64 = 4;
@@ -5556,6 +5570,418 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const autorun_aux_stdout_readback = filesystem.readFileAlloc(service_fba.allocator(), "/runtime/apps/aux/stdout.log", 64) catch return error.ToolServiceFailed;
     if (!std.mem.eql(u8, autorun_aux_stdout_readback, autorun_run_stdout)) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_plan_batch_service_request = std.fmt.bufPrint(
+        &scratch.service_batch_request_buffer,
+        "REQ {d} APPPLANSAVE {s} {s} {s} {s} virtual 1280 720 1\nREQ {d} APPPLANLIST {s}\nREQ {d} APPPLANINFO {s} {s}",
+        .{
+            app_plan_save_request_id,
+            package_name,
+            app_plan_name,
+            package_release_three_name,
+            trust_backup_bundle_name,
+            app_plan_list_request_id,
+            package_name,
+            app_plan_info_request_id,
+            package_name,
+            app_plan_name,
+        },
+    ) catch return error.ToolServiceFailed;
+    const app_plan_batch_service_request_payload = client_b.buildPayload(app_plan_batch_service_request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_batch_service_request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_batch_service_request_payload);
+    server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const app_plan_batch_service_response = tool_service.handleFramedRequestBatch(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        512,
+        256,
+        1024,
+    ) catch return error.ToolServiceFailed;
+    var app_plan_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const app_plan_path = std.fmt.bufPrint(&app_plan_path_buffer, "/runtime/apps/{s}/plans/{s}.txt", .{ package_name, app_plan_name }) catch return error.ToolServiceFailed;
+    var app_plan_save_payload_buffer: [40]u8 = undefined;
+    const app_plan_save_payload_expected = std.fmt.bufPrint(&app_plan_save_payload_buffer, "APPPLANSAVE {s} {s}\n", .{ package_name, app_plan_name }) catch return error.ToolServiceFailed;
+    const app_plan_list_payload_expected = "golden\n";
+    var app_plan_info_payload_buffer: [256]u8 = undefined;
+    const app_plan_info_payload_expected = std.fmt.bufPrint(
+        &app_plan_info_payload_buffer,
+        "package={s}\nplan={s}\nrelease={s}\ntrust_bundle={s}\nconnector=virtual\ndisplay_width=1280\ndisplay_height=720\nautorun=1\npath={s}\n",
+        .{ package_name, app_plan_name, package_release_three_name, trust_backup_bundle_name, app_plan_path },
+    ) catch return error.ToolServiceFailed;
+    const app_plan_batch_service_response_expected = std.fmt.bufPrint(
+        &scratch.service_batch_response_expected_buffer,
+        "RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}",
+        .{
+            app_plan_save_request_id,
+            app_plan_save_payload_expected.len,
+            app_plan_save_payload_expected,
+            app_plan_list_request_id,
+            app_plan_list_payload_expected.len,
+            app_plan_list_payload_expected,
+            app_plan_info_request_id,
+            app_plan_info_payload_expected.len,
+            app_plan_info_payload_expected,
+        },
+    ) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, app_plan_batch_service_response, app_plan_batch_service_response_expected)) return error.ToolServiceResponseMismatch;
+
+    var app_plan_batch_service_response_offset: usize = 0;
+    while (app_plan_batch_service_response_offset < app_plan_batch_service_response.len) {
+        const app_plan_batch_service_reply_chunk = server_b.buildPayloadChunk(app_plan_batch_service_response[app_plan_batch_service_response_offset..]) catch |err| return mapTcpSessionProbeError(err);
+        const expected_chunk = app_plan_batch_service_response[app_plan_batch_service_response_offset .. app_plan_batch_service_response_offset + app_plan_batch_service_reply_chunk.payload.len];
+        _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, app_plan_batch_service_reply_chunk);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, app_plan_batch_service_reply_chunk);
+        if (!std.mem.eql(u8, app_plan_batch_service_reply_chunk.payload, expected_chunk)) return error.PayloadMismatch;
+        const mapped_b_app_plan_batch_reply = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+        if (mapped_b_app_plan_batch_reply != client_b) return error.SessionStateMismatch;
+        mapped_b_app_plan_batch_reply.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+        app_plan_batch_service_response_offset += app_plan_batch_service_reply_chunk.payload.len;
+
+        const app_plan_batch_service_reply_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+        _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_batch_service_reply_ack);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_batch_service_reply_ack);
+        server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    }
+    if (app_plan_batch_service_response_offset != app_plan_batch_service_response.len) return error.PayloadMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_plan_mutated_install_request = std.fmt.allocPrint(
+        service_fba.allocator(),
+        "REQ {d} PKG {s} {d}\n{s}",
+        .{ app_plan_mutated_install_request_id, package_name, package_mutated_script_body.len, package_mutated_script_body },
+    ) catch return error.ToolServiceFailed;
+    const app_plan_mutated_install_request_payload = client_b.buildPayload(app_plan_mutated_install_request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_mutated_install_request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_mutated_install_request_payload);
+    server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const app_plan_mutated_install_response = tool_service.handleFramedRequest(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        512,
+        256,
+        512,
+    ) catch return error.ToolServiceFailed;
+    const app_plan_mutated_install_response_expected = std.fmt.allocPrint(
+        service_fba.allocator(),
+        "RESP {d} 45\nINSTALLED {s} -> /packages/{s}/bin/main.oc\n",
+        .{ app_plan_mutated_install_request_id, package_name, package_name },
+    ) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, app_plan_mutated_install_response, app_plan_mutated_install_response_expected)) return error.ToolServiceResponseMismatch;
+
+    var app_plan_mutated_install_response_offset: usize = 0;
+    while (app_plan_mutated_install_response_offset < app_plan_mutated_install_response.len) {
+        const app_plan_mutated_install_reply_chunk = server_b.buildPayloadChunk(app_plan_mutated_install_response[app_plan_mutated_install_response_offset..]) catch |err| return mapTcpSessionProbeError(err);
+        const expected_chunk = app_plan_mutated_install_response[app_plan_mutated_install_response_offset .. app_plan_mutated_install_response_offset + app_plan_mutated_install_reply_chunk.payload.len];
+        _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, app_plan_mutated_install_reply_chunk);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, app_plan_mutated_install_reply_chunk);
+        if (!std.mem.eql(u8, app_plan_mutated_install_reply_chunk.payload, expected_chunk)) return error.PayloadMismatch;
+        const mapped_b_app_plan_mutated_install_reply = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+        if (mapped_b_app_plan_mutated_install_reply != client_b) return error.SessionStateMismatch;
+        mapped_b_app_plan_mutated_install_reply.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+        app_plan_mutated_install_response_offset += app_plan_mutated_install_reply_chunk.payload.len;
+
+        const app_plan_mutated_install_reply_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+        _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_mutated_install_reply_ack);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_mutated_install_reply_ack);
+        server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    }
+    if (app_plan_mutated_install_response_offset != app_plan_mutated_install_response.len) return error.PayloadMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_plan_mutated_asset_put_request = std.fmt.allocPrint(
+        service_fba.allocator(),
+        "REQ {d} PKGPUT {s} {s} {d}\n{s}",
+        .{
+            app_plan_mutated_asset_put_request_id,
+            package_name,
+            package_asset_relative_path,
+            package_mutated_asset_body.len,
+            package_mutated_asset_body,
+        },
+    ) catch return error.ToolServiceFailed;
+    const app_plan_mutated_asset_put_request_payload = client_b.buildPayload(app_plan_mutated_asset_put_request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_mutated_asset_put_request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_mutated_asset_put_request_payload);
+    server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const app_plan_mutated_asset_put_response = tool_service.handleFramedRequest(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        512,
+        256,
+        512,
+    ) catch return error.ToolServiceFailed;
+    const app_plan_mutated_asset_put_payload_expected = std.fmt.allocPrint(
+        service_fba.allocator(),
+        "ASSET {s} -> {s}\n",
+        .{ package_name, package_asset_path },
+    ) catch return error.ToolServiceFailed;
+    const app_plan_mutated_asset_put_response_expected = std.fmt.allocPrint(
+        service_fba.allocator(),
+        "RESP {d} {d}\n{s}",
+        .{
+            app_plan_mutated_asset_put_request_id,
+            app_plan_mutated_asset_put_payload_expected.len,
+            app_plan_mutated_asset_put_payload_expected,
+        },
+    ) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, app_plan_mutated_asset_put_response, app_plan_mutated_asset_put_response_expected)) return error.ToolServiceResponseMismatch;
+
+    var app_plan_mutated_asset_put_response_offset: usize = 0;
+    while (app_plan_mutated_asset_put_response_offset < app_plan_mutated_asset_put_response.len) {
+        const app_plan_mutated_asset_put_reply_chunk = server_b.buildPayloadChunk(app_plan_mutated_asset_put_response[app_plan_mutated_asset_put_response_offset..]) catch |err| return mapTcpSessionProbeError(err);
+        const expected_chunk = app_plan_mutated_asset_put_response[app_plan_mutated_asset_put_response_offset .. app_plan_mutated_asset_put_response_offset + app_plan_mutated_asset_put_reply_chunk.payload.len];
+        _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, app_plan_mutated_asset_put_reply_chunk);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, app_plan_mutated_asset_put_reply_chunk);
+        if (!std.mem.eql(u8, app_plan_mutated_asset_put_reply_chunk.payload, expected_chunk)) return error.PayloadMismatch;
+        const mapped_b_app_plan_mutated_asset_put_reply = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+        if (mapped_b_app_plan_mutated_asset_put_reply != client_b) return error.SessionStateMismatch;
+        mapped_b_app_plan_mutated_asset_put_reply.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+        app_plan_mutated_asset_put_response_offset += app_plan_mutated_asset_put_reply_chunk.payload.len;
+
+        const app_plan_mutated_asset_put_reply_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+        _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_mutated_asset_put_reply_ack);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_mutated_asset_put_reply_ack);
+        server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    }
+    if (app_plan_mutated_asset_put_response_offset != app_plan_mutated_asset_put_response.len) return error.PayloadMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_plan_mutated_run_request = std.fmt.allocPrint(service_fba.allocator(), "REQ {d} PKGRUN {s}", .{ app_plan_mutated_run_request_id, package_name }) catch return error.ToolServiceFailed;
+    const app_plan_mutated_run_request_payload = client_b.buildPayload(app_plan_mutated_run_request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_mutated_run_request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_mutated_run_request_payload);
+    server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const app_plan_mutated_run_response = tool_service.handleFramedRequest(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        512,
+        256,
+        512,
+    ) catch return error.ToolServiceFailed;
+    if (!std.mem.startsWith(u8, app_plan_mutated_run_response, "RESP 100 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, app_plan_mutated_run_response, "pkg-service-mutated\n") == null) return error.ToolServiceResponseMismatch;
+
+    var app_plan_mutated_run_response_offset: usize = 0;
+    while (app_plan_mutated_run_response_offset < app_plan_mutated_run_response.len) {
+        const app_plan_mutated_run_reply_chunk = server_b.buildPayloadChunk(app_plan_mutated_run_response[app_plan_mutated_run_response_offset..]) catch |err| return mapTcpSessionProbeError(err);
+        const expected_chunk = app_plan_mutated_run_response[app_plan_mutated_run_response_offset .. app_plan_mutated_run_response_offset + app_plan_mutated_run_reply_chunk.payload.len];
+        _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, app_plan_mutated_run_reply_chunk);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, app_plan_mutated_run_reply_chunk);
+        if (!std.mem.eql(u8, app_plan_mutated_run_reply_chunk.payload, expected_chunk)) return error.PayloadMismatch;
+        const mapped_b_app_plan_mutated_run_reply = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+        if (mapped_b_app_plan_mutated_run_reply != client_b) return error.SessionStateMismatch;
+        mapped_b_app_plan_mutated_run_reply.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+        app_plan_mutated_run_response_offset += app_plan_mutated_run_reply_chunk.payload.len;
+
+        const app_plan_mutated_run_reply_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+        _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_mutated_run_reply_ack);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_mutated_run_reply_ack);
+        server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    }
+    if (app_plan_mutated_run_response_offset != app_plan_mutated_run_response.len) return error.PayloadMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_plan_mutated_asset_readback = filesystem.readFileAlloc(service_fba.allocator(), package_asset_path, 128) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, app_plan_mutated_asset_readback, package_mutated_asset_body)) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_plan_mutated_output_readback = filesystem.readFileAlloc(service_fba.allocator(), package_output_path, 64) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, app_plan_mutated_output_readback, package_output_mutated_expected)) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_plan_apply_batch_request = std.fmt.bufPrint(
+        &scratch.service_batch_request_buffer,
+        "REQ {d} APPPLANAPPLY {s} {s}\nREQ {d} APPPLANACTIVE {s}\nREQ {d} APPINFO {s}\nREQ {d} APPRUN {s}\nREQ {d} APPAUTORUNLIST",
+        .{
+            app_plan_apply_request_id,
+            package_name,
+            app_plan_name,
+            app_plan_active_request_id,
+            package_name,
+            app_plan_app_info_request_id,
+            package_name,
+            app_plan_run_request_id,
+            package_name,
+            app_plan_autorun_list_request_id,
+        },
+    ) catch return error.ToolServiceFailed;
+    const app_plan_apply_batch_request_payload = client_b.buildPayload(app_plan_apply_batch_request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_apply_batch_request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_apply_batch_request_payload);
+    server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const app_plan_apply_batch_response = tool_service.handleFramedRequestBatch(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        512,
+        256,
+        1024,
+    ) catch return error.ToolServiceFailed;
+    var app_plan_apply_payload_buffer: [40]u8 = undefined;
+    const app_plan_apply_payload_expected = std.fmt.bufPrint(&app_plan_apply_payload_buffer, "APPPLANAPPLY {s} {s}\n", .{ package_name, app_plan_name }) catch return error.ToolServiceFailed;
+    var app_plan_active_payload_buffer: [256]u8 = undefined;
+    const app_plan_active_payload_expected = std.fmt.bufPrint(
+        &app_plan_active_payload_buffer,
+        "active_plan={s}\npackage={s}\nplan={s}\nrelease={s}\ntrust_bundle={s}\nconnector=virtual\ndisplay_width=1280\ndisplay_height=720\nautorun=1\npath={s}\n",
+        .{ app_plan_name, package_name, app_plan_name, package_release_three_name, trust_backup_bundle_name, app_plan_path },
+    ) catch return error.ToolServiceFailed;
+    const app_plan_autorun_list_payload_expected = "aux\ndemo\n";
+    const app_plan_apply_batch_response_expected = std.fmt.bufPrint(
+        &scratch.service_batch_response_expected_buffer,
+        "RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}",
+        .{
+            app_plan_apply_request_id,
+            app_plan_apply_payload_expected.len,
+            app_plan_apply_payload_expected,
+            app_plan_active_request_id,
+            app_plan_active_payload_expected.len,
+            app_plan_active_payload_expected,
+            app_plan_app_info_request_id,
+            app_info_payload_expected.len,
+            app_info_payload_expected,
+            app_plan_run_request_id,
+            package_run_stdout.len,
+            package_run_stdout,
+            app_plan_autorun_list_request_id,
+            app_plan_autorun_list_payload_expected.len,
+            app_plan_autorun_list_payload_expected,
+        },
+    ) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, app_plan_apply_batch_response, app_plan_apply_batch_response_expected)) return error.ToolServiceResponseMismatch;
+
+    var app_plan_apply_batch_response_offset: usize = 0;
+    while (app_plan_apply_batch_response_offset < app_plan_apply_batch_response.len) {
+        const app_plan_apply_batch_reply_chunk = server_b.buildPayloadChunk(app_plan_apply_batch_response[app_plan_apply_batch_response_offset..]) catch |err| return mapTcpSessionProbeError(err);
+        const expected_chunk = app_plan_apply_batch_response[app_plan_apply_batch_response_offset .. app_plan_apply_batch_response_offset + app_plan_apply_batch_reply_chunk.payload.len];
+        _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, app_plan_apply_batch_reply_chunk);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, app_plan_apply_batch_reply_chunk);
+        if (!std.mem.eql(u8, app_plan_apply_batch_reply_chunk.payload, expected_chunk)) return error.PayloadMismatch;
+        const mapped_b_app_plan_apply_batch_reply = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+        if (mapped_b_app_plan_apply_batch_reply != client_b) return error.SessionStateMismatch;
+        mapped_b_app_plan_apply_batch_reply.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+        app_plan_apply_batch_response_offset += app_plan_apply_batch_reply_chunk.payload.len;
+
+        const app_plan_apply_batch_reply_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+        _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_apply_batch_reply_ack);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_apply_batch_reply_ack);
+        server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    }
+    if (app_plan_apply_batch_response_offset != app_plan_apply_batch_response.len) return error.PayloadMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    var app_plan_file_payload_buffer: [192]u8 = undefined;
+    const app_plan_file_payload_expected = std.fmt.bufPrint(
+        &app_plan_file_payload_buffer,
+        "package={s}\nplan={s}\nrelease={s}\ntrust_bundle={s}\nconnector=virtual\ndisplay_width=1280\ndisplay_height=720\nautorun=1\n",
+        .{ package_name, app_plan_name, package_release_three_name, trust_backup_bundle_name },
+    ) catch return error.ToolServiceFailed;
+    const app_plan_file_readback = filesystem.readFileAlloc(service_fba.allocator(), app_plan_path, 192) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, app_plan_file_readback, app_plan_file_payload_expected)) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_plan_active_readback = filesystem.readFileAlloc(service_fba.allocator(), "/runtime/apps/demo/active_plan.txt", 32) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, app_plan_active_readback, app_plan_name)) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_plan_restored_asset_readback = filesystem.readFileAlloc(service_fba.allocator(), package_asset_path, 128) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, app_plan_restored_asset_readback, package_asset_body)) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_plan_restored_output_readback = filesystem.readFileAlloc(service_fba.allocator(), package_output_path, 64) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, app_plan_restored_output_readback, package_output_expected)) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const app_plan_delete_batch_request = std.fmt.bufPrint(
+        &scratch.service_batch_request_buffer,
+        "REQ {d} APPPLANDELETE {s} {s}\nREQ {d} APPPLANLIST {s}",
+        .{
+            app_plan_delete_request_id,
+            package_name,
+            app_plan_name,
+            app_plan_list_after_delete_request_id,
+            package_name,
+        },
+    ) catch return error.ToolServiceFailed;
+    const app_plan_delete_batch_request_payload = client_b.buildPayload(app_plan_delete_batch_request) catch |err| return mapTcpSessionProbeError(err);
+    _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_delete_batch_request_payload);
+    try pollTcpProbePacket(eth, &scratch.packet_storage);
+    try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_delete_batch_request_payload);
+    server_b.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+    const app_plan_delete_batch_response = tool_service.handleFramedRequestBatch(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        512,
+        256,
+        512,
+    ) catch return error.ToolServiceFailed;
+    const app_plan_delete_batch_response_expected = std.fmt.bufPrint(
+        &scratch.service_batch_response_expected_buffer,
+        "RESP {d} 26\nAPPPLANDELETE {s} {s}\nRESP {d} 0\n",
+        .{ app_plan_delete_request_id, package_name, app_plan_name, app_plan_list_after_delete_request_id },
+    ) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, app_plan_delete_batch_response, app_plan_delete_batch_response_expected)) return error.ToolServiceResponseMismatch;
+
+    var app_plan_delete_batch_response_offset: usize = 0;
+    while (app_plan_delete_batch_response_offset < app_plan_delete_batch_response.len) {
+        const app_plan_delete_batch_reply_chunk = server_b.buildPayloadChunk(app_plan_delete_batch_response[app_plan_delete_batch_response_offset..]) catch |err| return mapTcpSessionProbeError(err);
+        const expected_chunk = app_plan_delete_batch_response[app_plan_delete_batch_response_offset .. app_plan_delete_batch_response_offset + app_plan_delete_batch_reply_chunk.payload.len];
+        _ = try sendTcpProbeSegment(destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, app_plan_delete_batch_reply_chunk);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, flow_b.remote_port, flow_b.local_port, app_plan_delete_batch_reply_chunk);
+        if (!std.mem.eql(u8, app_plan_delete_batch_reply_chunk.payload, expected_chunk)) return error.PayloadMismatch;
+        const mapped_b_app_plan_delete_batch_reply = table.findByInboundPacket(destination_ip, source_ip, tcpPacketView(&scratch.packet_storage)) orelse return error.SessionStateMismatch;
+        if (mapped_b_app_plan_delete_batch_reply != client_b) return error.SessionStateMismatch;
+        mapped_b_app_plan_delete_batch_reply.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+
+        app_plan_delete_batch_response_offset += app_plan_delete_batch_reply_chunk.payload.len;
+
+        const app_plan_delete_batch_reply_ack = client_b.buildAck() catch |err| return mapTcpSessionProbeError(err);
+        _ = try sendTcpProbeSegment(source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_delete_batch_reply_ack);
+        try pollTcpProbePacket(eth, &scratch.packet_storage);
+        try expectTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, flow_b.local_port, flow_b.remote_port, app_plan_delete_batch_reply_ack);
+        server_b.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapTcpSessionProbeError(err);
+    }
+    if (app_plan_delete_batch_response_offset != app_plan_delete_batch_response.len) return error.PayloadMismatch;
+
+    if (filesystem.statSummary(app_plan_path)) |_| {
+        return error.ToolServiceResponseMismatch;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return error.ToolServiceFailed,
+    }
+    if (filesystem.statSummary("/runtime/apps/demo/active_plan.txt")) |_| {
+        return error.ToolServiceResponseMismatch;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return error.ToolServiceFailed,
+    }
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const uninstall_service_request = std.fmt.bufPrint(&scratch.service_batch_request_buffer, "REQ {d} APPDELETE {s}\nREQ {d} APPLIST", .{
@@ -8381,11 +8807,11 @@ fn spinPause(iterations: usize) void {
     var idx: usize = 0;
     while (idx < iterations) : (idx += 1) {
         if (@import("builtin").cpu.arch == .x86_64) {
-            asm volatile ("pause" ::: "memory");
+            asm volatile ("pause" ::: .{ .memory = true });
         } else if (@import("builtin").cpu.arch == .aarch64) {
-            asm volatile ("yield" ::: "memory");
+            asm volatile ("yield" ::: .{ .memory = true });
         } else {
-            asm volatile ("" ::: "memory");
+            asm volatile ("" ::: .{ .memory = true });
         }
     }
 }
@@ -8393,9 +8819,9 @@ fn spinPause(iterations: usize) void {
 fn setProbeInterruptsEnabled(enabled: bool) void {
     if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86_64) return;
     if (enabled) {
-        asm volatile ("sti" ::: "memory");
+        asm volatile ("sti" ::: .{ .memory = true });
     } else {
-        asm volatile ("cli" ::: "memory");
+        asm volatile ("cli" ::: .{ .memory = true });
     }
 }
 
@@ -8411,7 +8837,7 @@ fn out8(port: u16, value: u8) void {
         :
         : [dx] "{dx}" (port),
           [al] "{al}" (value),
-        : "memory");
+        : .{ .memory = true });
 }
 
 pub fn panic(_: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
@@ -8424,7 +8850,7 @@ pub fn panic(_: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     }
     recordHealth(status.last_health_code, status.mode, status.ticks, status.command_seq_ack);
     while (true) {
-        asm volatile ("" ::: "memory");
+        asm volatile ("" ::: .{ .memory = true });
     }
 }
 
