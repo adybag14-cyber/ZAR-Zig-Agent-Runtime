@@ -28,6 +28,33 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Resolve python version and release tag
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_RAW="${{ inputs.version }}"
+          RELEASE_TAG="${{ inputs.release_tag }}"
+
+          if [[ "${VERSION_RAW}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-zig-([a-zA-Z0-9-]+)\.([0-9]+)$ ]]; then
+            BASE_VERSION="${BASH_REMATCH[1]}"
+            BUILD_NUMBER="${BASH_REMATCH[3]}"
+            PY_VERSION="${BASE_VERSION}.dev${BUILD_NUMBER}"
+            if [ -z "${RELEASE_TAG}" ]; then
+              RELEASE_TAG="${VERSION_RAW}"
+            fi
+          else
+            PY_VERSION="${VERSION_RAW}"
+          fi
+
+          if [[ -n "${RELEASE_TAG}" && "${RELEASE_TAG}" != v* ]]; then
+            RELEASE_TAG="v${RELEASE_TAG}"
+          fi
+
+          echo "python_version=${PY_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Resolved python_version=${PY_VERSION}, release_tag=${RELEASE_TAG}"
+
       - name: Set python package version
         shell: bash
         run: |
@@ -52,7 +79,7 @@ jobs:
               print(f"Updated pyproject version to {version}")
           PY
         env:
-          PY_VERSION: ${{ inputs.version }}
+          PY_VERSION: ${{ steps.meta.outputs.python_version }}
 
       - name: Build python distributions
         shell: bash
@@ -73,9 +100,9 @@ jobs:
         run: |
           ./scripts/package-registry-status.ps1 `
             -Repository "${{ github.repository }}" `
-            -ReleaseTag "${{ inputs.release_tag }}" `
+            -ReleaseTag "${{ steps.meta.outputs.release_tag }}" `
             -PythonPackageName "openclaw-zig-rpc-client" `
-            -PythonVersion "${{ inputs.version }}" `
+            -PythonVersion "${{ steps.meta.outputs.python_version }}" `
             -OutputJsonPath "./release/package-registry-status-python.json"
 
       - name: Upload python dist artifact
@@ -91,13 +118,13 @@ jobs:
           path: release/package-registry-status-python.json
 
       - name: Attach python distributions to release
-        if: ${{ inputs.release_tag != '' }}
+        if: ${{ steps.meta.outputs.release_tag != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${{ inputs.release_tag }}"
+          TAG="${{ steps.meta.outputs.release_tag }}"
           if gh release view "${TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release upload "${TAG}" python/openclaw-zig-rpc-client/dist/* --repo "${{ github.repository }}" --clobber
             echo "Attached Python distributions to release ${TAG}."
@@ -144,8 +171,9 @@ jobs:
           {
             echo "## Python publish summary"
             echo ""
-            echo "- version: \`${{ inputs.version }}\`"
-            echo "- release tag: \`${{ inputs.release_tag }}\`"
+            echo "- input version: \`${{ inputs.version }}\`"
+            echo "- resolved python version: \`${{ steps.meta.outputs.python_version }}\`"
+            echo "- release tag: \`${{ steps.meta.outputs.release_tag }}\`"
             echo "- PyPI token configured: \`${{ steps.auth.outputs.has_pypi_token }}\`"
             echo "- trusted publishing outcome: \`${{ steps.publish_trusted.outcome || 'not-run' }}\`"
             echo "- preflight artifact: \`package-registry-status-python.json\`"
