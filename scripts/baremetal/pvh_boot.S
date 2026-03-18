@@ -135,7 +135,8 @@ stack32_top:
 
 .balign 16
 stack64:
-    # The freestanding PAL path now carries DNS + TCP + HTTP + service framing.
-    # Keep the boot/runtime stack comfortably above the page-table scratch area.
-    .skip 131072
+    # The freestanding PAL path now carries DNS + TCP + HTTP + service framing,
+    # plus the broader FS5.5 package/app/runtime proofs on the Debug lane.
+    # Keep the PVH boot/runtime stack comfortably above that deeper probe depth.
+    .skip 262144
 stack64_top:
