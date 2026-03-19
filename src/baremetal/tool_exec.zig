@@ -154,7 +154,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-modes, display-set, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-plan-list, workspace-plan-info, workspace-plan-active, workspace-plan-save, workspace-plan-apply, workspace-plan-delete, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-suite-release-channel-list, workspace-suite-release-channel-info, workspace-suite-release-channel-set, workspace-suite-release-channel-activate, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-modes, display-set, run-script, run-package, app-run");
         return;
     }
 
@@ -1528,6 +1528,545 @@ fn execute(
         return;
     }
 
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-plan-list")) {
+        const workspace_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-plan-list <name>");
+            return;
+        };
+        if (workspace_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-plan-list <name>");
+            return;
+        }
+        const listing = workspace_runtime.planListAlloc(allocator, workspace_name.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-plan-list failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(listing);
+        try stdout_buffer.appendSlice(listing);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-plan-info")) {
+        const workspace_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-plan-info <name> <plan>");
+            return;
+        };
+        const plan_name = parseFirstArg(workspace_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-plan-info <name> <plan>");
+            return;
+        };
+        if (plan_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-plan-info <name> <plan>");
+            return;
+        }
+        const info = workspace_runtime.planInfoAlloc(allocator, workspace_name.arg, plan_name.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-plan-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(info);
+        try stdout_buffer.appendSlice(info);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-plan-active")) {
+        const workspace_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-plan-active <name>");
+            return;
+        };
+        if (workspace_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-plan-active <name>");
+            return;
+        }
+        const info = workspace_runtime.activePlanInfoAlloc(allocator, workspace_name.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-plan-active failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(info);
+        try stdout_buffer.appendSlice(info);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-plan-save")) {
+        const workspace_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-plan-save <name> <plan> <suite|none> <trust|none> <width> <height> [package:channel:release...]");
+            return;
+        };
+        const plan_name = parseFirstArg(workspace_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-plan-save <name> <plan> <suite|none> <trust|none> <width> <height> [package:channel:release...]");
+            return;
+        };
+        const suite_name = parseFirstArg(plan_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-plan-save <name> <plan> <suite|none> <trust|none> <width> <height> [package:channel:release...]");
+            return;
+        };
+        const trust_name = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-plan-save <name> <plan> <suite|none> <trust|none> <width> <height> [package:channel:release...]");
+            return;
+        };
+        const width_arg = parseFirstArg(trust_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-plan-save <name> <plan> <suite|none> <trust|none> <width> <height> [package:channel:release...]");
+            return;
+        };
+        const height_arg = parseFirstArg(width_arg.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-plan-save <name> <plan> <suite|none> <trust|none> <width> <height> [package:channel:release...]");
+            return;
+        };
+        const width = std.fmt.parseInt(u16, width_arg.arg, 10) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-plan-save <name> <plan> <suite|none> <trust|none> <width> <height> [package:channel:release...]");
+            return;
+        };
+        const height = std.fmt.parseInt(u16, height_arg.arg, 10) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-plan-save <name> <plan> <suite|none> <trust|none> <width> <height> [package:channel:release...]");
+            return;
+        };
+        const selected_suite = if (std.ascii.eqlIgnoreCase(suite_name.arg, "none")) "" else suite_name.arg;
+        const selected_trust = if (std.ascii.eqlIgnoreCase(trust_name.arg, "none")) "" else trust_name.arg;
+        workspace_runtime.savePlan(workspace_name.arg, plan_name.arg, selected_suite, selected_trust, width, height, height_arg.rest, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-plan-save failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("workspace plan saved {s} {s}\n", .{ workspace_name.arg, plan_name.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-plan-apply")) {
+        const workspace_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-plan-apply <name> <plan>");
+            return;
+        };
+        const plan_name = parseFirstArg(workspace_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-plan-apply <name> <plan>");
+            return;
+        };
+        if (plan_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-plan-apply <name> <plan>");
+            return;
+        }
+        workspace_runtime.applyPlan(workspace_name.arg, plan_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-plan-apply failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("workspace plan applied {s} {s}\n", .{ workspace_name.arg, plan_name.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-plan-delete")) {
+        const workspace_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-plan-delete <name> <plan>");
+            return;
+        };
+        const plan_name = parseFirstArg(workspace_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-plan-delete <name> <plan>");
+            return;
+        };
+        if (plan_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-plan-delete <name> <plan>");
+            return;
+        }
+        workspace_runtime.deletePlan(workspace_name.arg, plan_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-plan-delete failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("workspace plan deleted {s} {s}\n", .{ workspace_name.arg, plan_name.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-list")) {
+        if (parsed.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-list");
+            return;
+        }
+        const listing = workspace_runtime.suiteListAlloc(allocator, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-list failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(listing);
+        try stdout_buffer.appendSlice(listing);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-info")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-info <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-info <name>");
+            return;
+        }
+        const info = workspace_runtime.suiteInfoAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(info);
+        try stdout_buffer.appendSlice(info);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-save")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-save <name> <workspace...>");
+            return;
+        };
+        if (suite_name.rest.len == 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-save <name> <workspace...>");
+            return;
+        }
+        workspace_runtime.saveSuite(suite_name.arg, suite_name.rest, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-save failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("workspace suite saved {s}\n", .{suite_name.arg});
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-apply")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-apply <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-apply <name>");
+            return;
+        }
+        workspace_runtime.applySuite(arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-apply failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("workspace suite applied {s}\n", .{arg.arg});
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-run")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-run <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-run <name>");
+            return;
+        }
+        try runWorkspaceSuite(arg.arg, "workspace-suite-run", stdout_buffer, stderr_buffer, exit_code, allocator, depth);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-delete")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-delete <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-delete <name>");
+            return;
+        }
+        workspace_runtime.deleteSuite(arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-delete failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("workspace suite deleted {s}\n", .{arg.arg});
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-release-list")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-list <suite>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-list <suite>");
+            return;
+        }
+        const listing = workspace_runtime.suiteReleaseListAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-release-list failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(listing);
+        try stdout_buffer.appendSlice(listing);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-release-info")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-info <suite> <release>");
+            return;
+        };
+        const release_name = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-info <suite> <release>");
+            return;
+        };
+        if (release_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-info <suite> <release>");
+            return;
+        }
+        const info = workspace_runtime.suiteReleaseInfoAlloc(allocator, suite_name.arg, release_name.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-release-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(info);
+        try stdout_buffer.appendSlice(info);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-release-save")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-save <suite> <release>");
+            return;
+        };
+        const release_name = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-save <suite> <release>");
+            return;
+        };
+        if (release_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-save <suite> <release>");
+            return;
+        }
+        workspace_runtime.snapshotSuiteRelease(suite_name.arg, release_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-release-save failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("workspace suite release saved {s} {s}\n", .{ suite_name.arg, release_name.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-release-activate")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-activate <suite> <release>");
+            return;
+        };
+        const release_name = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-activate <suite> <release>");
+            return;
+        };
+        if (release_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-activate <suite> <release>");
+            return;
+        }
+        workspace_runtime.activateSuiteRelease(suite_name.arg, release_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-release-activate failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("workspace suite release activated {s} {s}\n", .{ suite_name.arg, release_name.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-release-delete")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-delete <suite> <release>");
+            return;
+        };
+        const release_name = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-delete <suite> <release>");
+            return;
+        };
+        if (release_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-delete <suite> <release>");
+            return;
+        }
+        workspace_runtime.deleteSuiteRelease(suite_name.arg, release_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-release-delete failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("workspace suite release deleted {s} {s}\n", .{ suite_name.arg, release_name.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-release-prune")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-prune <suite> <keep>");
+            return;
+        };
+        const keep_arg = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-prune <suite> <keep>");
+            return;
+        };
+        if (keep_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-prune <suite> <keep>");
+            return;
+        }
+        const keep = std.fmt.parseInt(usize, keep_arg.arg, 10) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-prune <suite> <keep>");
+            return;
+        };
+        const result = workspace_runtime.pruneSuiteReleases(suite_name.arg, keep, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-release-prune failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt(
+            "workspace suite release pruned {s} keep={d} deleted={d} kept={d}\n",
+            .{ suite_name.arg, keep, result.deleted_count, result.kept_count },
+        );
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-release-channel-list")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-channel-list <suite>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-channel-list <suite>");
+            return;
+        }
+        const listing = workspace_runtime.suiteChannelListAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-release-channel-list failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(listing);
+        try stdout_buffer.appendSlice(listing);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-release-channel-info")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-channel-info <suite> <channel>");
+            return;
+        };
+        const channel_name = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-channel-info <suite> <channel>");
+            return;
+        };
+        if (channel_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-channel-info <suite> <channel>");
+            return;
+        }
+        const info = workspace_runtime.suiteChannelInfoAlloc(allocator, suite_name.arg, channel_name.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-release-channel-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(info);
+        try stdout_buffer.appendSlice(info);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-release-channel-set")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-channel-set <suite> <channel> <release>");
+            return;
+        };
+        const channel_name = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-channel-set <suite> <channel> <release>");
+            return;
+        };
+        const release_name = parseFirstArg(channel_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-channel-set <suite> <channel> <release>");
+            return;
+        };
+        if (release_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-channel-set <suite> <channel> <release>");
+            return;
+        }
+        workspace_runtime.setSuiteReleaseChannel(suite_name.arg, channel_name.arg, release_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-release-channel-set failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("workspace suite release channel set {s} {s} {s}\n", .{ suite_name.arg, channel_name.arg, release_name.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-release-channel-activate")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-channel-activate <suite> <channel>");
+            return;
+        };
+        const channel_name = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-channel-activate <suite> <channel>");
+            return;
+        };
+        if (channel_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-channel-activate <suite> <channel>");
+            return;
+        }
+        workspace_runtime.activateSuiteReleaseChannel(suite_name.arg, channel_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-release-channel-activate failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("workspace suite release channel activated {s} {s}\n", .{ suite_name.arg, channel_name.arg });
+        return;
+    }
+
     if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-list")) {
         if (parsed.rest.len != 0) {
             exit_code.* = 2;
@@ -2575,6 +3114,31 @@ fn runWorkspace(
     };
 }
 
+fn runWorkspaceSuite(
+    suite_name: []const u8,
+    operation: []const u8,
+    stdout_buffer: *OutputBuffer,
+    stderr_buffer: *OutputBuffer,
+    exit_code: *u8,
+    allocator: std.mem.Allocator,
+    depth: usize,
+) Error!void {
+    const suite_entries = workspace_runtime.suiteEntriesAlloc(allocator, suite_name, 1024) catch |err| {
+        exit_code.* = 1;
+        try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+        return;
+    };
+    defer allocator.free(suite_entries);
+
+    var lines = std.mem.splitScalar(u8, suite_entries, '\n');
+    while (lines.next()) |raw_line| {
+        const workspace_name = std.mem.trim(u8, raw_line, " \t\r");
+        if (workspace_name.len == 0) continue;
+        try runWorkspace(workspace_name, operation, stdout_buffer, stderr_buffer, exit_code, allocator, depth);
+        if (exit_code.* != 0) return;
+    }
+}
+
 fn runWorkspaceAutorun(
     operation: []const u8,
     stdout_buffer: *OutputBuffer,
@@ -3516,6 +4080,72 @@ test "baremetal tool exec saves applies and deletes workspaces" {
     try std.testing.expect(std.mem.indexOf(u8, workspace_info.stdout, "display=1024x768") != null);
     try std.testing.expect(std.mem.indexOf(u8, workspace_info.stdout, "channel=demo:stable:r1") != null);
 
+    var save_workspace_plan_golden = try runCapture(std.testing.allocator, "workspace-plan-save ops golden duo root-a 1024 768 demo:stable:r1", 256, 256);
+    defer save_workspace_plan_golden.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_workspace_plan_golden.exit_code);
+    try std.testing.expectEqualStrings("workspace plan saved ops golden\n", save_workspace_plan_golden.stdout);
+
+    var save_workspace_plan_staging = try runCapture(std.testing.allocator, "workspace-plan-save ops staging none none 640 400 demo:stable:r2", 256, 256);
+    defer save_workspace_plan_staging.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_workspace_plan_staging.exit_code);
+    try std.testing.expectEqualStrings("workspace plan saved ops staging\n", save_workspace_plan_staging.stdout);
+
+    var workspace_plan_list = try runCapture(std.testing.allocator, "workspace-plan-list ops", 256, 256);
+    defer workspace_plan_list.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), workspace_plan_list.exit_code);
+    try std.testing.expectEqualStrings("golden\nstaging\n", workspace_plan_list.stdout);
+
+    var workspace_plan_info = try runCapture(std.testing.allocator, "workspace-plan-info ops staging", 512, 256);
+    defer workspace_plan_info.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), workspace_plan_info.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, workspace_plan_info.stdout, "workspace=ops") != null);
+    try std.testing.expect(std.mem.indexOf(u8, workspace_plan_info.stdout, "plan=staging") != null);
+    try std.testing.expect(std.mem.indexOf(u8, workspace_plan_info.stdout, "suite=none") != null);
+    try std.testing.expect(std.mem.indexOf(u8, workspace_plan_info.stdout, "trust_bundle=none") != null);
+    try std.testing.expect(std.mem.indexOf(u8, workspace_plan_info.stdout, "display=640x400") != null);
+    try std.testing.expect(std.mem.indexOf(u8, workspace_plan_info.stdout, "channel=demo:stable:r2") != null);
+
+    var apply_workspace_plan_staging = try runCapture(std.testing.allocator, "workspace-plan-apply ops staging", 256, 256);
+    defer apply_workspace_plan_staging.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), apply_workspace_plan_staging.exit_code);
+    try std.testing.expectEqualStrings("workspace plan applied ops staging\n", apply_workspace_plan_staging.stdout);
+
+    var workspace_plan_active = try runCapture(std.testing.allocator, "workspace-plan-active ops", 512, 256);
+    defer workspace_plan_active.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), workspace_plan_active.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, workspace_plan_active.stdout, "active_plan=staging") != null);
+
+    var staging_plan_workspace_info = try runCapture(std.testing.allocator, "workspace-info ops", 512, 256);
+    defer staging_plan_workspace_info.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), staging_plan_workspace_info.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, staging_plan_workspace_info.stdout, "suite=none") != null);
+    try std.testing.expect(std.mem.indexOf(u8, staging_plan_workspace_info.stdout, "trust_bundle=none") != null);
+    try std.testing.expect(std.mem.indexOf(u8, staging_plan_workspace_info.stdout, "display=640x400") != null);
+    try std.testing.expect(std.mem.indexOf(u8, staging_plan_workspace_info.stdout, "channel=demo:stable:r2") != null);
+
+    var apply_workspace_plan_golden = try runCapture(std.testing.allocator, "workspace-plan-apply ops golden", 256, 256);
+    defer apply_workspace_plan_golden.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), apply_workspace_plan_golden.exit_code);
+    try std.testing.expectEqualStrings("workspace plan applied ops golden\n", apply_workspace_plan_golden.stdout);
+
+    var restored_plan_workspace_info = try runCapture(std.testing.allocator, "workspace-info ops", 512, 256);
+    defer restored_plan_workspace_info.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), restored_plan_workspace_info.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, restored_plan_workspace_info.stdout, "suite=duo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, restored_plan_workspace_info.stdout, "trust_bundle=root-a") != null);
+    try std.testing.expect(std.mem.indexOf(u8, restored_plan_workspace_info.stdout, "display=1024x768") != null);
+    try std.testing.expect(std.mem.indexOf(u8, restored_plan_workspace_info.stdout, "channel=demo:stable:r1") != null);
+
+    var delete_workspace_plan_staging = try runCapture(std.testing.allocator, "workspace-plan-delete ops staging", 256, 256);
+    defer delete_workspace_plan_staging.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), delete_workspace_plan_staging.exit_code);
+    try std.testing.expectEqualStrings("workspace plan deleted ops staging\n", delete_workspace_plan_staging.stdout);
+
+    var workspace_plan_list_after_delete = try runCapture(std.testing.allocator, "workspace-plan-list ops", 256, 256);
+    defer workspace_plan_list_after_delete.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), workspace_plan_list_after_delete.exit_code);
+    try std.testing.expectEqualStrings("golden\n", workspace_plan_list_after_delete.stdout);
+
     var save_workspace_release = try runCapture(std.testing.allocator, "workspace-release-save ops golden", 256, 256);
     defer save_workspace_release.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), save_workspace_release.exit_code);
@@ -3691,6 +4321,269 @@ test "baremetal tool exec saves applies and deletes workspaces" {
     defer workspace_list_after_delete.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), workspace_list_after_delete.exit_code);
     try std.testing.expectEqualStrings("", workspace_list_after_delete.stdout);
+}
+
+test "baremetal tool exec persists and runs workspace suites" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    display_output.resetForTest();
+    framebuffer_console.resetForTest();
+    vga_text_console.resetForTest();
+
+    try trust_store.installBundle("root-a", "root-a-cert", 1);
+    try trust_store.installBundle("root-b", "root-b-cert", 2);
+    try package_store.installScriptPackage("demo", "echo demo-workspace", 3);
+    try package_store.installScriptPackage("aux", "echo aux-workspace", 4);
+
+    var save_demo_plan = try runCapture(std.testing.allocator, "app-plan-save demo boot none none virtual 1024 768 0", 256, 256);
+    defer save_demo_plan.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_demo_plan.exit_code);
+
+    var save_aux_plan = try runCapture(std.testing.allocator, "app-plan-save aux sidecar none none virtual 800 600 0", 256, 256);
+    defer save_aux_plan.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_aux_plan.exit_code);
+
+    var save_demo_suite = try runCapture(std.testing.allocator, "app-suite-save demo-suite demo:boot", 256, 256);
+    defer save_demo_suite.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_demo_suite.exit_code);
+
+    var save_aux_suite = try runCapture(std.testing.allocator, "app-suite-save aux-suite aux:sidecar", 256, 256);
+    defer save_aux_suite.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_aux_suite.exit_code);
+
+    var save_ops = try runCapture(std.testing.allocator, "workspace-save ops demo-suite root-a 1024 768", 256, 256);
+    defer save_ops.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_ops.exit_code);
+
+    var save_sidecar = try runCapture(std.testing.allocator, "workspace-save sidecar aux-suite root-b 800 600", 256, 256);
+    defer save_sidecar.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_sidecar.exit_code);
+
+    var save_workspace_suite = try runCapture(std.testing.allocator, "workspace-suite-save crew ops sidecar", 256, 256);
+    defer save_workspace_suite.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_workspace_suite.exit_code);
+    try std.testing.expectEqualStrings("workspace suite saved crew\n", save_workspace_suite.stdout);
+
+    var workspace_suite_list = try runCapture(std.testing.allocator, "workspace-suite-list", 256, 256);
+    defer workspace_suite_list.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), workspace_suite_list.exit_code);
+    try std.testing.expectEqualStrings("crew\n", workspace_suite_list.stdout);
+
+    var workspace_suite_info = try runCapture(std.testing.allocator, "workspace-suite-info crew", 256, 256);
+    defer workspace_suite_info.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), workspace_suite_info.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, workspace_suite_info.stdout, "suite=crew") != null);
+    try std.testing.expect(std.mem.indexOf(u8, workspace_suite_info.stdout, "workspace=ops") != null);
+    try std.testing.expect(std.mem.indexOf(u8, workspace_suite_info.stdout, "workspace=sidecar") != null);
+
+    var apply_workspace_suite = try runCapture(std.testing.allocator, "workspace-suite-apply crew", 256, 256);
+    defer apply_workspace_suite.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), apply_workspace_suite.exit_code);
+    try std.testing.expectEqualStrings("workspace suite applied crew\n", apply_workspace_suite.stdout);
+
+    var trust_active = try runCapture(std.testing.allocator, "trust-active", 256, 256);
+    defer trust_active.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), trust_active.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, trust_active.stdout, "name=root-b") != null);
+
+    var display_info = try runCapture(std.testing.allocator, "display-info", 256, 256);
+    defer display_info.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), display_info.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, display_info.stdout, "current=800x600") != null);
+
+    var workspace_suite_run = try runCapture(std.testing.allocator, "workspace-suite-run crew", 256, 256);
+    defer workspace_suite_run.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), workspace_suite_run.exit_code);
+    try std.testing.expectEqualStrings("demo-workspace\naux-workspace\n", workspace_suite_run.stdout);
+
+    var delete_workspace_suite = try runCapture(std.testing.allocator, "workspace-suite-delete crew", 256, 256);
+    defer delete_workspace_suite.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), delete_workspace_suite.exit_code);
+    try std.testing.expectEqualStrings("workspace suite deleted crew\n", delete_workspace_suite.stdout);
+
+    var workspace_suite_list_after_delete = try runCapture(std.testing.allocator, "workspace-suite-list", 256, 256);
+    defer workspace_suite_list_after_delete.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), workspace_suite_list_after_delete.exit_code);
+    try std.testing.expectEqualStrings("", workspace_suite_list_after_delete.stdout);
+}
+
+test "baremetal tool exec manages workspace suite releases" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    display_output.resetForTest();
+    framebuffer_console.resetForTest();
+    vga_text_console.resetForTest();
+
+    try trust_store.installBundle("root-a", "root-a-cert", 1);
+    try trust_store.installBundle("root-b", "root-b-cert", 2);
+    try package_store.installScriptPackage("demo", "echo demo-workspace", 3);
+    try package_store.installScriptPackage("aux", "echo aux-workspace", 4);
+    try app_runtime.savePlan("demo", "boot", "", "", abi.display_connector_virtual, 1024, 768, false, 5);
+    try app_runtime.savePlan("demo", "canary", "", "", abi.display_connector_virtual, 640, 400, false, 6);
+    try app_runtime.savePlan("aux", "sidecar", "", "", abi.display_connector_virtual, 800, 600, false, 7);
+    try app_runtime.saveSuite("demo-suite", "demo:boot", 8);
+    try app_runtime.saveSuite("aux-suite", "aux:sidecar", 9);
+
+    var save_ops = try runCapture(std.testing.allocator, "workspace-save ops demo-suite root-a 1024 768", 256, 256);
+    defer save_ops.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_ops.exit_code);
+
+    var save_sidecar = try runCapture(std.testing.allocator, "workspace-save sidecar aux-suite root-b 800 600", 256, 256);
+    defer save_sidecar.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_sidecar.exit_code);
+
+    var save_workspace_suite = try runCapture(std.testing.allocator, "workspace-suite-save crew ops sidecar", 256, 256);
+    defer save_workspace_suite.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_workspace_suite.exit_code);
+
+    var save_release_golden = try runCapture(std.testing.allocator, "workspace-suite-release-save crew golden", 256, 256);
+    defer save_release_golden.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_release_golden.exit_code);
+    try std.testing.expectEqualStrings("workspace suite release saved crew golden\n", save_release_golden.stdout);
+
+    var save_ops_canary = try runCapture(std.testing.allocator, "workspace-save ops demo-suite root-b 640 400", 256, 256);
+    defer save_ops_canary.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_ops_canary.exit_code);
+
+    var save_workspace_suite_staging = try runCapture(std.testing.allocator, "workspace-suite-save crew ops", 256, 256);
+    defer save_workspace_suite_staging.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_workspace_suite_staging.exit_code);
+
+    var save_release_staging = try runCapture(std.testing.allocator, "workspace-suite-release-save crew staging", 256, 256);
+    defer save_release_staging.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_release_staging.exit_code);
+    try std.testing.expectEqualStrings("workspace suite release saved crew staging\n", save_release_staging.stdout);
+
+    var release_list = try runCapture(std.testing.allocator, "workspace-suite-release-list crew", 256, 256);
+    defer release_list.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), release_list.exit_code);
+    try std.testing.expectEqualStrings("golden\nstaging\n", release_list.stdout);
+
+    var release_info = try runCapture(std.testing.allocator, "workspace-suite-release-info crew staging", 512, 256);
+    defer release_info.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), release_info.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, release_info.stdout, "suite=crew") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info.stdout, "release=staging") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info.stdout, "saved_seq=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info.stdout, "workspace=ops") != null);
+
+    var activate_release = try runCapture(std.testing.allocator, "workspace-suite-release-activate crew golden", 256, 256);
+    defer activate_release.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), activate_release.exit_code);
+    try std.testing.expectEqualStrings("workspace suite release activated crew golden\n", activate_release.stdout);
+
+    var suite_info = try runCapture(std.testing.allocator, "workspace-suite-info crew", 256, 256);
+    defer suite_info.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), suite_info.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info.stdout, "workspace=ops") != null);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info.stdout, "workspace=sidecar") != null);
+
+    var delete_release = try runCapture(std.testing.allocator, "workspace-suite-release-delete crew staging", 256, 256);
+    defer delete_release.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), delete_release.exit_code);
+    try std.testing.expectEqualStrings("workspace suite release deleted crew staging\n", delete_release.stdout);
+
+    var release_list_after_delete = try runCapture(std.testing.allocator, "workspace-suite-release-list crew", 256, 256);
+    defer release_list_after_delete.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), release_list_after_delete.exit_code);
+    try std.testing.expectEqualStrings("golden\n", release_list_after_delete.stdout);
+
+    var save_ops_fallback = try runCapture(std.testing.allocator, "workspace-save ops demo-suite root-b 640 400", 256, 256);
+    defer save_ops_fallback.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_ops_fallback.exit_code);
+
+    var save_workspace_suite_fallback = try runCapture(std.testing.allocator, "workspace-suite-save crew ops", 256, 256);
+    defer save_workspace_suite_fallback.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_workspace_suite_fallback.exit_code);
+
+    var save_release_fallback = try runCapture(std.testing.allocator, "workspace-suite-release-save crew fallback", 256, 256);
+    defer save_release_fallback.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_release_fallback.exit_code);
+    try std.testing.expectEqualStrings("workspace suite release saved crew fallback\n", save_release_fallback.stdout);
+
+    var prune_release = try runCapture(std.testing.allocator, "workspace-suite-release-prune crew 1", 256, 256);
+    defer prune_release.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), prune_release.exit_code);
+    try std.testing.expectEqualStrings("workspace suite release pruned crew keep=1 deleted=1 kept=1\n", prune_release.stdout);
+
+    var release_list_after_prune = try runCapture(std.testing.allocator, "workspace-suite-release-list crew", 256, 256);
+    defer release_list_after_prune.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), release_list_after_prune.exit_code);
+    try std.testing.expectEqualStrings("fallback\n", release_list_after_prune.stdout);
+}
+
+test "baremetal tool exec manages workspace suite release channels" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    display_output.resetForTest();
+    framebuffer_console.resetForTest();
+    vga_text_console.resetForTest();
+
+    try trust_store.installBundle("root-a", "root-a-cert", 1);
+    try trust_store.installBundle("root-b", "root-b-cert", 2);
+    try package_store.installScriptPackage("demo", "echo demo-workspace", 3);
+    try package_store.installScriptPackage("aux", "echo aux-workspace", 4);
+    try app_runtime.savePlan("demo", "boot", "", "", abi.display_connector_virtual, 1024, 768, false, 5);
+    try app_runtime.savePlan("demo", "canary", "", "", abi.display_connector_virtual, 640, 400, false, 6);
+    try app_runtime.savePlan("aux", "sidecar", "", "", abi.display_connector_virtual, 800, 600, false, 7);
+    try app_runtime.saveSuite("demo-suite", "demo:boot", 8);
+    try app_runtime.saveSuite("aux-suite", "aux:sidecar", 9);
+
+    var save_ops = try runCapture(std.testing.allocator, "workspace-save ops demo-suite root-a 1024 768", 256, 256);
+    defer save_ops.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_ops.exit_code);
+
+    var save_sidecar = try runCapture(std.testing.allocator, "workspace-save sidecar aux-suite root-b 800 600", 256, 256);
+    defer save_sidecar.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_sidecar.exit_code);
+
+    var save_workspace_suite = try runCapture(std.testing.allocator, "workspace-suite-save crew ops sidecar", 256, 256);
+    defer save_workspace_suite.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_workspace_suite.exit_code);
+
+    var save_release_golden = try runCapture(std.testing.allocator, "workspace-suite-release-save crew golden", 256, 256);
+    defer save_release_golden.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_release_golden.exit_code);
+
+    var save_ops_canary = try runCapture(std.testing.allocator, "workspace-save ops demo-suite root-b 640 400", 256, 256);
+    defer save_ops_canary.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_ops_canary.exit_code);
+
+    var save_workspace_suite_staging = try runCapture(std.testing.allocator, "workspace-suite-save crew ops", 256, 256);
+    defer save_workspace_suite_staging.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_workspace_suite_staging.exit_code);
+
+    var save_release_staging = try runCapture(std.testing.allocator, "workspace-suite-release-save crew staging", 256, 256);
+    defer save_release_staging.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_release_staging.exit_code);
+
+    var set_channel_fallback = try runCapture(std.testing.allocator, "workspace-suite-release-channel-set crew stable staging", 256, 256);
+    defer set_channel_fallback.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), set_channel_fallback.exit_code);
+    try std.testing.expectEqualStrings("workspace suite release channel set crew stable staging\n", set_channel_fallback.stdout);
+
+    var channel_list = try runCapture(std.testing.allocator, "workspace-suite-release-channel-list crew", 256, 256);
+    defer channel_list.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), channel_list.exit_code);
+    try std.testing.expectEqualStrings("stable\n", channel_list.stdout);
+
+    var channel_info = try runCapture(std.testing.allocator, "workspace-suite-release-channel-info crew stable", 256, 256);
+    defer channel_info.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), channel_info.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, channel_info.stdout, "suite=crew") != null);
+    try std.testing.expect(std.mem.indexOf(u8, channel_info.stdout, "channel=stable") != null);
+    try std.testing.expect(std.mem.indexOf(u8, channel_info.stdout, "release=staging") != null);
+
+    var activate_channel = try runCapture(std.testing.allocator, "workspace-suite-release-channel-activate crew stable", 256, 256);
+    defer activate_channel.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), activate_channel.exit_code);
+    try std.testing.expectEqualStrings("workspace suite release channel activated crew stable\n", activate_channel.stdout);
+
+    var suite_info_after_channel = try runCapture(std.testing.allocator, "workspace-suite-info crew", 256, 256);
+    defer suite_info_after_channel.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), suite_info_after_channel.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info_after_channel.stdout, "workspace=ops") != null);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info_after_channel.stdout, "workspace=sidecar") == null);
 }
 
 test "baremetal tool exec persists and runs workspace autorun" {
