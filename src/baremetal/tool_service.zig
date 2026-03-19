@@ -308,6 +308,7 @@ fn handleFramedPayload(
         .display_output => |output_index| try handleDisplayOutputRequest(allocator, output_index, payload_limit),
         .display_modes => try handleDisplayModesRequest(allocator, payload_limit),
         .display_set => |display_mode| try handleDisplaySetRequest(allocator, display_mode.width, display_mode.height, payload_limit),
+        .display_activate => |connector_name| try handleDisplayActivateRequest(allocator, connector_name, payload_limit),
         .trust_install => |trust_request| try handleTrustInstallRequest(allocator, trust_request.path, trust_request.body, payload_limit),
         .trust_list => try handleTrustListRequest(allocator, payload_limit),
         .trust_info => |trust_name| try handleTrustInfoRequest(allocator, trust_name, payload_limit),
@@ -1924,6 +1925,29 @@ fn handleDisplaySetRequest(allocator: std.mem.Allocator, width: u16, height: u16
     return response;
 }
 
+fn handleDisplayActivateRequest(allocator: std.mem.Allocator, connector_name: []const u8, payload_limit: usize) Error![]u8 {
+    const connector_type = package_store.parseConnectorType(connector_name) catch |err| {
+        return formatOperationError(allocator, "DISPLAYACTIVATE", err, payload_limit);
+    };
+    tool_exec.activateDisplayConnector(connector_type) catch |err| {
+        return formatOperationError(allocator, "DISPLAYACTIVATE", err, payload_limit);
+    };
+    const output = display_output.statePtr();
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "DISPLAYACTIVATE {s} scanout={d} current={d}x{d}\n",
+        .{
+            displayConnectorName(output.connector_type),
+            output.active_scanout,
+            output.current_width,
+            output.current_height,
+        },
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
 fn handleTrustListRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
     return trust_store.listBundlesAlloc(allocator, payload_limit) catch |err| {
         return formatOperationError(allocator, "TRUSTLIST", err, payload_limit);
@@ -3328,6 +3352,75 @@ test "baremetal tool service reports display info and supported modes" {
     const updated_info = try handleFramedRequest(std.testing.allocator, "REQ 66 DISPLAYINFO", 512, 256, 512);
     defer std.testing.allocator.free(updated_info);
     try std.testing.expect(std.mem.indexOf(u8, updated_info, "current=800x600") != null);
+}
+
+test "baremetal tool service activates requested display connector" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    framebuffer_console.resetForTest();
+    display_output.resetForTest();
+    display_output.updateFromVirtioGpu(.{
+        .vendor_id = 0x1AF4,
+        .device_id = 0x1050,
+        .pci_bus = 0,
+        .pci_device = 2,
+        .pci_function = 0,
+        .hardware_backed = false,
+        .connected = true,
+        .scanout_count = 2,
+        .active_scanout = 0,
+        .current_width = 1280,
+        .current_height = 720,
+        .preferred_width = 1280,
+        .preferred_height = 720,
+        .physical_width_mm = 300,
+        .physical_height_mm = 190,
+        .manufacturer_id = 0x1111,
+        .product_code = 0x2222,
+        .serial_number = 0x33334444,
+        .capability_flags = abi.display_capability_hdmi_vendor_data | abi.display_capability_preferred_timing,
+        .edid = &.{ 0x00, 0xFF, 0xFF, 0xFF },
+        .scanouts = &.{
+            .{
+                .connected = true,
+                .scanout_index = 0,
+                .current_width = 1280,
+                .current_height = 720,
+                .preferred_width = 1280,
+                .preferred_height = 720,
+                .physical_width_mm = 300,
+                .physical_height_mm = 190,
+                .manufacturer_id = 0x1111,
+                .product_code = 0x2222,
+                .serial_number = 0x33334444,
+                .capability_flags = abi.display_capability_hdmi_vendor_data | abi.display_capability_preferred_timing,
+                .edid_length = 128,
+            },
+            .{
+                .connected = true,
+                .scanout_index = 1,
+                .current_width = 1920,
+                .current_height = 1080,
+                .preferred_width = 1920,
+                .preferred_height = 1080,
+                .physical_width_mm = 520,
+                .physical_height_mm = 320,
+                .manufacturer_id = 0xAAAA,
+                .product_code = 0xBBBB,
+                .serial_number = 0xCCCCDDDD,
+                .capability_flags = abi.display_capability_displayid_extension | abi.display_capability_preferred_timing,
+                .edid_length = 128,
+            },
+        },
+    });
+
+    const activate_response = try handleFramedRequest(std.testing.allocator, "REQ 67 DISPLAYACTIVATE displayport", 512, 256, 512);
+    defer std.testing.allocator.free(activate_response);
+    try std.testing.expectEqualStrings("RESP 67 56\nDISPLAYACTIVATE displayport scanout=1 current=1920x1080\n", activate_response);
+
+    const mismatch_response = try handleFramedRequest(std.testing.allocator, "REQ 68 DISPLAYACTIVATE embedded-displayport", 512, 256, 512);
+    defer std.testing.allocator.free(mismatch_response);
+    try std.testing.expectEqualStrings("RESP 68 46\nERR DISPLAYACTIVATE: DisplayConnectorMismatch\n", mismatch_response);
 }
 
 test "baremetal tool service rotates queries and deletes trust bundles" {
