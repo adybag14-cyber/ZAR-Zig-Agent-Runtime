@@ -137,6 +137,8 @@ pub const RequestOp = enum {
     display_modes,
     display_set,
     display_activate,
+    display_activate_output,
+    display_output_set,
     trust_install,
     trust_list,
     trust_info,
@@ -177,6 +179,12 @@ pub const NamedValueRequest = struct {
 };
 
 pub const DisplayModeRequest = struct {
+    width: u16,
+    height: u16,
+};
+
+pub const DisplayOutputModeRequest = struct {
+    index: u16,
     width: u16,
     height: u16,
 };
@@ -438,6 +446,8 @@ pub const FramedRequest = struct {
         display_modes: void,
         display_set: DisplayModeRequest,
         display_activate: []const u8,
+        display_activate_output: []const u8,
+        display_output_set: DisplayOutputModeRequest,
         trust_install: PutRequest,
         trust_list: void,
         trust_info: []const u8,
@@ -2736,6 +2746,46 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         }
         return .{
             .framed = .{ .request_id = request_id, .operation = .{ .display_activate = connector_part.token } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYACTIVATEOUTPUT")) {
+        const output_part = try splitFirstToken(op_part.rest);
+        if (output_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .display_activate_output = output_part.token } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .display_activate_output = output_part.token } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYOUTPUTSET")) {
+        const output_part = try splitFirstToken(op_part.rest);
+        const width_part = try splitFirstToken(output_part.rest);
+        const height_part = try splitFirstToken(width_part.rest);
+        if (height_part.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .display_output_set = .{
+                .index = std.fmt.parseInt(u16, output_part.token, 10) catch return error.InvalidFrame,
+                .width = std.fmt.parseInt(u16, width_part.token, 10) catch return error.InvalidFrame,
+                .height = std.fmt.parseInt(u16, height_part.token, 10) catch return error.InvalidFrame,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
             .consumed_len = request.len,
         };
     }

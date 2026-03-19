@@ -309,6 +309,8 @@ fn handleFramedPayload(
         .display_modes => try handleDisplayModesRequest(allocator, payload_limit),
         .display_set => |display_mode| try handleDisplaySetRequest(allocator, display_mode.width, display_mode.height, payload_limit),
         .display_activate => |connector_name| try handleDisplayActivateRequest(allocator, connector_name, payload_limit),
+        .display_activate_output => |output_index| try handleDisplayActivateOutputRequest(allocator, output_index, payload_limit),
+        .display_output_set => |request| try handleDisplayOutputSetRequest(allocator, request.index, request.width, request.height, payload_limit),
         .trust_install => |trust_request| try handleTrustInstallRequest(allocator, trust_request.path, trust_request.body, payload_limit),
         .trust_list => try handleTrustListRequest(allocator, payload_limit),
         .trust_info => |trust_name| try handleTrustInfoRequest(allocator, trust_name, payload_limit),
@@ -1948,6 +1950,51 @@ fn handleDisplayActivateRequest(allocator: std.mem.Allocator, connector_name: []
     return response;
 }
 
+fn handleDisplayActivateOutputRequest(allocator: std.mem.Allocator, output_index_text: []const u8, payload_limit: usize) Error![]u8 {
+    const output_index = std.fmt.parseInt(u16, output_index_text, 10) catch {
+        return formatOperationError(allocator, "DISPLAYACTIVATEOUTPUT", error.InvalidFrame, payload_limit);
+    };
+    tool_exec.activateDisplayOutput(output_index) catch |err| {
+        return formatOperationError(allocator, "DISPLAYACTIVATEOUTPUT", err, payload_limit);
+    };
+    const output = display_output.statePtr();
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "DISPLAYACTIVATEOUTPUT {d} connector={s} scanout={d} current={d}x{d}\n",
+        .{
+            output_index,
+            displayConnectorName(output.connector_type),
+            output.active_scanout,
+            output.current_width,
+            output.current_height,
+        },
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleDisplayOutputSetRequest(allocator: std.mem.Allocator, output_index: u16, width: u16, height: u16, payload_limit: usize) Error![]u8 {
+    tool_exec.setDisplayOutputMode(output_index, width, height) catch |err| {
+        return formatOperationError(allocator, "DISPLAYOUTPUTSET", err, payload_limit);
+    };
+    const output = display_output.statePtr();
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "DISPLAYOUTPUTSET {d} {d}x{d} connector={s} scanout={d}\n",
+        .{
+            output_index,
+            output.current_width,
+            output.current_height,
+            displayConnectorName(output.connector_type),
+            output.active_scanout,
+        },
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
 fn handleTrustListRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
     return trust_store.listBundlesAlloc(allocator, payload_limit) catch |err| {
         return formatOperationError(allocator, "TRUSTLIST", err, payload_limit);
@@ -2348,6 +2395,16 @@ test "baremetal tool service parses typed framed requests" {
         .display_set => |payload| {
             try std.testing.expectEqual(@as(u16, 800), payload.width);
             try std.testing.expectEqual(@as(u16, 600), payload.height);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const display_output_set = try parseFramedRequest("REQ 31 DISPLAYOUTPUTSET 1 1024 768");
+    switch (display_output_set.operation) {
+        .display_output_set => |payload| {
+            try std.testing.expectEqual(@as(u16, 1), payload.index);
+            try std.testing.expectEqual(@as(u16, 1024), payload.width);
+            try std.testing.expectEqual(@as(u16, 768), payload.height);
         },
         else => return error.InvalidFrame,
     }
@@ -3421,6 +3478,26 @@ test "baremetal tool service activates requested display connector" {
     const mismatch_response = try handleFramedRequest(std.testing.allocator, "REQ 68 DISPLAYACTIVATE embedded-displayport", 512, 256, 512);
     defer std.testing.allocator.free(mismatch_response);
     try std.testing.expectEqualStrings("RESP 68 46\nERR DISPLAYACTIVATE: DisplayConnectorMismatch\n", mismatch_response);
+
+    const activate_output_response = try handleFramedRequest(std.testing.allocator, "REQ 69 DISPLAYACTIVATEOUTPUT 1", 512, 256, 512);
+    defer std.testing.allocator.free(activate_output_response);
+    try std.testing.expectEqualStrings("RESP 69 74\nDISPLAYACTIVATEOUTPUT 1 connector=displayport scanout=1 current=1920x1080\n", activate_output_response);
+
+    const missing_output_response = try handleFramedRequest(std.testing.allocator, "REQ 70 DISPLAYACTIVATEOUTPUT 2", 512, 256, 512);
+    defer std.testing.allocator.free(missing_output_response);
+    try std.testing.expectEqualStrings("RESP 70 49\nERR DISPLAYACTIVATEOUTPUT: DisplayOutputNotFound\n", missing_output_response);
+
+    const set_output_response = try handleFramedRequest(std.testing.allocator, "REQ 71 DISPLAYOUTPUTSET 1 1024 768", 512, 256, 512);
+    defer std.testing.allocator.free(set_output_response);
+    try std.testing.expectEqualStrings("RESP 71 60\nDISPLAYOUTPUTSET 1 1024x768 connector=displayport scanout=1\n", set_output_response);
+
+    const unsupported_output_set_response = try handleFramedRequest(std.testing.allocator, "REQ 72 DISPLAYOUTPUTSET 1 2560 1440", 512, 256, 512);
+    defer std.testing.allocator.free(unsupported_output_set_response);
+    try std.testing.expectEqualStrings("RESP 72 51\nERR DISPLAYOUTPUTSET: DisplayOutputUnsupportedMode\n", unsupported_output_set_response);
+
+    const missing_output_set_response = try handleFramedRequest(std.testing.allocator, "REQ 73 DISPLAYOUTPUTSET 2 800 600", 512, 256, 512);
+    defer std.testing.allocator.free(missing_output_set_response);
+    try std.testing.expectEqualStrings("RESP 73 44\nERR DISPLAYOUTPUTSET: DisplayOutputNotFound\n", missing_output_set_response);
 }
 
 test "baremetal tool service rotates queries and deletes trust bundles" {

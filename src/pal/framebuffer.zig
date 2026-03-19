@@ -2,6 +2,7 @@
 const abi = @import("../baremetal/abi.zig");
 const display_output = @import("../baremetal/display_output.zig");
 const framebuffer_console = @import("../baremetal/framebuffer_console.zig");
+const virtio_gpu = @import("../baremetal/virtio_gpu.zig");
 
 pub const State = abi.BaremetalFramebufferState;
 pub const DisplayOutputState = abi.BaremetalDisplayOutputState;
@@ -45,6 +46,39 @@ pub fn displayOutputEntry(index: u16) DisplayOutputEntry {
 
 pub fn displayOutputEdidByte(index: u16) u8 {
     return display_output.edidByte(index);
+}
+
+pub fn activateDisplayOutput(index: u16) error{NotFound}!void {
+    const display_state = display_output.statePtr();
+    if (display_state.controller == abi.display_controller_virtio_gpu) {
+        if (display_state.hardware_backed != 0) {
+            _ = virtio_gpu.probeAndPresentPatternForOutputIndex(@intCast(index)) catch return error.NotFound;
+            return;
+        }
+        if (!display_output.selectOutputIndex(index)) return error.NotFound;
+        return;
+    }
+    if (!display_output.selectOutputIndex(index)) return error.NotFound;
+}
+
+pub fn setDisplayOutputMode(index: u16, width: u16, height: u16) error{ NotFound, UnsupportedMode }!void {
+    const display_state = display_output.statePtr();
+    if (display_state.controller == abi.display_controller_virtio_gpu) {
+        if (display_state.hardware_backed != 0) {
+            _ = virtio_gpu.probeAndPresentPatternForOutputIndexMode(@intCast(index), width, height) catch |err| switch (err) {
+                error.NoConnectedScanout => return error.NotFound,
+                error.UnsupportedMode, error.FramebufferTooLarge => return error.UnsupportedMode,
+                else => return error.NotFound,
+            };
+            return;
+        }
+        const entry = display_output.outputEntry(index);
+        if (index >= display_output.outputCount() or entry.connected == 0) return error.NotFound;
+        if (!display_output.setOutputMode(index, width, height)) return error.UnsupportedMode;
+        return;
+    }
+    if (index != 0) return error.NotFound;
+    framebuffer_console.setMode(width, height) catch return error.UnsupportedMode;
 }
 
 pub fn pixel(index: u32) u32 {
