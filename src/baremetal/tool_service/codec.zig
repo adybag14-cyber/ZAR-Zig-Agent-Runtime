@@ -73,6 +73,12 @@ pub const RequestOp = enum {
     app_suite_channel_info,
     app_suite_channel_set,
     app_suite_channel_activate,
+    workspace_plan_list,
+    workspace_plan_info,
+    workspace_plan_active,
+    workspace_plan_save,
+    workspace_plan_apply,
+    workspace_plan_delete,
     workspace_suite_list,
     workspace_suite_info,
     workspace_suite_save,
@@ -184,6 +190,21 @@ pub const WorkspaceReleasePruneRequest = struct {
 pub const WorkspaceChannelRequest = struct {
     workspace_name: []const u8,
     value: []const u8,
+};
+
+pub const WorkspacePlanRequest = struct {
+    workspace_name: []const u8,
+    plan_name: []const u8,
+};
+
+pub const WorkspacePlanSaveRequest = struct {
+    workspace_name: []const u8,
+    plan_name: []const u8,
+    suite_name: []const u8,
+    trust_bundle: []const u8,
+    width: u16,
+    height: u16,
+    entries_spec: []const u8,
 };
 
 pub const WorkspaceChannelSetRequest = struct {
@@ -332,6 +353,12 @@ pub const FramedRequest = struct {
         app_suite_channel_info: AppSuiteChannelRequest,
         app_suite_channel_set: AppSuiteChannelSetRequest,
         app_suite_channel_activate: AppSuiteChannelRequest,
+        workspace_plan_list: []const u8,
+        workspace_plan_info: WorkspacePlanRequest,
+        workspace_plan_active: []const u8,
+        workspace_plan_save: WorkspacePlanSaveRequest,
+        workspace_plan_apply: WorkspacePlanRequest,
+        workspace_plan_delete: WorkspacePlanRequest,
         workspace_suite_list: void,
         workspace_suite_info: []const u8,
         workspace_suite_save: WorkspaceSuiteSaveRequest,
@@ -1775,6 +1802,137 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
             .operation = .{ .workspace_suite_channel_activate = .{
                 .suite_name = suite_name.token,
                 .value = channel_name.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACEPLANLIST")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .workspace_plan_list = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .workspace_plan_list = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACEPLANINFO")) {
+        const workspace_name = try splitFirstToken(op_part.rest);
+        if (workspace_name.rest.len == 0) return error.InvalidFrame;
+        const plan_name = try splitFirstToken(workspace_name.rest);
+        if (plan_name.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .workspace_plan_info = .{
+                .workspace_name = workspace_name.token,
+                .plan_name = plan_name.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACEPLANACTIVE")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .workspace_plan_active = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .workspace_plan_active = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACEPLANSAVE")) {
+        const workspace_name = try splitFirstToken(op_part.rest);
+        const plan_name = try splitFirstToken(workspace_name.rest);
+        const suite_name = try splitFirstToken(plan_name.rest);
+        const trust_bundle = try splitFirstToken(suite_name.rest);
+        const width_part = try splitFirstToken(trust_bundle.rest);
+        const height_part = try splitFirstToken(width_part.rest);
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .workspace_plan_save = .{
+                .workspace_name = workspace_name.token,
+                .plan_name = plan_name.token,
+                .suite_name = suite_name.token,
+                .trust_bundle = trust_bundle.token,
+                .width = std.fmt.parseInt(u16, width_part.token, 10) catch return error.InvalidFrame,
+                .height = std.fmt.parseInt(u16, height_part.token, 10) catch return error.InvalidFrame,
+                .entries_spec = height_part.rest,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACEPLANAPPLY")) {
+        const workspace_name = try splitFirstToken(op_part.rest);
+        if (workspace_name.rest.len == 0) return error.InvalidFrame;
+        const plan_name = try splitFirstToken(workspace_name.rest);
+        if (plan_name.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .workspace_plan_apply = .{
+                .workspace_name = workspace_name.token,
+                .plan_name = plan_name.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACEPLANDELETE")) {
+        const workspace_name = try splitFirstToken(op_part.rest);
+        if (workspace_name.rest.len == 0) return error.InvalidFrame;
+        const plan_name = try splitFirstToken(workspace_name.rest);
+        if (plan_name.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .workspace_plan_delete = .{
+                .workspace_name = workspace_name.token,
+                .plan_name = plan_name.token,
             } },
         };
         if (newline_index != null) {

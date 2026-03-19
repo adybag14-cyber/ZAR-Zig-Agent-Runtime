@@ -19,6 +19,7 @@ const suite_channel_root_dir = "/runtime/workspace-suite-release-channels";
 const runtime_root_dir = "/runtime/workspace-runs";
 const release_root_dir = "/runtime/workspace-releases";
 const channel_root_dir = "/runtime/workspace-release-channels";
+const max_plan_bytes: usize = 1024;
 const max_workspace_bytes: usize = 1024;
 const max_workspace_suite_bytes: usize = 1024;
 const max_history_bytes: usize = 1024;
@@ -39,10 +40,13 @@ pub const Error = filesystem.Error || app_runtime.Error || package_store.Error |
     WorkspaceStdoutNotFound,
     WorkspaceStderrNotFound,
     WorkspaceAutorunEntryNotFound,
+    WorkspacePlanNotFound,
+    WorkspaceActivePlanNotSet,
     WorkspaceReleaseNotFound,
     WorkspaceReleaseAlreadyExists,
     WorkspaceReleaseChannelNotFound,
     WorkspaceSuiteReleaseChannelNotFound,
+    InvalidWorkspacePlanName,
     InvalidWorkspaceSuiteName,
     WorkspaceSuiteNotFound,
     WorkspaceSuiteReleaseNotFound,
@@ -108,6 +112,37 @@ const Workspace = struct {
 
     fn workspaceName(self: *const @This()) []const u8 {
         return self.workspace_name_storage[0..self.workspace_name_len];
+    }
+
+    fn suiteName(self: *const @This()) []const u8 {
+        return self.suite_name_storage[0..self.suite_name_len];
+    }
+
+    fn trustBundle(self: *const @This()) []const u8 {
+        return self.trust_bundle_storage[0..self.trust_bundle_len];
+    }
+};
+
+const WorkspacePlan = struct {
+    workspace_name_len: u8 = 0,
+    workspace_name_storage: [max_name_len]u8 = [_]u8{0} ** max_name_len,
+    plan_name_len: u8 = 0,
+    plan_name_storage: [package_store.max_release_len]u8 = [_]u8{0} ** package_store.max_release_len,
+    suite_name_len: u8 = 0,
+    suite_name_storage: [package_store.max_release_len]u8 = [_]u8{0} ** package_store.max_release_len,
+    trust_bundle_len: u8 = 0,
+    trust_bundle_storage: [trust_store.max_name_len]u8 = [_]u8{0} ** trust_store.max_name_len,
+    display_width: u16 = 0,
+    display_height: u16 = 0,
+    entry_count: u8 = 0,
+    entries: [max_workspace_entries]ChannelEntry = [_]ChannelEntry{.{}} ** max_workspace_entries,
+
+    fn workspaceName(self: *const @This()) []const u8 {
+        return self.workspace_name_storage[0..self.workspace_name_len];
+    }
+
+    fn planName(self: *const @This()) []const u8 {
+        return self.plan_name_storage[0..self.plan_name_len];
     }
 
     fn suiteName(self: *const @This()) []const u8 {
@@ -341,6 +376,132 @@ pub fn suiteChannelInfoAlloc(
 
 pub fn autorunListAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
     return readAutorunListAlloc(allocator, max_bytes);
+}
+
+pub fn planListAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
+    try validateWorkspaceName(name);
+    if (!try workspaceExists(name)) return error.WorkspaceNotFound;
+
+    var plans_dir_buf: [filesystem.max_path_len]u8 = undefined;
+    const plans_dir = try plansDirPath(name, &plans_dir_buf);
+    const raw_listing = filesystem.listDirectoryAlloc(allocator, plans_dir, max_plan_bytes) catch |err| switch (err) {
+        error.FileNotFound => return allocator.alloc(u8, 0),
+        else => return err,
+    };
+    defer allocator.free(raw_listing);
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    var lines = std.mem.splitScalar(u8, raw_listing, '\n');
+    while (lines.next()) |line| {
+        if (!std.mem.startsWith(u8, line, "file ")) continue;
+        var parts = std.mem.splitScalar(u8, line["file ".len..], ' ');
+        const file_name = parts.next() orelse continue;
+        if (!std.mem.endsWith(u8, file_name, ".txt")) continue;
+        const plan_name = file_name[0 .. file_name.len - ".txt".len];
+        if (plan_name.len == 0) continue;
+        if (out.items.len + plan_name.len + 1 > max_bytes) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, plan_name);
+        try out.append(allocator, '\n');
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+pub fn planInfoAlloc(allocator: std.mem.Allocator, name: []const u8, plan_name: []const u8, max_bytes: usize) Error![]u8 {
+    const plan = try loadPlan(name, plan_name);
+    var path_buf: [filesystem.max_path_len]u8 = undefined;
+    const path = try planPath(name, plan_name, &path_buf);
+    return renderWorkspacePlanAlloc(allocator, plan, path, null, max_bytes);
+}
+
+pub fn activePlanInfoAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
+    const active_plan_name = try activePlanNameAlloc(allocator, name, package_store.max_release_len);
+    defer allocator.free(active_plan_name);
+
+    const plan = try loadPlan(name, active_plan_name);
+    var path_buf: [filesystem.max_path_len]u8 = undefined;
+    const path = try planPath(name, active_plan_name, &path_buf);
+    return renderWorkspacePlanAlloc(allocator, plan, path, active_plan_name, max_bytes);
+}
+
+pub fn savePlan(
+    name: []const u8,
+    plan_name: []const u8,
+    suite_name: []const u8,
+    trust_bundle: []const u8,
+    display_width: u16,
+    display_height: u16,
+    channel_entries_spec: []const u8,
+    tick: u64,
+) Error!void {
+    try validateWorkspaceName(name);
+    try validatePlanName(plan_name);
+    if (!try workspaceExists(name)) return error.WorkspaceNotFound;
+    try validateSuiteName(suite_name);
+    try validateTrustBundle(trust_bundle);
+    try validateDisplayMode(display_width, display_height);
+
+    var plan = try initPlan(name, plan_name);
+    try copyComponent(plan.suite_name_storage[0..], &plan.suite_name_len, suite_name, error.InvalidWorkspace);
+    try copyComponent(plan.trust_bundle_storage[0..], &plan.trust_bundle_len, trust_bundle, error.InvalidWorkspace);
+    plan.display_width = display_width;
+    plan.display_height = display_height;
+    try parsePlanChannelEntriesSpec(&plan, channel_entries_spec);
+
+    var workspace_dir_buf: [filesystem.max_path_len]u8 = undefined;
+    var plans_dir_buf: [filesystem.max_path_len]u8 = undefined;
+    var path_buf: [filesystem.max_path_len]u8 = undefined;
+    try filesystem.createDirPath(root_dir);
+    try filesystem.createDirPath(try workspaceDirPath(name, &workspace_dir_buf));
+    try filesystem.createDirPath(try plansDirPath(name, &plans_dir_buf));
+    var body_buffer: [max_plan_bytes]u8 = undefined;
+    const body = try renderWorkspacePlanBody(&plan, &body_buffer);
+    try filesystem.writeFile(try planPath(name, plan_name, &path_buf), body, tick);
+}
+
+pub fn applyPlan(name: []const u8, plan_name: []const u8, tick: u64) Error!void {
+    const plan = try loadPlan(name, plan_name);
+    var workspace = try initWorkspace(plan.workspaceName());
+    try copyComponent(workspace.suite_name_storage[0..], &workspace.suite_name_len, plan.suiteName(), error.InvalidWorkspace);
+    try copyComponent(workspace.trust_bundle_storage[0..], &workspace.trust_bundle_len, plan.trustBundle(), error.InvalidWorkspace);
+    workspace.display_width = plan.display_width;
+    workspace.display_height = plan.display_height;
+    workspace.entry_count = plan.entry_count;
+    @memcpy(workspace.entries[0..plan.entry_count], plan.entries[0..plan.entry_count]);
+
+    var path_buffer: [filesystem.max_path_len]u8 = undefined;
+    var body_buffer: [max_workspace_bytes]u8 = undefined;
+    const body = try renderWorkspaceBody(&workspace, &body_buffer);
+    try filesystem.writeFile(try workspacePath(name, &path_buffer), body, tick);
+    try setActivePlan(name, plan_name, tick);
+}
+
+pub fn deletePlan(name: []const u8, plan_name: []const u8, tick: u64) Error!void {
+    try validateWorkspaceName(name);
+    try validatePlanName(plan_name);
+    if (!try workspaceExists(name)) return error.WorkspaceNotFound;
+
+    var path_buf: [filesystem.max_path_len]u8 = undefined;
+    filesystem.deleteFile(try planPath(name, plan_name, &path_buf), tick) catch |err| switch (err) {
+        error.FileNotFound => return error.WorkspacePlanNotFound,
+        else => return err,
+    };
+
+    var active_name_buf: [package_store.max_release_len]u8 = undefined;
+    const active_name = loadActivePlanNameScratch(name, &active_name_buf) catch |err| switch (err) {
+        error.WorkspaceActivePlanNotSet => null,
+        else => return err,
+    };
+    if (active_name) |selected| {
+        if (std.mem.eql(u8, selected, plan_name)) {
+            clearActivePlan(name, tick) catch |err| switch (err) {
+                error.WorkspaceActivePlanNotSet => {},
+                else => return err,
+            };
+        }
+    }
 }
 
 pub fn releaseListAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
@@ -736,6 +897,20 @@ pub fn deleteWorkspace(name: []const u8, tick: u64) Error!void {
         error.FileNotFound => {},
         else => return err,
     };
+    var channels_buffer: [filesystem.max_path_len]u8 = undefined;
+    filesystem.deleteTree(channelsRootPath(name, &channels_buffer), tick) catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    };
+    var plans_buffer: [filesystem.max_path_len]u8 = undefined;
+    filesystem.deleteTree(try plansDirPath(name, &plans_buffer), tick) catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    };
+    clearActivePlan(name, tick) catch |err| switch (err) {
+        error.WorkspaceActivePlanNotSet => {},
+        else => return err,
+    };
 }
 
 pub fn deleteSuite(suite_name: []const u8, tick: u64) Error!void {
@@ -927,6 +1102,27 @@ fn workspacePath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![
     return std.fmt.bufPrint(buffer, "{s}/{s}.txt", .{ root_dir, name }) catch error.InvalidPath;
 }
 
+fn workspaceDirPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validateWorkspaceName(name);
+    return std.fmt.bufPrint(buffer, "{s}/{s}", .{ root_dir, name }) catch error.InvalidPath;
+}
+
+fn plansDirPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validateWorkspaceName(name);
+    return std.fmt.bufPrint(buffer, "{s}/{s}/plans", .{ root_dir, name }) catch error.InvalidPath;
+}
+
+fn planPath(name: []const u8, plan_name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validateWorkspaceName(name);
+    try validatePlanName(plan_name);
+    return std.fmt.bufPrint(buffer, "{s}/{s}/plans/{s}.txt", .{ root_dir, name, plan_name }) catch error.InvalidPath;
+}
+
+fn activePlanPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validateWorkspaceName(name);
+    return std.fmt.bufPrint(buffer, "{s}/{s}/active_plan.txt", .{ root_dir, name }) catch error.InvalidPath;
+}
+
 fn workspaceSuitePath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
     try validateWorkspaceSuiteName(name);
     return std.fmt.bufPrint(buffer, "{s}/{s}.txt", .{ suite_root_dir, name }) catch error.InvalidPath;
@@ -994,6 +1190,37 @@ fn channelPath(name: []const u8, channel: []const u8, buffer: *[filesystem.max_p
     try validateWorkspaceName(name);
     try package_store.validateChannelName(channel);
     return std.fmt.bufPrint(buffer, "{s}/{s}/{s}.txt", .{ channel_root_dir, name, channel }) catch error.InvalidPath;
+}
+
+fn setActivePlan(name: []const u8, plan_name: []const u8, tick: u64) Error!void {
+    var active_path_buf: [filesystem.max_path_len]u8 = undefined;
+    try filesystem.writeFile(try activePlanPath(name, &active_path_buf), plan_name, tick);
+}
+
+fn clearActivePlan(name: []const u8, tick: u64) Error!void {
+    var active_path_buf: [filesystem.max_path_len]u8 = undefined;
+    filesystem.deleteFile(try activePlanPath(name, &active_path_buf), tick) catch |err| switch (err) {
+        error.FileNotFound => return error.WorkspaceActivePlanNotSet,
+        else => return err,
+    };
+}
+
+fn activePlanNameAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
+    var active_path_buf: [filesystem.max_path_len]u8 = undefined;
+    return filesystem.readFileAlloc(allocator, try activePlanPath(name, &active_path_buf), max_bytes) catch |err| switch (err) {
+        error.FileNotFound => error.WorkspaceActivePlanNotSet,
+        else => err,
+    };
+}
+
+fn loadActivePlanNameScratch(name: []const u8, buffer: *[package_store.max_release_len]u8) Error!?[]const u8 {
+    var fba = std.heap.FixedBufferAllocator.init(buffer);
+    const active_name = activePlanNameAlloc(fba.allocator(), name, buffer.len) catch |err| switch (err) {
+        error.WorkspaceActivePlanNotSet => return null,
+        else => return err,
+    };
+    try validatePlanName(active_name);
+    return active_name;
 }
 
 pub fn statePath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
@@ -1099,6 +1326,37 @@ fn renderWorkspaceAlloc(
     return out.toOwnedSlice(allocator);
 }
 
+fn renderWorkspacePlanAlloc(
+    allocator: std.mem.Allocator,
+    plan: WorkspacePlan,
+    path: []const u8,
+    active_name: ?[]const u8,
+    max_bytes: usize,
+) Error![]u8 {
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    if (active_name) |active| {
+        try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "active_plan={s}\n", .{active}));
+    }
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "workspace={s}\n", .{plan.workspaceName()}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "plan={s}\n", .{plan.planName()}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "path={s}\n", .{path}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "suite={s}\n", .{if (plan.suiteName().len == 0) "none" else plan.suiteName()}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "trust_bundle={s}\n", .{if (plan.trustBundle().len == 0) "none" else plan.trustBundle()}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "display={d}x{d}\n", .{ plan.display_width, plan.display_height }));
+    for (plan.entries[0..plan.entry_count]) |entry| {
+        try appendLine(
+            &out,
+            allocator,
+            max_bytes,
+            try std.fmt.allocPrint(allocator, "channel={s}:{s}:{s}\n", .{ entry.packageName(), entry.channelName(), entry.releaseName() }),
+        );
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
 fn appendLine(out: *std.ArrayList(u8), allocator: std.mem.Allocator, max_bytes: usize, line: []u8) Error!void {
     defer allocator.free(line);
     if (out.items.len + line.len > max_bytes) return error.ResponseTooLarge;
@@ -1113,6 +1371,20 @@ fn renderWorkspaceBody(workspace: *const Workspace, buffer: *[max_workspace_byte
     used += (std.fmt.bufPrint(buffer[used..], "display_width={d}\n", .{workspace.display_width}) catch return error.ResponseTooLarge).len;
     used += (std.fmt.bufPrint(buffer[used..], "display_height={d}\n", .{workspace.display_height}) catch return error.ResponseTooLarge).len;
     for (workspace.entries[0..workspace.entry_count]) |entry| {
+        used += (std.fmt.bufPrint(buffer[used..], "channel={s}:{s}:{s}\n", .{ entry.packageName(), entry.channelName(), entry.releaseName() }) catch return error.ResponseTooLarge).len;
+    }
+
+    return buffer[0..used];
+}
+
+fn renderWorkspacePlanBody(plan: *const WorkspacePlan, buffer: *[max_plan_bytes]u8) Error![]const u8 {
+    var used: usize = 0;
+
+    used += (std.fmt.bufPrint(buffer[used..], "suite={s}\n", .{if (plan.suiteName().len == 0) "none" else plan.suiteName()}) catch return error.ResponseTooLarge).len;
+    used += (std.fmt.bufPrint(buffer[used..], "trust_bundle={s}\n", .{if (plan.trustBundle().len == 0) "none" else plan.trustBundle()}) catch return error.ResponseTooLarge).len;
+    used += (std.fmt.bufPrint(buffer[used..], "display_width={d}\n", .{plan.display_width}) catch return error.ResponseTooLarge).len;
+    used += (std.fmt.bufPrint(buffer[used..], "display_height={d}\n", .{plan.display_height}) catch return error.ResponseTooLarge).len;
+    for (plan.entries[0..plan.entry_count]) |entry| {
         used += (std.fmt.bufPrint(buffer[used..], "channel={s}:{s}:{s}\n", .{ entry.packageName(), entry.channelName(), entry.releaseName() }) catch return error.ResponseTooLarge).len;
     }
 
@@ -1137,6 +1409,21 @@ fn loadWorkspace(name: []const u8) Error!Workspace {
         else => return err,
     };
     return parseWorkspacePayload(name, payload);
+}
+
+fn loadPlan(name: []const u8, plan_name: []const u8) Error!WorkspacePlan {
+    try validateWorkspaceName(name);
+    try validatePlanName(plan_name);
+    if (!try workspaceExists(name)) return error.WorkspaceNotFound;
+
+    var path_buffer: [filesystem.max_path_len]u8 = undefined;
+    var scratch: [max_plan_bytes]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&scratch);
+    const payload = filesystem.readFileAlloc(fba.allocator(), try planPath(name, plan_name, &path_buffer), max_plan_bytes) catch |err| switch (err) {
+        error.FileNotFound => return error.WorkspacePlanNotFound,
+        else => return err,
+    };
+    return parseWorkspacePlanPayload(name, plan_name, payload);
 }
 
 fn loadWorkspaceSuite(suite_name: []const u8) Error!WorkspaceSuite {
@@ -1235,6 +1522,53 @@ fn parseWorkspacePayload(name: []const u8, payload: []const u8) Error!Workspace 
     return workspace;
 }
 
+fn parseWorkspacePlanPayload(name: []const u8, plan_name: []const u8, payload: []const u8) Error!WorkspacePlan {
+    var plan = try initPlan(name, plan_name);
+
+    var have_width = false;
+    var have_height = false;
+
+    var lines = std.mem.splitScalar(u8, payload, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, "\r");
+        if (line.len == 0) continue;
+
+        if (std.mem.startsWith(u8, line, "suite=")) {
+            const value = line["suite=".len..];
+            const suite_name = if (std.ascii.eqlIgnoreCase(value, "none")) "" else value;
+            try validateSuiteName(suite_name);
+            try copyComponent(plan.suite_name_storage[0..], &plan.suite_name_len, suite_name, error.InvalidWorkspace);
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "trust_bundle=")) {
+            const value = line["trust_bundle=".len..];
+            const trust_name = if (std.ascii.eqlIgnoreCase(value, "none")) "" else value;
+            try validateTrustBundle(trust_name);
+            try copyComponent(plan.trust_bundle_storage[0..], &plan.trust_bundle_len, trust_name, error.InvalidWorkspace);
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "display_width=")) {
+            plan.display_width = std.fmt.parseInt(u16, line["display_width=".len..], 10) catch return error.InvalidWorkspace;
+            have_width = true;
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "display_height=")) {
+            plan.display_height = std.fmt.parseInt(u16, line["display_height=".len..], 10) catch return error.InvalidWorkspace;
+            have_height = true;
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "channel=")) {
+            try parsePlanChannelEntryLine(&plan, line["channel=".len..]);
+            continue;
+        }
+        return error.InvalidWorkspace;
+    }
+
+    if (!have_width or !have_height) return error.InvalidWorkspace;
+    try validateDisplayMode(plan.display_width, plan.display_height);
+    return plan;
+}
+
 fn parseWorkspaceSuitePayload(name: []const u8, payload: []const u8) Error!WorkspaceSuite {
     var suite = WorkspaceSuite{};
     try copyComponent(suite.suite_name_storage[0..], &suite.suite_name_len, name, error.InvalidWorkspaceSuiteName);
@@ -1280,6 +1614,14 @@ fn parseChannelEntriesSpec(workspace: *Workspace, spec: []const u8) Error!void {
     }
 }
 
+fn parsePlanChannelEntriesSpec(plan: *WorkspacePlan, spec: []const u8) Error!void {
+    if (spec.len == 0) return;
+    var iter = std.mem.tokenizeAny(u8, spec, " \t\r\n");
+    while (iter.next()) |token| {
+        try parsePlanChannelEntryLine(plan, token);
+    }
+}
+
 fn parseChannelEntryLine(workspace: *Workspace, line: []const u8) Error!void {
     const first_sep = std.mem.indexOfScalar(u8, line, ':') orelse return error.InvalidWorkspaceEntry;
     const second_rel = std.mem.indexOfScalar(u8, line[first_sep + 1 ..], ':') orelse return error.InvalidWorkspaceEntry;
@@ -1307,6 +1649,33 @@ fn parseChannelEntryLine(workspace: *Workspace, line: []const u8) Error!void {
     workspace.entry_count += 1;
 }
 
+fn parsePlanChannelEntryLine(plan: *WorkspacePlan, line: []const u8) Error!void {
+    const first_sep = std.mem.indexOfScalar(u8, line, ':') orelse return error.InvalidWorkspaceEntry;
+    const second_rel = std.mem.indexOfScalar(u8, line[first_sep + 1 ..], ':') orelse return error.InvalidWorkspaceEntry;
+    const second_sep = first_sep + 1 + second_rel;
+
+    const package_name = line[0..first_sep];
+    const channel_name = line[first_sep + 1 .. second_sep];
+    const release_name = line[second_sep + 1 ..];
+    if (package_name.len == 0 or channel_name.len == 0 or release_name.len == 0) return error.InvalidWorkspaceEntry;
+    if (std.mem.indexOfScalar(u8, release_name, ':') != null) return error.InvalidWorkspaceEntry;
+
+    try package_store.validatePackageName(package_name);
+    try package_store.validateChannelName(channel_name);
+    try package_store.validateReleaseName(release_name);
+
+    var entrypoint_buffer: [filesystem.max_path_len]u8 = undefined;
+    _ = try package_store.loadLaunchProfile(package_name, &entrypoint_buffer);
+    if (!try package_store.releaseExistsAlloc(package_name, release_name)) return error.PackageReleaseNotFound;
+
+    if (plan.entry_count >= max_workspace_entries) return error.WorkspaceEntryLimit;
+    const entry = &plan.entries[plan.entry_count];
+    try copyComponent(entry.package_name_storage[0..], &entry.package_name_len, package_name, error.InvalidWorkspaceEntry);
+    try copyComponent(entry.channel_name_storage[0..], &entry.channel_name_len, channel_name, error.InvalidWorkspaceEntry);
+    try copyComponent(entry.release_name_storage[0..], &entry.release_name_len, release_name, error.InvalidWorkspaceEntry);
+    plan.entry_count += 1;
+}
+
 fn validateWorkspaceName(name: []const u8) Error!void {
     if (name.len == 0 or name.len > max_name_len) return error.InvalidWorkspaceName;
     for (name) |char| {
@@ -1320,6 +1689,14 @@ fn validateWorkspaceSuiteName(name: []const u8) Error!void {
     for (name) |char| {
         if (std.ascii.isAlphanumeric(char) or char == '-' or char == '_' or char == '.') continue;
         return error.InvalidWorkspaceSuiteName;
+    }
+}
+
+fn validatePlanName(name: []const u8) Error!void {
+    if (name.len == 0 or name.len > package_store.max_release_len) return error.InvalidWorkspacePlanName;
+    for (name) |char| {
+        if (std.ascii.isAlphanumeric(char) or char == '-' or char == '_' or char == '.') continue;
+        return error.InvalidWorkspacePlanName;
     }
 }
 
@@ -1352,6 +1729,19 @@ fn copyComponent(storage: []u8, len_ptr: anytype, value: []const u8, comptime er
     if (value.len > storage.len) return err_value;
     @memcpy(storage[0..value.len], value);
     len_ptr.* = @as(u8, @intCast(value.len));
+}
+
+fn initWorkspace(name: []const u8) Error!Workspace {
+    var workspace = Workspace{};
+    try copyComponent(workspace.workspace_name_storage[0..], &workspace.workspace_name_len, name, error.InvalidWorkspaceName);
+    return workspace;
+}
+
+fn initPlan(name: []const u8, plan_name: []const u8) Error!WorkspacePlan {
+    var plan = WorkspacePlan{};
+    try copyComponent(plan.workspace_name_storage[0..], &plan.workspace_name_len, name, error.InvalidWorkspaceName);
+    try copyComponent(plan.plan_name_storage[0..], &plan.plan_name_len, plan_name, error.InvalidWorkspacePlanName);
+    return plan;
 }
 
 fn readAutorunListAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
@@ -1904,6 +2294,115 @@ test "workspace runtime persists autorun registry and clears stale entries" {
     const updated = try autorunListAlloc(std.testing.allocator, 128);
     defer std.testing.allocator.free(updated);
     try std.testing.expectEqualStrings("sidecar\n", updated);
+}
+
+test "workspace runtime manages workspace plans" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    framebuffer_console.resetForTest();
+
+    try trust_store.installBundle("root-a", "root-a-cert", 1);
+    try trust_store.installBundle("root-b", "root-b-cert", 2);
+    try package_store.installScriptPackage("demo", "echo workspace-plan-r1", 3);
+    try package_store.snapshotPackageRelease("demo", "r1", 4);
+    try package_store.installScriptPackage("demo", "echo workspace-plan-r2", 5);
+    try package_store.snapshotPackageRelease("demo", "r2", 6);
+    try app_runtime.savePlan("demo", "boot", "", "", abi.display_connector_virtual, 1024, 768, false, 7);
+    try app_runtime.saveSuite("duo", "demo:boot", 8);
+    try saveWorkspace("ops", "duo", "root-a", 1024, 768, "demo:stable:r1", 9);
+
+    try savePlan("ops", "golden", "duo", "root-a", 1024, 768, "demo:stable:r1", 10);
+    try savePlan("ops", "staging", "", "", 640, 400, "demo:stable:r2", 11);
+
+    const plan_list = try planListAlloc(std.testing.allocator, "ops", 64);
+    defer std.testing.allocator.free(plan_list);
+    try std.testing.expectEqualStrings("golden\nstaging\n", plan_list);
+
+    const plan_info = try planInfoAlloc(std.testing.allocator, "ops", "staging", 256);
+    defer std.testing.allocator.free(plan_info);
+    try std.testing.expect(std.mem.indexOf(u8, plan_info, "workspace=ops") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_info, "plan=staging") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_info, "suite=none") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_info, "trust_bundle=none") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_info, "display=640x400") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_info, "channel=demo:stable:r2") != null);
+
+    try applyPlan("ops", "golden", 12);
+
+    const golden_active = try activePlanInfoAlloc(std.testing.allocator, "ops", 256);
+    defer std.testing.allocator.free(golden_active);
+    try std.testing.expect(std.mem.indexOf(u8, golden_active, "active_plan=golden") != null);
+
+    const restored = try infoAlloc(std.testing.allocator, "ops", 512);
+    defer std.testing.allocator.free(restored);
+    try std.testing.expect(std.mem.indexOf(u8, restored, "suite=duo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, restored, "trust_bundle=root-a") != null);
+    try std.testing.expect(std.mem.indexOf(u8, restored, "display=1024x768") != null);
+    try std.testing.expect(std.mem.indexOf(u8, restored, "channel=demo:stable:r1") != null);
+
+    try applyPlan("ops", "staging", 13);
+
+    const staging_active = try activePlanInfoAlloc(std.testing.allocator, "ops", 256);
+    defer std.testing.allocator.free(staging_active);
+    try std.testing.expect(std.mem.indexOf(u8, staging_active, "active_plan=staging") != null);
+
+    const mutated = try infoAlloc(std.testing.allocator, "ops", 512);
+    defer std.testing.allocator.free(mutated);
+    try std.testing.expect(std.mem.indexOf(u8, mutated, "suite=none") != null);
+    try std.testing.expect(std.mem.indexOf(u8, mutated, "trust_bundle=none") != null);
+    try std.testing.expect(std.mem.indexOf(u8, mutated, "display=640x400") != null);
+    try std.testing.expect(std.mem.indexOf(u8, mutated, "channel=demo:stable:r2") != null);
+
+    try deletePlan("ops", "golden", 14);
+    const final_list = try planListAlloc(std.testing.allocator, "ops", 64);
+    defer std.testing.allocator.free(final_list);
+    try std.testing.expectEqualStrings("staging\n", final_list);
+
+    try deleteWorkspace("ops", 15);
+    try std.testing.expectError(error.WorkspaceNotFound, planListAlloc(std.testing.allocator, "ops", 64));
+    if (filesystem.statSummary("/runtime/workspaces/ops/plans")) |_| {
+        return error.TestUnexpectedResult;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    }
+}
+
+test "workspace runtime persists workspace plans on ata-backed storage" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    framebuffer_console.resetForTest();
+    ata_pio_disk.testEnableMockDevice(8192);
+    ata_pio_disk.testInstallMockMbrPartition(2048, 4096, 0x83);
+    defer ata_pio_disk.testDisableMockDevice();
+
+    try trust_store.installBundle("persisted-root", "persisted-cert", 1);
+    try package_store.installScriptPackage("persisted", "echo persisted-r1", 2);
+    try package_store.snapshotPackageRelease("persisted", "r1", 3);
+    try app_runtime.savePlan("persisted", "boot", "", "", abi.display_connector_virtual, 1280, 720, false, 4);
+    try app_runtime.saveSuite("persisted-suite", "persisted:boot", 5);
+    try saveWorkspace("persisted", "persisted-suite", "", 1024, 768, "persisted:stable:r1", 6);
+    try savePlan("persisted", "boot", "persisted-suite", "persisted-root", 1280, 720, "persisted:stable:r1", 7);
+    try applyPlan("persisted", "boot", 8);
+
+    filesystem.resetForTest();
+    framebuffer_console.resetForTest();
+
+    const plan_list = try planListAlloc(std.testing.allocator, "persisted", 64);
+    defer std.testing.allocator.free(plan_list);
+    try std.testing.expectEqualStrings("boot\n", plan_list);
+
+    const active = try activePlanInfoAlloc(std.testing.allocator, "persisted", 256);
+    defer std.testing.allocator.free(active);
+    try std.testing.expect(std.mem.indexOf(u8, active, "active_plan=boot") != null);
+    try std.testing.expect(std.mem.indexOf(u8, active, "trust_bundle=persisted-root") != null);
+    try std.testing.expect(std.mem.indexOf(u8, active, "display=1280x720") != null);
+
+    const restored = try infoAlloc(std.testing.allocator, "persisted", 512);
+    defer std.testing.allocator.free(restored);
+    try std.testing.expect(std.mem.indexOf(u8, restored, "suite=persisted-suite") != null);
+    try std.testing.expect(std.mem.indexOf(u8, restored, "trust_bundle=persisted-root") != null);
+    try std.testing.expect(std.mem.indexOf(u8, restored, "display=1280x720") != null);
 }
 
 test "workspace runtime snapshots activates deletes and prunes workspace releases" {

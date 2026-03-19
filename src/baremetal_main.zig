@@ -3512,6 +3512,17 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const workspace_channel_activate_golden_request_id: u32 = 152;
     const workspace_channel_staging_info_request_id: u32 = 153;
     const workspace_channel_restored_info_request_id: u32 = 154;
+    const workspace_plan_save_golden_request_id: u32 = 225;
+    const workspace_plan_save_staging_request_id: u32 = 226;
+    const workspace_plan_list_request_id: u32 = 227;
+    const workspace_plan_info_request_id: u32 = 228;
+    const workspace_plan_apply_staging_request_id: u32 = 229;
+    const workspace_plan_active_request_id: u32 = 230;
+    const workspace_plan_staging_info_request_id: u32 = 231;
+    const workspace_plan_apply_golden_request_id: u32 = 232;
+    const workspace_plan_restored_info_request_id: u32 = 233;
+    const workspace_plan_delete_staging_request_id: u32 = 234;
+    const workspace_plan_list_final_request_id: u32 = 235;
     const app_suite_release_save_golden_request_id: u32 = 155;
     const app_suite_mutate_staging_request_id: u32 = 156;
     const app_suite_release_save_staging_request_id: u32 = 157;
@@ -7104,6 +7115,243 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         512,
     );
     if (!std.mem.eql(u8, workspace_info_response, workspace_info_response_expected)) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_save_golden_request_buffer: [160]u8 = undefined;
+    const workspace_plan_save_golden_request = std.fmt.bufPrint(
+        &workspace_plan_save_golden_request_buffer,
+        "REQ {d} WORKSPACEPLANSAVE {s} golden {s} {s} 1024 768 {s}:{s}:{s}",
+        .{ workspace_plan_save_golden_request_id, workspace_name, app_suite_name, trust_backup_bundle_name, package_name, package_channel_name, package_release_three_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_save_golden_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_save_golden_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_plan_save_golden_response, "RESP 225 29\nWORKSPACEPLANSAVE ops golden\n")) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_save_staging_request_buffer: [160]u8 = undefined;
+    const workspace_plan_save_staging_request = std.fmt.bufPrint(
+        &workspace_plan_save_staging_request_buffer,
+        "REQ {d} WORKSPACEPLANSAVE {s} staging none none 640 400 {s}:{s}:{s}",
+        .{ workspace_plan_save_staging_request_id, workspace_name, package_name, package_channel_name, package_release_three_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_save_staging_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_save_staging_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_plan_save_staging_response, "RESP 226 30\nWORKSPACEPLANSAVE ops staging\n")) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_list_request_buffer: [96]u8 = undefined;
+    const workspace_plan_list_request = std.fmt.bufPrint(
+        &workspace_plan_list_request_buffer,
+        "REQ {d} WORKSPACEPLANLIST {s}",
+        .{ workspace_plan_list_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_list_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_list_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_plan_list_response, "RESP 227 15\ngolden\nstaging\n")) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_info_request_buffer: [112]u8 = undefined;
+    const workspace_plan_info_request = std.fmt.bufPrint(
+        &workspace_plan_info_request_buffer,
+        "REQ {d} WORKSPACEPLANINFO {s} staging",
+        .{ workspace_plan_info_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_info_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_info_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_plan_info_response, "RESP 228 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_info_response, "workspace=ops") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_info_response, "plan=staging") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_info_response, "suite=none") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_info_response, "trust_bundle=none") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_info_response, "display=640x400") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_info_response, "channel=demo:stable:r3") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_apply_staging_request_buffer: [112]u8 = undefined;
+    const workspace_plan_apply_staging_request = std.fmt.bufPrint(
+        &workspace_plan_apply_staging_request_buffer,
+        "REQ {d} WORKSPACEPLANAPPLY {s} staging",
+        .{ workspace_plan_apply_staging_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_apply_staging_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_apply_staging_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_plan_apply_staging_response, "RESP 229 31\nWORKSPACEPLANAPPLY ops staging\n")) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_active_request_buffer: [96]u8 = undefined;
+    const workspace_plan_active_request = std.fmt.bufPrint(
+        &workspace_plan_active_request_buffer,
+        "REQ {d} WORKSPACEPLANACTIVE {s}",
+        .{ workspace_plan_active_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_active_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_active_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_plan_active_response, "RESP 230 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_active_response, "active_plan=staging") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_staging_info_request_buffer: [96]u8 = undefined;
+    const workspace_plan_staging_info_request = std.fmt.bufPrint(
+        &workspace_plan_staging_info_request_buffer,
+        "REQ {d} WORKSPACEINFO {s}",
+        .{ workspace_plan_staging_info_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_staging_info_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_staging_info_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_plan_staging_info_response, "RESP 231 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_staging_info_response, "suite=none") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_staging_info_response, "trust_bundle=none") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_staging_info_response, "display=640x400") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_staging_info_response, "channel=demo:stable:r3") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_apply_golden_request_buffer: [112]u8 = undefined;
+    const workspace_plan_apply_golden_request = std.fmt.bufPrint(
+        &workspace_plan_apply_golden_request_buffer,
+        "REQ {d} WORKSPACEPLANAPPLY {s} golden",
+        .{ workspace_plan_apply_golden_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_apply_golden_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_apply_golden_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_plan_apply_golden_response, "RESP 232 30\nWORKSPACEPLANAPPLY ops golden\n")) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_restored_info_response_buffer: [640]u8 = undefined;
+    const workspace_plan_restored_info_response_expected = std.fmt.bufPrint(
+        &workspace_plan_restored_info_response_buffer,
+        "RESP {d} {d}\n{s}",
+        .{ workspace_plan_restored_info_request_id, workspace_info_payload_expected.len, workspace_info_payload_expected },
+    ) catch return error.ToolServiceFailed;
+    var workspace_plan_restored_info_request_buffer: [96]u8 = undefined;
+    const workspace_plan_restored_info_request = std.fmt.bufPrint(
+        &workspace_plan_restored_info_request_buffer,
+        "REQ {d} WORKSPACEINFO {s}",
+        .{ workspace_plan_restored_info_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_restored_info_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_restored_info_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_plan_restored_info_response, workspace_plan_restored_info_response_expected)) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_delete_staging_request_buffer: [112]u8 = undefined;
+    const workspace_plan_delete_staging_request = std.fmt.bufPrint(
+        &workspace_plan_delete_staging_request_buffer,
+        "REQ {d} WORKSPACEPLANDELETE {s} staging",
+        .{ workspace_plan_delete_staging_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_delete_staging_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_delete_staging_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_plan_delete_staging_response, "RESP 234 32\nWORKSPACEPLANDELETE ops staging\n")) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_list_final_request_buffer: [96]u8 = undefined;
+    const workspace_plan_list_final_request = std.fmt.bufPrint(
+        &workspace_plan_list_final_request_buffer,
+        "REQ {d} WORKSPACEPLANLIST {s}",
+        .{ workspace_plan_list_final_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_list_final_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_list_final_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_plan_list_final_response, "RESP 235 7\ngolden\n")) return error.ToolServiceResponseMismatch;
 
     var workspace_release_golden_save_request_buffer: [96]u8 = undefined;
     const workspace_release_golden_save_request = std.fmt.bufPrint(

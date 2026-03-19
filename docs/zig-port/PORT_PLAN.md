@@ -2019,6 +2019,11 @@ Full-stack replacement execution reference:
     - `src/baremetal/tool_service.zig` now exposes `WORKSPACELIST`, `WORKSPACEINFO`, `WORKSPACESAVE`, `WORKSPACEAPPLY`, `WORKSPACERUN`, `WORKSPACESTATE`, `WORKSPACEHISTORY`, `WORKSPACESTDOUT`, `WORKSPACESTDERR`, `WORKSPACEDELETE`, `WORKSPACERELEASELIST`, `WORKSPACERELEASEINFO`, `WORKSPACERELEASESAVE`, `WORKSPACERELEASEACTIVATE`, `WORKSPACERELEASEDELETE`, `WORKSPACERELEASEPRUNE`, `WORKSPACEAUTORUNLIST`, `WORKSPACEAUTORUNADD`, `WORKSPACEAUTORUNREMOVE`, and `WORKSPACEAUTORUNRUN`
     - host validation now proves RAM-disk and ATA-backed workspace persistence plus workspace release save/list/info/activate/delete/prune, workspace autorun registry persistence, persisted runtime-receipt readback, restored canonical package script content, trust-bundle selection, display mode, and app-suite active-plan markers
     - the broad live RTL8139 TCP proof now covers save -> list -> info -> apply -> run -> state -> history -> stdout -> stderr -> delete plus workspace release save -> mutate -> list -> info -> activate -> delete -> prune, workspace autorun add -> list -> run -> remove, persisted `/runtime/workspace-runs/autorun.txt` readback, persisted release file readback, restored workspace info, restored canonical package content, persisted runtime-receipt readback, and delete cleanup on the workspace surface
+    - `src/baremetal/workspace_runtime.zig` now also persists workspace plans under `/runtime/workspace-plans/<name>/<plan>.txt` plus `/runtime/workspace-plans/<name>/active.txt`, with `planListAlloc`, `planInfoAlloc`, `activePlanInfoAlloc`, `savePlan`, `applyPlan`, and `deletePlan`
+    - `src/baremetal/tool_exec.zig` now also exposes `workspace-plan-list`, `workspace-plan-info`, `workspace-plan-active`, `workspace-plan-save`, `workspace-plan-apply`, and `workspace-plan-delete`
+    - `src/baremetal/tool_service.zig` now also exposes `WORKSPACEPLANLIST`, `WORKSPACEPLANINFO`, `WORKSPACEPLANACTIVE`, `WORKSPACEPLANSAVE`, `WORKSPACEPLANAPPLY`, and `WORKSPACEPLANDELETE`
+    - host validation now also proves RAM-disk and ATA-backed workspace-plan persistence plus restored suite/trust/display/channel state after plan apply
+    - the broad live RTL8139 TCP proof now also covers workspace plan save -> list -> info -> apply -> active -> restore -> delete with restored suite/trust/display/channel readback on the persisted workspace surface
     - `src/baremetal/workspace_runtime.zig` now also persists workspace release-channel targets under `/runtime/workspace-release-channels/<name>/<channel>.txt`, with `channelListAlloc`, `channelInfoAlloc`, `setWorkspaceReleaseChannel`, and `activateWorkspaceReleaseChannel`
     - `src/baremetal/tool_exec.zig` now also exposes `workspace-release-channel-list`, `workspace-release-channel-info`, `workspace-release-channel-set`, and `workspace-release-channel-activate`
     - `src/baremetal/tool_service.zig` now also exposes `WORKSPACECHANNELLIST`, `WORKSPACECHANNELINFO`, `WORKSPACECHANNELSET`, and `WORKSPACECHANNELACTIVATE`
@@ -2039,13 +2044,13 @@ Full-stack replacement execution reference:
     - `src/baremetal/tool_service.zig` now also exposes `WORKSPACESUITECHANNELLIST`, `WORKSPACESUITECHANNELINFO`, `WORKSPACESUITECHANNELSET`, and `WORKSPACESUITECHANNELACTIVATE`
     - host validation now also proves RAM-disk and ATA-backed workspace-suite-release-channel persistence plus restored suite readback through channel activation
     - the broad live RTL8139 TCP proof now also covers workspace suite release-channel set -> persisted channel-target readback -> list -> info -> activate plus restored suite readback through the selected workspace-suite release channel
-    - `src/baremetal/filesystem.zig` now carries a `128`-entry filesystem budget so the deeper FS5.5 package/trust/app/workspace/workspace-suite release surface no longer fails with live-service `NoSpace`
-    - current local validation after the workspace-suite-release-channel slice is green:
-      - `zig build test --summary all` -> `396/396` passed
+    - `src/baremetal/filesystem.zig` now carries a `128`-entry filesystem budget so the deeper FS5.5 package/trust/app/workspace/workspace-plan/workspace-suite release surface no longer fails with live-service `NoSpace`
+    - current local validation after the workspace-plan slice is green:
+      - `zig build test --summary all` -> `398/398` passed
       - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1 -TimeoutSeconds 120` -> pass
       - parity gate -> pass (`union 141/141`, `events 19/19`)
       - docs status gate -> pass
-      - the real regressions fixed during the slice were missing `workspace_suite_channel_*` opcode wiring in `src/baremetal/tool_service/codec.zig`, stale broad-proof expectations that still assumed the pre-channel `sidecar` workspace survived after activating the pruned `fallback` release, and delete cleanup gaps that would have left `/runtime/workspace-suite-release-channels/<suite>` behind after suite removal; the runtime, CLI, typed service, and live proof now match the current workspace-suite-release-channel contract
+      - the real regressions fixed during the slice were proof-order drift that referenced pruned package release `r2` after the earlier release lifecycle moved on to `r3`, a wrong staged delete payload length constant for `WORKSPACEPLANDELETE`, and the new plan surface itself (`WORKSPACEPLAN*` parsing, handlers, runtime persistence, and live proof expectations); the runtime, CLI, typed service, and live proof now match the current workspace-plan contract
     - `build.zig` now runs the compiled native test executables directly on Windows, which avoids the current Zig master `--listen=-` test-runner hang while keeping the real hosted and baremetal-host test matrix intact
 
 

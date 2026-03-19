@@ -35,6 +35,8 @@ pub const AppPlanSaveRequest = codec.AppPlanSaveRequest;
 pub const AppSuiteSaveRequest = codec.AppSuiteSaveRequest;
 pub const AppSuiteChannelRequest = codec.AppSuiteChannelRequest;
 pub const AppSuiteChannelSetRequest = codec.AppSuiteChannelSetRequest;
+pub const WorkspacePlanRequest = codec.WorkspacePlanRequest;
+pub const WorkspacePlanSaveRequest = codec.WorkspacePlanSaveRequest;
 pub const WorkspaceSaveRequest = codec.WorkspaceSaveRequest;
 pub const WorkspaceSuiteSaveRequest = codec.WorkspaceSuiteSaveRequest;
 pub const WorkspaceSuiteReleaseRequest = codec.WorkspaceSuiteReleaseRequest;
@@ -241,6 +243,12 @@ fn handleFramedPayload(
         .app_suite_channel_info => |request| try handleAppSuiteChannelInfoRequest(allocator, request.suite_name, request.value, payload_limit),
         .app_suite_channel_set => |request| try handleAppSuiteChannelSetRequest(allocator, request.suite_name, request.channel, request.release, payload_limit),
         .app_suite_channel_activate => |request| try handleAppSuiteChannelActivateRequest(allocator, request.suite_name, request.value, payload_limit),
+        .workspace_plan_list => |workspace_name| try handleWorkspacePlanListRequest(allocator, workspace_name, payload_limit),
+        .workspace_plan_info => |request| try handleWorkspacePlanInfoRequest(allocator, request.workspace_name, request.plan_name, payload_limit),
+        .workspace_plan_active => |workspace_name| try handleWorkspacePlanActiveRequest(allocator, workspace_name, payload_limit),
+        .workspace_plan_save => |request| try handleWorkspacePlanSaveRequest(allocator, request, payload_limit),
+        .workspace_plan_apply => |request| try handleWorkspacePlanApplyRequest(allocator, request.workspace_name, request.plan_name, payload_limit),
+        .workspace_plan_delete => |request| try handleWorkspacePlanDeleteRequest(allocator, request.workspace_name, request.plan_name, payload_limit),
         .workspace_suite_list => try handleWorkspaceSuiteListRequest(allocator, payload_limit),
         .workspace_suite_info => |suite_name| try handleWorkspaceSuiteInfoRequest(allocator, suite_name, payload_limit),
         .workspace_suite_save => |suite_request| try handleWorkspaceSuiteSaveRequest(allocator, suite_request, payload_limit),
@@ -1046,6 +1054,83 @@ fn handleAppSuiteChannelActivateRequest(
         return formatOperationError(allocator, "APPSUITECHANNELACTIVATE", err, payload_limit);
     };
     const response = try std.fmt.allocPrint(allocator, "APPSUITECHANNELACTIVATE {s} {s}\n", .{ suite_name, channel_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleWorkspacePlanListRequest(
+    allocator: std.mem.Allocator,
+    workspace_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return workspace_runtime.planListAlloc(allocator, workspace_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "WORKSPACEPLANLIST", err, payload_limit);
+    };
+}
+
+fn handleWorkspacePlanInfoRequest(
+    allocator: std.mem.Allocator,
+    workspace_name: []const u8,
+    plan_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return workspace_runtime.planInfoAlloc(allocator, workspace_name, plan_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "WORKSPACEPLANINFO", err, payload_limit);
+    };
+}
+
+fn handleWorkspacePlanActiveRequest(
+    allocator: std.mem.Allocator,
+    workspace_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return workspace_runtime.activePlanInfoAlloc(allocator, workspace_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "WORKSPACEPLANACTIVE", err, payload_limit);
+    };
+}
+
+fn handleWorkspacePlanSaveRequest(
+    allocator: std.mem.Allocator,
+    request: WorkspacePlanSaveRequest,
+    payload_limit: usize,
+) Error![]u8 {
+    const suite_name = if (std.ascii.eqlIgnoreCase(request.suite_name, "none")) "" else request.suite_name;
+    const trust_bundle = if (std.ascii.eqlIgnoreCase(request.trust_bundle, "none")) "" else request.trust_bundle;
+    workspace_runtime.savePlan(request.workspace_name, request.plan_name, suite_name, trust_bundle, request.width, request.height, request.entries_spec, 0) catch |err| {
+        return formatOperationError(allocator, "WORKSPACEPLANSAVE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "WORKSPACEPLANSAVE {s} {s}\n", .{ request.workspace_name, request.plan_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleWorkspacePlanApplyRequest(
+    allocator: std.mem.Allocator,
+    workspace_name: []const u8,
+    plan_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    workspace_runtime.applyPlan(workspace_name, plan_name, 0) catch |err| {
+        return formatOperationError(allocator, "WORKSPACEPLANAPPLY", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "WORKSPACEPLANAPPLY {s} {s}\n", .{ workspace_name, plan_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleWorkspacePlanDeleteRequest(
+    allocator: std.mem.Allocator,
+    workspace_name: []const u8,
+    plan_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    workspace_runtime.deletePlan(workspace_name, plan_name, 0) catch |err| {
+        return formatOperationError(allocator, "WORKSPACEPLANDELETE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "WORKSPACEPLANDELETE {s} {s}\n", .{ workspace_name, plan_name });
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
@@ -3429,6 +3514,65 @@ test "baremetal tool service manages persisted workspaces" {
     try std.testing.expect(std.mem.indexOf(u8, info_response, "display=1024x768") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_response, "state_path=/runtime/workspace-runs/ops/last_run.txt") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_response, "channel=demo:stable:r1") != null);
+
+    const plan_save_golden_response = try handleFramedRequest(std.testing.allocator, "REQ 1831 WORKSPACEPLANSAVE ops golden duo root-a 1024 768 demo:stable:r1", 512, 256, 512);
+    defer std.testing.allocator.free(plan_save_golden_response);
+    try std.testing.expectEqualStrings("RESP 1831 29\nWORKSPACEPLANSAVE ops golden\n", plan_save_golden_response);
+
+    const plan_save_staging_response = try handleFramedRequest(std.testing.allocator, "REQ 1832 WORKSPACEPLANSAVE ops staging none none 640 400 demo:stable:r2", 512, 256, 512);
+    defer std.testing.allocator.free(plan_save_staging_response);
+    try std.testing.expectEqualStrings("RESP 1832 30\nWORKSPACEPLANSAVE ops staging\n", plan_save_staging_response);
+
+    const plan_list_response = try handleFramedRequest(std.testing.allocator, "REQ 1833 WORKSPACEPLANLIST ops", 512, 256, 512);
+    defer std.testing.allocator.free(plan_list_response);
+    try std.testing.expectEqualStrings("RESP 1833 15\ngolden\nstaging\n", plan_list_response);
+
+    const plan_info_response = try handleFramedRequest(std.testing.allocator, "REQ 1834 WORKSPACEPLANINFO ops staging", 512, 256, 512);
+    defer std.testing.allocator.free(plan_info_response);
+    try std.testing.expect(std.mem.startsWith(u8, plan_info_response, "RESP 1834 "));
+    try std.testing.expect(std.mem.indexOf(u8, plan_info_response, "workspace=ops") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_info_response, "plan=staging") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_info_response, "suite=none") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_info_response, "trust_bundle=none") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_info_response, "display=640x400") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_info_response, "channel=demo:stable:r2") != null);
+
+    const plan_apply_staging_response = try handleFramedRequest(std.testing.allocator, "REQ 1835 WORKSPACEPLANAPPLY ops staging", 512, 256, 512);
+    defer std.testing.allocator.free(plan_apply_staging_response);
+    try std.testing.expectEqualStrings("RESP 1835 31\nWORKSPACEPLANAPPLY ops staging\n", plan_apply_staging_response);
+
+    const plan_active_response = try handleFramedRequest(std.testing.allocator, "REQ 1836 WORKSPACEPLANACTIVE ops", 512, 256, 512);
+    defer std.testing.allocator.free(plan_active_response);
+    try std.testing.expect(std.mem.startsWith(u8, plan_active_response, "RESP 1836 "));
+    try std.testing.expect(std.mem.indexOf(u8, plan_active_response, "active_plan=staging") != null);
+
+    const plan_staging_info_response = try handleFramedRequest(std.testing.allocator, "REQ 1837 WORKSPACEINFO ops", 512, 256, 512);
+    defer std.testing.allocator.free(plan_staging_info_response);
+    try std.testing.expect(std.mem.startsWith(u8, plan_staging_info_response, "RESP 1837 "));
+    try std.testing.expect(std.mem.indexOf(u8, plan_staging_info_response, "suite=none") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_staging_info_response, "trust_bundle=none") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_staging_info_response, "display=640x400") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_staging_info_response, "channel=demo:stable:r2") != null);
+
+    const plan_apply_golden_response = try handleFramedRequest(std.testing.allocator, "REQ 1838 WORKSPACEPLANAPPLY ops golden", 512, 256, 512);
+    defer std.testing.allocator.free(plan_apply_golden_response);
+    try std.testing.expectEqualStrings("RESP 1838 30\nWORKSPACEPLANAPPLY ops golden\n", plan_apply_golden_response);
+
+    const plan_restored_info_response = try handleFramedRequest(std.testing.allocator, "REQ 1839 WORKSPACEINFO ops", 512, 256, 512);
+    defer std.testing.allocator.free(plan_restored_info_response);
+    try std.testing.expect(std.mem.startsWith(u8, plan_restored_info_response, "RESP 1839 "));
+    try std.testing.expect(std.mem.indexOf(u8, plan_restored_info_response, "suite=duo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_restored_info_response, "trust_bundle=root-a") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_restored_info_response, "display=1024x768") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_restored_info_response, "channel=demo:stable:r1") != null);
+
+    const plan_delete_staging_response = try handleFramedRequest(std.testing.allocator, "REQ 18391 WORKSPACEPLANDELETE ops staging", 512, 256, 512);
+    defer std.testing.allocator.free(plan_delete_staging_response);
+    try std.testing.expectEqualStrings("RESP 18391 32\nWORKSPACEPLANDELETE ops staging\n", plan_delete_staging_response);
+
+    const plan_list_after_delete_response = try handleFramedRequest(std.testing.allocator, "REQ 18392 WORKSPACEPLANLIST ops", 512, 256, 512);
+    defer std.testing.allocator.free(plan_list_after_delete_response);
+    try std.testing.expectEqualStrings("RESP 18392 7\ngolden\n", plan_list_after_delete_response);
 
     const release_save_response = try handleFramedRequest(std.testing.allocator, "REQ 1841 WORKSPACERELEASESAVE ops golden", 512, 256, 512);
     defer std.testing.allocator.free(release_save_response);
