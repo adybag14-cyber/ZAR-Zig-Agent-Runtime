@@ -3456,6 +3456,11 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const workspace_suite_release_save_fallback_request_id: u32 = 217;
     const workspace_suite_release_prune_request_id: u32 = 218;
     const workspace_suite_release_list_final_request_id: u32 = 219;
+    const workspace_suite_channel_set_request_id: u32 = 220;
+    const workspace_suite_channel_list_request_id: u32 = 221;
+    const workspace_suite_channel_info_request_id: u32 = 222;
+    const workspace_suite_channel_activate_request_id: u32 = 223;
+    const workspace_suite_channel_restored_info_request_id: u32 = 224;
     const app_suite_name = "duo";
     const app_suite_aux_plan_name = "sidecar";
     const app_suite_aux_plan_save_request_id: u32 = 108;
@@ -8229,6 +8234,123 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     );
     if (!std.mem.eql(u8, workspace_suite_release_list_final_response, "RESP 219 9\nfallback\n")) return error.ToolServiceResponseMismatch;
 
+    var workspace_suite_channel_set_request_buffer: [128]u8 = undefined;
+    const workspace_suite_channel_set_request = std.fmt.bufPrint(
+        &workspace_suite_channel_set_request_buffer,
+        "REQ {d} WORKSPACESUITECHANNELSET {s} stable fallback",
+        .{ workspace_suite_channel_set_request_id, workspace_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_suite_channel_set_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_suite_channel_set_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_suite_channel_set_response, "RESP 220 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_channel_set_response, "WORKSPACESUITECHANNELSET crew stable fallback\n") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_suite_channel_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const workspace_suite_channel_path = std.fmt.bufPrint(
+        &workspace_suite_channel_path_buffer,
+        "/runtime/workspace-suite-release-channels/{s}/stable.txt",
+        .{workspace_suite_name},
+    ) catch return error.ToolServiceFailed;
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const workspace_suite_channel_readback = filesystem.readFileAlloc(service_fba.allocator(), workspace_suite_channel_path, 64) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, std.mem.trim(u8, workspace_suite_channel_readback, "\r\n\t "), "fallback")) return error.ToolServiceResponseMismatch;
+
+    var workspace_suite_channel_list_request_buffer: [128]u8 = undefined;
+    const workspace_suite_channel_list_request = std.fmt.bufPrint(
+        &workspace_suite_channel_list_request_buffer,
+        "REQ {d} WORKSPACESUITECHANNELLIST {s}",
+        .{ workspace_suite_channel_list_request_id, workspace_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_suite_channel_list_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_suite_channel_list_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_suite_channel_list_response, "RESP 221 7\nstable\n")) return error.ToolServiceResponseMismatch;
+
+    var workspace_suite_channel_info_request_buffer: [128]u8 = undefined;
+    const workspace_suite_channel_info_request = std.fmt.bufPrint(
+        &workspace_suite_channel_info_request_buffer,
+        "REQ {d} WORKSPACESUITECHANNELINFO {s} stable",
+        .{ workspace_suite_channel_info_request_id, workspace_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_suite_channel_info_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_suite_channel_info_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_suite_channel_info_response, "RESP 222 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_channel_info_response, "suite=crew") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_channel_info_response, "channel=stable") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_channel_info_response, "release=fallback") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_suite_channel_activate_request_buffer: [128]u8 = undefined;
+    const workspace_suite_channel_activate_request = std.fmt.bufPrint(
+        &workspace_suite_channel_activate_request_buffer,
+        "REQ {d} WORKSPACESUITECHANNELACTIVATE {s} stable",
+        .{ workspace_suite_channel_activate_request_id, workspace_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_suite_channel_activate_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_suite_channel_activate_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_suite_channel_activate_response, "RESP 223 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_channel_activate_response, "WORKSPACESUITECHANNELACTIVATE crew stable\n") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_suite_channel_restored_info_request_buffer: [128]u8 = undefined;
+    const workspace_suite_channel_restored_info_request = std.fmt.bufPrint(
+        &workspace_suite_channel_restored_info_request_buffer,
+        "REQ {d} WORKSPACESUITEINFO {s}",
+        .{ workspace_suite_channel_restored_info_request_id, workspace_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_suite_channel_restored_info_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_suite_channel_restored_info_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_suite_channel_restored_info_response, "RESP 224 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_channel_restored_info_response, "workspace=ops") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_channel_restored_info_response, "workspace=sidecar") != null) return error.ToolServiceResponseMismatch;
+
     var workspace_suite_delete_request_buffer: [128]u8 = undefined;
     const workspace_suite_delete_request = std.fmt.bufPrint(
         &workspace_suite_delete_request_buffer,
@@ -8283,6 +8405,12 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         else => return error.ToolServiceFailed,
     }
     if (filesystem.statSummary(workspace_suite_release_root_path)) |_| {
+        return error.ToolServiceResponseMismatch;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return error.ToolServiceFailed,
+    }
+    if (filesystem.statSummary("/runtime/workspace-suite-release-channels/crew")) |_| {
         return error.ToolServiceResponseMismatch;
     } else |err| switch (err) {
         error.FileNotFound => {},

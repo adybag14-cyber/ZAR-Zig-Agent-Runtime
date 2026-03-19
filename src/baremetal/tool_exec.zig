@@ -154,7 +154,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-modes, display-set, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-suite-release-channel-list, workspace-suite-release-channel-info, workspace-suite-release-channel-set, workspace-suite-release-channel-activate, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-modes, display-set, run-script, run-package, app-run");
         return;
     }
 
@@ -1792,6 +1792,108 @@ fn execute(
             "workspace suite release pruned {s} keep={d} deleted={d} kept={d}\n",
             .{ suite_name.arg, keep, result.deleted_count, result.kept_count },
         );
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-release-channel-list")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-channel-list <suite>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-channel-list <suite>");
+            return;
+        }
+        const listing = workspace_runtime.suiteChannelListAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-release-channel-list failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(listing);
+        try stdout_buffer.appendSlice(listing);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-release-channel-info")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-channel-info <suite> <channel>");
+            return;
+        };
+        const channel_name = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-channel-info <suite> <channel>");
+            return;
+        };
+        if (channel_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-channel-info <suite> <channel>");
+            return;
+        }
+        const info = workspace_runtime.suiteChannelInfoAlloc(allocator, suite_name.arg, channel_name.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-release-channel-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(info);
+        try stdout_buffer.appendSlice(info);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-release-channel-set")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-channel-set <suite> <channel> <release>");
+            return;
+        };
+        const channel_name = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-channel-set <suite> <channel> <release>");
+            return;
+        };
+        const release_name = parseFirstArg(channel_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-channel-set <suite> <channel> <release>");
+            return;
+        };
+        if (release_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-channel-set <suite> <channel> <release>");
+            return;
+        }
+        workspace_runtime.setSuiteReleaseChannel(suite_name.arg, channel_name.arg, release_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-release-channel-set failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("workspace suite release channel set {s} {s} {s}\n", .{ suite_name.arg, channel_name.arg, release_name.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-release-channel-activate")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-channel-activate <suite> <channel>");
+            return;
+        };
+        const channel_name = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-channel-activate <suite> <channel>");
+            return;
+        };
+        if (channel_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-channel-activate <suite> <channel>");
+            return;
+        }
+        workspace_runtime.activateSuiteReleaseChannel(suite_name.arg, channel_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-release-channel-activate failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("workspace suite release channel activated {s} {s}\n", .{ suite_name.arg, channel_name.arg });
         return;
     }
 
@@ -4172,6 +4274,80 @@ test "baremetal tool exec manages workspace suite releases" {
     defer release_list_after_prune.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), release_list_after_prune.exit_code);
     try std.testing.expectEqualStrings("fallback\n", release_list_after_prune.stdout);
+}
+
+test "baremetal tool exec manages workspace suite release channels" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    display_output.resetForTest();
+    framebuffer_console.resetForTest();
+    vga_text_console.resetForTest();
+
+    try trust_store.installBundle("root-a", "root-a-cert", 1);
+    try trust_store.installBundle("root-b", "root-b-cert", 2);
+    try package_store.installScriptPackage("demo", "echo demo-workspace", 3);
+    try package_store.installScriptPackage("aux", "echo aux-workspace", 4);
+    try app_runtime.savePlan("demo", "boot", "", "", abi.display_connector_virtual, 1024, 768, false, 5);
+    try app_runtime.savePlan("demo", "canary", "", "", abi.display_connector_virtual, 640, 400, false, 6);
+    try app_runtime.savePlan("aux", "sidecar", "", "", abi.display_connector_virtual, 800, 600, false, 7);
+    try app_runtime.saveSuite("demo-suite", "demo:boot", 8);
+    try app_runtime.saveSuite("aux-suite", "aux:sidecar", 9);
+
+    var save_ops = try runCapture(std.testing.allocator, "workspace-save ops demo-suite root-a 1024 768", 256, 256);
+    defer save_ops.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_ops.exit_code);
+
+    var save_sidecar = try runCapture(std.testing.allocator, "workspace-save sidecar aux-suite root-b 800 600", 256, 256);
+    defer save_sidecar.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_sidecar.exit_code);
+
+    var save_workspace_suite = try runCapture(std.testing.allocator, "workspace-suite-save crew ops sidecar", 256, 256);
+    defer save_workspace_suite.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_workspace_suite.exit_code);
+
+    var save_release_golden = try runCapture(std.testing.allocator, "workspace-suite-release-save crew golden", 256, 256);
+    defer save_release_golden.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_release_golden.exit_code);
+
+    var save_ops_canary = try runCapture(std.testing.allocator, "workspace-save ops demo-suite root-b 640 400", 256, 256);
+    defer save_ops_canary.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_ops_canary.exit_code);
+
+    var save_workspace_suite_staging = try runCapture(std.testing.allocator, "workspace-suite-save crew ops", 256, 256);
+    defer save_workspace_suite_staging.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_workspace_suite_staging.exit_code);
+
+    var save_release_staging = try runCapture(std.testing.allocator, "workspace-suite-release-save crew staging", 256, 256);
+    defer save_release_staging.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_release_staging.exit_code);
+
+    var set_channel_fallback = try runCapture(std.testing.allocator, "workspace-suite-release-channel-set crew stable staging", 256, 256);
+    defer set_channel_fallback.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), set_channel_fallback.exit_code);
+    try std.testing.expectEqualStrings("workspace suite release channel set crew stable staging\n", set_channel_fallback.stdout);
+
+    var channel_list = try runCapture(std.testing.allocator, "workspace-suite-release-channel-list crew", 256, 256);
+    defer channel_list.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), channel_list.exit_code);
+    try std.testing.expectEqualStrings("stable\n", channel_list.stdout);
+
+    var channel_info = try runCapture(std.testing.allocator, "workspace-suite-release-channel-info crew stable", 256, 256);
+    defer channel_info.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), channel_info.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, channel_info.stdout, "suite=crew") != null);
+    try std.testing.expect(std.mem.indexOf(u8, channel_info.stdout, "channel=stable") != null);
+    try std.testing.expect(std.mem.indexOf(u8, channel_info.stdout, "release=staging") != null);
+
+    var activate_channel = try runCapture(std.testing.allocator, "workspace-suite-release-channel-activate crew stable", 256, 256);
+    defer activate_channel.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), activate_channel.exit_code);
+    try std.testing.expectEqualStrings("workspace suite release channel activated crew stable\n", activate_channel.stdout);
+
+    var suite_info_after_channel = try runCapture(std.testing.allocator, "workspace-suite-info crew", 256, 256);
+    defer suite_info_after_channel.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), suite_info_after_channel.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info_after_channel.stdout, "workspace=ops") != null);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info_after_channel.stdout, "workspace=sidecar") == null);
 }
 
 test "baremetal tool exec persists and runs workspace autorun" {

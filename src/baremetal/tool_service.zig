@@ -39,6 +39,8 @@ pub const WorkspaceSaveRequest = codec.WorkspaceSaveRequest;
 pub const WorkspaceSuiteSaveRequest = codec.WorkspaceSuiteSaveRequest;
 pub const WorkspaceSuiteReleaseRequest = codec.WorkspaceSuiteReleaseRequest;
 pub const WorkspaceSuiteReleasePruneRequest = codec.WorkspaceSuiteReleasePruneRequest;
+pub const WorkspaceSuiteChannelRequest = codec.WorkspaceSuiteChannelRequest;
+pub const WorkspaceSuiteChannelSetRequest = codec.WorkspaceSuiteChannelSetRequest;
 pub const WorkspaceReleaseRequest = codec.WorkspaceReleaseRequest;
 pub const WorkspaceReleasePruneRequest = codec.WorkspaceReleasePruneRequest;
 pub const WorkspaceChannelRequest = codec.WorkspaceChannelRequest;
@@ -251,6 +253,10 @@ fn handleFramedPayload(
         .workspace_suite_release_activate => |request| try handleWorkspaceSuiteReleaseActivateRequest(allocator, request.suite_name, request.release_name, payload_limit),
         .workspace_suite_release_delete => |request| try handleWorkspaceSuiteReleaseDeleteRequest(allocator, request.suite_name, request.release_name, payload_limit),
         .workspace_suite_release_prune => |request| try handleWorkspaceSuiteReleasePruneRequest(allocator, request.suite_name, request.keep, payload_limit),
+        .workspace_suite_channel_list => |suite_name| try handleWorkspaceSuiteChannelListRequest(allocator, suite_name, payload_limit),
+        .workspace_suite_channel_info => |request| try handleWorkspaceSuiteChannelInfoRequest(allocator, request.suite_name, request.value, payload_limit),
+        .workspace_suite_channel_set => |request| try handleWorkspaceSuiteChannelSetRequest(allocator, request.suite_name, request.channel, request.release, payload_limit),
+        .workspace_suite_channel_activate => |request| try handleWorkspaceSuiteChannelActivateRequest(allocator, request.suite_name, request.value, payload_limit),
         .workspace_list => try handleWorkspaceListRequest(allocator, payload_limit),
         .workspace_info => |workspace_name| try handleWorkspaceInfoRequest(allocator, workspace_name, payload_limit),
         .workspace_save => |workspace_request| try handleWorkspaceSaveRequest(allocator, workspace_request, payload_limit),
@@ -1195,6 +1201,58 @@ fn handleWorkspaceSuiteReleasePruneRequest(
         "WORKSPACESUITERELEASEPRUNE {s} keep={d} deleted={d} kept={d}\n",
         .{ suite_name, keep, result.deleted_count, result.kept_count },
     );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleWorkspaceSuiteChannelListRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return workspace_runtime.suiteChannelListAlloc(allocator, suite_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "WORKSPACESUITECHANNELLIST", err, payload_limit);
+    };
+}
+
+fn handleWorkspaceSuiteChannelInfoRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    channel_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return workspace_runtime.suiteChannelInfoAlloc(allocator, suite_name, channel_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "WORKSPACESUITECHANNELINFO", err, payload_limit);
+    };
+}
+
+fn handleWorkspaceSuiteChannelSetRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    channel_name: []const u8,
+    release_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    workspace_runtime.setSuiteReleaseChannel(suite_name, channel_name, release_name, 0) catch |err| {
+        return formatOperationError(allocator, "WORKSPACESUITECHANNELSET", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "WORKSPACESUITECHANNELSET {s} {s} {s}\n", .{ suite_name, channel_name, release_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleWorkspaceSuiteChannelActivateRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    channel_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    workspace_runtime.activateSuiteReleaseChannel(suite_name, channel_name, 0) catch |err| {
+        return formatOperationError(allocator, "WORKSPACESUITECHANNELACTIVATE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "WORKSPACESUITECHANNELACTIVATE {s} {s}\n", .{ suite_name, channel_name });
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
@@ -2367,6 +2425,40 @@ test "baremetal tool service parses typed framed requests" {
         .workspace_suite_release_prune => |payload| {
             try std.testing.expectEqualStrings("crew", payload.suite_name);
             try std.testing.expectEqual(@as(u32, 1), payload.keep);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_suite_channel_list = try parseFramedRequest("REQ 198 WORKSPACESUITECHANNELLIST crew");
+    switch (workspace_suite_channel_list.operation) {
+        .workspace_suite_channel_list => |suite_name| try std.testing.expectEqualStrings("crew", suite_name),
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_suite_channel_info = try parseFramedRequest("REQ 199 WORKSPACESUITECHANNELINFO crew stable");
+    switch (workspace_suite_channel_info.operation) {
+        .workspace_suite_channel_info => |payload| {
+            try std.testing.expectEqualStrings("crew", payload.suite_name);
+            try std.testing.expectEqualStrings("stable", payload.value);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_suite_channel_set = try parseFramedRequest("REQ 200 WORKSPACESUITECHANNELSET crew stable golden");
+    switch (workspace_suite_channel_set.operation) {
+        .workspace_suite_channel_set => |payload| {
+            try std.testing.expectEqualStrings("crew", payload.suite_name);
+            try std.testing.expectEqualStrings("stable", payload.channel);
+            try std.testing.expectEqualStrings("golden", payload.release);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_suite_channel_activate = try parseFramedRequest("REQ 201 WORKSPACESUITECHANNELACTIVATE crew stable");
+    switch (workspace_suite_channel_activate.operation) {
+        .workspace_suite_channel_activate => |payload| {
+            try std.testing.expectEqualStrings("crew", payload.suite_name);
+            try std.testing.expectEqualStrings("stable", payload.value);
         },
         else => return error.InvalidFrame,
     }
@@ -3671,6 +3763,33 @@ test "baremetal tool service manages workspace suite releases" {
     const release_list_final_response = try handleFramedRequest(std.testing.allocator, "REQ 2058 WORKSPACESUITERELEASELIST crew", 512, 256, 768);
     defer std.testing.allocator.free(release_list_final_response);
     try std.testing.expectEqualStrings("RESP 2058 9\nfallback\n", release_list_final_response);
+
+    const channel_set_response = try handleFramedRequest(std.testing.allocator, "REQ 2059 WORKSPACESUITECHANNELSET crew stable fallback", 512, 256, 768);
+    defer std.testing.allocator.free(channel_set_response);
+    try std.testing.expect(std.mem.startsWith(u8, channel_set_response, "RESP 2059 "));
+    try std.testing.expect(std.mem.indexOf(u8, channel_set_response, "WORKSPACESUITECHANNELSET crew stable fallback\n") != null);
+
+    const channel_list_response = try handleFramedRequest(std.testing.allocator, "REQ 2060 WORKSPACESUITECHANNELLIST crew", 512, 256, 768);
+    defer std.testing.allocator.free(channel_list_response);
+    try std.testing.expectEqualStrings("RESP 2060 7\nstable\n", channel_list_response);
+
+    const channel_info_response = try handleFramedRequest(std.testing.allocator, "REQ 2061 WORKSPACESUITECHANNELINFO crew stable", 512, 256, 768);
+    defer std.testing.allocator.free(channel_info_response);
+    try std.testing.expect(std.mem.startsWith(u8, channel_info_response, "RESP 2061 "));
+    try std.testing.expect(std.mem.indexOf(u8, channel_info_response, "suite=crew") != null);
+    try std.testing.expect(std.mem.indexOf(u8, channel_info_response, "channel=stable") != null);
+    try std.testing.expect(std.mem.indexOf(u8, channel_info_response, "release=fallback") != null);
+
+    const channel_activate_response = try handleFramedRequest(std.testing.allocator, "REQ 2062 WORKSPACESUITECHANNELACTIVATE crew stable", 512, 256, 768);
+    defer std.testing.allocator.free(channel_activate_response);
+    try std.testing.expect(std.mem.startsWith(u8, channel_activate_response, "RESP 2062 "));
+    try std.testing.expect(std.mem.indexOf(u8, channel_activate_response, "WORKSPACESUITECHANNELACTIVATE crew stable\n") != null);
+
+    const suite_info_after_channel_response = try handleFramedRequest(std.testing.allocator, "REQ 2063 WORKSPACESUITEINFO crew", 512, 256, 768);
+    defer std.testing.allocator.free(suite_info_after_channel_response);
+    try std.testing.expect(std.mem.startsWith(u8, suite_info_after_channel_response, "RESP 2063 "));
+    try std.testing.expect(std.mem.indexOf(u8, suite_info_after_channel_response, "workspace=ops") != null);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info_after_channel_response, "workspace=sidecar") == null);
 }
 
 test "baremetal tool service persists and runs workspace autorun requests" {

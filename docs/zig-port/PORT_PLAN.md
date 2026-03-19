@@ -2034,13 +2034,18 @@ Full-stack replacement execution reference:
     - `src/baremetal/tool_service.zig` now also exposes `WORKSPACESUITERELEASELIST`, `WORKSPACESUITERELEASEINFO`, `WORKSPACESUITERELEASESAVE`, `WORKSPACESUITERELEASEACTIVATE`, `WORKSPACESUITERELEASEDELETE`, and `WORKSPACESUITERELEASEPRUNE`
     - host validation now also proves RAM-disk and ATA-backed workspace-suite-release persistence with deterministic `saved_seq` / `saved_tick` metadata
     - the broad live RTL8139 TCP proof now also covers workspace suite release save -> mutate -> list -> info -> activate -> delete -> prune plus restored suite readback and post-delete suite-release absence
-    - `src/baremetal/filesystem.zig` now carries a `128`-entry filesystem budget so the deeper FS5.5 package/trust/app/workspace release surface no longer fails with live-service `NoSpace`
-    - current local validation after the workspace-suite-release slice is green:
-      - `zig build test --summary all` -> `393/393` passed
+    - `src/baremetal/workspace_runtime.zig` now also persists workspace suite release-channel targets under `/runtime/workspace-suite-release-channels/<suite>/<channel>.txt`, with `suiteChannelListAlloc`, `suiteChannelInfoAlloc`, `setSuiteReleaseChannel`, and `activateSuiteReleaseChannel`
+    - `src/baremetal/tool_exec.zig` now also exposes `workspace-suite-release-channel-list`, `workspace-suite-release-channel-info`, `workspace-suite-release-channel-set`, and `workspace-suite-release-channel-activate`
+    - `src/baremetal/tool_service.zig` now also exposes `WORKSPACESUITECHANNELLIST`, `WORKSPACESUITECHANNELINFO`, `WORKSPACESUITECHANNELSET`, and `WORKSPACESUITECHANNELACTIVATE`
+    - host validation now also proves RAM-disk and ATA-backed workspace-suite-release-channel persistence plus restored suite readback through channel activation
+    - the broad live RTL8139 TCP proof now also covers workspace suite release-channel set -> persisted channel-target readback -> list -> info -> activate plus restored suite readback through the selected workspace-suite release channel
+    - `src/baremetal/filesystem.zig` now carries a `128`-entry filesystem budget so the deeper FS5.5 package/trust/app/workspace/workspace-suite release surface no longer fails with live-service `NoSpace`
+    - current local validation after the workspace-suite-release-channel slice is green:
+      - `zig build test --summary all` -> `396/396` passed
       - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1 -TimeoutSeconds 120` -> pass
       - parity gate -> pass (`union 141/141`, `events 19/19`)
       - docs status gate -> pass
-      - the real regressions fixed during the slice were missing `workspace_suite_release_*` opcode wiring in `src/baremetal/tool_service/codec.zig`, stale `2048` help/output caps that caused `StreamTooLong` command failures inside the broad probe, an undersized filesystem entry budget that surfaced as live `WORKSPACESUITERELEASESAVE: NoSpace`, and a shared dispatcher-runtime test leak in `gateway.dispatcher.test.dispatch file.write and file.read lifecycle updates status counters`; the runtime, CLI, typed service, dispatcher test isolation, and live proof now match the current workspace-suite-release contract
+      - the real regressions fixed during the slice were missing `workspace_suite_channel_*` opcode wiring in `src/baremetal/tool_service/codec.zig`, stale broad-proof expectations that still assumed the pre-channel `sidecar` workspace survived after activating the pruned `fallback` release, and delete cleanup gaps that would have left `/runtime/workspace-suite-release-channels/<suite>` behind after suite removal; the runtime, CLI, typed service, and live proof now match the current workspace-suite-release-channel contract
     - `build.zig` now runs the compiled native test executables directly on Windows, which avoids the current Zig master `--listen=-` test-runner hang while keeping the real hosted and baremetal-host test matrix intact
 
 

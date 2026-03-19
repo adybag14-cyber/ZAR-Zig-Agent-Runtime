@@ -85,6 +85,10 @@ pub const RequestOp = enum {
     workspace_suite_release_activate,
     workspace_suite_release_delete,
     workspace_suite_release_prune,
+    workspace_suite_channel_list,
+    workspace_suite_channel_info,
+    workspace_suite_channel_set,
+    workspace_suite_channel_activate,
     workspace_list,
     workspace_info,
     workspace_save,
@@ -255,6 +259,17 @@ pub const WorkspaceSuiteReleasePruneRequest = struct {
     keep: u32,
 };
 
+pub const WorkspaceSuiteChannelRequest = struct {
+    suite_name: []const u8,
+    value: []const u8,
+};
+
+pub const WorkspaceSuiteChannelSetRequest = struct {
+    suite_name: []const u8,
+    channel: []const u8,
+    release: []const u8,
+};
+
 pub const FramedRequest = struct {
     request_id: u32,
     operation: union(RequestOp) {
@@ -329,6 +344,10 @@ pub const FramedRequest = struct {
         workspace_suite_release_activate: WorkspaceSuiteReleaseRequest,
         workspace_suite_release_delete: WorkspaceSuiteReleaseRequest,
         workspace_suite_release_prune: WorkspaceSuiteReleasePruneRequest,
+        workspace_suite_channel_list: []const u8,
+        workspace_suite_channel_info: WorkspaceSuiteChannelRequest,
+        workspace_suite_channel_set: WorkspaceSuiteChannelSetRequest,
+        workspace_suite_channel_activate: WorkspaceSuiteChannelRequest,
         workspace_list: void,
         workspace_info: []const u8,
         workspace_save: WorkspaceSaveRequest,
@@ -1667,6 +1686,95 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
             .operation = .{ .workspace_suite_release_prune = .{
                 .suite_name = suite_name.token,
                 .keep = keep,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACESUITECHANNELLIST")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .workspace_suite_channel_list = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .workspace_suite_channel_list = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACESUITECHANNELINFO")) {
+        const suite_name = try splitFirstToken(op_part.rest);
+        if (suite_name.rest.len == 0) return error.InvalidFrame;
+        const channel_name = try splitFirstToken(suite_name.rest);
+        if (channel_name.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .workspace_suite_channel_info = .{
+                .suite_name = suite_name.token,
+                .value = channel_name.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACESUITECHANNELSET")) {
+        const suite_name = try splitFirstToken(op_part.rest);
+        if (suite_name.rest.len == 0) return error.InvalidFrame;
+        const channel_name = try splitFirstToken(suite_name.rest);
+        if (channel_name.rest.len == 0) return error.InvalidFrame;
+        const release_name = try splitFirstToken(channel_name.rest);
+        if (release_name.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .workspace_suite_channel_set = .{
+                .suite_name = suite_name.token,
+                .channel = channel_name.token,
+                .release = release_name.token,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACESUITECHANNELACTIVATE")) {
+        const suite_name = try splitFirstToken(op_part.rest);
+        if (suite_name.rest.len == 0) return error.InvalidFrame;
+        const channel_name = try splitFirstToken(suite_name.rest);
+        if (channel_name.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .workspace_suite_channel_activate = .{
+                .suite_name = suite_name.token,
+                .value = channel_name.token,
             } },
         };
         if (newline_index != null) {
