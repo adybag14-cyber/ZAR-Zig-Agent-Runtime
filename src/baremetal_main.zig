@@ -640,6 +640,8 @@ const VirtioGpuDisplayProbeError = error{
     BackendMismatch,
     ControllerMismatch,
     ConnectorMismatch,
+    ExplicitConnectorActivateMismatch,
+    MissingConnectorMismatchFailure,
     HardwareBackedMismatch,
     ConnectedMismatch,
     EdidPresenceMismatch,
@@ -10398,25 +10400,27 @@ fn virtioGpuDisplayProbeFailureCode(err: VirtioGpuDisplayProbeError) u8 {
         error.BackendMismatch => 0x52,
         error.ControllerMismatch => 0x53,
         error.ConnectorMismatch => 0x54,
-        error.HardwareBackedMismatch => 0x55,
-        error.ConnectedMismatch => 0x56,
-        error.EdidPresenceMismatch => 0x57,
-        error.VendorMismatch => 0x58,
-        error.DeviceMismatch => 0x59,
-        error.ActiveScanoutMismatch => 0x5A,
-        error.CurrentModeMismatch => 0x5B,
-        error.PreferredModeMismatch => 0x5C,
-        error.PhysicalSizeMismatch => 0x5D,
-        error.ManufacturerMismatch => 0x5E,
-        error.ProductMismatch => 0x5F,
-        error.SerialMismatch => 0x60,
-        error.EdidLengthMismatch => 0x61,
-        error.EdidHeaderMismatch => 0x62,
-        error.CapabilityFlagsMismatch => 0x63,
-        error.OutputEntryCountMismatch => 0x64,
-        error.OutputEntryMismatch => 0x65,
-        error.PresentStatsMismatch => 0x66,
-        error.RenderedPixelMismatch => 0x67,
+        error.ExplicitConnectorActivateMismatch => 0x55,
+        error.MissingConnectorMismatchFailure => 0x56,
+        error.HardwareBackedMismatch => 0x57,
+        error.ConnectedMismatch => 0x58,
+        error.EdidPresenceMismatch => 0x59,
+        error.VendorMismatch => 0x5A,
+        error.DeviceMismatch => 0x5B,
+        error.ActiveScanoutMismatch => 0x5C,
+        error.CurrentModeMismatch => 0x5D,
+        error.PreferredModeMismatch => 0x5E,
+        error.PhysicalSizeMismatch => 0x5F,
+        error.ManufacturerMismatch => 0x60,
+        error.ProductMismatch => 0x61,
+        error.SerialMismatch => 0x62,
+        error.EdidLengthMismatch => 0x63,
+        error.EdidHeaderMismatch => 0x64,
+        error.CapabilityFlagsMismatch => 0x65,
+        error.OutputEntryCountMismatch => 0x66,
+        error.OutputEntryMismatch => 0x67,
+        error.PresentStatsMismatch => 0x68,
+        error.RenderedPixelMismatch => 0x69,
     };
 }
 
@@ -10687,6 +10691,51 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
     for (edid_header, 0..) |expected, index| {
         if (oc_display_output_edid_byte(@intCast(index)) != expected) return error.EdidHeaderMismatch;
     }
+
+    const explicit = virtio_gpu.probeAndPresentPatternForConnector(expected_connector) catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.DeviceNotFound => return error.DeviceNotFound,
+        error.MissingCapabilities => return error.MissingCapabilities,
+        error.MissingVersion1 => return error.MissingVersion1,
+        error.MissingEdidFeature => return error.MissingEdidFeature,
+        error.FeaturesRejected => return error.FeaturesRejected,
+        error.QueueUnavailable => return error.QueueUnavailable,
+        error.QueueTooSmall => return error.QueueTooSmall,
+        error.RequestTimedOut => return error.RequestTimedOut,
+        error.InvalidDisplayInfoResponse => return error.InvalidDisplayInfoResponse,
+        error.InvalidEdidResponse => return error.InvalidEdidResponse,
+        error.NoConnectedScanout => return error.ExplicitConnectorActivateMismatch,
+        error.InvalidEdid => return error.InvalidEdid,
+        error.InvalidControlResponse => return error.InvalidControlResponse,
+        error.FramebufferTooLarge => return error.FramebufferTooLarge,
+    };
+    if (explicit.active_scanout != result.active_scanout or explicit.capability_flags != result.capability_flags) {
+        return error.ExplicitConnectorActivateMismatch;
+    }
+
+    const wrong_connector: u8 = switch (expected_connector) {
+        abi.display_connector_hdmi => abi.display_connector_displayport,
+        abi.display_connector_displayport, abi.display_connector_embedded_displayport => abi.display_connector_hdmi,
+        else => abi.display_connector_hdmi,
+    };
+    _ = virtio_gpu.probeAndPresentPatternForConnector(wrong_connector) catch |err| switch (err) {
+        error.NoConnectedScanout => return,
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.DeviceNotFound => return error.DeviceNotFound,
+        error.MissingCapabilities => return error.MissingCapabilities,
+        error.MissingVersion1 => return error.MissingVersion1,
+        error.MissingEdidFeature => return error.MissingEdidFeature,
+        error.FeaturesRejected => return error.FeaturesRejected,
+        error.QueueUnavailable => return error.QueueUnavailable,
+        error.QueueTooSmall => return error.QueueTooSmall,
+        error.RequestTimedOut => return error.RequestTimedOut,
+        error.InvalidDisplayInfoResponse => return error.InvalidDisplayInfoResponse,
+        error.InvalidEdidResponse => return error.InvalidEdidResponse,
+        error.InvalidEdid => return error.InvalidEdid,
+        error.InvalidControlResponse => return error.InvalidControlResponse,
+        error.FramebufferTooLarge => return error.FramebufferTooLarge,
+    };
+    return error.MissingConnectorMismatchFailure;
 }
 
 fn ataStorageProbeFailureCode(err: AtaStorageProbeError) u8 {

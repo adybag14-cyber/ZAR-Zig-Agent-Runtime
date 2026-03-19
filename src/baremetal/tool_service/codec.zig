@@ -136,6 +136,7 @@ pub const RequestOp = enum {
     display_output,
     display_modes,
     display_set,
+    display_activate,
     trust_install,
     trust_list,
     trust_info,
@@ -436,6 +437,7 @@ pub const FramedRequest = struct {
         display_output: []const u8,
         display_modes: void,
         display_set: DisplayModeRequest,
+        display_activate: []const u8,
         trust_install: PutRequest,
         trust_list: void,
         trust_info: []const u8,
@@ -2719,6 +2721,21 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         }
         return .{
             .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYACTIVATE")) {
+        const connector_part = try splitFirstToken(op_part.rest);
+        if (connector_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .display_activate = connector_part.token } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .display_activate = connector_part.token } },
             .consumed_len = request.len,
         };
     }
