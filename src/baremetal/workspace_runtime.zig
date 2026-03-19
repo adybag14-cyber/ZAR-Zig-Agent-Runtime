@@ -19,6 +19,7 @@ const suite_channel_root_dir = "/runtime/workspace-suite-release-channels";
 const runtime_root_dir = "/runtime/workspace-runs";
 const release_root_dir = "/runtime/workspace-releases";
 const channel_root_dir = "/runtime/workspace-release-channels";
+const plan_release_root_dir = "/runtime/workspace-plan-releases";
 const max_plan_bytes: usize = 1024;
 const max_workspace_bytes: usize = 1024;
 const max_workspace_suite_bytes: usize = 1024;
@@ -42,6 +43,8 @@ pub const Error = filesystem.Error || app_runtime.Error || package_store.Error |
     WorkspaceAutorunEntryNotFound,
     WorkspacePlanNotFound,
     WorkspaceActivePlanNotSet,
+    WorkspacePlanReleaseNotFound,
+    WorkspacePlanReleaseAlreadyExists,
     WorkspaceReleaseNotFound,
     WorkspaceReleaseAlreadyExists,
     WorkspaceReleaseChannelNotFound,
@@ -58,6 +61,14 @@ pub const Error = filesystem.Error || app_runtime.Error || package_store.Error |
 pub const ReleasePruneResult = struct {
     kept_count: u32,
     deleted_count: u32,
+};
+
+const PlanReleaseMetadata = struct {
+    workspace: []const u8 = "",
+    plan: []const u8 = "",
+    release: []const u8 = "",
+    saved_seq: u32 = 0,
+    saved_tick: u64 = 0,
 };
 
 const ReleaseMetadata = struct {
@@ -426,6 +437,93 @@ pub fn activePlanInfoAlloc(allocator: std.mem.Allocator, name: []const u8, max_b
     return renderWorkspacePlanAlloc(allocator, plan, path, active_plan_name, max_bytes);
 }
 
+pub fn planReleaseListAlloc(
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    plan_name: []const u8,
+    max_bytes: usize,
+) Error![]u8 {
+    try validateWorkspaceName(name);
+    try validatePlanName(plan_name);
+    if (!try workspaceExists(name)) return error.WorkspaceNotFound;
+    if (!try planExists(name, plan_name)) return error.WorkspacePlanNotFound;
+
+    var records: [filesystem.max_entries]ReleaseRecord = undefined;
+    const record_count = try collectPlanReleaseRecords(name, plan_name, &records);
+    sortReleaseRecordsOldestFirst(records[0..record_count]);
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    for (records[0..record_count]) |record| {
+        const release_name = record.name();
+        if (out.items.len + release_name.len + 1 > max_bytes) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, release_name);
+        try out.append(allocator, '\n');
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+pub fn planReleaseInfoAlloc(
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    plan_name: []const u8,
+    release: []const u8,
+    max_bytes: usize,
+) Error![]u8 {
+    try validateWorkspaceName(name);
+    try validatePlanName(plan_name);
+    try package_store.validateReleaseName(release);
+    if (!try planReleaseExists(name, plan_name, release)) return error.WorkspacePlanReleaseNotFound;
+
+    var metadata_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    var release_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    var release_root_buffer: [filesystem.max_path_len]u8 = undefined;
+    const metadata_path = try planReleaseMetadataPath(name, plan_name, release, &metadata_path_buffer);
+    const release_path = try planReleasePath(name, plan_name, release, &release_path_buffer);
+    const release_root = try planReleaseDirPath(name, plan_name, release, &release_root_buffer);
+
+    var metadata_scratch: [256]u8 = undefined;
+    var metadata_fba = std.heap.FixedBufferAllocator.init(&metadata_scratch);
+    const metadata_raw = filesystem.readFileAlloc(metadata_fba.allocator(), metadata_path, metadata_scratch.len) catch |err| switch (err) {
+        error.FileNotFound => return error.WorkspacePlanReleaseNotFound,
+        else => return err,
+    };
+    const metadata = try parsePlanReleaseMetadata(metadata_raw);
+
+    var payload_scratch: [max_plan_bytes]u8 = undefined;
+    var payload_fba = std.heap.FixedBufferAllocator.init(&payload_scratch);
+    const payload = filesystem.readFileAlloc(payload_fba.allocator(), release_path, payload_scratch.len) catch |err| switch (err) {
+        error.FileNotFound => return error.WorkspacePlanReleaseNotFound,
+        else => return err,
+    };
+    const plan = try parseWorkspacePlanPayload(name, plan_name, payload);
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "workspace={s}\n", .{name}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "plan={s}\n", .{if (metadata.plan.len == 0) plan_name else metadata.plan}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "release={s}\n", .{if (metadata.release.len == 0) release else metadata.release}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "saved_seq={d}\n", .{metadata.saved_seq}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "saved_tick={d}\n", .{metadata.saved_tick}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "root={s}\n", .{release_root}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "plan_path={s}\n", .{release_path}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "metadata_path={s}\n", .{metadata_path}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "suite={s}\n", .{if (plan.suiteName().len == 0) "none" else plan.suiteName()}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "trust_bundle={s}\n", .{if (plan.trustBundle().len == 0) "none" else plan.trustBundle()}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "display={d}x{d}\n", .{ plan.display_width, plan.display_height }));
+    for (plan.entries[0..plan.entry_count]) |entry| {
+        try appendLine(
+            &out,
+            allocator,
+            max_bytes,
+            try std.fmt.allocPrint(allocator, "channel={s}:{s}:{s}\n", .{ entry.packageName(), entry.channelName(), entry.releaseName() }),
+        );
+    }
+    return out.toOwnedSlice(allocator);
+}
+
 pub fn savePlan(
     name: []const u8,
     plan_name: []const u8,
@@ -502,6 +600,93 @@ pub fn deletePlan(name: []const u8, plan_name: []const u8, tick: u64) Error!void
             };
         }
     }
+
+    var release_root_buffer: [filesystem.max_path_len]u8 = undefined;
+    filesystem.deleteTree(try planReleasesRootPath(name, plan_name, &release_root_buffer), tick) catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    };
+}
+
+pub fn snapshotPlanRelease(name: []const u8, plan_name: []const u8, release: []const u8, tick: u64) Error!void {
+    try validateWorkspaceName(name);
+    try validatePlanName(plan_name);
+    try package_store.validateReleaseName(release);
+    if (!try workspaceExists(name)) return error.WorkspaceNotFound;
+    if (!try planExists(name, plan_name)) return error.WorkspacePlanNotFound;
+    if (try planReleaseExists(name, plan_name, release)) return error.WorkspacePlanReleaseAlreadyExists;
+
+    const saved_seq = try nextPlanReleaseSequence(name, plan_name);
+    try createPlanReleaseDirectories(name, plan_name, release);
+
+    var canonical_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    var canonical_scratch: [max_plan_bytes]u8 = undefined;
+    var canonical_fba = std.heap.FixedBufferAllocator.init(&canonical_scratch);
+    const canonical_payload = filesystem.readFileAlloc(canonical_fba.allocator(), try planPath(name, plan_name, &canonical_path_buffer), canonical_scratch.len) catch |err| switch (err) {
+        error.FileNotFound => return error.WorkspacePlanNotFound,
+        else => return err,
+    };
+
+    var release_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    try filesystem.writeFile(try planReleasePath(name, plan_name, release, &release_path_buffer), canonical_payload, tick);
+    try writePlanReleaseMetadata(name, plan_name, release, saved_seq, tick);
+}
+
+pub fn activatePlanRelease(name: []const u8, plan_name: []const u8, release: []const u8, tick: u64) Error!void {
+    try validateWorkspaceName(name);
+    try validatePlanName(plan_name);
+    try package_store.validateReleaseName(release);
+    if (!try planReleaseExists(name, plan_name, release)) return error.WorkspacePlanReleaseNotFound;
+
+    var release_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    var release_scratch: [max_plan_bytes]u8 = undefined;
+    var release_fba = std.heap.FixedBufferAllocator.init(&release_scratch);
+    const release_payload = filesystem.readFileAlloc(release_fba.allocator(), try planReleasePath(name, plan_name, release, &release_path_buffer), release_scratch.len) catch |err| switch (err) {
+        error.FileNotFound => return error.WorkspacePlanReleaseNotFound,
+        else => return err,
+    };
+    _ = try parseWorkspacePlanPayload(name, plan_name, release_payload);
+
+    var workspace_dir_buffer: [filesystem.max_path_len]u8 = undefined;
+    var plans_dir_buffer: [filesystem.max_path_len]u8 = undefined;
+    var canonical_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    try filesystem.createDirPath(root_dir);
+    try filesystem.createDirPath(try workspaceDirPath(name, &workspace_dir_buffer));
+    try filesystem.createDirPath(try plansDirPath(name, &plans_dir_buffer));
+    try filesystem.writeFile(try planPath(name, plan_name, &canonical_path_buffer), release_payload, tick);
+}
+
+pub fn deletePlanRelease(name: []const u8, plan_name: []const u8, release: []const u8, tick: u64) Error!void {
+    try validateWorkspaceName(name);
+    try validatePlanName(plan_name);
+    try package_store.validateReleaseName(release);
+    if (!try planReleaseExists(name, plan_name, release)) return error.WorkspacePlanReleaseNotFound;
+
+    var release_dir_buffer: [filesystem.max_path_len]u8 = undefined;
+    try filesystem.deleteTree(try planReleaseDirPath(name, plan_name, release, &release_dir_buffer), tick);
+}
+
+pub fn prunePlanReleases(name: []const u8, plan_name: []const u8, keep: usize, tick: u64) Error!ReleasePruneResult {
+    try validateWorkspaceName(name);
+    try validatePlanName(plan_name);
+    if (!try workspaceExists(name)) return error.WorkspaceNotFound;
+    if (!try planExists(name, plan_name)) return error.WorkspacePlanNotFound;
+
+    var records: [filesystem.max_entries]ReleaseRecord = undefined;
+    const record_count = try collectPlanReleaseRecords(name, plan_name, &records);
+    sortReleaseRecordsNewestFirst(records[0..record_count]);
+
+    var deleted_count: u32 = 0;
+    var index = keep;
+    while (index < record_count) : (index += 1) {
+        try deletePlanRelease(name, plan_name, records[index].name(), tick);
+        deleted_count += 1;
+    }
+
+    return .{
+        .kept_count = @intCast(@min(keep, record_count)),
+        .deleted_count = deleted_count,
+    };
 }
 
 pub fn releaseListAlloc(allocator: std.mem.Allocator, name: []const u8, max_bytes: usize) Error![]u8 {
@@ -897,6 +1082,11 @@ pub fn deleteWorkspace(name: []const u8, tick: u64) Error!void {
         error.FileNotFound => {},
         else => return err,
     };
+    var plan_releases_buffer: [filesystem.max_path_len]u8 = undefined;
+    filesystem.deleteTree(workspacePlanReleasesRootPath(name, &plan_releases_buffer), tick) catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    };
     var channels_buffer: [filesystem.max_path_len]u8 = undefined;
     filesystem.deleteTree(channelsRootPath(name, &channels_buffer), tick) catch |err| switch (err) {
         error.FileNotFound => {},
@@ -1140,6 +1330,16 @@ fn releasesRootPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) []co
     return std.fmt.bufPrint(buffer, "{s}/{s}", .{ release_root_dir, name }) catch unreachable;
 }
 
+fn workspacePlanReleasesRootPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) []const u8 {
+    return std.fmt.bufPrint(buffer, "{s}/{s}", .{ plan_release_root_dir, name }) catch unreachable;
+}
+
+fn planReleasesRootPath(name: []const u8, plan_name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validateWorkspaceName(name);
+    try validatePlanName(plan_name);
+    return std.fmt.bufPrint(buffer, "{s}/{s}/{s}", .{ plan_release_root_dir, name, plan_name }) catch error.InvalidPath;
+}
+
 fn channelsRootPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) []const u8 {
     return std.fmt.bufPrint(buffer, "{s}/{s}", .{ channel_root_dir, name }) catch unreachable;
 }
@@ -1160,6 +1360,27 @@ fn releaseMetadataPath(name: []const u8, release: []const u8, buffer: *[filesyst
     try validateWorkspaceName(name);
     try package_store.validateReleaseName(release);
     return std.fmt.bufPrint(buffer, "{s}/{s}/{s}/release.txt", .{ release_root_dir, name, release }) catch error.InvalidPath;
+}
+
+fn planReleaseDirPath(name: []const u8, plan_name: []const u8, release: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validateWorkspaceName(name);
+    try validatePlanName(plan_name);
+    try package_store.validateReleaseName(release);
+    return std.fmt.bufPrint(buffer, "{s}/{s}/{s}/{s}", .{ plan_release_root_dir, name, plan_name, release }) catch error.InvalidPath;
+}
+
+fn planReleasePath(name: []const u8, plan_name: []const u8, release: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validateWorkspaceName(name);
+    try validatePlanName(plan_name);
+    try package_store.validateReleaseName(release);
+    return std.fmt.bufPrint(buffer, "{s}/{s}/{s}/{s}/plan.txt", .{ plan_release_root_dir, name, plan_name, release }) catch error.InvalidPath;
+}
+
+fn planReleaseMetadataPath(name: []const u8, plan_name: []const u8, release: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validateWorkspaceName(name);
+    try validatePlanName(plan_name);
+    try package_store.validateReleaseName(release);
+    return std.fmt.bufPrint(buffer, "{s}/{s}/{s}/{s}/release.txt", .{ plan_release_root_dir, name, plan_name, release }) catch error.InvalidPath;
 }
 
 fn suiteReleaseDirPath(suite_name: []const u8, release: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
@@ -1456,6 +1677,15 @@ fn workspaceSuiteExists(name: []const u8) Error!bool {
     return true;
 }
 
+fn planExists(name: []const u8, plan_name: []const u8) Error!bool {
+    var path_buffer: [filesystem.max_path_len]u8 = undefined;
+    _ = filesystem.statSummary(try planPath(name, plan_name, &path_buffer)) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => return err,
+    };
+    return true;
+}
+
 fn releaseExists(name: []const u8, release: []const u8) Error!bool {
     var path_buffer: [filesystem.max_path_len]u8 = undefined;
     _ = filesystem.statSummary(try releasePath(name, release, &path_buffer)) catch |err| switch (err) {
@@ -1468,6 +1698,15 @@ fn releaseExists(name: []const u8, release: []const u8) Error!bool {
 fn suiteReleaseExists(suite_name: []const u8, release: []const u8) Error!bool {
     var path_buffer: [filesystem.max_path_len]u8 = undefined;
     _ = filesystem.statSummary(try suiteReleasePath(suite_name, release, &path_buffer)) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => return err,
+    };
+    return true;
+}
+
+fn planReleaseExists(name: []const u8, plan_name: []const u8, release: []const u8) Error!bool {
+    var path_buffer: [filesystem.max_path_len]u8 = undefined;
+    _ = filesystem.statSummary(try planReleasePath(name, plan_name, release, &path_buffer)) catch |err| switch (err) {
         error.FileNotFound => return false,
         else => return err,
     };
@@ -1766,6 +2005,13 @@ fn createReleaseDirectories(name: []const u8, release: []const u8) Error!void {
     try filesystem.createDirPath(try releaseDirPath(name, release, &release_dir_buffer));
 }
 
+fn createPlanReleaseDirectories(name: []const u8, plan_name: []const u8, release: []const u8) Error!void {
+    var releases_root_buffer: [filesystem.max_path_len]u8 = undefined;
+    var release_dir_buffer: [filesystem.max_path_len]u8 = undefined;
+    try filesystem.createDirPath(try planReleasesRootPath(name, plan_name, &releases_root_buffer));
+    try filesystem.createDirPath(try planReleaseDirPath(name, plan_name, release, &release_dir_buffer));
+}
+
 fn createSuiteReleaseDirectories(suite_name: []const u8, release: []const u8) Error!void {
     var releases_root_buffer: [filesystem.max_path_len]u8 = undefined;
     var release_dir_buffer: [filesystem.max_path_len]u8 = undefined;
@@ -1784,6 +2030,17 @@ fn writeReleaseMetadata(name: []const u8, release: []const u8, saved_seq: u32, s
     try filesystem.writeFile(try releaseMetadataPath(name, release, &metadata_path_buffer), body, saved_tick);
 }
 
+fn writePlanReleaseMetadata(name: []const u8, plan_name: []const u8, release: []const u8, saved_seq: u32, saved_tick: u64) Error!void {
+    var metadata_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    var body_buffer: [224]u8 = undefined;
+    const body = std.fmt.bufPrint(
+        &body_buffer,
+        "workspace={s}\nplan={s}\nrelease={s}\nsaved_seq={d}\nsaved_tick={d}\n",
+        .{ name, plan_name, release, saved_seq, saved_tick },
+    ) catch return error.ResponseTooLarge;
+    try filesystem.writeFile(try planReleaseMetadataPath(name, plan_name, release, &metadata_path_buffer), body, saved_tick);
+}
+
 fn writeSuiteReleaseMetadata(suite_name: []const u8, release: []const u8, saved_seq: u32, saved_tick: u64) Error!void {
     var metadata_path_buffer: [filesystem.max_path_len]u8 = undefined;
     var body_buffer: [192]u8 = undefined;
@@ -1793,6 +2050,37 @@ fn writeSuiteReleaseMetadata(suite_name: []const u8, release: []const u8, saved_
         .{ suite_name, release, saved_seq, saved_tick },
     ) catch return error.ResponseTooLarge;
     try filesystem.writeFile(try suiteReleaseMetadataPath(suite_name, release, &metadata_path_buffer), body, saved_tick);
+}
+
+fn parsePlanReleaseMetadata(payload: []const u8) Error!PlanReleaseMetadata {
+    var metadata = PlanReleaseMetadata{};
+    var lines = std.mem.splitScalar(u8, payload, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, "\r");
+        if (line.len == 0) continue;
+        if (std.mem.startsWith(u8, line, "workspace=")) {
+            metadata.workspace = line["workspace=".len..];
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "plan=")) {
+            metadata.plan = line["plan=".len..];
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "release=")) {
+            metadata.release = line["release=".len..];
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "saved_seq=")) {
+            metadata.saved_seq = std.fmt.parseInt(u32, line["saved_seq=".len..], 10) catch return error.InvalidWorkspace;
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "saved_tick=")) {
+            metadata.saved_tick = std.fmt.parseInt(u64, line["saved_tick=".len..], 10) catch return error.InvalidWorkspace;
+            continue;
+        }
+        return error.InvalidWorkspace;
+    }
+    return metadata;
 }
 
 fn parseReleaseMetadata(payload: []const u8) Error!ReleaseMetadata {
@@ -1859,6 +2147,16 @@ fn nextReleaseSequence(name: []const u8) Error!u32 {
     return max_seq + 1;
 }
 
+fn nextPlanReleaseSequence(name: []const u8, plan_name: []const u8) Error!u32 {
+    var records: [filesystem.max_entries]ReleaseRecord = undefined;
+    const record_count = try collectPlanReleaseRecords(name, plan_name, &records);
+    var max_seq: u32 = 0;
+    for (records[0..record_count]) |record| {
+        max_seq = @max(max_seq, record.saved_seq);
+    }
+    return max_seq + 1;
+}
+
 fn nextSuiteReleaseSequence(suite_name: []const u8) Error!u32 {
     var records: [filesystem.max_entries]ReleaseRecord = undefined;
     const record_count = try collectSuiteReleaseRecords(suite_name, &records);
@@ -1894,6 +2192,44 @@ fn collectReleaseRecords(name: []const u8, records: *[filesystem.max_entries]Rel
         };
         if (metadata_raw) |raw| {
             const metadata = try parseReleaseMetadata(raw);
+            saved_seq = metadata.saved_seq;
+        }
+
+        records[count] = .{
+            .name_len = @intCast(release_name.len),
+            .saved_seq = saved_seq,
+        };
+        @memcpy(records[count].name_storage[0..release_name.len], release_name);
+        count += 1;
+    }
+    return count;
+}
+
+fn collectPlanReleaseRecords(name: []const u8, plan_name: []const u8, records: *[filesystem.max_entries]ReleaseRecord) Error!usize {
+    var releases_buffer: [filesystem.max_path_len]u8 = undefined;
+    const releases_root = try planReleasesRootPath(name, plan_name, &releases_buffer);
+
+    var count: usize = 0;
+    var idx: u32 = 0;
+    while (idx < filesystem.max_entries) : (idx += 1) {
+        const record = filesystem.entry(idx);
+        if (record.kind != abi.filesystem_kind_directory) continue;
+        const path = record.path[0..record.path_len];
+        const release_name = directChildName(releases_root, path) orelse continue;
+        if (release_name.len == 0) continue;
+        if (findReleaseRecord(records[0..count], release_name) != null) continue;
+
+        var saved_seq: u32 = 0;
+        var metadata_path_buffer: [filesystem.max_path_len]u8 = undefined;
+        const metadata_path = try planReleaseMetadataPath(name, plan_name, release_name, &metadata_path_buffer);
+        var metadata_scratch: [release_list_scan_max_bytes]u8 = undefined;
+        var metadata_fba = std.heap.FixedBufferAllocator.init(&metadata_scratch);
+        const metadata_raw = filesystem.readFileAlloc(metadata_fba.allocator(), metadata_path, metadata_scratch.len) catch |err| switch (err) {
+            error.FileNotFound => null,
+            else => return err,
+        };
+        if (metadata_raw) |raw| {
+            const metadata = try parsePlanReleaseMetadata(raw);
             saved_seq = metadata.saved_seq;
         }
 

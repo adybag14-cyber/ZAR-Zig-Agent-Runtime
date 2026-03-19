@@ -3523,6 +3523,17 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const workspace_plan_restored_info_request_id: u32 = 233;
     const workspace_plan_delete_staging_request_id: u32 = 234;
     const workspace_plan_list_final_request_id: u32 = 235;
+    const workspace_plan_release_save_v1_request_id: u32 = 236;
+    const workspace_plan_release_mutate_request_id: u32 = 237;
+    const workspace_plan_release_save_v2_request_id: u32 = 238;
+    const workspace_plan_release_list_request_id: u32 = 239;
+    const workspace_plan_release_info_request_id: u32 = 240;
+    const workspace_plan_release_activate_request_id: u32 = 241;
+    const workspace_plan_release_restored_info_request_id: u32 = 242;
+    const workspace_plan_release_delete_request_id: u32 = 243;
+    const workspace_plan_release_save_fallback_request_id: u32 = 244;
+    const workspace_plan_release_prune_request_id: u32 = 245;
+    const workspace_plan_release_list_final_request_id: u32 = 246;
     const app_suite_release_save_golden_request_id: u32 = 155;
     const app_suite_mutate_staging_request_id: u32 = 156;
     const app_suite_release_save_staging_request_id: u32 = 157;
@@ -7352,6 +7363,309 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         512,
     );
     if (!std.mem.eql(u8, workspace_plan_list_final_response, "RESP 235 7\ngolden\n")) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_release_save_v1_request_buffer: [128]u8 = undefined;
+    const workspace_plan_release_save_v1_request = std.fmt.bufPrint(
+        &workspace_plan_release_save_v1_request_buffer,
+        "REQ {d} WORKSPACEPLANRELEASESAVE {s} golden v1",
+        .{ workspace_plan_release_save_v1_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_release_save_v1_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_release_save_v1_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_plan_release_save_v1_response, "RESP 236 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_save_v1_response, "WORKSPACEPLANRELEASESAVE ops golden v1\n") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_release_v1_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const workspace_plan_release_v1_path = std.fmt.bufPrint(
+        &workspace_plan_release_v1_path_buffer,
+        "/runtime/workspace-plan-releases/{s}/golden/v1/plan.txt",
+        .{workspace_name},
+    ) catch return error.ToolServiceFailed;
+    var workspace_plan_release_v1_metadata_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const workspace_plan_release_v1_metadata_path = std.fmt.bufPrint(
+        &workspace_plan_release_v1_metadata_path_buffer,
+        "/runtime/workspace-plan-releases/{s}/golden/v1/release.txt",
+        .{workspace_name},
+    ) catch return error.ToolServiceFailed;
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const workspace_plan_release_v1_readback = filesystem.readFileAlloc(service_fba.allocator(), workspace_plan_release_v1_path, 256) catch return error.ToolServiceFailed;
+    if (std.mem.indexOf(u8, workspace_plan_release_v1_readback, "suite=duo") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_v1_readback, "trust_bundle=fs55-backup") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_v1_readback, "display_width=1024") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_v1_readback, "display_height=768") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_v1_readback, "channel=demo:stable:r3") == null) return error.ToolServiceResponseMismatch;
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const workspace_plan_release_v1_metadata = filesystem.readFileAlloc(service_fba.allocator(), workspace_plan_release_v1_metadata_path, 128) catch return error.ToolServiceFailed;
+    if (std.mem.indexOf(u8, workspace_plan_release_v1_metadata, "release=v1") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_v1_metadata, "saved_seq=1") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_release_mutate_request_buffer: [160]u8 = undefined;
+    const workspace_plan_release_mutate_request = std.fmt.bufPrint(
+        &workspace_plan_release_mutate_request_buffer,
+        "REQ {d} WORKSPACEPLANSAVE {s} golden none none 800 600 {s}:{s}:{s}",
+        .{ workspace_plan_release_mutate_request_id, workspace_name, package_name, package_channel_name, package_release_three_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_release_mutate_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_release_mutate_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_plan_release_mutate_response, "RESP 237 29\nWORKSPACEPLANSAVE ops golden\n")) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_release_save_v2_request_buffer: [128]u8 = undefined;
+    const workspace_plan_release_save_v2_request = std.fmt.bufPrint(
+        &workspace_plan_release_save_v2_request_buffer,
+        "REQ {d} WORKSPACEPLANRELEASESAVE {s} golden v2",
+        .{ workspace_plan_release_save_v2_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_release_save_v2_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_release_save_v2_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_plan_release_save_v2_response, "RESP 238 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_save_v2_response, "WORKSPACEPLANRELEASESAVE ops golden v2\n") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_release_v2_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const workspace_plan_release_v2_path = std.fmt.bufPrint(
+        &workspace_plan_release_v2_path_buffer,
+        "/runtime/workspace-plan-releases/{s}/golden/v2/plan.txt",
+        .{workspace_name},
+    ) catch return error.ToolServiceFailed;
+    var workspace_plan_release_v2_metadata_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const workspace_plan_release_v2_metadata_path = std.fmt.bufPrint(
+        &workspace_plan_release_v2_metadata_path_buffer,
+        "/runtime/workspace-plan-releases/{s}/golden/v2/release.txt",
+        .{workspace_name},
+    ) catch return error.ToolServiceFailed;
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const workspace_plan_release_v2_readback = filesystem.readFileAlloc(service_fba.allocator(), workspace_plan_release_v2_path, 256) catch return error.ToolServiceFailed;
+    if (std.mem.indexOf(u8, workspace_plan_release_v2_readback, "suite=none") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_v2_readback, "trust_bundle=none") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_v2_readback, "display_width=800") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_v2_readback, "display_height=600") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_v2_readback, "channel=demo:stable:r3") == null) return error.ToolServiceResponseMismatch;
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const workspace_plan_release_v2_metadata = filesystem.readFileAlloc(service_fba.allocator(), workspace_plan_release_v2_metadata_path, 128) catch return error.ToolServiceFailed;
+    if (std.mem.indexOf(u8, workspace_plan_release_v2_metadata, "release=v2") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_v2_metadata, "saved_seq=2") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_release_list_request_buffer: [112]u8 = undefined;
+    const workspace_plan_release_list_request = std.fmt.bufPrint(
+        &workspace_plan_release_list_request_buffer,
+        "REQ {d} WORKSPACEPLANRELEASELIST {s} golden",
+        .{ workspace_plan_release_list_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_release_list_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_release_list_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_plan_release_list_response, "RESP 239 6\nv1\nv2\n")) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_release_info_request_buffer: [128]u8 = undefined;
+    const workspace_plan_release_info_request = std.fmt.bufPrint(
+        &workspace_plan_release_info_request_buffer,
+        "REQ {d} WORKSPACEPLANRELEASEINFO {s} golden v2",
+        .{ workspace_plan_release_info_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_release_info_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_release_info_request,
+        512,
+        256,
+        768,
+    );
+    if (!std.mem.startsWith(u8, workspace_plan_release_info_response, "RESP 240 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_info_response, "workspace=ops") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_info_response, "plan=golden") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_info_response, "release=v2") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_info_response, "saved_seq=2") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_info_response, "trust_bundle=none") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_info_response, "display=800x600") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_info_response, "channel=demo:stable:r3") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_release_activate_request_buffer: [128]u8 = undefined;
+    const workspace_plan_release_activate_request = std.fmt.bufPrint(
+        &workspace_plan_release_activate_request_buffer,
+        "REQ {d} WORKSPACEPLANRELEASEACTIVATE {s} golden v1",
+        .{ workspace_plan_release_activate_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_release_activate_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_release_activate_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_plan_release_activate_response, "RESP 241 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_activate_response, "WORKSPACEPLANRELEASEACTIVATE ops golden v1\n") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_release_restored_info_request_buffer: [128]u8 = undefined;
+    const workspace_plan_release_restored_info_request = std.fmt.bufPrint(
+        &workspace_plan_release_restored_info_request_buffer,
+        "REQ {d} WORKSPACEPLANINFO {s} golden",
+        .{ workspace_plan_release_restored_info_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_release_restored_info_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_release_restored_info_request,
+        512,
+        256,
+        768,
+    );
+    if (!std.mem.startsWith(u8, workspace_plan_release_restored_info_response, "RESP 242 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_restored_info_response, "suite=duo") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_restored_info_response, "trust_bundle=fs55-backup") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_restored_info_response, "display=1024x768") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_restored_info_response, "channel=demo:stable:r3") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_release_delete_request_buffer: [128]u8 = undefined;
+    const workspace_plan_release_delete_request = std.fmt.bufPrint(
+        &workspace_plan_release_delete_request_buffer,
+        "REQ {d} WORKSPACEPLANRELEASEDELETE {s} golden v2",
+        .{ workspace_plan_release_delete_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_release_delete_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_release_delete_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_plan_release_delete_response, "RESP 243 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_delete_response, "WORKSPACEPLANRELEASEDELETE ops golden v2\n") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_release_save_fallback_request_buffer: [128]u8 = undefined;
+    const workspace_plan_release_save_fallback_mutate_request = std.fmt.bufPrint(
+        &workspace_plan_release_mutate_request_buffer,
+        "REQ {d} WORKSPACEPLANSAVE {s} golden none none 1280 720 {s}:{s}:{s}",
+        .{ workspace_plan_release_mutate_request_id, workspace_name, package_name, package_channel_name, package_release_three_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_release_save_fallback_mutate_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_release_save_fallback_mutate_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_plan_release_save_fallback_mutate_response, "RESP 237 29\nWORKSPACEPLANSAVE ops golden\n")) return error.ToolServiceResponseMismatch;
+    const workspace_plan_release_save_fallback_request = std.fmt.bufPrint(
+        &workspace_plan_release_save_fallback_request_buffer,
+        "REQ {d} WORKSPACEPLANRELEASESAVE {s} golden fallback",
+        .{ workspace_plan_release_save_fallback_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_release_save_fallback_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_release_save_fallback_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_plan_release_save_fallback_response, "RESP 244 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_save_fallback_response, "WORKSPACEPLANRELEASESAVE ops golden fallback\n") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_release_prune_request_buffer: [128]u8 = undefined;
+    const workspace_plan_release_prune_request = std.fmt.bufPrint(
+        &workspace_plan_release_prune_request_buffer,
+        "REQ {d} WORKSPACEPLANRELEASEPRUNE {s} golden 1",
+        .{ workspace_plan_release_prune_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_release_prune_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_release_prune_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_plan_release_prune_response, "RESP 245 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_plan_release_prune_response, "WORKSPACEPLANRELEASEPRUNE ops golden keep=1 deleted=1 kept=1\n") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_plan_release_list_final_request_buffer: [128]u8 = undefined;
+    const workspace_plan_release_list_final_request = std.fmt.bufPrint(
+        &workspace_plan_release_list_final_request_buffer,
+        "REQ {d} WORKSPACEPLANRELEASELIST {s} golden",
+        .{ workspace_plan_release_list_final_request_id, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_plan_release_list_final_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_plan_release_list_final_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_plan_release_list_final_response, "RESP 246 9\nfallback\n")) return error.ToolServiceResponseMismatch;
 
     var workspace_release_golden_save_request_buffer: [96]u8 = undefined;
     const workspace_release_golden_save_request = std.fmt.bufPrint(

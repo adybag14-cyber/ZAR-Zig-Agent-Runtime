@@ -2024,6 +2024,11 @@ Full-stack replacement execution reference:
     - `src/baremetal/tool_service.zig` now also exposes `WORKSPACEPLANLIST`, `WORKSPACEPLANINFO`, `WORKSPACEPLANACTIVE`, `WORKSPACEPLANSAVE`, `WORKSPACEPLANAPPLY`, and `WORKSPACEPLANDELETE`
     - host validation now also proves RAM-disk and ATA-backed workspace-plan persistence plus restored suite/trust/display/channel state after plan apply
     - the broad live RTL8139 TCP proof now also covers workspace plan save -> list -> info -> apply -> active -> restore -> delete with restored suite/trust/display/channel readback on the persisted workspace surface
+    - `src/baremetal/workspace_runtime.zig` now also persists workspace plan releases under `/runtime/workspace-plan-releases/<name>/<plan>/<release>/plan.txt` plus `release.txt`, with `planReleaseListAlloc`, `planReleaseInfoAlloc`, `snapshotPlanRelease`, `activatePlanRelease`, `deletePlanRelease`, and `prunePlanReleases`
+    - `src/baremetal/tool_exec.zig` now also exposes `workspace-plan-release-list`, `workspace-plan-release-info`, `workspace-plan-release-save`, `workspace-plan-release-activate`, `workspace-plan-release-delete`, and `workspace-plan-release-prune`
+    - `src/baremetal/tool_service.zig` now also exposes `WORKSPACEPLANRELEASELIST`, `WORKSPACEPLANRELEASEINFO`, `WORKSPACEPLANRELEASESAVE`, `WORKSPACEPLANRELEASEACTIVATE`, `WORKSPACEPLANRELEASEDELETE`, and `WORKSPACEPLANRELEASEPRUNE`
+    - host validation now also proves RAM-disk and ATA-backed workspace-plan-release persistence with deterministic `saved_seq` / `saved_tick` metadata plus restored workspace-plan info through release activation
+    - the broad live RTL8139 TCP proof now also covers workspace plan release save -> mutate -> list -> info -> activate -> delete -> prune plus persisted plan/metadata readback and restored workspace-plan info
     - `src/baremetal/workspace_runtime.zig` now also persists workspace release-channel targets under `/runtime/workspace-release-channels/<name>/<channel>.txt`, with `channelListAlloc`, `channelInfoAlloc`, `setWorkspaceReleaseChannel`, and `activateWorkspaceReleaseChannel`
     - `src/baremetal/tool_exec.zig` now also exposes `workspace-release-channel-list`, `workspace-release-channel-info`, `workspace-release-channel-set`, and `workspace-release-channel-activate`
     - `src/baremetal/tool_service.zig` now also exposes `WORKSPACECHANNELLIST`, `WORKSPACECHANNELINFO`, `WORKSPACECHANNELSET`, and `WORKSPACECHANNELACTIVATE`
@@ -2050,7 +2055,7 @@ Full-stack replacement execution reference:
       - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1 -TimeoutSeconds 120` -> pass
       - parity gate -> pass (`union 141/141`, `events 19/19`)
       - docs status gate -> pass
-      - the real regressions fixed during the slice were proof-order drift that referenced pruned package release `r2` after the earlier release lifecycle moved on to `r3`, a wrong staged delete payload length constant for `WORKSPACEPLANDELETE`, and the new plan surface itself (`WORKSPACEPLAN*` parsing, handlers, runtime persistence, and live proof expectations); the runtime, CLI, typed service, and live proof now match the current workspace-plan contract
+      - the real regressions fixed during the slice were proof-order drift that referenced pruned package release `r2` after the earlier release lifecycle moved on to `r3`, a wrong staged delete payload length constant for `WORKSPACEPLANDELETE`, brittle exact-length assertions on the new `WORKSPACEPLANRELEASE*` service responses, and the new plan-release surface itself (`WORKSPACEPLANRELEASE*` parsing, handlers, runtime persistence, and live proof expectations); the runtime, CLI, typed service, and live proof now match the current workspace-plan-release contract
     - `build.zig` now runs the compiled native test executables directly on Windows, which avoids the current Zig master `--listen=-` test-runner hang while keeping the real hosted and baremetal-host test matrix intact
 
 
