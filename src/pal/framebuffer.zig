@@ -5,6 +5,7 @@ const framebuffer_console = @import("../baremetal/framebuffer_console.zig");
 
 pub const State = abi.BaremetalFramebufferState;
 pub const DisplayOutputState = abi.BaremetalDisplayOutputState;
+pub const DisplayOutputEntry = abi.BaremetalDisplayOutputEntry;
 
 pub fn init() bool {
     return framebuffer_console.init();
@@ -32,6 +33,14 @@ pub fn statePtr() *const State {
 
 pub fn displayOutputStatePtr() *const DisplayOutputState {
     return display_output.statePtr();
+}
+
+pub fn displayOutputCount() u16 {
+    return display_output.outputCount();
+}
+
+pub fn displayOutputEntry(index: u16) DisplayOutputEntry {
+    return display_output.outputEntry(index);
 }
 
 pub fn displayOutputEdidByte(index: u16) u8 {

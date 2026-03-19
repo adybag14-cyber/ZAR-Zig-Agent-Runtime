@@ -154,7 +154,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-plan-list, workspace-plan-info, workspace-plan-active, workspace-plan-save, workspace-plan-apply, workspace-plan-delete, workspace-plan-release-list, workspace-plan-release-info, workspace-plan-release-save, workspace-plan-release-activate, workspace-plan-release-delete, workspace-plan-release-prune, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-suite-release-channel-list, workspace-suite-release-channel-info, workspace-suite-release-channel-set, workspace-suite-release-channel-activate, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-modes, display-set, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-plan-list, workspace-plan-info, workspace-plan-active, workspace-plan-save, workspace-plan-apply, workspace-plan-delete, workspace-plan-release-list, workspace-plan-release-info, workspace-plan-release-save, workspace-plan-release-activate, workspace-plan-release-delete, workspace-plan-release-prune, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-suite-release-channel-list, workspace-suite-release-channel-info, workspace-suite-release-channel-set, workspace-suite-release-channel-activate, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-outputs, display-output, display-modes, display-set, run-script, run-package, app-run");
         return;
     }
 
@@ -2965,6 +2965,75 @@ fn execute(
         return;
     }
 
+    if (std.ascii.eqlIgnoreCase(parsed.name, "display-outputs")) {
+        if (parsed.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-outputs");
+            return;
+        }
+        ensureDisplayReady();
+        var index: u16 = 0;
+        while (index < display_output.outputCount()) : (index += 1) {
+            const entry = display_output.outputEntry(index);
+            try stdout_buffer.appendFmt(
+                "output {d} scanout={d} connector={s} connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x}\n",
+                .{
+                    index,
+                    entry.scanout_index,
+                    displayConnectorName(entry.connector_type),
+                    entry.connected,
+                    entry.current_width,
+                    entry.current_height,
+                    entry.preferred_width,
+                    entry.preferred_height,
+                    entry.capability_flags,
+                },
+            );
+        }
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "display-output")) {
+        const index_arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "display-output <index>");
+            return;
+        };
+        if (index_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-output <index>");
+            return;
+        }
+        const index = std.fmt.parseInt(u16, index_arg.arg, 10) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-output <index>");
+            return;
+        };
+        ensureDisplayReady();
+        if (index >= display_output.outputCount()) {
+            exit_code.* = 1;
+            try stderr_buffer.appendLine("display-output failed: NotFound");
+            return;
+        }
+        const entry = display_output.outputEntry(index);
+        try stdout_buffer.appendFmt(
+            "index={d} scanout={d} connector={s} connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x} edid_present={d}\n",
+            .{
+                index,
+                entry.scanout_index,
+                displayConnectorName(entry.connector_type),
+                entry.connected,
+                entry.current_width,
+                entry.current_height,
+                entry.preferred_width,
+                entry.preferred_height,
+                entry.capability_flags,
+                entry.edid_present,
+            },
+        );
+        return;
+    }
+
     if (std.ascii.eqlIgnoreCase(parsed.name, "display-modes")) {
         if (parsed.rest.len != 0) {
             exit_code.* = 2;
@@ -3709,6 +3778,16 @@ test "baremetal tool exec reports current display info and supported modes" {
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "backend=bga") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "controller=bochs-bga") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "current=640x400") != null);
+
+    var outputs_result = try runCapture(std.testing.allocator, "display-outputs", 256, 256);
+    defer outputs_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), outputs_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, outputs_result.stdout, "output 0 scanout=0 connector=virtual connected=0 current=640x400 preferred=640x400") != null);
+
+    var output_result = try runCapture(std.testing.allocator, "display-output 0", 256, 256);
+    defer output_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), output_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, output_result.stdout, "index=0 scanout=0 connector=virtual connected=0 current=640x400 preferred=640x400") != null);
 
     var modes_result = try runCapture(std.testing.allocator, "display-modes", 256, 256);
     defer modes_result.deinit(std.testing.allocator);

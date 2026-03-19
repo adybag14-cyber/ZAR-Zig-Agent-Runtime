@@ -132,6 +132,8 @@ pub const RequestOp = enum {
     app_autorun_remove,
     app_autorun_run,
     display_info,
+    display_outputs,
+    display_output,
     display_modes,
     display_set,
     trust_install,
@@ -430,6 +432,8 @@ pub const FramedRequest = struct {
         app_autorun_remove: []const u8,
         app_autorun_run: void,
         display_info: void,
+        display_outputs: void,
+        display_output: []const u8,
         display_modes: void,
         display_set: DisplayModeRequest,
         trust_install: PutRequest,
@@ -2649,6 +2653,35 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         }
         return .{
             .framed = .{ .request_id = request_id, .operation = .{ .display_info = {} } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYOUTPUTS")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .display_outputs = {} } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .display_outputs = {} } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYOUTPUT")) {
+        const output_index_part = try splitFirstToken(op_part.rest);
+        if (output_index_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .display_output = output_index_part.token } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .display_output = output_index_part.token } },
             .consumed_len = request.len,
         };
     }

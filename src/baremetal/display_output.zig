@@ -3,6 +3,8 @@ const std = @import("std");
 const abi = @import("abi.zig");
 
 pub const max_edid_bytes: usize = 1024;
+pub const max_output_entries: usize = 16;
+pub const OutputEntry = abi.BaremetalDisplayOutputEntry;
 
 pub const BgaUpdate = struct {
     vendor_id: u16 = 0,
@@ -37,10 +39,56 @@ pub const VirtioGpuUpdate = struct {
     serial_number: u32,
     capability_flags: u16,
     edid: []const u8,
+    scanouts: []const VirtioGpuScanoutUpdate = &.{},
+};
+
+pub const VirtioGpuScanoutUpdate = struct {
+    connected: bool,
+    scanout_index: u8,
+    current_width: u16,
+    current_height: u16,
+    preferred_width: u16,
+    preferred_height: u16,
+    physical_width_mm: u16,
+    physical_height_mm: u16,
+    manufacturer_id: u16,
+    product_code: u16,
+    serial_number: u32,
+    capability_flags: u16,
+    edid_length: u16,
 };
 
 var state: abi.BaremetalDisplayOutputState = undefined;
 var edid_bytes: [max_edid_bytes]u8 = [_]u8{0} ** max_edid_bytes;
+pub export var oc_display_output_entry_count_data: u16 = 0;
+pub export var oc_display_output_entries_data: [max_output_entries]OutputEntry = [_]OutputEntry{zeroOutputEntry()} ** max_output_entries;
+
+fn zeroOutputEntry() OutputEntry {
+    return .{
+        .connected = 0,
+        .scanout_index = 0,
+        .connector_type = abi.display_connector_none,
+        .edid_present = 0,
+        .current_width = 0,
+        .current_height = 0,
+        .preferred_width = 0,
+        .preferred_height = 0,
+        .physical_width_mm = 0,
+        .physical_height_mm = 0,
+        .manufacturer_id = 0,
+        .product_code = 0,
+        .capability_flags = 0,
+        .edid_length = 0,
+        .serial_number = 0,
+    };
+}
+
+fn clearOutputEntries() void {
+    oc_display_output_entry_count_data = 0;
+    for (&oc_display_output_entries_data) |*entry| {
+        entry.* = zeroOutputEntry();
+    }
+}
 
 fn initState() void {
     state = .{
@@ -72,6 +120,7 @@ fn initState() void {
         .edid_length = 0,
         .capability_flags = 0,
     };
+    clearOutputEntries();
 }
 
 pub fn resetForTest() void {
@@ -81,6 +130,16 @@ pub fn resetForTest() void {
 
 pub fn statePtr() *const abi.BaremetalDisplayOutputState {
     return &state;
+}
+
+pub fn outputCount() u16 {
+    return oc_display_output_entry_count_data;
+}
+
+pub fn outputEntry(index: u16) OutputEntry {
+    const idx: usize = @intCast(index);
+    if (idx >= oc_display_output_entry_count_data or idx >= oc_display_output_entries_data.len) return zeroOutputEntry();
+    return oc_display_output_entries_data[idx];
 }
 
 pub fn edidByte(index: u16) u8 {
@@ -107,6 +166,24 @@ pub fn updateFromBga(update: BgaUpdate) void {
     state.current_height = update.height;
     state.preferred_width = update.width;
     state.preferred_height = update.height;
+    oc_display_output_entry_count_data = 1;
+    oc_display_output_entries_data[0] = .{
+        .connected = if (update.connected) 1 else 0,
+        .scanout_index = 0,
+        .connector_type = abi.display_connector_virtual,
+        .edid_present = 0,
+        .current_width = update.width,
+        .current_height = update.height,
+        .preferred_width = update.width,
+        .preferred_height = update.height,
+        .physical_width_mm = 0,
+        .physical_height_mm = 0,
+        .manufacturer_id = 0,
+        .product_code = 0,
+        .capability_flags = 0,
+        .edid_length = 0,
+        .serial_number = 0,
+    };
 }
 
 pub fn inferConnectorType(capability_flags: u16) u8 {
@@ -151,6 +228,50 @@ pub fn updateFromVirtioGpu(update: VirtioGpuUpdate) void {
         std.mem.copyForwards(u8, edid_bytes[0..edid_len], update.edid[0..edid_len]);
     }
     state.edid_length = @intCast(edid_len);
+
+    const scanout_len = @min(update.scanouts.len, oc_display_output_entries_data.len);
+    if (scanout_len == 0) {
+        oc_display_output_entry_count_data = 1;
+        oc_display_output_entries_data[0] = .{
+            .connected = if (update.connected) 1 else 0,
+            .scanout_index = update.active_scanout,
+            .connector_type = state.connector_type,
+            .edid_present = state.edid_present,
+            .current_width = update.current_width,
+            .current_height = update.current_height,
+            .preferred_width = update.preferred_width,
+            .preferred_height = update.preferred_height,
+            .physical_width_mm = update.physical_width_mm,
+            .physical_height_mm = update.physical_height_mm,
+            .manufacturer_id = update.manufacturer_id,
+            .product_code = update.product_code,
+            .capability_flags = update.capability_flags,
+            .edid_length = @intCast(edid_len),
+            .serial_number = update.serial_number,
+        };
+        return;
+    }
+
+    oc_display_output_entry_count_data = @intCast(scanout_len);
+    for (update.scanouts[0..scanout_len], 0..) |scanout, index| {
+        oc_display_output_entries_data[index] = .{
+            .connected = if (scanout.connected) 1 else 0,
+            .scanout_index = scanout.scanout_index,
+            .connector_type = if (scanout.connected) inferConnectorType(scanout.capability_flags) else abi.display_connector_none,
+            .edid_present = if (scanout.edid_length > 0) 1 else 0,
+            .current_width = scanout.current_width,
+            .current_height = scanout.current_height,
+            .preferred_width = scanout.preferred_width,
+            .preferred_height = scanout.preferred_height,
+            .physical_width_mm = scanout.physical_width_mm,
+            .physical_height_mm = scanout.physical_height_mm,
+            .manufacturer_id = scanout.manufacturer_id,
+            .product_code = scanout.product_code,
+            .capability_flags = scanout.capability_flags,
+            .edid_length = scanout.edid_length,
+            .serial_number = scanout.serial_number,
+        };
+    }
 }
 
 test "display output state updates from bga metadata" {
@@ -174,6 +295,11 @@ test "display output state updates from bga metadata" {
     try std.testing.expectEqual(@as(u8, 1), output.connected);
     try std.testing.expectEqual(@as(u16, 1280), output.current_width);
     try std.testing.expectEqual(@as(u16, 720), output.current_height);
+    try std.testing.expectEqual(@as(u16, 1), outputCount());
+    const entry = outputEntry(0);
+    try std.testing.expectEqual(@as(u8, 1), entry.connected);
+    try std.testing.expectEqual(@as(u8, abi.display_connector_virtual), entry.connector_type);
+    try std.testing.expectEqual(@as(u16, 1280), entry.current_width);
 }
 
 test "display output state copies virtio gpu edid payload" {
@@ -200,6 +326,23 @@ test "display output state copies virtio gpu edid payload" {
         .serial_number = 0xCAFEBABE,
         .capability_flags = abi.display_capability_digital_input | abi.display_capability_preferred_timing,
         .edid = &edid,
+        .scanouts = &.{
+            .{
+                .connected = true,
+                .scanout_index = 0,
+                .current_width = 1280,
+                .current_height = 800,
+                .preferred_width = 1280,
+                .preferred_height = 800,
+                .physical_width_mm = 300,
+                .physical_height_mm = 190,
+                .manufacturer_id = 0x1234,
+                .product_code = 0x5678,
+                .serial_number = 0xCAFEBABE,
+                .capability_flags = abi.display_capability_digital_input | abi.display_capability_preferred_timing,
+                .edid_length = edid.len,
+            },
+        },
     });
     const output = statePtr();
     try std.testing.expectEqual(@as(u8, abi.display_backend_virtio_gpu), output.backend);
@@ -208,10 +351,83 @@ test "display output state copies virtio gpu edid payload" {
     try std.testing.expectEqual(@as(u16, 4), output.edid_length);
     try std.testing.expectEqual(@as(u16, abi.display_capability_digital_input | abi.display_capability_preferred_timing), output.capability_flags);
     try std.testing.expectEqual(@as(u8, 0xFF), edidByte(1));
+    try std.testing.expectEqual(@as(u16, 1), outputCount());
+    const entry = outputEntry(0);
+    try std.testing.expectEqual(@as(u8, 0), entry.scanout_index);
+    try std.testing.expectEqual(@as(u8, abi.display_connector_virtual), entry.connector_type);
+    try std.testing.expectEqual(@as(u16, 1280), entry.current_width);
 }
 
 test "display output infers connector type from edid capability flags" {
     try std.testing.expectEqual(@as(u8, abi.display_connector_hdmi), inferConnectorType(abi.display_capability_hdmi_vendor_data));
     try std.testing.expectEqual(@as(u8, abi.display_connector_displayport), inferConnectorType(abi.display_capability_displayid_extension));
     try std.testing.expectEqual(@as(u8, abi.display_connector_virtual), inferConnectorType(abi.display_capability_digital_input));
+}
+
+test "display output state stores multiple virtio scanout entries" {
+    resetForTest();
+    updateFromVirtioGpu(.{
+        .vendor_id = 0x1AF4,
+        .device_id = 0x1050,
+        .pci_bus = 0,
+        .pci_device = 2,
+        .pci_function = 0,
+        .hardware_backed = true,
+        .connected = true,
+        .scanout_count = 2,
+        .active_scanout = 1,
+        .current_width = 1920,
+        .current_height = 1080,
+        .preferred_width = 1920,
+        .preferred_height = 1080,
+        .physical_width_mm = 520,
+        .physical_height_mm = 320,
+        .manufacturer_id = 0x1111,
+        .product_code = 0x2222,
+        .serial_number = 0x33334444,
+        .capability_flags = abi.display_capability_displayid_extension | abi.display_capability_preferred_timing,
+        .edid = &.{ 0x00, 0xFF, 0xFF, 0xFF },
+        .scanouts = &.{
+            .{
+                .connected = false,
+                .scanout_index = 0,
+                .current_width = 0,
+                .current_height = 0,
+                .preferred_width = 0,
+                .preferred_height = 0,
+                .physical_width_mm = 0,
+                .physical_height_mm = 0,
+                .manufacturer_id = 0,
+                .product_code = 0,
+                .serial_number = 0,
+                .capability_flags = 0,
+                .edid_length = 0,
+            },
+            .{
+                .connected = true,
+                .scanout_index = 1,
+                .current_width = 1920,
+                .current_height = 1080,
+                .preferred_width = 1920,
+                .preferred_height = 1080,
+                .physical_width_mm = 520,
+                .physical_height_mm = 320,
+                .manufacturer_id = 0x1111,
+                .product_code = 0x2222,
+                .serial_number = 0x33334444,
+                .capability_flags = abi.display_capability_displayid_extension | abi.display_capability_preferred_timing,
+                .edid_length = 256,
+            },
+        },
+    });
+
+    try std.testing.expectEqual(@as(u16, 2), outputCount());
+    const disconnected = outputEntry(0);
+    try std.testing.expectEqual(@as(u8, 0), disconnected.connected);
+    try std.testing.expectEqual(@as(u8, abi.display_connector_none), disconnected.connector_type);
+    const connected = outputEntry(1);
+    try std.testing.expectEqual(@as(u8, 1), connected.connected);
+    try std.testing.expectEqual(@as(u8, 1), connected.scanout_index);
+    try std.testing.expectEqual(@as(u8, abi.display_connector_displayport), connected.connector_type);
+    try std.testing.expectEqual(@as(u16, 1920), connected.current_width);
 }
