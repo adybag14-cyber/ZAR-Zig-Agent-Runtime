@@ -61,6 +61,46 @@ pub fn activateDisplayOutput(index: u16) error{NotFound}!void {
     if (!display_output.selectOutputIndex(index)) return error.NotFound;
 }
 
+pub fn activateDisplayConnectorPreferred(connector_type: u8) error{ NotFound, UnsupportedMode }!void {
+    const display_state = display_output.statePtr();
+    if (display_state.controller == abi.display_controller_virtio_gpu) {
+        if (display_state.hardware_backed != 0) {
+            _ = virtio_gpu.probeAndPresentPatternForConnectorPreferred(connector_type) catch |err| switch (err) {
+                error.NoConnectedScanout => return error.NotFound,
+                error.UnsupportedMode, error.FramebufferTooLarge => return error.UnsupportedMode,
+                else => return error.NotFound,
+            };
+            return;
+        }
+        if (!display_output.selectOutputConnector(connector_type)) return error.NotFound;
+        const active_index = display_output.statePtr().active_scanout;
+        if (!display_output.setOutputPreferredMode(@as(u16, active_index))) return error.UnsupportedMode;
+        return;
+    }
+    if (display_state.connector_type != connector_type) return error.NotFound;
+    const mode = display_output.preferredMode(@as(u16, display_state.active_scanout)) orelse return error.UnsupportedMode;
+    framebuffer_console.setMode(mode.width, mode.height) catch return error.UnsupportedMode;
+}
+
+pub fn activateDisplayOutputPreferred(index: u16) error{ NotFound, UnsupportedMode }!void {
+    const display_state = display_output.statePtr();
+    if (display_state.controller == abi.display_controller_virtio_gpu) {
+        if (display_state.hardware_backed != 0) {
+            _ = virtio_gpu.probeAndPresentPatternForOutputIndexPreferred(@intCast(index)) catch |err| switch (err) {
+                error.NoConnectedScanout => return error.NotFound,
+                error.UnsupportedMode, error.FramebufferTooLarge => return error.UnsupportedMode,
+                else => return error.NotFound,
+            };
+            return;
+        }
+        if (!display_output.setOutputPreferredMode(index)) return error.UnsupportedMode;
+        return;
+    }
+    if (index != 0) return error.NotFound;
+    const mode = display_output.preferredMode(index) orelse return error.UnsupportedMode;
+    framebuffer_console.setMode(mode.width, mode.height) catch return error.UnsupportedMode;
+}
+
 pub fn setDisplayOutputMode(index: u16, width: u16, height: u16) error{ NotFound, UnsupportedMode }!void {
     const display_state = display_output.statePtr();
     if (display_state.controller == abi.display_controller_virtio_gpu) {

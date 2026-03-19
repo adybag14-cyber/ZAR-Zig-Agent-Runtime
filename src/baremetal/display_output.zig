@@ -5,6 +5,10 @@ const abi = @import("abi.zig");
 pub const max_edid_bytes: usize = 1024;
 pub const max_output_entries: usize = 16;
 pub const OutputEntry = abi.BaremetalDisplayOutputEntry;
+pub const OutputMode = struct {
+    width: u16,
+    height: u16,
+};
 
 pub const BgaUpdate = struct {
     vendor_id: u16 = 0,
@@ -165,6 +169,14 @@ fn applyModeToEntry(entry: *OutputEntry, width: u16, height: u16) void {
     entry.current_height = height;
 }
 
+fn effectivePreferredMode(entry: OutputEntry) ?OutputMode {
+    if (entry.connected == 0) return null;
+    const width = if (entry.preferred_width != 0) entry.preferred_width else entry.current_width;
+    const height = if (entry.preferred_height != 0) entry.preferred_height else entry.current_height;
+    if (width == 0 or height == 0) return null;
+    return .{ .width = width, .height = height };
+}
+
 pub fn selectOutputConnector(connector_type: u8) bool {
     var index: usize = 0;
     while (index < oc_display_output_entry_count_data and index < oc_display_output_entries_data.len) : (index += 1) {
@@ -197,6 +209,17 @@ pub fn setOutputMode(index: u16, width: u16, height: u16) bool {
     applyModeToEntry(entry, width, height);
     applyEntryToState(entry.*);
     return true;
+}
+
+pub fn preferredMode(index: u16) ?OutputMode {
+    const idx: usize = @intCast(index);
+    if (idx >= oc_display_output_entry_count_data or idx >= oc_display_output_entries_data.len) return null;
+    return effectivePreferredMode(oc_display_output_entries_data[idx]);
+}
+
+pub fn setOutputPreferredMode(index: u16) bool {
+    const mode = preferredMode(index) orelse return false;
+    return setOutputMode(index, mode.width, mode.height);
 }
 
 pub fn edidByte(index: u16) u8 {
@@ -754,4 +777,56 @@ test "display output can restore a reduced mode up to preferred bounds" {
     try std.testing.expectEqual(@as(u16, 1024), outputEntry(1).current_width);
     try std.testing.expectEqual(@as(u16, 768), outputEntry(1).current_height);
     try std.testing.expect(!setOutputMode(1, 2560, 1440));
+}
+
+test "display output preferred mode restores full preferred resolution" {
+    resetForTest();
+    updateFromVirtioGpu(.{
+        .vendor_id = 0x1AF4,
+        .device_id = 0x1050,
+        .pci_bus = 0,
+        .pci_device = 2,
+        .pci_function = 0,
+        .hardware_backed = true,
+        .connected = true,
+        .scanout_count = 1,
+        .active_scanout = 0,
+        .current_width = 800,
+        .current_height = 600,
+        .preferred_width = 1280,
+        .preferred_height = 800,
+        .physical_width_mm = 300,
+        .physical_height_mm = 190,
+        .manufacturer_id = 0x1111,
+        .product_code = 0x2222,
+        .serial_number = 0x33334444,
+        .capability_flags = abi.display_capability_hdmi_vendor_data | abi.display_capability_preferred_timing,
+        .edid = &.{ 0x00, 0xFF, 0xFF, 0xFF },
+        .scanouts = &.{
+            .{
+                .connected = true,
+                .scanout_index = 0,
+                .current_width = 800,
+                .current_height = 600,
+                .preferred_width = 1280,
+                .preferred_height = 800,
+                .physical_width_mm = 300,
+                .physical_height_mm = 190,
+                .manufacturer_id = 0x1111,
+                .product_code = 0x2222,
+                .serial_number = 0x33334444,
+                .capability_flags = abi.display_capability_hdmi_vendor_data | abi.display_capability_preferred_timing,
+                .edid_length = 128,
+            },
+        },
+    });
+
+    const preferred = preferredMode(0) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u16, 1280), preferred.width);
+    try std.testing.expectEqual(@as(u16, 800), preferred.height);
+    try std.testing.expect(setOutputPreferredMode(0));
+    try std.testing.expectEqual(@as(u16, 1280), statePtr().current_width);
+    try std.testing.expectEqual(@as(u16, 800), statePtr().current_height);
+    try std.testing.expectEqual(@as(u16, 1280), outputEntry(0).current_width);
+    try std.testing.expectEqual(@as(u16, 800), outputEntry(0).current_height);
 }
