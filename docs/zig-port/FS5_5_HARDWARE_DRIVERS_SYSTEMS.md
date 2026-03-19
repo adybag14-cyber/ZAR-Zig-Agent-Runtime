@@ -145,10 +145,10 @@ Current local source-of-truth evidence:
 - a real EDID-backed display capability path now exists beyond the rendered BGA console:
   - `src/baremetal/edid.zig` provides bounded EDID header/checksum/timing/name parsing
   - EDID parsing now also exports capability flags for digital input, preferred timing, CEA extension presence, DisplayID extension presence, HDMI vendor data, and basic audio when those descriptors are present
-  - `src/baremetal/display_output.zig` provides the exported display-output ABI surface plus EDID byte export
-  - `src/baremetal/virtio_gpu.zig` probes the first real controller-specific path, `virtio-gpu-pci`, through modern virtio PCI capabilities plus `GET_DISPLAY_INFO`, `GET_EDID`, bounded 2D resource creation, guest-backing attach, scanout selection, transfer-to-host, and flush
+  - `src/baremetal/display_output.zig` provides the exported display-output ABI surface plus EDID byte export and a bounded per-output entry table
+  - `src/baremetal/virtio_gpu.zig` probes the first real controller-specific path, `virtio-gpu-pci`, through modern virtio PCI capabilities plus `GET_DISPLAY_INFO`, `GET_EDID`, bounded multi-scanout enumeration, connector-aware scanout selection, bounded 2D resource creation, guest-backing attach, transfer-to-host, and flush
   - `src/pal/framebuffer.zig` now also exposes the display-output state and EDID byte surface through the PAL seam
-- host regressions now prove the framebuffer export surface updates host-backed framebuffer state, glyph pixels, supported-mode enumeration, high-resolution mode switching, and preservation of the last valid mode on unsupported requests
+- host regressions now prove the framebuffer export surface updates host-backed framebuffer state, glyph pixels, supported-mode enumeration, high-resolution mode switching, per-output entry export, and preservation of the last valid mode on unsupported requests
 - a live bare-metal PVH/QEMU proof now passes:
   - `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1`
   - exported framebuffer state has `magic=framebuffer_magic`, `api_version=2`, and now proves `640x400` (`cols=80`, `rows=25`), `1024x768` (`cols=128`, `rows=48`), and `1280x720` (`cols=160`, `rows=45`) surfaces over the same BGA path
@@ -159,7 +159,7 @@ Current local source-of-truth evidence:
 - a second live bare-metal PVH/QEMU proof now passes:
   - `scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1`
   - exported display-output state has `magic=display_output_magic`, `api_version=2`, `backend=virtio_gpu`, `controller=virtio_gpu`, an EDID-derived connector type, and a real EDID header over `virtio-gpu-pci,edid=on`
-  - runtime now also reports the selected virtio-gpu PCI vendor/device, PCI location, active scanout, current mode, preferred mode, physical dimensions, manufacturer/product IDs, exported EDID byte surface, and the exported capability flags derived from the EDID payload
+  - runtime now also reports the selected virtio-gpu PCI vendor/device, PCI location, active scanout, current mode, preferred mode, physical dimensions, manufacturer/product IDs, exported EDID byte surface, the exported capability flags derived from the EDID payload, and the bounded per-output entry export for the selected scanout
   - the same proof now also validates non-zero present statistics plus non-zero scanout pixels from the guest-backed render pattern after resource-create/attach/set-scanout/flush
 - current real source-of-truth rendered display support now covers bounded Bochs/QEMU BGA mode-setting plus virtio-gpu present/flush over the virtual scanout path
 - real HDMI/DisplayPort connector-specific scanout paths are not yet implemented and are not claimed by this branch

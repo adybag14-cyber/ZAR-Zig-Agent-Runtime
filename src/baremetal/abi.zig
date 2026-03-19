@@ -373,6 +373,24 @@ pub const BaremetalDisplayOutputState = extern struct {
     capability_flags: u16,
 };
 
+pub const BaremetalDisplayOutputEntry = extern struct {
+    connected: u8,
+    scanout_index: u8,
+    connector_type: u8,
+    edid_present: u8,
+    current_width: u16,
+    current_height: u16,
+    preferred_width: u16,
+    preferred_height: u16,
+    physical_width_mm: u16,
+    physical_height_mm: u16,
+    manufacturer_id: u16,
+    product_code: u16,
+    capability_flags: u16,
+    edid_length: u16,
+    serial_number: u32,
+};
+
 pub const BaremetalStorageState = extern struct {
     magic: u32,
     api_version: u16,

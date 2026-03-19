@@ -24,6 +24,7 @@ $expectedHeight = 800
 $expectedMinEdidLength = 128
 $expectedCapabilityDigital = 0x0001
 $expectedCapabilityPreferredTiming = 0x0002
+$expectedOutputEntryCount = 1
 
 $stateMagicOffset = 0
 $stateApiVersionOffset = 4
@@ -51,6 +52,16 @@ $stateProductCodeOffset = 36
 $stateSerialNumberOffset = 40
 $stateEdidLengthOffset = 44
 $stateCapabilityFlagsOffset = 46
+
+$outputEntryConnectedOffset = 0
+$outputEntryScanoutIndexOffset = 1
+$outputEntryConnectorOffset = 2
+$outputEntryEdidPresentOffset = 3
+$outputEntryCurrentWidthOffset = 4
+$outputEntryCurrentHeightOffset = 6
+$outputEntryPreferredWidthOffset = 8
+$outputEntryPreferredHeightOffset = 10
+$outputEntryCapabilityFlagsOffset = 20
 
 function Resolve-ZigExecutable {
     $default = "C:\Users\Ady\Documents\toolchains\zig-master\current\zig.exe"
@@ -240,6 +251,8 @@ if ($LASTEXITCODE -ne 0 -or $null -eq $symbolOutput -or $symbolOutput.Count -eq 
 $qemuExitAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[tT]\sbaremetal_main\.qemuExit$' -SymbolName "baremetal_main.qemuExit"
 $displayStateAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal\.display_output\.state$' -SymbolName "baremetal.display_output.state"
 $edidBytesAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal\.display_output\.edid_bytes$' -SymbolName "baremetal.display_output.edid_bytes"
+$outputEntryCountAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\soc_display_output_entry_count_data$' -SymbolName "oc_display_output_entry_count_data"
+$outputEntriesAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\soc_display_output_entries_data$' -SymbolName "oc_display_output_entries_data"
 $artifactForGdb = $artifact.Replace('\', '/')
 
 Remove-PathWithRetry $gdbStdout
@@ -286,6 +299,16 @@ commands
   printf "DISPLAY_SERIAL_NUMBER=%u\n", *(unsigned int*)(__DISPLAY_STATE_ADDR__ + __SERIAL_NUMBER_OFFSET__)
   printf "DISPLAY_EDID_LENGTH=%u\n", *(unsigned short*)(__DISPLAY_STATE_ADDR__ + __EDID_LENGTH_OFFSET__)
   printf "DISPLAY_CAPABILITY_FLAGS=%u\n", *(unsigned short*)(__DISPLAY_STATE_ADDR__ + __CAPABILITY_FLAGS_OFFSET__)
+  printf "DISPLAY_OUTPUT_ENTRY_COUNT=%u\n", *(unsigned short*)(__OUTPUT_ENTRY_COUNT_ADDR__)
+  printf "DISPLAY_OUTPUT0_CONNECTED=%u\n", *(unsigned char*)(__OUTPUT_ENTRIES_ADDR__ + __OUTPUT_ENTRY_CONNECTED_OFFSET__)
+  printf "DISPLAY_OUTPUT0_SCANOUT=%u\n", *(unsigned char*)(__OUTPUT_ENTRIES_ADDR__ + __OUTPUT_ENTRY_SCANOUT_OFFSET__)
+  printf "DISPLAY_OUTPUT0_CONNECTOR=%u\n", *(unsigned char*)(__OUTPUT_ENTRIES_ADDR__ + __OUTPUT_ENTRY_CONNECTOR_OFFSET__)
+  printf "DISPLAY_OUTPUT0_EDID_PRESENT=%u\n", *(unsigned char*)(__OUTPUT_ENTRIES_ADDR__ + __OUTPUT_ENTRY_EDID_PRESENT_OFFSET__)
+  printf "DISPLAY_OUTPUT0_CURRENT_WIDTH=%u\n", *(unsigned short*)(__OUTPUT_ENTRIES_ADDR__ + __OUTPUT_ENTRY_CURRENT_WIDTH_OFFSET__)
+  printf "DISPLAY_OUTPUT0_CURRENT_HEIGHT=%u\n", *(unsigned short*)(__OUTPUT_ENTRIES_ADDR__ + __OUTPUT_ENTRY_CURRENT_HEIGHT_OFFSET__)
+  printf "DISPLAY_OUTPUT0_PREFERRED_WIDTH=%u\n", *(unsigned short*)(__OUTPUT_ENTRIES_ADDR__ + __OUTPUT_ENTRY_PREFERRED_WIDTH_OFFSET__)
+  printf "DISPLAY_OUTPUT0_PREFERRED_HEIGHT=%u\n", *(unsigned short*)(__OUTPUT_ENTRIES_ADDR__ + __OUTPUT_ENTRY_PREFERRED_HEIGHT_OFFSET__)
+  printf "DISPLAY_OUTPUT0_CAPABILITY_FLAGS=%u\n", *(unsigned short*)(__OUTPUT_ENTRIES_ADDR__ + __OUTPUT_ENTRY_CAPABILITY_FLAGS_OFFSET__)
   printf "DISPLAY_EDID_0=%u\n", *(unsigned char*)(__EDID_BYTES_ADDR__ + 0)
   printf "DISPLAY_EDID_1=%u\n", *(unsigned char*)(__EDID_BYTES_ADDR__ + 1)
   printf "DISPLAY_EDID_2=%u\n", *(unsigned char*)(__EDID_BYTES_ADDR__ + 2)
@@ -305,6 +328,8 @@ $gdbScriptContent = $gdbTemplate `
     -replace '__QEMU_EXIT__', $qemuExitAddress `
     -replace '__DISPLAY_STATE_ADDR__', ('0x' + $displayStateAddress) `
     -replace '__EDID_BYTES_ADDR__', ('0x' + $edidBytesAddress) `
+    -replace '__OUTPUT_ENTRY_COUNT_ADDR__', ('0x' + $outputEntryCountAddress) `
+    -replace '__OUTPUT_ENTRIES_ADDR__', ('0x' + $outputEntriesAddress) `
     -replace '__MAGIC_OFFSET__', $stateMagicOffset `
     -replace '__API_VERSION_OFFSET__', $stateApiVersionOffset `
     -replace '__BACKEND_OFFSET__', $stateBackendOffset `
@@ -330,7 +355,16 @@ $gdbScriptContent = $gdbTemplate `
     -replace '__PRODUCT_CODE_OFFSET__', $stateProductCodeOffset `
     -replace '__SERIAL_NUMBER_OFFSET__', $stateSerialNumberOffset `
     -replace '__EDID_LENGTH_OFFSET__', $stateEdidLengthOffset `
-    -replace '__CAPABILITY_FLAGS_OFFSET__', $stateCapabilityFlagsOffset
+    -replace '__CAPABILITY_FLAGS_OFFSET__', $stateCapabilityFlagsOffset `
+    -replace '__OUTPUT_ENTRY_CONNECTED_OFFSET__', $outputEntryConnectedOffset `
+    -replace '__OUTPUT_ENTRY_SCANOUT_OFFSET__', $outputEntryScanoutIndexOffset `
+    -replace '__OUTPUT_ENTRY_CONNECTOR_OFFSET__', $outputEntryConnectorOffset `
+    -replace '__OUTPUT_ENTRY_EDID_PRESENT_OFFSET__', $outputEntryEdidPresentOffset `
+    -replace '__OUTPUT_ENTRY_CURRENT_WIDTH_OFFSET__', $outputEntryCurrentWidthOffset `
+    -replace '__OUTPUT_ENTRY_CURRENT_HEIGHT_OFFSET__', $outputEntryCurrentHeightOffset `
+    -replace '__OUTPUT_ENTRY_PREFERRED_WIDTH_OFFSET__', $outputEntryPreferredWidthOffset `
+    -replace '__OUTPUT_ENTRY_PREFERRED_HEIGHT_OFFSET__', $outputEntryPreferredHeightOffset `
+    -replace '__OUTPUT_ENTRY_CAPABILITY_FLAGS_OFFSET__', $outputEntryCapabilityFlagsOffset
 $gdbScriptContent | Set-Content -Path $gdbScript -Encoding Ascii
 
 $qemuProcess = $null
@@ -403,6 +437,16 @@ $productCode = Extract-IntValue -Text $out -Name 'DISPLAY_PRODUCT_CODE'
 $serialNumber = Extract-IntValue -Text $out -Name 'DISPLAY_SERIAL_NUMBER'
 $edidLength = Extract-IntValue -Text $out -Name 'DISPLAY_EDID_LENGTH'
 $capabilityFlags = Extract-IntValue -Text $out -Name 'DISPLAY_CAPABILITY_FLAGS'
+$outputEntryCount = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT_ENTRY_COUNT'
+$output0Connected = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_CONNECTED'
+$output0Scanout = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_SCANOUT'
+$output0Connector = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_CONNECTOR'
+$output0EdidPresent = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_EDID_PRESENT'
+$output0CurrentWidth = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_CURRENT_WIDTH'
+$output0CurrentHeight = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_CURRENT_HEIGHT'
+$output0PreferredWidth = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_PREFERRED_WIDTH'
+$output0PreferredHeight = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_PREFERRED_HEIGHT'
+$output0CapabilityFlags = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_CAPABILITY_FLAGS'
 $edid0 = Extract-IntValue -Text $out -Name 'DISPLAY_EDID_0'
 $edid1 = Extract-IntValue -Text $out -Name 'DISPLAY_EDID_1'
 $edid2 = Extract-IntValue -Text $out -Name 'DISPLAY_EDID_2'
@@ -448,6 +492,16 @@ Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_MANUFACTURER_ID=$manufactu
 Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_PRODUCT_CODE=$productCode"
 Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_SERIAL_NUMBER=$serialNumber"
 Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_EDID_LENGTH=$edidLength"
+Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT_ENTRY_COUNT=$outputEntryCount"
+Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_CONNECTED=$output0Connected"
+Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_SCANOUT=$output0Scanout"
+Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_CONNECTOR=$output0Connector"
+Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_EDID_PRESENT=$output0EdidPresent"
+Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_CURRENT_WIDTH=$output0CurrentWidth"
+Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_CURRENT_HEIGHT=$output0CurrentHeight"
+Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_PREFERRED_WIDTH=$output0PreferredWidth"
+Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_PREFERRED_HEIGHT=$output0PreferredHeight"
+Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_CAPABILITY_FLAGS=$output0CapabilityFlags"
 
 $pass = (
     $magic -eq $displayMagic -and
@@ -474,6 +528,16 @@ $pass = (
     $manufacturerId -gt 0 -and
     $productCode -gt 0 -and
     $edidLength -ge $expectedMinEdidLength -and
+    $outputEntryCount -eq $expectedOutputEntryCount -and
+    $output0Connected -eq 1 -and
+    $output0Scanout -eq 0 -and
+    $output0Connector -eq $expectedConnector -and
+    $output0EdidPresent -eq 1 -and
+    $output0CurrentWidth -eq $expectedWidth -and
+    $output0CurrentHeight -eq $expectedHeight -and
+    $output0PreferredWidth -gt 0 -and
+    $output0PreferredHeight -gt 0 -and
+    $output0CapabilityFlags -eq $capabilityFlags -and
     ($capabilityFlags -band $expectedCapabilityDigital) -ne 0 -and
     ($capabilityFlags -band $expectedCapabilityPreferredTiming) -ne 0 -and
     $edid0 -eq 0 -and

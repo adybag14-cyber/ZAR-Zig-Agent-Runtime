@@ -304,6 +304,8 @@ fn handleFramedPayload(
         .app_autorun_remove => |package_name| try handleAppAutorunRemoveRequest(allocator, package_name, payload_limit),
         .app_autorun_run => try handleAppAutorunRunRequest(allocator, stdout_limit, stderr_limit, payload_limit),
         .display_info => try handleDisplayInfoRequest(allocator, payload_limit),
+        .display_outputs => try handleDisplayOutputsRequest(allocator, payload_limit),
+        .display_output => |output_index| try handleDisplayOutputRequest(allocator, output_index, payload_limit),
         .display_modes => try handleDisplayModesRequest(allocator, payload_limit),
         .display_set => |display_mode| try handleDisplaySetRequest(allocator, display_mode.width, display_mode.height, payload_limit),
         .trust_install => |trust_request| try handleTrustInstallRequest(allocator, trust_request.path, trust_request.body, payload_limit),
@@ -1831,6 +1833,67 @@ fn handleDisplayInfoRequest(allocator: std.mem.Allocator, payload_limit: usize) 
     return response;
 }
 
+fn handleDisplayOutputsRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    ensureDisplayReady();
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    var index: u16 = 0;
+    while (index < display_output.outputCount()) : (index += 1) {
+        const entry = display_output.outputEntry(index);
+        const line = try std.fmt.allocPrint(
+            allocator,
+            "output {d} scanout={d} connector={s} connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x}\n",
+            .{
+                index,
+                entry.scanout_index,
+                displayConnectorName(entry.connector_type),
+                entry.connected,
+                entry.current_width,
+                entry.current_height,
+                entry.preferred_width,
+                entry.preferred_height,
+                entry.capability_flags,
+            },
+        );
+        defer allocator.free(line);
+        if (out.items.len + line.len > payload_limit) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, line);
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+fn handleDisplayOutputRequest(allocator: std.mem.Allocator, output_index_text: []const u8, payload_limit: usize) Error![]u8 {
+    ensureDisplayReady();
+    const index = std.fmt.parseInt(u16, output_index_text, 10) catch {
+        return formatOperationError(allocator, "DISPLAYOUTPUT", error.InvalidFrame, payload_limit);
+    };
+    if (index >= display_output.outputCount()) {
+        return formatOperationError(allocator, "DISPLAYOUTPUT", error.NotFound, payload_limit);
+    }
+    const entry = display_output.outputEntry(index);
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "index={d} scanout={d} connector={s} connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x} edid_present={d}\n",
+        .{
+            index,
+            entry.scanout_index,
+            displayConnectorName(entry.connector_type),
+            entry.connected,
+            entry.current_width,
+            entry.current_height,
+            entry.preferred_width,
+            entry.preferred_height,
+            entry.capability_flags,
+            entry.edid_present,
+        },
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
 fn handleDisplayModesRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
     ensureDisplayReady();
     var out: std.ArrayList(u8) = .empty;
@@ -2238,13 +2301,25 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
-    const display_modes = try parseFramedRequest("REQ 27 DISPLAYMODES");
+    const display_outputs = try parseFramedRequest("REQ 27 DISPLAYOUTPUTS");
+    switch (display_outputs.operation) {
+        .display_outputs => {},
+        else => return error.InvalidFrame,
+    }
+
+    const display_output_request = try parseFramedRequest("REQ 28 DISPLAYOUTPUT 0");
+    switch (display_output_request.operation) {
+        .display_output => |payload| try std.testing.expectEqualStrings("0", payload),
+        else => return error.InvalidFrame,
+    }
+
+    const display_modes = try parseFramedRequest("REQ 29 DISPLAYMODES");
     switch (display_modes.operation) {
         .display_modes => {},
         else => return error.InvalidFrame,
     }
 
-    const display_set = try parseFramedRequest("REQ 28 DISPLAYSET 800 600");
+    const display_set = try parseFramedRequest("REQ 30 DISPLAYSET 800 600");
     switch (display_set.operation) {
         .display_set => |payload| {
             try std.testing.expectEqual(@as(u16, 800), payload.width);
@@ -3230,17 +3305,27 @@ test "baremetal tool service reports display info and supported modes" {
     try std.testing.expect(std.mem.indexOf(u8, info_response, "connector=virtual") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_response, "current=640x400") != null);
 
-    const modes_response = try handleFramedRequest(std.testing.allocator, "REQ 62 DISPLAYMODES", 512, 256, 512);
+    const outputs_response = try handleFramedRequest(std.testing.allocator, "REQ 62 DISPLAYOUTPUTS", 512, 256, 512);
+    defer std.testing.allocator.free(outputs_response);
+    try std.testing.expect(std.mem.startsWith(u8, outputs_response, "RESP 62 "));
+    try std.testing.expect(std.mem.indexOf(u8, outputs_response, "output 0 scanout=0 connector=virtual connected=0 current=640x400 preferred=640x400") != null);
+
+    const output_response = try handleFramedRequest(std.testing.allocator, "REQ 63 DISPLAYOUTPUT 0", 512, 256, 512);
+    defer std.testing.allocator.free(output_response);
+    try std.testing.expect(std.mem.startsWith(u8, output_response, "RESP 63 "));
+    try std.testing.expect(std.mem.indexOf(u8, output_response, "index=0 scanout=0 connector=virtual connected=0 current=640x400 preferred=640x400") != null);
+
+    const modes_response = try handleFramedRequest(std.testing.allocator, "REQ 64 DISPLAYMODES", 512, 256, 512);
     defer std.testing.allocator.free(modes_response);
-    try std.testing.expect(std.mem.startsWith(u8, modes_response, "RESP 62 "));
+    try std.testing.expect(std.mem.startsWith(u8, modes_response, "RESP 64 "));
     try std.testing.expect(std.mem.indexOf(u8, modes_response, "mode 0 640x400") != null);
     try std.testing.expect(std.mem.indexOf(u8, modes_response, "mode 4 1280x1024") != null);
 
-    const set_response = try handleFramedRequest(std.testing.allocator, "REQ 63 DISPLAYSET 800 600", 512, 256, 512);
+    const set_response = try handleFramedRequest(std.testing.allocator, "REQ 65 DISPLAYSET 800 600", 512, 256, 512);
     defer std.testing.allocator.free(set_response);
-    try std.testing.expectEqualStrings("RESP 63 16\nDISPLAY 800x600\n", set_response);
+    try std.testing.expectEqualStrings("RESP 65 16\nDISPLAY 800x600\n", set_response);
 
-    const updated_info = try handleFramedRequest(std.testing.allocator, "REQ 64 DISPLAYINFO", 512, 256, 512);
+    const updated_info = try handleFramedRequest(std.testing.allocator, "REQ 66 DISPLAYINFO", 512, 256, 512);
     defer std.testing.allocator.free(updated_info);
     try std.testing.expect(std.mem.indexOf(u8, updated_info, "current=800x600") != null);
 }

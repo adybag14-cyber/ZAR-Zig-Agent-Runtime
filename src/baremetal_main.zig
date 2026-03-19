@@ -655,6 +655,8 @@ const VirtioGpuDisplayProbeError = error{
     EdidLengthMismatch,
     EdidHeaderMismatch,
     CapabilityFlagsMismatch,
+    OutputEntryCountMismatch,
+    OutputEntryMismatch,
     PresentStatsMismatch,
     RenderedPixelMismatch,
 };
@@ -956,6 +958,14 @@ pub export fn oc_display_output_state_ptr() *const BaremetalDisplayOutputState {
 
 pub export fn oc_display_output_edid_byte(index: u16) u8 {
     return display_output.edidByte(index);
+}
+
+pub export fn oc_display_output_entry_count() u16 {
+    return display_output.outputCount();
+}
+
+pub export fn oc_display_output_entry(index: u16) abi.BaremetalDisplayOutputEntry {
+    return display_output.outputEntry(index);
 }
 
 pub export fn oc_keyboard_state_ptr() *const BaremetalKeyboardState {
@@ -3408,6 +3418,8 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const batch_request_id_package_asset_get: u32 = 59;
     const batch_request_id_display_info: u32 = 60;
     const batch_request_id_display_modes: u32 = 61;
+    const batch_request_id_display_outputs: u32 = 160;
+    const batch_request_id_display_output: u32 = 161;
     const batch_request_id_app_connector: u32 = 62;
     const batch_request_id_app_trust: u32 = 63;
     const batch_request_id_app_info: u32 = 64;
@@ -5729,7 +5741,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
 
     client_b.local_window = 48;
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
-    const batch_service_request = std.fmt.bufPrint(&scratch.service_batch_request_buffer, "REQ {d} GET {s}\nREQ {d} PKGLS {s}\nREQ {d} PKGGET {s} {s}\nREQ {d} DISPLAYINFO\nREQ {d} DISPLAYMODES", .{
+    const batch_service_request = std.fmt.bufPrint(&scratch.service_batch_request_buffer, "REQ {d} GET {s}\nREQ {d} PKGLS {s}\nREQ {d} PKGGET {s} {s}\nREQ {d} DISPLAYINFO\nREQ {d} DISPLAYOUTPUTS\nREQ {d} DISPLAYOUTPUT 0\nREQ {d} DISPLAYMODES", .{
         batch_request_id_script,
         service_script_path,
         batch_request_id_package_asset_list,
@@ -5738,6 +5750,8 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         package_name,
         package_asset_relative_path,
         batch_request_id_display_info,
+        batch_request_id_display_outputs,
+        batch_request_id_display_output,
         batch_request_id_display_modes,
     }) catch return error.ToolServiceFailed;
     const batch_service_request_payload = client_b.buildPayload(batch_service_request) catch |err| return mapTcpSessionProbeError(err);
@@ -5752,7 +5766,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
         512,
         256,
-        512,
+        1024,
     ) catch return error.ToolServiceFailed;
     const framebuffer_state = oc_framebuffer_state_ptr();
     if (framebuffer_state.magic != abi.framebuffer_magic or oc_display_output_state_ptr().backend == abi.display_backend_none) {
@@ -5778,6 +5792,32 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
             display_state.capability_flags,
         },
     ) catch return error.ToolServiceFailed;
+    var display_outputs_payload_buffer: [160]u8 = undefined;
+    const display_outputs_payload_expected = std.fmt.bufPrint(
+        &display_outputs_payload_buffer,
+        "output 0 scanout=0 connector=virtual connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x}\n",
+        .{
+            display_state.connected,
+            display_state.current_width,
+            display_state.current_height,
+            display_state.preferred_width,
+            display_state.preferred_height,
+            display_state.capability_flags,
+        },
+    ) catch return error.ToolServiceFailed;
+    var display_output_payload_buffer: [176]u8 = undefined;
+    const display_output_payload_expected = std.fmt.bufPrint(
+        &display_output_payload_buffer,
+        "index=0 scanout=0 connector=virtual connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x} edid_present=0\n",
+        .{
+            display_state.connected,
+            display_state.current_width,
+            display_state.current_height,
+            display_state.preferred_width,
+            display_state.preferred_height,
+            display_state.capability_flags,
+        },
+    ) catch return error.ToolServiceFailed;
     var display_modes_payload_buffer: [256]u8 = undefined;
     var display_modes_payload_len: usize = 0;
     var display_mode_index: u16 = 0;
@@ -5794,7 +5834,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         display_modes_payload_len += line.len;
     }
     const display_modes_payload_expected = display_modes_payload_buffer[0..display_modes_payload_len];
-    const batch_service_response_expected = std.fmt.bufPrint(&scratch.service_batch_response_expected_buffer, "RESP {d} {d}\n{s}RESP {d} 11\ndir config\nRESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}", .{
+    const batch_service_response_expected = std.fmt.bufPrint(&scratch.service_batch_response_expected_buffer, "RESP {d} {d}\n{s}RESP {d} 11\ndir config\nRESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}RESP {d} {d}\n{s}", .{
         batch_request_id_script,
         service_script_body.len,
         service_script_body,
@@ -5805,6 +5845,12 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         batch_request_id_display_info,
         display_info_payload_expected.len,
         display_info_payload_expected,
+        batch_request_id_display_outputs,
+        display_outputs_payload_expected.len,
+        display_outputs_payload_expected,
+        batch_request_id_display_output,
+        display_output_payload_expected.len,
+        display_output_payload_expected,
         batch_request_id_display_modes,
         display_modes_payload_expected.len,
         display_modes_payload_expected,
@@ -10367,8 +10413,10 @@ fn virtioGpuDisplayProbeFailureCode(err: VirtioGpuDisplayProbeError) u8 {
         error.EdidLengthMismatch => 0x61,
         error.EdidHeaderMismatch => 0x62,
         error.CapabilityFlagsMismatch => 0x63,
-        error.PresentStatsMismatch => 0x64,
-        error.RenderedPixelMismatch => 0x65,
+        error.OutputEntryCountMismatch => 0x64,
+        error.OutputEntryMismatch => 0x65,
+        error.PresentStatsMismatch => 0x66,
+        error.RenderedPixelMismatch => 0x67,
     };
 }
 
@@ -10383,12 +10431,12 @@ fn runToolExecProbe() ToolExecProbeError!void {
     resetBaremetalRuntimeForTest();
     vga_text_console.clear();
 
-    var scratch: [4096]u8 = undefined;
+    var scratch: [8192]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&scratch);
     const allocator = fba.allocator();
     const io: std.Io = undefined;
 
-    var help = pal_proc.runCaptureFreestanding(allocator, io, &.{"help"}, 1000, 4096, 128) catch |err| switch (err) {
+    var help = pal_proc.runCaptureFreestanding(allocator, io, &.{"help"}, 1000, 8192, 256) catch |err| switch (err) {
         error.OutOfMemory => return error.AllocatorExhausted,
         else => return error.HelpRunFailed,
     };
@@ -10567,7 +10615,7 @@ fn runToolRuntimeProbe() ToolRuntimeProbeError!void {
 
 fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
     resetBaremetalRuntimeForTest();
-    const result = virtio_gpu.probeAndPresentPattern() catch |err| switch (err) {
+    const result = virtio_gpu.probeAndPresentPatternForConnector(abi.display_connector_virtual) catch |err| switch (err) {
         error.UnsupportedPlatform => return error.UnsupportedPlatform,
         error.DeviceNotFound => return error.DeviceNotFound,
         error.MissingCapabilities => return error.MissingCapabilities,
@@ -10608,6 +10656,21 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
     if (output.capability_flags != result.capability_flags) return error.CapabilityFlagsMismatch;
     if ((output.capability_flags & abi.display_capability_digital_input) == 0) return error.CapabilityFlagsMismatch;
     if ((output.capability_flags & abi.display_capability_preferred_timing) == 0) return error.CapabilityFlagsMismatch;
+    if (oc_display_output_entry_count() != result.scanout_count) return error.OutputEntryCountMismatch;
+    if (result.active_scanout >= oc_display_output_entry_count()) return error.OutputEntryCountMismatch;
+    const active_entry = oc_display_output_entry(result.active_scanout);
+    if (active_entry.connected != 1 or
+        active_entry.scanout_index != result.active_scanout or
+        active_entry.connector_type != expected_connector or
+        active_entry.current_width != result.current_width or
+        active_entry.current_height != result.current_height or
+        active_entry.preferred_width != result.preferred_width or
+        active_entry.preferred_height != result.preferred_height or
+        active_entry.capability_flags != result.capability_flags or
+        active_entry.edid_present != 1)
+    {
+        return error.OutputEntryMismatch;
+    }
     if (present_stats.resource_create_count == 0 or
         present_stats.attach_backing_count == 0 or
         present_stats.scanout_set_count == 0 or
@@ -18821,6 +18884,12 @@ test "baremetal display output export surface mirrors bounded bga framebuffer st
     try std.testing.expectEqual(@as(u16, 0), output.edid_length);
     try std.testing.expectEqual(@as(u16, 0), output.capability_flags);
     try std.testing.expectEqual(@as(u8, 0), oc_display_output_edid_byte(0));
+    try std.testing.expectEqual(@as(u16, 1), oc_display_output_entry_count());
+    const entry = oc_display_output_entry(0);
+    try std.testing.expectEqual(@as(u8, 0), entry.connected);
+    try std.testing.expectEqual(@as(u8, abi.display_connector_virtual), entry.connector_type);
+    try std.testing.expectEqual(@as(u16, 640), entry.current_width);
+    try std.testing.expectEqual(@as(u8, 0), entry.edid_present);
 
     try std.testing.expectEqual(abi.result_ok, oc_framebuffer_set_mode(1280, 720));
     output = oc_display_output_state_ptr();
@@ -18829,6 +18898,9 @@ test "baremetal display output export surface mirrors bounded bga framebuffer st
     try std.testing.expectEqual(@as(u16, 1280), output.preferred_width);
     try std.testing.expectEqual(@as(u16, 720), output.preferred_height);
     try std.testing.expectEqual(@as(u8, 0), oc_display_output_edid_byte(127));
+    const updated_entry = oc_display_output_entry(0);
+    try std.testing.expectEqual(@as(u16, 1280), updated_entry.current_width);
+    try std.testing.expectEqual(@as(u16, 720), updated_entry.current_height);
 }
 
 test "baremetal ethernet export surface initializes mock rtl8139 and loops a frame" {

@@ -15,7 +15,7 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
   - Original OpenClaw baseline (`v2026.3.13-1`): `100/100` covered
   - Original OpenClaw beta baseline (`v2026.3.13-beta.1`): `100/100` covered
   - Union baseline: `141/141` covered (`MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> `398/398` passed
+- Latest local validation: `zig build test --summary all` -> `399/399` passed
 - Current edge release target tag: `v0.2.0-zig-edge.31`
 - License posture: repo-wide `GPL-2.0-only` with Linux-style SPDX headers on repo-owned source and script files
 - Toolchain policy: Codeberg `master` is canonical; `adybag14-cyber/zig` publishes rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
@@ -44,8 +44,9 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
   - `src/pal/framebuffer.zig` exposes the framebuffer path through the bare-metal PAL and the bare-metal ABI now supports bounded mode switching plus supported-mode table export through `oc_framebuffer_set_mode`, `oc_framebuffer_supported_mode_count`, `oc_framebuffer_supported_mode_width`, and `oc_framebuffer_supported_mode_height`
 - `src/baremetal/edid.zig`, `src/baremetal/display_output.zig`, and `src/baremetal/virtio_gpu.zig` now provide EDID-backed display capability export plus bounded render/present/flush proof for the first real controller-specific path, `virtio-gpu-pci`, including digital-input, preferred-timing, CEA, DisplayID, HDMI-vendor-data, and basic-audio capability flags when present in EDID data
   - `src/baremetal/display_output.zig` now derives the exported connector type from EDID capability flags instead of hard-coding the virtio-gpu path as always `virtual`
+  - the same display-output surface now exports bounded per-output entries through `oc_display_output_entry_count` and `oc_display_output_entry`, and the broad host/tool surface now exposes `display-outputs` and `display-output <index>` on top of that table
   - `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1` now proves live MMIO banner pixels plus exported adapter metadata against the freestanding PVH artifact at `640x400`, `1024x768`, and `1280x720`
-  - `scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1` now proves live `virtio-gpu-pci` EDID/controller capability export plus resource-create/attach/set-scanout/flush behavior with non-zero scanout pixel readback over QEMU with `edid=on`
+  - `scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1` now proves live `virtio-gpu-pci` EDID/controller capability export plus output-entry count/entry metadata and resource-create/attach/set-scanout/flush behavior with non-zero scanout pixel readback over QEMU with `edid=on`
   - real HDMI/DisplayPort connector-specific scanout paths are still future depth and are not claimed by this branch
   - keyboard/mouse is now strict-closed in [`docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md`](docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md)
   - `src/baremetal/ps2_input.zig` now contains a real x86 port-I/O backed PS/2 controller path

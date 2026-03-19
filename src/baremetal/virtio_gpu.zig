@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
 const builtin = @import("builtin");
+const abi = @import("abi.zig");
 const pci = @import("pci.zig");
 const edid = @import("edid.zig");
 const display_output = @import("display_output.zig");
@@ -222,6 +223,12 @@ pub const ProbeResult = struct {
     serial_number: u32,
     capability_flags: u16,
     edid_length: u16,
+};
+
+const DetailedProbe = struct {
+    result: ProbeResult,
+    scanouts: [max_scanouts]display_output.VirtioGpuScanoutUpdate,
+    scanout_count: u8,
 };
 
 pub const PresentStats = struct {
@@ -585,56 +592,120 @@ pub fn scanoutPixel(x: u16, y: u16) u32 {
     return scanout_pixels[(@as(usize, y) * max_present_width) + @as(usize, x)];
 }
 
-fn selectConnectedScanout(response: RespDisplayInfo, scanout_limit: u32) ?struct { index: u8, width: u16, height: u16 } {
+fn enumerateScanouts(device: pci.VirtioGpuDevice, queue_notify_off: u16, display_info: RespDisplayInfo, scanout_limit: u32) ProbeError!struct {
+    scanouts: [max_scanouts]display_output.VirtioGpuScanoutUpdate,
+    scanout_count: u8,
+} {
+    var scanouts: [max_scanouts]display_output.VirtioGpuScanoutUpdate = undefined;
+    @memset(&scanouts, std.mem.zeroes(display_output.VirtioGpuScanoutUpdate));
+
+    const limit: usize = @min(@as(usize, scanout_limit), max_scanouts);
     var idx: usize = 0;
-    while (idx < @min(@as(usize, scanout_limit), max_scanouts)) : (idx += 1) {
-        const mode = response.pmodes[idx];
-        if (mode.enabled == 0) continue;
-        return .{
-            .index = @intCast(idx),
-            .width = @intCast(@min(mode.rect.width, std.math.maxInt(u16))),
-            .height = @intCast(@min(mode.rect.height, std.math.maxInt(u16))),
+    while (idx < limit) : (idx += 1) {
+        const mode = display_info.pmodes[idx];
+        if (mode.enabled == 0) {
+            scanouts[idx] = .{
+                .connected = false,
+                .scanout_index = @intCast(idx),
+                .current_width = 0,
+                .current_height = 0,
+                .preferred_width = 0,
+                .preferred_height = 0,
+                .physical_width_mm = 0,
+                .physical_height_mm = 0,
+                .manufacturer_id = 0,
+                .product_code = 0,
+                .serial_number = 0,
+                .capability_flags = 0,
+                .edid_length = 0,
+            };
+            continue;
+        }
+
+        const edid_response = try sendGetEdid(device, queue_notify_off, @intCast(idx));
+        const edid_size = @min(edid_response.size, @as(u32, display_output.max_edid_bytes));
+        if (edid_size < edid.block_len) return error.InvalidEdidResponse;
+        const parsed = edid.parse(edid_response.edid[0..edid_size]) catch return error.InvalidEdid;
+        scanouts[idx] = .{
+            .connected = true,
+            .scanout_index = @intCast(idx),
+            .current_width = @intCast(@min(mode.rect.width, std.math.maxInt(u16))),
+            .current_height = @intCast(@min(mode.rect.height, std.math.maxInt(u16))),
+            .preferred_width = if (parsed.preferred_timing) |timing| timing.h_active else @intCast(@min(mode.rect.width, std.math.maxInt(u16))),
+            .preferred_height = if (parsed.preferred_timing) |timing| timing.v_active else @intCast(@min(mode.rect.height, std.math.maxInt(u16))),
+            .physical_width_mm = parsed.physical_width_mm,
+            .physical_height_mm = parsed.physical_height_mm,
+            .manufacturer_id = parsed.manufacturer_id,
+            .product_code = parsed.product_code,
+            .serial_number = parsed.serial_number,
+            .capability_flags = parsed.capability_flags,
+            .edid_length = @intCast(edid_size),
         };
+    }
+
+    return .{
+        .scanouts = scanouts,
+        .scanout_count = @intCast(limit),
+    };
+}
+
+fn selectScanoutForConnector(
+    scanouts: []const display_output.VirtioGpuScanoutUpdate,
+    preferred_connector: ?u8,
+) ?display_output.VirtioGpuScanoutUpdate {
+    if (preferred_connector) |connector| {
+        for (scanouts) |scanout| {
+            if (!scanout.connected) continue;
+            if (display_output.inferConnectorType(scanout.capability_flags) == connector) return scanout;
+        }
+    }
+    for (scanouts) |scanout| {
+        if (scanout.connected) return scanout;
     }
     return null;
 }
 
-pub fn probeDisplay() ProbeError!ProbeResult {
+fn probeDisplayDetailed(preferred_connector: ?u8) ProbeError!DetailedProbe {
     if (!hardwareBacked()) return error.UnsupportedPlatform;
     const device = pci.discoverVirtioGpuDevice() orelse return error.DeviceNotFound;
     const queue_notify_off = try initTransport(device);
     const scanout_limit = @min(deviceCfg(device).num_scanouts, @as(u32, max_scanouts));
     const display_info = try sendGetDisplayInfo(device, queue_notify_off);
-    const active = selectConnectedScanout(display_info, scanout_limit) orelse return error.NoConnectedScanout;
-    const edid_response = try sendGetEdid(device, queue_notify_off, active.index);
-    const edid_size = @min(edid_response.size, @as(u32, display_output.max_edid_bytes));
-    if (edid_size < edid.block_len) return error.InvalidEdidResponse;
-
-    const parsed = edid.parse(edid_response.edid[0..edid_size]) catch return error.InvalidEdid;
+    const enumerated = try enumerateScanouts(device, queue_notify_off, display_info, scanout_limit);
+    const active = selectScanoutForConnector(enumerated.scanouts[0..enumerated.scanout_count], preferred_connector) orelse return error.NoConnectedScanout;
     return .{
-        .vendor_id = device.vendor_id,
-        .device_id = device.device_id,
-        .pci_bus = device.location.bus,
-        .pci_device = device.location.device,
-        .pci_function = device.location.function,
-        .scanout_count = @intCast(scanout_limit),
-        .active_scanout = active.index,
-        .current_width = active.width,
-        .current_height = active.height,
-        .preferred_width = if (parsed.preferred_timing) |timing| timing.h_active else active.width,
-        .preferred_height = if (parsed.preferred_timing) |timing| timing.v_active else active.height,
-        .physical_width_mm = parsed.physical_width_mm,
-        .physical_height_mm = parsed.physical_height_mm,
-        .manufacturer_id = parsed.manufacturer_id,
-        .product_code = parsed.product_code,
-        .serial_number = parsed.serial_number,
-        .capability_flags = parsed.capability_flags,
-        .edid_length = @intCast(edid_size),
+        .result = .{
+            .vendor_id = device.vendor_id,
+            .device_id = device.device_id,
+            .pci_bus = device.location.bus,
+            .pci_device = device.location.device,
+            .pci_function = device.location.function,
+            .scanout_count = enumerated.scanout_count,
+            .active_scanout = active.scanout_index,
+            .current_width = active.current_width,
+            .current_height = active.current_height,
+            .preferred_width = active.preferred_width,
+            .preferred_height = active.preferred_height,
+            .physical_width_mm = active.physical_width_mm,
+            .physical_height_mm = active.physical_height_mm,
+            .manufacturer_id = active.manufacturer_id,
+            .product_code = active.product_code,
+            .serial_number = active.serial_number,
+            .capability_flags = active.capability_flags,
+            .edid_length = active.edid_length,
+        },
+        .scanouts = enumerated.scanouts,
+        .scanout_count = enumerated.scanout_count,
     };
 }
 
+pub fn probeDisplay() ProbeError!ProbeResult {
+    return (try probeDisplayDetailed(null)).result;
+}
+
 pub fn probeAndPublish() ProbeError!ProbeResult {
-    const result = try probeDisplay();
+    const detailed = try probeDisplayDetailed(null);
+    const result = detailed.result;
     const device = pci.discoverVirtioGpuDevice() orelse return error.DeviceNotFound;
     const queue_notify_off = try initTransport(device);
     const edid_response = try sendGetEdid(device, queue_notify_off, result.active_scanout);
@@ -660,55 +731,37 @@ pub fn probeAndPublish() ProbeError!ProbeResult {
         .serial_number = result.serial_number,
         .capability_flags = result.capability_flags,
         .edid = edid_response.edid[0..edid_len],
+        .scanouts = detailed.scanouts[0..detailed.scanout_count],
     });
     return result;
 }
 
 pub fn probeAndPresentPattern() ProbeError!ProbeResult {
+    return probeAndPresentPatternForConnector(null);
+}
+
+pub fn probeAndPresentPatternForConnector(preferred_connector: ?u8) ProbeError!ProbeResult {
     if (!hardwareBacked()) return error.UnsupportedPlatform;
     last_present_stats = .{};
     @memset(&scanout_pixels, 0);
 
+    const detailed = try probeDisplayDetailed(preferred_connector);
+    const result = detailed.result;
+    if (result.current_width > max_present_width or result.current_height > max_present_height) return error.FramebufferTooLarge;
+
     const device = pci.discoverVirtioGpuDevice() orelse return error.DeviceNotFound;
     const queue_notify_off = try initTransport(device);
-    const scanout_limit = @min(deviceCfg(device).num_scanouts, @as(u32, max_scanouts));
-    const display_info = try sendGetDisplayInfo(device, queue_notify_off);
-    const active = selectConnectedScanout(display_info, scanout_limit) orelse return error.NoConnectedScanout;
-    if (active.width > max_present_width or active.height > max_present_height) return error.FramebufferTooLarge;
-
-    const edid_response = try sendGetEdid(device, queue_notify_off, active.index);
+    const edid_response = try sendGetEdid(device, queue_notify_off, result.active_scanout);
     const edid_size = @min(edid_response.size, @as(u32, display_output.max_edid_bytes));
     if (edid_size < edid.block_len) return error.InvalidEdidResponse;
 
-    const parsed = edid.parse(edid_response.edid[0..edid_size]) catch return error.InvalidEdid;
-    fillProbePattern(active.width, active.height);
-    try sendResourceCreate2d(device, queue_notify_off, active.width, active.height);
+    fillProbePattern(result.current_width, result.current_height);
+    try sendResourceCreate2d(device, queue_notify_off, result.current_width, result.current_height);
     errdefer sendResourceUnref(device, queue_notify_off) catch {};
-    try sendResourceAttachBacking(device, queue_notify_off, active.width, active.height);
-    try sendSetScanout(device, queue_notify_off, active.index, active.width, active.height);
-    try sendTransferToHost2d(device, queue_notify_off, active.width, active.height);
-    try sendResourceFlush(device, queue_notify_off, active.width, active.height);
-
-    const result: ProbeResult = .{
-        .vendor_id = device.vendor_id,
-        .device_id = device.device_id,
-        .pci_bus = device.location.bus,
-        .pci_device = device.location.device,
-        .pci_function = device.location.function,
-        .scanout_count = @intCast(scanout_limit),
-        .active_scanout = active.index,
-        .current_width = active.width,
-        .current_height = active.height,
-        .preferred_width = if (parsed.preferred_timing) |timing| timing.h_active else active.width,
-        .preferred_height = if (parsed.preferred_timing) |timing| timing.v_active else active.height,
-        .physical_width_mm = parsed.physical_width_mm,
-        .physical_height_mm = parsed.physical_height_mm,
-        .manufacturer_id = parsed.manufacturer_id,
-        .product_code = parsed.product_code,
-        .serial_number = parsed.serial_number,
-        .capability_flags = parsed.capability_flags,
-        .edid_length = @intCast(edid_size),
-    };
+    try sendResourceAttachBacking(device, queue_notify_off, result.current_width, result.current_height);
+    try sendSetScanout(device, queue_notify_off, result.active_scanout, result.current_width, result.current_height);
+    try sendTransferToHost2d(device, queue_notify_off, result.current_width, result.current_height);
+    try sendResourceFlush(device, queue_notify_off, result.current_width, result.current_height);
     display_output.updateFromVirtioGpu(.{
         .vendor_id = result.vendor_id,
         .device_id = result.device_id,
@@ -730,21 +783,88 @@ pub fn probeAndPresentPattern() ProbeError!ProbeResult {
         .serial_number = result.serial_number,
         .capability_flags = result.capability_flags,
         .edid = edid_response.edid[0..edid_size],
+        .scanouts = detailed.scanouts[0..detailed.scanout_count],
     });
     return result;
 }
 
 test "virtio gpu scanout selector chooses first enabled output" {
-    var response = std.mem.zeroes(RespDisplayInfo);
-    response.pmodes[0].enabled = 0;
-    response.pmodes[1].enabled = 1;
-    response.pmodes[1].rect.width = 1280;
-    response.pmodes[1].rect.height = 720;
+    const scanouts = [_]display_output.VirtioGpuScanoutUpdate{
+        .{
+            .connected = false,
+            .scanout_index = 0,
+            .current_width = 0,
+            .current_height = 0,
+            .preferred_width = 0,
+            .preferred_height = 0,
+            .physical_width_mm = 0,
+            .physical_height_mm = 0,
+            .manufacturer_id = 0,
+            .product_code = 0,
+            .serial_number = 0,
+            .capability_flags = 0,
+            .edid_length = 0,
+        },
+        .{
+            .connected = true,
+            .scanout_index = 1,
+            .current_width = 1280,
+            .current_height = 720,
+            .preferred_width = 1280,
+            .preferred_height = 720,
+            .physical_width_mm = 0,
+            .physical_height_mm = 0,
+            .manufacturer_id = 0,
+            .product_code = 0,
+            .serial_number = 0,
+            .capability_flags = 0,
+            .edid_length = 0,
+        },
+    };
 
-    const selected = selectConnectedScanout(response, 2) orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqual(@as(u8, 1), selected.index);
-    try std.testing.expectEqual(@as(u16, 1280), selected.width);
-    try std.testing.expectEqual(@as(u16, 720), selected.height);
+    const selected = selectScanoutForConnector(&scanouts, null) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u8, 1), selected.scanout_index);
+    try std.testing.expectEqual(@as(u16, 1280), selected.current_width);
+    try std.testing.expectEqual(@as(u16, 720), selected.current_height);
+}
+
+test "virtio gpu scanout selector prefers requested connector when present" {
+    const scanouts = [_]display_output.VirtioGpuScanoutUpdate{
+        .{
+            .connected = true,
+            .scanout_index = 0,
+            .current_width = 1280,
+            .current_height = 720,
+            .preferred_width = 1280,
+            .preferred_height = 720,
+            .physical_width_mm = 0,
+            .physical_height_mm = 0,
+            .manufacturer_id = 0,
+            .product_code = 0,
+            .serial_number = 0,
+            .capability_flags = abi.display_capability_hdmi_vendor_data,
+            .edid_length = 128,
+        },
+        .{
+            .connected = true,
+            .scanout_index = 1,
+            .current_width = 1920,
+            .current_height = 1080,
+            .preferred_width = 1920,
+            .preferred_height = 1080,
+            .physical_width_mm = 0,
+            .physical_height_mm = 0,
+            .manufacturer_id = 0,
+            .product_code = 0,
+            .serial_number = 0,
+            .capability_flags = abi.display_capability_displayid_extension,
+            .edid_length = 128,
+        },
+    };
+
+    const selected = selectScanoutForConnector(&scanouts, abi.display_connector_displayport) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u8, 1), selected.scanout_index);
+    try std.testing.expectEqual(@as(u16, 1920), selected.current_width);
 }
 
 test "virtio gpu probe pattern paints scanout pixels" {
