@@ -139,6 +139,12 @@ pub const RequestOp = enum {
     display_activate,
     display_activate_output,
     display_output_set,
+    display_profile_list,
+    display_profile_info,
+    display_profile_active,
+    display_profile_save,
+    display_profile_apply,
+    display_profile_delete,
     trust_install,
     trust_list,
     trust_info,
@@ -448,6 +454,12 @@ pub const FramedRequest = struct {
         display_activate: []const u8,
         display_activate_output: []const u8,
         display_output_set: DisplayOutputModeRequest,
+        display_profile_list: void,
+        display_profile_info: []const u8,
+        display_profile_active: void,
+        display_profile_save: []const u8,
+        display_profile_apply: []const u8,
+        display_profile_delete: []const u8,
         trust_install: PutRequest,
         trust_list: void,
         trust_info: []const u8,
@@ -2786,6 +2798,90 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         }
         return .{
             .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYPROFILELIST")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .display_profile_list = {} } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .display_profile_list = {} } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYPROFILEINFO")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .display_profile_info = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .display_profile_info = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYPROFILEACTIVE")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .display_profile_active = {} } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .display_profile_active = {} } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYPROFILESAVE")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .display_profile_save = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .display_profile_save = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYPROFILEAPPLY")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .display_profile_apply = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .display_profile_apply = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYPROFILEDELETE")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .display_profile_delete = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .display_profile_delete = op_part.rest } },
             .consumed_len = request.len,
         };
     }

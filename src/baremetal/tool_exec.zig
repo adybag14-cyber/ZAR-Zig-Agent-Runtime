@@ -7,13 +7,14 @@ const package_store = @import("package_store.zig");
 const runtime_bridge = @import("runtime_bridge.zig");
 const trust_store = @import("trust_store.zig");
 const workspace_runtime = @import("workspace_runtime.zig");
+const display_profile_store = @import("display_profile_store.zig");
 const display_output = @import("display_output.zig");
 const framebuffer_console = @import("framebuffer_console.zig");
 const vga_text_console = @import("vga_text_console.zig");
 const storage_backend = @import("storage_backend.zig");
 const virtio_gpu = @import("virtio_gpu.zig");
 
-pub const Error = filesystem.Error || trust_store.Error || app_runtime.Error || workspace_runtime.Error || std.mem.Allocator.Error || error{
+pub const Error = filesystem.Error || trust_store.Error || app_runtime.Error || workspace_runtime.Error || display_profile_store.Error || std.mem.Allocator.Error || error{
     MissingCommand,
     MissingPath,
     StreamTooLong,
@@ -157,7 +158,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-plan-list, workspace-plan-info, workspace-plan-active, workspace-plan-save, workspace-plan-apply, workspace-plan-delete, workspace-plan-release-list, workspace-plan-release-info, workspace-plan-release-save, workspace-plan-release-activate, workspace-plan-release-delete, workspace-plan-release-prune, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-suite-release-channel-list, workspace-suite-release-channel-info, workspace-suite-release-channel-set, workspace-suite-release-channel-activate, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-outputs, display-output, display-modes, display-set, display-activate, display-activate-output, display-output-set, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-plan-list, workspace-plan-info, workspace-plan-active, workspace-plan-save, workspace-plan-apply, workspace-plan-delete, workspace-plan-release-list, workspace-plan-release-info, workspace-plan-release-save, workspace-plan-release-activate, workspace-plan-release-delete, workspace-plan-release-prune, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-suite-release-channel-list, workspace-suite-release-channel-info, workspace-suite-release-channel-set, workspace-suite-release-channel-activate, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-outputs, display-output, display-modes, display-set, display-activate, display-activate-output, display-output-set, display-profile-list, display-profile-info, display-profile-active, display-profile-save, display-profile-apply, display-profile-delete, run-script, run-package, app-run");
         return;
     }
 
@@ -3213,6 +3214,139 @@ fn execute(
         return;
     }
 
+    if (std.ascii.eqlIgnoreCase(parsed.name, "display-profile-list")) {
+        if (parsed.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-profile-list");
+            return;
+        }
+        const listing = display_profile_store.listProfilesAlloc(allocator, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("display-profile-list failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(listing);
+        try stdout_buffer.appendSlice(listing);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "display-profile-info")) {
+        const name_arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "display-profile-info <name>");
+            return;
+        };
+        if (name_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-profile-info <name>");
+            return;
+        }
+        const info = display_profile_store.infoAlloc(allocator, name_arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("display-profile-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(info);
+        try stdout_buffer.appendSlice(info);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "display-profile-active")) {
+        if (parsed.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-profile-active");
+            return;
+        }
+        const info = display_profile_store.activeProfileInfoAlloc(allocator, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("display-profile-active failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(info);
+        try stdout_buffer.appendSlice(info);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "display-profile-save")) {
+        const name_arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "display-profile-save <name>");
+            return;
+        };
+        if (name_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-profile-save <name>");
+            return;
+        }
+        display_profile_store.saveCurrentProfile(name_arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("display-profile-save failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        const output = display_output.statePtr();
+        try stdout_buffer.appendFmt(
+            "display profile saved {s} output={d} current={d}x{d} connector={s}\n",
+            .{
+                name_arg.arg,
+                output.active_scanout,
+                output.current_width,
+                output.current_height,
+                displayConnectorName(output.connector_type),
+            },
+        );
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "display-profile-apply")) {
+        const name_arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "display-profile-apply <name>");
+            return;
+        };
+        if (name_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-profile-apply <name>");
+            return;
+        }
+        display_profile_store.applyProfile(name_arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("display-profile-apply failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        const output = display_output.statePtr();
+        try stdout_buffer.appendFmt(
+            "display profile applied {s} output={d} current={d}x{d} connector={s}\n",
+            .{
+                name_arg.arg,
+                output.active_scanout,
+                output.current_width,
+                output.current_height,
+                displayConnectorName(output.connector_type),
+            },
+        );
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "display-profile-delete")) {
+        const name_arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "display-profile-delete <name>");
+            return;
+        };
+        if (name_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-profile-delete <name>");
+            return;
+        }
+        display_profile_store.deleteProfile(name_arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("display-profile-delete failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("display profile deleted {s}\n", .{name_arg.arg});
+        return;
+    }
+
     if (std.ascii.eqlIgnoreCase(parsed.name, "run-script")) {
         const arg = parseFirstArg(parsed.rest) catch |err| {
             exit_code.* = 2;
@@ -4106,6 +4240,44 @@ test "baremetal tool exec activates requested display connector from stored outp
     defer missing_output_set_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 1), missing_output_set_result.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, missing_output_set_result.stderr, "display-output-set failed: DisplayOutputNotFound") != null);
+
+    var save_profile_result = try runCapture(std.testing.allocator, "display-profile-save golden", 256, 256);
+    defer save_profile_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_profile_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, save_profile_result.stdout, "display profile saved golden output=1 current=1024x768 connector=displayport") != null);
+
+    var info_profile_result = try runCapture(std.testing.allocator, "display-profile-info golden", 256, 256);
+    defer info_profile_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), info_profile_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, info_profile_result.stdout, "name=golden") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_profile_result.stdout, "output_index=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_profile_result.stdout, "width=1024") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_profile_result.stdout, "height=768") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_profile_result.stdout, "selected=0") != null);
+
+    var list_profile_result = try runCapture(std.testing.allocator, "display-profile-list", 256, 256);
+    defer list_profile_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), list_profile_result.exit_code);
+    try std.testing.expectEqualStrings("golden\n", list_profile_result.stdout);
+
+    var mutate_output_result = try runCapture(std.testing.allocator, "display-output-set 1 800 600", 256, 256);
+    defer mutate_output_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), mutate_output_result.exit_code);
+
+    var apply_profile_result = try runCapture(std.testing.allocator, "display-profile-apply golden", 256, 256);
+    defer apply_profile_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), apply_profile_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, apply_profile_result.stdout, "display profile applied golden output=1 current=1024x768 connector=displayport") != null);
+
+    var active_profile_result = try runCapture(std.testing.allocator, "display-profile-active", 256, 256);
+    defer active_profile_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), active_profile_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, active_profile_result.stdout, "selected=1") != null);
+
+    var delete_profile_result = try runCapture(std.testing.allocator, "display-profile-delete golden", 256, 256);
+    defer delete_profile_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), delete_profile_result.exit_code);
+    try std.testing.expectEqualStrings("display profile deleted golden\n", delete_profile_result.stdout);
 }
 
 test "baremetal tool exec persists package display mode and applies it during package launch" {

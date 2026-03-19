@@ -164,7 +164,14 @@ Current local source-of-truth evidence:
   - runtime now also reports the selected virtio-gpu PCI vendor/device, PCI location, active scanout, current mode, preferred mode, physical dimensions, manufacturer/product IDs, exported EDID byte surface, the exported capability flags derived from the EDID payload, and the bounded per-output entry export for the selected scanout
   - the same proof now also validates that explicit activation of the connected connector succeeds and that an explicit mismatched connector request is rejected on the live controller path
   - the same proof now also validates that explicit `display-output-set` retargets the connected output to `1024x768` and that an oversized requested mode is rejected without corrupting the exported output state
+  - the same proof now also validates persisted display-profile save/list/info/apply/delete, including mutating the active output down to `800x600`, reapplying the saved profile, and restoring the live output to `1024x768`
   - the same proof now also validates non-zero present statistics plus non-zero scanout pixels from the guest-backed render pattern after resource-create/attach/set-scanout/flush
+- a real persisted display-profile layer now exists on top of the connector-aware display path:
+  - `src/baremetal/display_profile_store.zig` persists connector-aware display profiles under `/runtime/display-profiles/profiles/<name>.txt` plus `/runtime/display-profiles/active.txt`
+  - `src/baremetal/tool_exec.zig` now exposes `display-profile-list`, `display-profile-info`, `display-profile-active`, `display-profile-save`, `display-profile-apply`, and `display-profile-delete`
+  - `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `DISPLAYPROFILELIST`, `DISPLAYPROFILEINFO`, `DISPLAYPROFILEACTIVE`, `DISPLAYPROFILESAVE`, `DISPLAYPROFILEAPPLY`, and `DISPLAYPROFILEDELETE`
+  - host/module validation proves save -> list -> info -> mutate -> apply -> active -> delete on both RAM-disk and ATA-backed storage
+  - `src/baremetal/display_output.zig` now restores a previously reduced mode up to the preferred output bounds, so the non-hardware virtio-gpu host model matches the real controller path when a saved profile reapplies a larger valid mode
 - current real source-of-truth rendered display support now covers bounded Bochs/QEMU BGA mode-setting plus virtio-gpu present/flush over the virtual scanout path
 - real HDMI/DisplayPort connector-specific scanout paths are not yet implemented and are not claimed by this branch
 

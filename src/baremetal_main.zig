@@ -6,6 +6,7 @@ const ata_pio_disk = @import("baremetal/ata_pio_disk.zig");
 const disk_installer = @import("baremetal/disk_installer.zig");
 const x86_bootstrap = @import("baremetal/x86_bootstrap.zig");
 const display_output = @import("baremetal/display_output.zig");
+const display_profile_store = @import("baremetal/display_profile_store.zig");
 const virtio_gpu = @import("baremetal/virtio_gpu.zig");
 const framebuffer_console = @import("baremetal/framebuffer_console.zig");
 const pal_framebuffer = @import("pal/framebuffer.zig");
@@ -667,6 +668,10 @@ const VirtioGpuDisplayProbeError = error{
     OutputEntryMismatch,
     PresentStatsMismatch,
     RenderedPixelMismatch,
+    DisplayProfileSaveMismatch,
+    DisplayProfileListMismatch,
+    DisplayProfileInfoMismatch,
+    DisplayProfileApplyMismatch,
 };
 
 const Multiboot2Header = extern struct {
@@ -10445,6 +10450,10 @@ fn virtioGpuDisplayProbeFailureCode(err: VirtioGpuDisplayProbeError) u8 {
         error.OutputEntryMismatch => 0x69,
         error.PresentStatsMismatch => 0x6A,
         error.RenderedPixelMismatch => 0x6B,
+        error.DisplayProfileSaveMismatch => 0x6D,
+        error.DisplayProfileListMismatch => 0x6E,
+        error.DisplayProfileInfoMismatch => 0x6F,
+        error.DisplayProfileApplyMismatch => 0x70,
     };
 }
 
@@ -10789,6 +10798,66 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
         oc_display_output_entry(result.active_scanout).current_height != requested_output_height)
     {
         return error.ExplicitOutputModeSetMismatch;
+    }
+
+    display_profile_store.saveCurrentProfile("golden", 0) catch return error.DisplayProfileSaveMismatch;
+
+    var profile_list_scratch: [64]u8 = undefined;
+    var profile_list_fba = std.heap.FixedBufferAllocator.init(&profile_list_scratch);
+    const profile_list = display_profile_store.listProfilesAlloc(profile_list_fba.allocator(), profile_list_scratch.len) catch {
+        return error.DisplayProfileListMismatch;
+    };
+    if (!std.mem.eql(u8, profile_list, "golden\n")) return error.DisplayProfileListMismatch;
+
+    var profile_info_scratch: [256]u8 = undefined;
+    var profile_info_fba = std.heap.FixedBufferAllocator.init(&profile_info_scratch);
+    const profile_info = display_profile_store.infoAlloc(profile_info_fba.allocator(), "golden", profile_info_scratch.len) catch {
+        return error.DisplayProfileInfoMismatch;
+    };
+    var output_index_buffer: [32]u8 = undefined;
+    const output_index_expected = std.fmt.bufPrint(&output_index_buffer, "output_index={d}", .{result.active_scanout}) catch {
+        return error.DisplayProfileInfoMismatch;
+    };
+    if (std.mem.indexOf(u8, profile_info, "name=golden") == null or
+        std.mem.indexOf(u8, profile_info, output_index_expected) == null or
+        std.mem.indexOf(u8, profile_info, "width=1024") == null or
+        std.mem.indexOf(u8, profile_info, "height=768") == null or
+        std.mem.indexOf(u8, profile_info, "selected=0") == null)
+    {
+        return error.DisplayProfileInfoMismatch;
+    }
+
+    const alternate_output_width: u16 = 800;
+    const alternate_output_height: u16 = 600;
+    pal_framebuffer.setDisplayOutputMode(result.active_scanout, alternate_output_width, alternate_output_height) catch {
+        return error.DisplayProfileApplyMismatch;
+    };
+    if (oc_display_output_state_ptr().current_width != alternate_output_width or
+        oc_display_output_state_ptr().current_height != alternate_output_height or
+        oc_display_output_entry(result.active_scanout).current_width != alternate_output_width or
+        oc_display_output_entry(result.active_scanout).current_height != alternate_output_height)
+    {
+        return error.DisplayProfileApplyMismatch;
+    }
+
+    display_profile_store.applyProfile("golden", 0) catch return error.DisplayProfileApplyMismatch;
+    if (oc_display_output_state_ptr().current_width != requested_output_width or
+        oc_display_output_state_ptr().current_height != requested_output_height or
+        oc_display_output_entry(result.active_scanout).current_width != requested_output_width or
+        oc_display_output_entry(result.active_scanout).current_height != requested_output_height)
+    {
+        return error.DisplayProfileApplyMismatch;
+    }
+
+    var active_profile_scratch: [256]u8 = undefined;
+    var active_profile_fba = std.heap.FixedBufferAllocator.init(&active_profile_scratch);
+    const active_profile = display_profile_store.activeProfileInfoAlloc(active_profile_fba.allocator(), active_profile_scratch.len) catch {
+        return error.DisplayProfileInfoMismatch;
+    };
+    if (std.mem.indexOf(u8, active_profile, "name=golden") == null or
+        std.mem.indexOf(u8, active_profile, "selected=1") == null)
+    {
+        return error.DisplayProfileInfoMismatch;
     }
 
     const wrong_connector: u8 = switch (expected_connector) {
