@@ -36,6 +36,8 @@ pub const AppSuiteSaveRequest = codec.AppSuiteSaveRequest;
 pub const AppSuiteChannelRequest = codec.AppSuiteChannelRequest;
 pub const AppSuiteChannelSetRequest = codec.AppSuiteChannelSetRequest;
 pub const WorkspacePlanRequest = codec.WorkspacePlanRequest;
+pub const WorkspacePlanReleaseRequest = codec.WorkspacePlanReleaseRequest;
+pub const WorkspacePlanReleasePruneRequest = codec.WorkspacePlanReleasePruneRequest;
 pub const WorkspacePlanSaveRequest = codec.WorkspacePlanSaveRequest;
 pub const WorkspaceSaveRequest = codec.WorkspaceSaveRequest;
 pub const WorkspaceSuiteSaveRequest = codec.WorkspaceSuiteSaveRequest;
@@ -249,6 +251,12 @@ fn handleFramedPayload(
         .workspace_plan_save => |request| try handleWorkspacePlanSaveRequest(allocator, request, payload_limit),
         .workspace_plan_apply => |request| try handleWorkspacePlanApplyRequest(allocator, request.workspace_name, request.plan_name, payload_limit),
         .workspace_plan_delete => |request| try handleWorkspacePlanDeleteRequest(allocator, request.workspace_name, request.plan_name, payload_limit),
+        .workspace_plan_release_list => |request| try handleWorkspacePlanReleaseListRequest(allocator, request.workspace_name, request.plan_name, payload_limit),
+        .workspace_plan_release_info => |request| try handleWorkspacePlanReleaseInfoRequest(allocator, request.workspace_name, request.plan_name, request.release_name, payload_limit),
+        .workspace_plan_release_save => |request| try handleWorkspacePlanReleaseSaveRequest(allocator, request.workspace_name, request.plan_name, request.release_name, payload_limit),
+        .workspace_plan_release_activate => |request| try handleWorkspacePlanReleaseActivateRequest(allocator, request.workspace_name, request.plan_name, request.release_name, payload_limit),
+        .workspace_plan_release_delete => |request| try handleWorkspacePlanReleaseDeleteRequest(allocator, request.workspace_name, request.plan_name, request.release_name, payload_limit),
+        .workspace_plan_release_prune => |request| try handleWorkspacePlanReleasePruneRequest(allocator, request.workspace_name, request.plan_name, request.keep, payload_limit),
         .workspace_suite_list => try handleWorkspaceSuiteListRequest(allocator, payload_limit),
         .workspace_suite_info => |suite_name| try handleWorkspaceSuiteInfoRequest(allocator, suite_name, payload_limit),
         .workspace_suite_save => |suite_request| try handleWorkspaceSuiteSaveRequest(allocator, suite_request, payload_limit),
@@ -1131,6 +1139,98 @@ fn handleWorkspacePlanDeleteRequest(
         return formatOperationError(allocator, "WORKSPACEPLANDELETE", err, payload_limit);
     };
     const response = try std.fmt.allocPrint(allocator, "WORKSPACEPLANDELETE {s} {s}\n", .{ workspace_name, plan_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleWorkspacePlanReleaseListRequest(
+    allocator: std.mem.Allocator,
+    workspace_name: []const u8,
+    plan_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return workspace_runtime.planReleaseListAlloc(allocator, workspace_name, plan_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "WORKSPACEPLANRELEASELIST", err, payload_limit);
+    };
+}
+
+fn handleWorkspacePlanReleaseInfoRequest(
+    allocator: std.mem.Allocator,
+    workspace_name: []const u8,
+    plan_name: []const u8,
+    release_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return workspace_runtime.planReleaseInfoAlloc(allocator, workspace_name, plan_name, release_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "WORKSPACEPLANRELEASEINFO", err, payload_limit);
+    };
+}
+
+fn handleWorkspacePlanReleaseSaveRequest(
+    allocator: std.mem.Allocator,
+    workspace_name: []const u8,
+    plan_name: []const u8,
+    release_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    workspace_runtime.snapshotPlanRelease(workspace_name, plan_name, release_name, 0) catch |err| {
+        return formatOperationError(allocator, "WORKSPACEPLANRELEASESAVE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "WORKSPACEPLANRELEASESAVE {s} {s} {s}\n", .{ workspace_name, plan_name, release_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleWorkspacePlanReleaseActivateRequest(
+    allocator: std.mem.Allocator,
+    workspace_name: []const u8,
+    plan_name: []const u8,
+    release_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    workspace_runtime.activatePlanRelease(workspace_name, plan_name, release_name, 0) catch |err| {
+        return formatOperationError(allocator, "WORKSPACEPLANRELEASEACTIVATE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "WORKSPACEPLANRELEASEACTIVATE {s} {s} {s}\n", .{ workspace_name, plan_name, release_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleWorkspacePlanReleaseDeleteRequest(
+    allocator: std.mem.Allocator,
+    workspace_name: []const u8,
+    plan_name: []const u8,
+    release_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    workspace_runtime.deletePlanRelease(workspace_name, plan_name, release_name, 0) catch |err| {
+        return formatOperationError(allocator, "WORKSPACEPLANRELEASEDELETE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "WORKSPACEPLANRELEASEDELETE {s} {s} {s}\n", .{ workspace_name, plan_name, release_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleWorkspacePlanReleasePruneRequest(
+    allocator: std.mem.Allocator,
+    workspace_name: []const u8,
+    plan_name: []const u8,
+    keep: u32,
+    payload_limit: usize,
+) Error![]u8 {
+    const keep_usize: usize = @intCast(keep);
+    const prune = workspace_runtime.prunePlanReleases(workspace_name, plan_name, keep_usize, 0) catch |err| {
+        return formatOperationError(allocator, "WORKSPACEPLANRELEASEPRUNE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "WORKSPACEPLANRELEASEPRUNE {s} {s} keep={d} deleted={d} kept={d}\n",
+        .{ workspace_name, plan_name, keep, prune.deleted_count, prune.kept_count },
+    );
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
@@ -3573,6 +3673,71 @@ test "baremetal tool service manages persisted workspaces" {
     const plan_list_after_delete_response = try handleFramedRequest(std.testing.allocator, "REQ 18392 WORKSPACEPLANLIST ops", 512, 256, 512);
     defer std.testing.allocator.free(plan_list_after_delete_response);
     try std.testing.expectEqualStrings("RESP 18392 7\ngolden\n", plan_list_after_delete_response);
+
+    const plan_release_save_v1_response = try handleFramedRequest(std.testing.allocator, "REQ 18393 WORKSPACEPLANRELEASESAVE ops golden v1", 512, 256, 512);
+    defer std.testing.allocator.free(plan_release_save_v1_response);
+    try std.testing.expect(std.mem.startsWith(u8, plan_release_save_v1_response, "RESP 18393 "));
+    try std.testing.expect(std.mem.indexOf(u8, plan_release_save_v1_response, "WORKSPACEPLANRELEASESAVE ops golden v1\n") != null);
+
+    const mutate_plan_release_response = try handleFramedRequest(std.testing.allocator, "REQ 18394 WORKSPACEPLANSAVE ops golden none root-b 800 600 demo:stable:r2", 512, 256, 512);
+    defer std.testing.allocator.free(mutate_plan_release_response);
+    try std.testing.expectEqualStrings("RESP 18394 29\nWORKSPACEPLANSAVE ops golden\n", mutate_plan_release_response);
+
+    const plan_release_save_v2_response = try handleFramedRequest(std.testing.allocator, "REQ 18395 WORKSPACEPLANRELEASESAVE ops golden v2", 512, 256, 512);
+    defer std.testing.allocator.free(plan_release_save_v2_response);
+    try std.testing.expect(std.mem.startsWith(u8, plan_release_save_v2_response, "RESP 18395 "));
+    try std.testing.expect(std.mem.indexOf(u8, plan_release_save_v2_response, "WORKSPACEPLANRELEASESAVE ops golden v2\n") != null);
+
+    const plan_release_list_response = try handleFramedRequest(std.testing.allocator, "REQ 18396 WORKSPACEPLANRELEASELIST ops golden", 512, 256, 512);
+    defer std.testing.allocator.free(plan_release_list_response);
+    try std.testing.expectEqualStrings("RESP 18396 6\nv1\nv2\n", plan_release_list_response);
+
+    const plan_release_info_response = try handleFramedRequest(std.testing.allocator, "REQ 18397 WORKSPACEPLANRELEASEINFO ops golden v2", 512, 256, 512);
+    defer std.testing.allocator.free(plan_release_info_response);
+    try std.testing.expect(std.mem.startsWith(u8, plan_release_info_response, "RESP 18397 "));
+    try std.testing.expect(std.mem.indexOf(u8, plan_release_info_response, "workspace=ops") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_release_info_response, "plan=golden") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_release_info_response, "release=v2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_release_info_response, "saved_seq=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_release_info_response, "trust_bundle=root-b") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_release_info_response, "display=800x600") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_release_info_response, "channel=demo:stable:r2") != null);
+
+    const plan_release_activate_v1_response = try handleFramedRequest(std.testing.allocator, "REQ 18398 WORKSPACEPLANRELEASEACTIVATE ops golden v1", 512, 256, 512);
+    defer std.testing.allocator.free(plan_release_activate_v1_response);
+    try std.testing.expect(std.mem.startsWith(u8, plan_release_activate_v1_response, "RESP 18398 "));
+    try std.testing.expect(std.mem.indexOf(u8, plan_release_activate_v1_response, "WORKSPACEPLANRELEASEACTIVATE ops golden v1\n") != null);
+
+    const plan_release_restored_info_response = try handleFramedRequest(std.testing.allocator, "REQ 18399 WORKSPACEPLANINFO ops golden", 512, 256, 512);
+    defer std.testing.allocator.free(plan_release_restored_info_response);
+    try std.testing.expect(std.mem.startsWith(u8, plan_release_restored_info_response, "RESP 18399 "));
+    try std.testing.expect(std.mem.indexOf(u8, plan_release_restored_info_response, "suite=duo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_release_restored_info_response, "trust_bundle=root-a") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_release_restored_info_response, "display=1024x768") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_release_restored_info_response, "channel=demo:stable:r1") != null);
+
+    const plan_release_delete_v2_response = try handleFramedRequest(std.testing.allocator, "REQ 183901 WORKSPACEPLANRELEASEDELETE ops golden v2", 512, 256, 512);
+    defer std.testing.allocator.free(plan_release_delete_v2_response);
+    try std.testing.expect(std.mem.startsWith(u8, plan_release_delete_v2_response, "RESP 183901 "));
+    try std.testing.expect(std.mem.indexOf(u8, plan_release_delete_v2_response, "WORKSPACEPLANRELEASEDELETE ops golden v2\n") != null);
+
+    const mutate_plan_release_fallback_response = try handleFramedRequest(std.testing.allocator, "REQ 183902 WORKSPACEPLANSAVE ops golden duo root-b 1280 720 demo:stable:r2", 512, 256, 512);
+    defer std.testing.allocator.free(mutate_plan_release_fallback_response);
+    try std.testing.expectEqualStrings("RESP 183902 29\nWORKSPACEPLANSAVE ops golden\n", mutate_plan_release_fallback_response);
+
+    const plan_release_save_fallback_response = try handleFramedRequest(std.testing.allocator, "REQ 183903 WORKSPACEPLANRELEASESAVE ops golden fallback", 512, 256, 512);
+    defer std.testing.allocator.free(plan_release_save_fallback_response);
+    try std.testing.expect(std.mem.startsWith(u8, plan_release_save_fallback_response, "RESP 183903 "));
+    try std.testing.expect(std.mem.indexOf(u8, plan_release_save_fallback_response, "WORKSPACEPLANRELEASESAVE ops golden fallback\n") != null);
+
+    const plan_release_prune_response = try handleFramedRequest(std.testing.allocator, "REQ 183904 WORKSPACEPLANRELEASEPRUNE ops golden 1", 512, 256, 512);
+    defer std.testing.allocator.free(plan_release_prune_response);
+    try std.testing.expect(std.mem.startsWith(u8, plan_release_prune_response, "RESP 183904 "));
+    try std.testing.expect(std.mem.indexOf(u8, plan_release_prune_response, "WORKSPACEPLANRELEASEPRUNE ops golden keep=1 deleted=1 kept=1\n") != null);
+
+    const plan_release_list_after_prune_response = try handleFramedRequest(std.testing.allocator, "REQ 183905 WORKSPACEPLANRELEASELIST ops golden", 512, 256, 512);
+    defer std.testing.allocator.free(plan_release_list_after_prune_response);
+    try std.testing.expectEqualStrings("RESP 183905 9\nfallback\n", plan_release_list_after_prune_response);
 
     const release_save_response = try handleFramedRequest(std.testing.allocator, "REQ 1841 WORKSPACERELEASESAVE ops golden", 512, 256, 512);
     defer std.testing.allocator.free(release_save_response);
