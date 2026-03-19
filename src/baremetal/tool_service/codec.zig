@@ -73,6 +73,12 @@ pub const RequestOp = enum {
     app_suite_channel_info,
     app_suite_channel_set,
     app_suite_channel_activate,
+    workspace_suite_list,
+    workspace_suite_info,
+    workspace_suite_save,
+    workspace_suite_apply,
+    workspace_suite_run,
+    workspace_suite_delete,
     workspace_list,
     workspace_info,
     workspace_save,
@@ -228,6 +234,11 @@ pub const WorkspaceSaveRequest = struct {
     entries_spec: []const u8,
 };
 
+pub const WorkspaceSuiteSaveRequest = struct {
+    suite_name: []const u8,
+    entries_spec: []const u8,
+};
+
 pub const FramedRequest = struct {
     request_id: u32,
     operation: union(RequestOp) {
@@ -290,6 +301,12 @@ pub const FramedRequest = struct {
         app_suite_channel_info: AppSuiteChannelRequest,
         app_suite_channel_set: AppSuiteChannelSetRequest,
         app_suite_channel_activate: AppSuiteChannelRequest,
+        workspace_suite_list: void,
+        workspace_suite_info: []const u8,
+        workspace_suite_save: WorkspaceSuiteSaveRequest,
+        workspace_suite_apply: []const u8,
+        workspace_suite_run: []const u8,
+        workspace_suite_delete: []const u8,
         workspace_list: void,
         workspace_info: []const u8,
         workspace_save: WorkspaceSaveRequest,
@@ -1426,6 +1443,97 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         }
         return .{
             .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACESUITELIST")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .workspace_suite_list = {} } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .workspace_suite_list = {} } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACESUITEINFO")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .workspace_suite_info = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .workspace_suite_info = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACESUITESAVE")) {
+        const suite_name = try splitFirstToken(op_part.rest);
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .workspace_suite_save = .{
+                .suite_name = suite_name.token,
+                .entries_spec = suite_name.rest,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACESUITEAPPLY")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .workspace_suite_apply = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .workspace_suite_apply = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACESUITERUN")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .workspace_suite_run = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .workspace_suite_run = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACESUITEDELETE")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .workspace_suite_delete = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .workspace_suite_delete = op_part.rest } },
             .consumed_len = request.len,
         };
     }

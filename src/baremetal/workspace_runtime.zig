@@ -13,10 +13,12 @@ pub const max_name_len: usize = 32;
 pub const max_workspace_entries: usize = 8;
 
 const root_dir = "/runtime/workspaces";
+const suite_root_dir = "/runtime/workspace-suites";
 const runtime_root_dir = "/runtime/workspace-runs";
 const release_root_dir = "/runtime/workspace-releases";
 const channel_root_dir = "/runtime/workspace-release-channels";
 const max_workspace_bytes: usize = 1024;
+const max_workspace_suite_bytes: usize = 1024;
 const max_history_bytes: usize = 1024;
 const max_autorun_bytes: usize = 1024;
 const release_list_scan_max_bytes: usize = storage_backend.block_size * 4;
@@ -38,6 +40,10 @@ pub const Error = filesystem.Error || app_runtime.Error || package_store.Error |
     WorkspaceReleaseNotFound,
     WorkspaceReleaseAlreadyExists,
     WorkspaceReleaseChannelNotFound,
+    InvalidWorkspaceSuiteName,
+    WorkspaceSuiteNotFound,
+    InvalidWorkspaceSuite,
+    WorkspaceSuiteEmpty,
 };
 
 pub const ReleasePruneResult = struct {
@@ -108,6 +114,26 @@ const Workspace = struct {
     }
 };
 
+const WorkspaceSuiteEntry = struct {
+    workspace_name_len: u8 = 0,
+    workspace_name_storage: [max_name_len]u8 = [_]u8{0} ** max_name_len,
+
+    fn workspaceName(self: *const @This()) []const u8 {
+        return self.workspace_name_storage[0..self.workspace_name_len];
+    }
+};
+
+const WorkspaceSuite = struct {
+    suite_name_len: u8 = 0,
+    suite_name_storage: [max_name_len]u8 = [_]u8{0} ** max_name_len,
+    entry_count: u8 = 0,
+    entries: [max_workspace_entries]WorkspaceSuiteEntry = [_]WorkspaceSuiteEntry{.{}} ** max_workspace_entries,
+
+    fn suiteName(self: *const @This()) []const u8 {
+        return self.suite_name_storage[0..self.suite_name_len];
+    }
+};
+
 pub fn listAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
     const raw_listing = filesystem.listDirectoryAlloc(allocator, root_dir, max_workspace_bytes) catch |err| switch (err) {
         error.FileNotFound => return allocator.alloc(u8, 0),
@@ -133,6 +159,45 @@ pub fn listAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
     }
 
     return out.toOwnedSlice(allocator);
+}
+
+pub fn suiteListAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
+    const raw_listing = filesystem.listDirectoryAlloc(allocator, suite_root_dir, max_workspace_suite_bytes) catch |err| switch (err) {
+        error.FileNotFound => return allocator.alloc(u8, 0),
+        else => return err,
+    };
+    defer allocator.free(raw_listing);
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    var lines = std.mem.splitScalar(u8, raw_listing, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        if (!std.mem.startsWith(u8, line, "file ")) continue;
+        var parts = std.mem.splitScalar(u8, line["file ".len..], ' ');
+        const file_name = parts.next() orelse continue;
+        if (!std.mem.endsWith(u8, file_name, ".txt")) continue;
+        const suite_name = file_name[0 .. file_name.len - ".txt".len];
+        if (suite_name.len == 0) continue;
+        if (out.items.len + suite_name.len + 1 > max_bytes) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, suite_name);
+        try out.append(allocator, '\n');
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+pub fn suiteEntriesAlloc(allocator: std.mem.Allocator, suite_name: []const u8, max_bytes: usize) Error![]u8 {
+    const suite = try loadWorkspaceSuite(suite_name);
+    return renderWorkspaceSuiteEntriesAlloc(allocator, suite, max_bytes);
+}
+
+pub fn suiteInfoAlloc(allocator: std.mem.Allocator, suite_name: []const u8, max_bytes: usize) Error![]u8 {
+    const suite = try loadWorkspaceSuite(suite_name);
+    var path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const path = try workspaceSuitePath(suite_name, &path_buffer);
+    return renderWorkspaceSuiteInfoAlloc(allocator, suite, path, max_bytes);
 }
 
 pub fn autorunListAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
@@ -325,6 +390,21 @@ pub fn saveWorkspace(
     try filesystem.writeFile(try workspacePath(name, &path_buffer), body, tick);
 }
 
+pub fn saveSuite(suite_name: []const u8, entries_spec: []const u8, tick: u64) Error!void {
+    try validateWorkspaceSuiteName(suite_name);
+
+    var suite = WorkspaceSuite{};
+    try copyComponent(suite.suite_name_storage[0..], &suite.suite_name_len, suite_name, error.InvalidWorkspaceSuiteName);
+    try parseWorkspaceSuiteEntriesSpec(&suite, entries_spec);
+    if (suite.entry_count == 0) return error.WorkspaceSuiteEmpty;
+
+    try filesystem.createDirPath(suite_root_dir);
+    var path_buffer: [filesystem.max_path_len]u8 = undefined;
+    var body_buffer: [max_workspace_suite_bytes]u8 = undefined;
+    const body = try renderWorkspaceSuiteBody(&suite, &body_buffer);
+    try filesystem.writeFile(try workspaceSuitePath(suite_name, &path_buffer), body, tick);
+}
+
 pub fn snapshotWorkspaceRelease(name: []const u8, release: []const u8, tick: u64) Error!void {
     try validateWorkspaceName(name);
     try package_store.validateReleaseName(release);
@@ -416,6 +496,15 @@ pub fn applyWorkspace(name: []const u8, tick: u64) Error!void {
     };
 }
 
+pub fn applySuite(suite_name: []const u8, tick: u64) Error!void {
+    const suite = try loadWorkspaceSuite(suite_name);
+    if (suite.entry_count == 0) return error.WorkspaceSuiteEmpty;
+
+    for (suite.entries[0..suite.entry_count]) |entry| {
+        try applyWorkspace(entry.workspaceName(), tick);
+    }
+}
+
 pub fn deleteWorkspace(name: []const u8, tick: u64) Error!void {
     try validateWorkspaceName(name);
     var path_buffer: [filesystem.max_path_len]u8 = undefined;
@@ -435,6 +524,14 @@ pub fn deleteWorkspace(name: []const u8, tick: u64) Error!void {
     var releases_buffer: [filesystem.max_path_len]u8 = undefined;
     filesystem.deleteTree(releasesRootPath(name, &releases_buffer), tick) catch |err| switch (err) {
         error.FileNotFound => {},
+        else => return err,
+    };
+}
+
+pub fn deleteSuite(suite_name: []const u8, tick: u64) Error!void {
+    var path_buffer: [filesystem.max_path_len]u8 = undefined;
+    filesystem.deleteFile(try workspaceSuitePath(suite_name, &path_buffer), tick) catch |err| switch (err) {
+        error.FileNotFound => return error.WorkspaceSuiteNotFound,
         else => return err,
     };
 }
@@ -608,6 +705,11 @@ fn workspacePath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![
     return std.fmt.bufPrint(buffer, "{s}/{s}.txt", .{ root_dir, name }) catch error.InvalidPath;
 }
 
+fn workspaceSuitePath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validateWorkspaceSuiteName(name);
+    return std.fmt.bufPrint(buffer, "{s}/{s}.txt", .{ suite_root_dir, name }) catch error.InvalidPath;
+}
+
 fn releasesRootPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) []const u8 {
     return std.fmt.bufPrint(buffer, "{s}/{s}", .{ release_root_dir, name }) catch unreachable;
 }
@@ -665,6 +767,49 @@ fn workspaceRunDirPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) E
     return std.fmt.bufPrint(buffer, "{s}/{s}", .{ runtime_root_dir, name }) catch error.InvalidPath;
 }
 
+fn renderWorkspaceSuiteEntriesAlloc(
+    allocator: std.mem.Allocator,
+    suite: WorkspaceSuite,
+    max_bytes: usize,
+) Error![]u8 {
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    for (suite.entries[0..suite.entry_count]) |entry| {
+        try appendLine(
+            &out,
+            allocator,
+            max_bytes,
+            try std.fmt.allocPrint(allocator, "{s}\n", .{entry.workspaceName()}),
+        );
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+fn renderWorkspaceSuiteInfoAlloc(
+    allocator: std.mem.Allocator,
+    suite: WorkspaceSuite,
+    path: []const u8,
+    max_bytes: usize,
+) Error![]u8 {
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "suite={s}\n", .{suite.suiteName()}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "path={s}\n", .{path}));
+    for (suite.entries[0..suite.entry_count]) |entry| {
+        try appendLine(
+            &out,
+            allocator,
+            max_bytes,
+            try std.fmt.allocPrint(allocator, "workspace={s}\n", .{entry.workspaceName()}),
+        );
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
 fn renderWorkspaceAlloc(
     allocator: std.mem.Allocator,
     workspace: Workspace,
@@ -720,6 +865,14 @@ fn renderWorkspaceBody(workspace: *const Workspace, buffer: *[max_workspace_byte
     return buffer[0..used];
 }
 
+fn renderWorkspaceSuiteBody(suite: *const WorkspaceSuite, buffer: *[max_workspace_suite_bytes]u8) Error![]const u8 {
+    var used: usize = 0;
+    for (suite.entries[0..suite.entry_count]) |entry| {
+        used += (std.fmt.bufPrint(buffer[used..], "workspace={s}\n", .{entry.workspaceName()}) catch return error.ResponseTooLarge).len;
+    }
+    return buffer[0..used];
+}
+
 fn loadWorkspace(name: []const u8) Error!Workspace {
     try validateWorkspaceName(name);
     var path_buffer: [filesystem.max_path_len]u8 = undefined;
@@ -732,9 +885,30 @@ fn loadWorkspace(name: []const u8) Error!Workspace {
     return parseWorkspacePayload(name, payload);
 }
 
+fn loadWorkspaceSuite(suite_name: []const u8) Error!WorkspaceSuite {
+    try validateWorkspaceSuiteName(suite_name);
+    var path_buffer: [filesystem.max_path_len]u8 = undefined;
+    var scratch: [max_workspace_suite_bytes]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&scratch);
+    const payload = filesystem.readFileAlloc(fba.allocator(), try workspaceSuitePath(suite_name, &path_buffer), max_workspace_suite_bytes) catch |err| switch (err) {
+        error.FileNotFound => return error.WorkspaceSuiteNotFound,
+        else => return err,
+    };
+    return parseWorkspaceSuitePayload(suite_name, payload);
+}
+
 fn workspaceExists(name: []const u8) Error!bool {
     var path_buffer: [filesystem.max_path_len]u8 = undefined;
     _ = filesystem.statSummary(try workspacePath(name, &path_buffer)) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => return err,
+    };
+    return true;
+}
+
+fn workspaceSuiteExists(name: []const u8) Error!bool {
+    var path_buffer: [filesystem.max_path_len]u8 = undefined;
+    _ = filesystem.statSummary(try workspaceSuitePath(name, &path_buffer)) catch |err| switch (err) {
         error.FileNotFound => return false,
         else => return err,
     };
@@ -798,6 +972,43 @@ fn parseWorkspacePayload(name: []const u8, payload: []const u8) Error!Workspace 
     return workspace;
 }
 
+fn parseWorkspaceSuitePayload(name: []const u8, payload: []const u8) Error!WorkspaceSuite {
+    var suite = WorkspaceSuite{};
+    try copyComponent(suite.suite_name_storage[0..], &suite.suite_name_len, name, error.InvalidWorkspaceSuiteName);
+
+    var lines = std.mem.splitScalar(u8, payload, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, "\r");
+        if (line.len == 0) continue;
+        if (std.mem.startsWith(u8, line, "workspace=")) {
+            try parseWorkspaceSuiteEntryLine(&suite, line["workspace=".len..]);
+            continue;
+        }
+        return error.InvalidWorkspaceSuite;
+    }
+
+    if (suite.entry_count == 0) return error.WorkspaceSuiteEmpty;
+    return suite;
+}
+
+fn parseWorkspaceSuiteEntriesSpec(suite: *WorkspaceSuite, spec: []const u8) Error!void {
+    if (spec.len == 0) return;
+    var iter = std.mem.tokenizeAny(u8, spec, " \t\r\n");
+    while (iter.next()) |token| {
+        try parseWorkspaceSuiteEntryLine(suite, token);
+    }
+}
+
+fn parseWorkspaceSuiteEntryLine(suite: *WorkspaceSuite, line: []const u8) Error!void {
+    try validateWorkspaceName(line);
+    if (!try workspaceExists(line)) return error.WorkspaceNotFound;
+    if (suite.entry_count >= max_workspace_entries) return error.WorkspaceEntryLimit;
+
+    const entry = &suite.entries[suite.entry_count];
+    try copyComponent(entry.workspace_name_storage[0..], &entry.workspace_name_len, line, error.InvalidWorkspaceSuite);
+    suite.entry_count += 1;
+}
+
 fn parseChannelEntriesSpec(workspace: *Workspace, spec: []const u8) Error!void {
     if (spec.len == 0) return;
     var iter = std.mem.tokenizeAny(u8, spec, " \t\r\n");
@@ -838,6 +1049,14 @@ fn validateWorkspaceName(name: []const u8) Error!void {
     for (name) |char| {
         if (std.ascii.isAlphanumeric(char) or char == '-' or char == '_' or char == '.') continue;
         return error.InvalidWorkspaceName;
+    }
+}
+
+fn validateWorkspaceSuiteName(name: []const u8) Error!void {
+    if (name.len == 0 or name.len > max_name_len) return error.InvalidWorkspaceSuiteName;
+    for (name) |char| {
+        if (std.ascii.isAlphanumeric(char) or char == '-' or char == '_' or char == '.') continue;
+        return error.InvalidWorkspaceSuiteName;
     }
 }
 
@@ -1401,4 +1620,95 @@ test "workspace runtime manages release channels" {
     try std.testing.expect(std.mem.indexOf(u8, restored_info, "trust_bundle=root-a") != null);
     try std.testing.expect(std.mem.indexOf(u8, restored_info, "display=1024x768") != null);
     try std.testing.expect(std.mem.indexOf(u8, restored_info, "channel=demo:stable:r1") != null);
+}
+
+test "workspace runtime manages workspace suites" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    framebuffer_console.resetForTest();
+
+    try trust_store.installBundle("root-a", "root-a-cert", 1);
+    try trust_store.installBundle("root-b", "root-b-cert", 2);
+    try trust_store.selectBundle("root-a", 3);
+
+    try package_store.installScriptPackage("demo", "echo demo-suite", 4);
+    try package_store.installScriptPackage("aux", "echo aux-suite", 5);
+    try app_runtime.savePlan("demo", "boot", "", "", abi.display_connector_virtual, 1024, 768, false, 6);
+    try app_runtime.savePlan("aux", "sidecar", "", "", abi.display_connector_virtual, 800, 600, false, 7);
+    try app_runtime.saveSuite("demo-suite", "demo:boot", 8);
+    try app_runtime.saveSuite("aux-suite", "aux:sidecar", 9);
+    try saveWorkspace("ops", "demo-suite", "root-a", 1024, 768, "", 10);
+    try saveWorkspace("sidecar", "aux-suite", "root-b", 800, 600, "", 11);
+    try saveSuite("crew", "ops sidecar", 12);
+
+    const listing = try suiteListAlloc(std.testing.allocator, 128);
+    defer std.testing.allocator.free(listing);
+    try std.testing.expectEqualStrings("crew\n", listing);
+
+    const info = try suiteInfoAlloc(std.testing.allocator, "crew", 256);
+    defer std.testing.allocator.free(info);
+    try std.testing.expect(std.mem.indexOf(u8, info, "suite=crew") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info, "workspace=ops") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info, "workspace=sidecar") != null);
+
+    const entries = try suiteEntriesAlloc(std.testing.allocator, "crew", 64);
+    defer std.testing.allocator.free(entries);
+    try std.testing.expectEqualStrings("ops\nsidecar\n", entries);
+
+    try applySuite("crew", 13);
+    const active_bundle = try trust_store.activeBundleNameAlloc(std.testing.allocator, trust_store.max_name_len);
+    defer std.testing.allocator.free(active_bundle);
+    try std.testing.expectEqualStrings("root-b", active_bundle);
+    const display_state = framebuffer_console.statePtr();
+    try std.testing.expectEqual(@as(u16, 800), display_state.width);
+    try std.testing.expectEqual(@as(u16, 600), display_state.height);
+
+    try deleteSuite("crew", 14);
+    const after_delete = try suiteListAlloc(std.testing.allocator, 64);
+    defer std.testing.allocator.free(after_delete);
+    try std.testing.expectEqualStrings("", after_delete);
+}
+
+test "workspace runtime workspace suites persist on ata-backed storage" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    framebuffer_console.resetForTest();
+    ata_pio_disk.testEnableMockDevice(8192);
+    ata_pio_disk.testInstallMockMbrPartition(2048, 4096, 0x83);
+    defer ata_pio_disk.testDisableMockDevice();
+
+    try trust_store.installBundle("persist-root-a", "persist-a", 1);
+    try trust_store.installBundle("persist-root-b", "persist-b", 2);
+    try package_store.installScriptPackage("demo", "echo demo-persist", 3);
+    try package_store.installScriptPackage("aux", "echo aux-persist", 4);
+    try app_runtime.savePlan("demo", "boot", "", "", abi.display_connector_virtual, 1024, 768, false, 5);
+    try app_runtime.savePlan("aux", "sidecar", "", "", abi.display_connector_virtual, 1280, 720, false, 6);
+    try app_runtime.saveSuite("demo-suite", "demo:boot", 7);
+    try app_runtime.saveSuite("aux-suite", "aux:sidecar", 8);
+    try saveWorkspace("ops", "demo-suite", "persist-root-a", 1024, 768, "", 9);
+    try saveWorkspace("sidecar", "aux-suite", "persist-root-b", 1280, 720, "", 10);
+    try saveSuite("crew", "ops sidecar", 11);
+
+    filesystem.resetForTest();
+    framebuffer_console.resetForTest();
+
+    const listing = try suiteListAlloc(std.testing.allocator, 128);
+    defer std.testing.allocator.free(listing);
+    try std.testing.expectEqualStrings("crew\n", listing);
+
+    const info = try suiteInfoAlloc(std.testing.allocator, "crew", 256);
+    defer std.testing.allocator.free(info);
+    try std.testing.expect(std.mem.indexOf(u8, info, "workspace=ops") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info, "workspace=sidecar") != null);
+
+    try applySuite("crew", 12);
+    try std.testing.expectEqual(@as(u32, 2048), ata_pio_disk.logicalBaseLba());
+
+    const active_bundle = try trust_store.activeBundleNameAlloc(std.testing.allocator, trust_store.max_name_len);
+    defer std.testing.allocator.free(active_bundle);
+    try std.testing.expectEqualStrings("persist-root-b", active_bundle);
+
+    const display_state = framebuffer_console.statePtr();
+    try std.testing.expectEqual(@as(u16, 1280), display_state.width);
+    try std.testing.expectEqual(@as(u16, 720), display_state.height);
 }

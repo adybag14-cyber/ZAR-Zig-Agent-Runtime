@@ -2024,9 +2024,14 @@ Full-stack replacement execution reference:
     - `src/baremetal/tool_service.zig` now also exposes `WORKSPACECHANNELLIST`, `WORKSPACECHANNELINFO`, `WORKSPACECHANNELSET`, and `WORKSPACECHANNELACTIVATE`
     - host validation now also proves RAM-disk and ATA-backed workspace release-channel persistence plus restored workspace info through channel activation
     - the broad live RTL8139 TCP proof now also covers workspace release channel set -> info -> list -> activate, persisted channel-target readback, and restored workspace info through the selected workspace release channel
+    - `src/baremetal/workspace_runtime.zig` now also persists workspace suites under `/runtime/workspace-suites/<suite>.txt`, with `suiteListAlloc`, `suiteEntriesAlloc`, `suiteInfoAlloc`, `saveSuite`, `applySuite`, and `deleteSuite`
+    - `src/baremetal/tool_exec.zig` now also exposes `workspace-suite-list`, `workspace-suite-info`, `workspace-suite-save`, `workspace-suite-apply`, `workspace-suite-run`, and `workspace-suite-delete`
+    - `src/baremetal/tool_service.zig` now also exposes `WORKSPACESUITELIST`, `WORKSPACESUITEINFO`, `WORKSPACESUITESAVE`, `WORKSPACESUITEAPPLY`, `WORKSPACESUITERUN`, and `WORKSPACESUITEDELETE`
+    - host validation now also proves RAM-disk and ATA-backed workspace-suite persistence on top of the existing workspace orchestration surface
+    - the broad live RTL8139 TCP proof now also covers workspace suite save -> persisted suite-file readback -> list -> info -> apply -> run -> delete plus post-delete suite absence
     - `src/baremetal/filesystem.zig` now carries a `96`-entry filesystem budget so the deeper FS5.5 package/trust/app/workspace release surface no longer fails with live-service `NoSpace`
-    - current local validation after the app-suite-release-channel slice is green:
-      - `zig build test --summary all` -> `387/387` passed
+    - current local validation after the workspace-suite slice is green:
+      - `zig build test --summary all` -> `390/390` passed
       - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1 -TimeoutSeconds 120` -> pass
       - parity gate -> pass (`union 141/141`, `events 19/19`)
       - docs status gate -> pass
