@@ -79,6 +79,12 @@ pub const RequestOp = enum {
     workspace_suite_apply,
     workspace_suite_run,
     workspace_suite_delete,
+    workspace_suite_release_list,
+    workspace_suite_release_info,
+    workspace_suite_release_save,
+    workspace_suite_release_activate,
+    workspace_suite_release_delete,
+    workspace_suite_release_prune,
     workspace_list,
     workspace_info,
     workspace_save,
@@ -239,6 +245,16 @@ pub const WorkspaceSuiteSaveRequest = struct {
     entries_spec: []const u8,
 };
 
+pub const WorkspaceSuiteReleaseRequest = struct {
+    suite_name: []const u8,
+    release_name: []const u8,
+};
+
+pub const WorkspaceSuiteReleasePruneRequest = struct {
+    suite_name: []const u8,
+    keep: u32,
+};
+
 pub const FramedRequest = struct {
     request_id: u32,
     operation: union(RequestOp) {
@@ -307,6 +323,12 @@ pub const FramedRequest = struct {
         workspace_suite_apply: []const u8,
         workspace_suite_run: []const u8,
         workspace_suite_delete: []const u8,
+        workspace_suite_release_list: []const u8,
+        workspace_suite_release_info: WorkspaceSuiteReleaseRequest,
+        workspace_suite_release_save: WorkspaceSuiteReleaseRequest,
+        workspace_suite_release_activate: WorkspaceSuiteReleaseRequest,
+        workspace_suite_release_delete: WorkspaceSuiteReleaseRequest,
+        workspace_suite_release_prune: WorkspaceSuiteReleasePruneRequest,
         workspace_list: void,
         workspace_info: []const u8,
         workspace_save: WorkspaceSaveRequest,
@@ -1534,6 +1556,127 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         }
         return .{
             .framed = .{ .request_id = request_id, .operation = .{ .workspace_suite_delete = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACESUITERELEASELIST")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .workspace_suite_release_list = op_part.rest } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .workspace_suite_release_list = op_part.rest } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACESUITERELEASEINFO")) {
+        const suite_name = try splitFirstToken(op_part.rest);
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .workspace_suite_release_info = .{
+                .suite_name = suite_name.token,
+                .release_name = suite_name.rest,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACESUITERELEASESAVE")) {
+        const suite_name = try splitFirstToken(op_part.rest);
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .workspace_suite_release_save = .{
+                .suite_name = suite_name.token,
+                .release_name = suite_name.rest,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACESUITERELEASEACTIVATE")) {
+        const suite_name = try splitFirstToken(op_part.rest);
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .workspace_suite_release_activate = .{
+                .suite_name = suite_name.token,
+                .release_name = suite_name.rest,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACESUITERELEASEDELETE")) {
+        const suite_name = try splitFirstToken(op_part.rest);
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .workspace_suite_release_delete = .{
+                .suite_name = suite_name.token,
+                .release_name = suite_name.rest,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "WORKSPACESUITERELEASEPRUNE")) {
+        const suite_name = try splitFirstToken(op_part.rest);
+        if (suite_name.rest.len == 0) return error.InvalidFrame;
+        const keep = std.fmt.parseInt(u32, suite_name.rest, 10) catch return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .workspace_suite_release_prune = .{
+                .suite_name = suite_name.token,
+                .keep = keep,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
             .consumed_len = request.len,
         };
     }

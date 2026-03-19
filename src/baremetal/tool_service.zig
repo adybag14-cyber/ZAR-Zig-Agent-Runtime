@@ -37,6 +37,8 @@ pub const AppSuiteChannelRequest = codec.AppSuiteChannelRequest;
 pub const AppSuiteChannelSetRequest = codec.AppSuiteChannelSetRequest;
 pub const WorkspaceSaveRequest = codec.WorkspaceSaveRequest;
 pub const WorkspaceSuiteSaveRequest = codec.WorkspaceSuiteSaveRequest;
+pub const WorkspaceSuiteReleaseRequest = codec.WorkspaceSuiteReleaseRequest;
+pub const WorkspaceSuiteReleasePruneRequest = codec.WorkspaceSuiteReleasePruneRequest;
 pub const WorkspaceReleaseRequest = codec.WorkspaceReleaseRequest;
 pub const WorkspaceReleasePruneRequest = codec.WorkspaceReleasePruneRequest;
 pub const WorkspaceChannelRequest = codec.WorkspaceChannelRequest;
@@ -243,6 +245,12 @@ fn handleFramedPayload(
         .workspace_suite_apply => |suite_name| try handleWorkspaceSuiteApplyRequest(allocator, suite_name, payload_limit),
         .workspace_suite_run => |suite_name| try handleWorkspaceSuiteRunRequest(allocator, suite_name, stdout_limit, stderr_limit, payload_limit),
         .workspace_suite_delete => |suite_name| try handleWorkspaceSuiteDeleteRequest(allocator, suite_name, payload_limit),
+        .workspace_suite_release_list => |suite_name| try handleWorkspaceSuiteReleaseListRequest(allocator, suite_name, payload_limit),
+        .workspace_suite_release_info => |request| try handleWorkspaceSuiteReleaseInfoRequest(allocator, request.suite_name, request.release_name, payload_limit),
+        .workspace_suite_release_save => |request| try handleWorkspaceSuiteReleaseSaveRequest(allocator, request.suite_name, request.release_name, payload_limit),
+        .workspace_suite_release_activate => |request| try handleWorkspaceSuiteReleaseActivateRequest(allocator, request.suite_name, request.release_name, payload_limit),
+        .workspace_suite_release_delete => |request| try handleWorkspaceSuiteReleaseDeleteRequest(allocator, request.suite_name, request.release_name, payload_limit),
+        .workspace_suite_release_prune => |request| try handleWorkspaceSuiteReleasePruneRequest(allocator, request.suite_name, request.keep, payload_limit),
         .workspace_list => try handleWorkspaceListRequest(allocator, payload_limit),
         .workspace_info => |workspace_name| try handleWorkspaceInfoRequest(allocator, workspace_name, payload_limit),
         .workspace_save => |workspace_request| try handleWorkspaceSaveRequest(allocator, workspace_request, payload_limit),
@@ -1102,6 +1110,91 @@ fn handleWorkspaceSuiteDeleteRequest(
         return formatOperationError(allocator, "WORKSPACESUITEDELETE", err, payload_limit);
     };
     const response = try std.fmt.allocPrint(allocator, "WORKSPACESUITEDELETE {s}\n", .{suite_name});
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleWorkspaceSuiteReleaseListRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return workspace_runtime.suiteReleaseListAlloc(allocator, suite_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "WORKSPACESUITERELEASELIST", err, payload_limit);
+    };
+}
+
+fn handleWorkspaceSuiteReleaseInfoRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    release_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    return workspace_runtime.suiteReleaseInfoAlloc(allocator, suite_name, release_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "WORKSPACESUITERELEASEINFO", err, payload_limit);
+    };
+}
+
+fn handleWorkspaceSuiteReleaseSaveRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    release_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    workspace_runtime.snapshotSuiteRelease(suite_name, release_name, 0) catch |err| {
+        return formatOperationError(allocator, "WORKSPACESUITERELEASESAVE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "WORKSPACESUITERELEASESAVE {s} {s}\n", .{ suite_name, release_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleWorkspaceSuiteReleaseActivateRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    release_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    workspace_runtime.activateSuiteRelease(suite_name, release_name, 0) catch |err| {
+        return formatOperationError(allocator, "WORKSPACESUITERELEASEACTIVATE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "WORKSPACESUITERELEASEACTIVATE {s} {s}\n", .{ suite_name, release_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleWorkspaceSuiteReleaseDeleteRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    release_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    workspace_runtime.deleteSuiteRelease(suite_name, release_name, 0) catch |err| {
+        return formatOperationError(allocator, "WORKSPACESUITERELEASEDELETE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "WORKSPACESUITERELEASEDELETE {s} {s}\n", .{ suite_name, release_name });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleWorkspaceSuiteReleasePruneRequest(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    keep: u32,
+    payload_limit: usize,
+) Error![]u8 {
+    const result = workspace_runtime.pruneSuiteReleases(suite_name, keep, 0) catch |err| {
+        return formatOperationError(allocator, "WORKSPACESUITERELEASEPRUNE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "WORKSPACESUITERELEASEPRUNE {s} keep={d} deleted={d} kept={d}\n",
+        .{ suite_name, keep, result.deleted_count, result.kept_count },
+    );
     errdefer allocator.free(response);
     if (response.len > payload_limit) return error.ResponseTooLarge;
     return response;
@@ -2224,6 +2317,57 @@ test "baremetal tool service parses typed framed requests" {
     const workspace_suite_delete = try parseFramedRequest("REQ 191 WORKSPACESUITEDELETE crew");
     switch (workspace_suite_delete.operation) {
         .workspace_suite_delete => |suite_name| try std.testing.expectEqualStrings("crew", suite_name),
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_suite_release_list = try parseFramedRequest("REQ 192 WORKSPACESUITERELEASELIST crew");
+    switch (workspace_suite_release_list.operation) {
+        .workspace_suite_release_list => |suite_name| try std.testing.expectEqualStrings("crew", suite_name),
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_suite_release_info = try parseFramedRequest("REQ 193 WORKSPACESUITERELEASEINFO crew golden");
+    switch (workspace_suite_release_info.operation) {
+        .workspace_suite_release_info => |payload| {
+            try std.testing.expectEqualStrings("crew", payload.suite_name);
+            try std.testing.expectEqualStrings("golden", payload.release_name);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_suite_release_save = try parseFramedRequest("REQ 194 WORKSPACESUITERELEASESAVE crew golden");
+    switch (workspace_suite_release_save.operation) {
+        .workspace_suite_release_save => |payload| {
+            try std.testing.expectEqualStrings("crew", payload.suite_name);
+            try std.testing.expectEqualStrings("golden", payload.release_name);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_suite_release_activate = try parseFramedRequest("REQ 195 WORKSPACESUITERELEASEACTIVATE crew golden");
+    switch (workspace_suite_release_activate.operation) {
+        .workspace_suite_release_activate => |payload| {
+            try std.testing.expectEqualStrings("crew", payload.suite_name);
+            try std.testing.expectEqualStrings("golden", payload.release_name);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_suite_release_delete = try parseFramedRequest("REQ 196 WORKSPACESUITERELEASEDELETE crew golden");
+    switch (workspace_suite_release_delete.operation) {
+        .workspace_suite_release_delete => |payload| {
+            try std.testing.expectEqualStrings("crew", payload.suite_name);
+            try std.testing.expectEqualStrings("golden", payload.release_name);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const workspace_suite_release_prune = try parseFramedRequest("REQ 197 WORKSPACESUITERELEASEPRUNE crew 1");
+    switch (workspace_suite_release_prune.operation) {
+        .workspace_suite_release_prune => |payload| {
+            try std.testing.expectEqualStrings("crew", payload.suite_name);
+            try std.testing.expectEqual(@as(u32, 1), payload.keep);
+        },
         else => return error.InvalidFrame,
     }
 
@@ -3430,6 +3574,103 @@ test "baremetal tool service persists and runs workspace suites" {
     try std.testing.expectEqualStrings("RESP 2039 0\n", suite_list_after_delete);
 
     try std.testing.expectError(error.FileNotFound, filesystem.statSummary("/runtime/workspace-suites/crew.txt"));
+}
+
+test "baremetal tool service manages workspace suite releases" {
+    resetPersistentStateForTest();
+
+    try trust_store.installBundle("root-a", "root-a-cert", 1);
+    try trust_store.installBundle("root-b", "root-b-cert", 2);
+    try package_store.installScriptPackage("demo", "echo demo-workspace", 3);
+    try package_store.installScriptPackage("aux", "echo aux-workspace", 4);
+    try app_runtime.savePlan("demo", "boot", "", "", abi.display_connector_virtual, 1024, 768, false, 5);
+    try app_runtime.savePlan("aux", "sidecar", "", "", abi.display_connector_virtual, 800, 600, false, 6);
+    try app_runtime.saveSuite("demo-suite", "demo:boot", 7);
+    try app_runtime.saveSuite("aux-suite", "aux:sidecar", 8);
+
+    const save_ops_response = try handleFramedRequest(std.testing.allocator, "REQ 2041 WORKSPACESAVE ops demo-suite root-a 1024 768", 512, 256, 768);
+    defer std.testing.allocator.free(save_ops_response);
+    try std.testing.expectEqualStrings("RESP 2041 18\nWORKSPACESAVE ops\n", save_ops_response);
+
+    const save_sidecar_response = try handleFramedRequest(std.testing.allocator, "REQ 2042 WORKSPACESAVE sidecar aux-suite root-b 800 600", 512, 256, 768);
+    defer std.testing.allocator.free(save_sidecar_response);
+    try std.testing.expectEqualStrings("RESP 2042 22\nWORKSPACESAVE sidecar\n", save_sidecar_response);
+
+    const suite_save_response = try handleFramedRequest(std.testing.allocator, "REQ 2043 WORKSPACESUITESAVE crew ops sidecar", 512, 256, 768);
+    defer std.testing.allocator.free(suite_save_response);
+    try std.testing.expectEqualStrings("RESP 2043 24\nWORKSPACESUITESAVE crew\n", suite_save_response);
+
+    const release_save_golden_response = try handleFramedRequest(std.testing.allocator, "REQ 2044 WORKSPACESUITERELEASESAVE crew golden", 512, 256, 768);
+    defer std.testing.allocator.free(release_save_golden_response);
+    try std.testing.expect(std.mem.startsWith(u8, release_save_golden_response, "RESP 2044 "));
+    try std.testing.expect(std.mem.indexOf(u8, release_save_golden_response, "WORKSPACESUITERELEASESAVE crew golden\n") != null);
+
+    const mutate_ops_response = try handleFramedRequest(std.testing.allocator, "REQ 2045 WORKSPACESAVE ops demo-suite root-b 640 400", 512, 256, 768);
+    defer std.testing.allocator.free(mutate_ops_response);
+    try std.testing.expectEqualStrings("RESP 2045 18\nWORKSPACESAVE ops\n", mutate_ops_response);
+
+    const suite_overwrite_response = try handleFramedRequest(std.testing.allocator, "REQ 2046 WORKSPACESUITESAVE crew ops", 512, 256, 768);
+    defer std.testing.allocator.free(suite_overwrite_response);
+    try std.testing.expectEqualStrings("RESP 2046 24\nWORKSPACESUITESAVE crew\n", suite_overwrite_response);
+
+    const release_save_staging_response = try handleFramedRequest(std.testing.allocator, "REQ 2047 WORKSPACESUITERELEASESAVE crew staging", 512, 256, 768);
+    defer std.testing.allocator.free(release_save_staging_response);
+    try std.testing.expect(std.mem.startsWith(u8, release_save_staging_response, "RESP 2047 "));
+    try std.testing.expect(std.mem.indexOf(u8, release_save_staging_response, "WORKSPACESUITERELEASESAVE crew staging\n") != null);
+
+    const release_list_response = try handleFramedRequest(std.testing.allocator, "REQ 2048 WORKSPACESUITERELEASELIST crew", 512, 256, 768);
+    defer std.testing.allocator.free(release_list_response);
+    try std.testing.expectEqualStrings("RESP 2048 15\ngolden\nstaging\n", release_list_response);
+
+    const release_info_response = try handleFramedRequest(std.testing.allocator, "REQ 2049 WORKSPACESUITERELEASEINFO crew staging", 512, 256, 768);
+    defer std.testing.allocator.free(release_info_response);
+    try std.testing.expect(std.mem.startsWith(u8, release_info_response, "RESP 2049 "));
+    try std.testing.expect(std.mem.indexOf(u8, release_info_response, "suite=crew") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info_response, "release=staging") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info_response, "saved_seq=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info_response, "workspace=ops") != null);
+
+    const release_activate_response = try handleFramedRequest(std.testing.allocator, "REQ 2050 WORKSPACESUITERELEASEACTIVATE crew golden", 512, 256, 768);
+    defer std.testing.allocator.free(release_activate_response);
+    try std.testing.expect(std.mem.startsWith(u8, release_activate_response, "RESP 2050 "));
+    try std.testing.expect(std.mem.indexOf(u8, release_activate_response, "WORKSPACESUITERELEASEACTIVATE crew golden\n") != null);
+
+    const suite_info_response = try handleFramedRequest(std.testing.allocator, "REQ 2051 WORKSPACESUITEINFO crew", 512, 256, 768);
+    defer std.testing.allocator.free(suite_info_response);
+    try std.testing.expect(std.mem.startsWith(u8, suite_info_response, "RESP 2051 "));
+    try std.testing.expect(std.mem.indexOf(u8, suite_info_response, "workspace=ops") != null);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info_response, "workspace=sidecar") != null);
+
+    const release_delete_response = try handleFramedRequest(std.testing.allocator, "REQ 2052 WORKSPACESUITERELEASEDELETE crew staging", 512, 256, 768);
+    defer std.testing.allocator.free(release_delete_response);
+    try std.testing.expect(std.mem.startsWith(u8, release_delete_response, "RESP 2052 "));
+    try std.testing.expect(std.mem.indexOf(u8, release_delete_response, "WORKSPACESUITERELEASEDELETE crew staging\n") != null);
+
+    const release_list_after_delete_response = try handleFramedRequest(std.testing.allocator, "REQ 2053 WORKSPACESUITERELEASELIST crew", 512, 256, 768);
+    defer std.testing.allocator.free(release_list_after_delete_response);
+    try std.testing.expectEqualStrings("RESP 2053 7\ngolden\n", release_list_after_delete_response);
+
+    const mutate_ops_fallback_response = try handleFramedRequest(std.testing.allocator, "REQ 2054 WORKSPACESAVE ops demo-suite root-b 640 400", 512, 256, 768);
+    defer std.testing.allocator.free(mutate_ops_fallback_response);
+    try std.testing.expectEqualStrings("RESP 2054 18\nWORKSPACESAVE ops\n", mutate_ops_fallback_response);
+
+    const suite_fallback_response = try handleFramedRequest(std.testing.allocator, "REQ 2055 WORKSPACESUITESAVE crew ops", 512, 256, 768);
+    defer std.testing.allocator.free(suite_fallback_response);
+    try std.testing.expectEqualStrings("RESP 2055 24\nWORKSPACESUITESAVE crew\n", suite_fallback_response);
+
+    const release_save_fallback_response = try handleFramedRequest(std.testing.allocator, "REQ 2056 WORKSPACESUITERELEASESAVE crew fallback", 512, 256, 768);
+    defer std.testing.allocator.free(release_save_fallback_response);
+    try std.testing.expect(std.mem.startsWith(u8, release_save_fallback_response, "RESP 2056 "));
+    try std.testing.expect(std.mem.indexOf(u8, release_save_fallback_response, "WORKSPACESUITERELEASESAVE crew fallback\n") != null);
+
+    const release_prune_response = try handleFramedRequest(std.testing.allocator, "REQ 2057 WORKSPACESUITERELEASEPRUNE crew 1", 512, 256, 768);
+    defer std.testing.allocator.free(release_prune_response);
+    try std.testing.expect(std.mem.startsWith(u8, release_prune_response, "RESP 2057 "));
+    try std.testing.expect(std.mem.indexOf(u8, release_prune_response, "WORKSPACESUITERELEASEPRUNE crew keep=1 deleted=1 kept=1\n") != null);
+
+    const release_list_final_response = try handleFramedRequest(std.testing.allocator, "REQ 2058 WORKSPACESUITERELEASELIST crew", 512, 256, 768);
+    defer std.testing.allocator.free(release_list_final_response);
+    try std.testing.expectEqualStrings("RESP 2058 9\nfallback\n", release_list_final_response);
 }
 
 test "baremetal tool service persists and runs workspace autorun requests" {

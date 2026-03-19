@@ -154,7 +154,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-modes, display-set, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-modes, display-set, run-script, run-package, app-run");
         return;
     }
 
@@ -1637,6 +1637,161 @@ fn execute(
             return;
         };
         try stdout_buffer.appendFmt("workspace suite deleted {s}\n", .{arg.arg});
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-release-list")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-list <suite>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-list <suite>");
+            return;
+        }
+        const listing = workspace_runtime.suiteReleaseListAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-release-list failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(listing);
+        try stdout_buffer.appendSlice(listing);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-release-info")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-info <suite> <release>");
+            return;
+        };
+        const release_name = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-info <suite> <release>");
+            return;
+        };
+        if (release_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-info <suite> <release>");
+            return;
+        }
+        const info = workspace_runtime.suiteReleaseInfoAlloc(allocator, suite_name.arg, release_name.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-release-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(info);
+        try stdout_buffer.appendSlice(info);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-release-save")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-save <suite> <release>");
+            return;
+        };
+        const release_name = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-save <suite> <release>");
+            return;
+        };
+        if (release_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-save <suite> <release>");
+            return;
+        }
+        workspace_runtime.snapshotSuiteRelease(suite_name.arg, release_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-release-save failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("workspace suite release saved {s} {s}\n", .{ suite_name.arg, release_name.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-release-activate")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-activate <suite> <release>");
+            return;
+        };
+        const release_name = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-activate <suite> <release>");
+            return;
+        };
+        if (release_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-activate <suite> <release>");
+            return;
+        }
+        workspace_runtime.activateSuiteRelease(suite_name.arg, release_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-release-activate failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("workspace suite release activated {s} {s}\n", .{ suite_name.arg, release_name.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-release-delete")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-delete <suite> <release>");
+            return;
+        };
+        const release_name = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-delete <suite> <release>");
+            return;
+        };
+        if (release_name.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-delete <suite> <release>");
+            return;
+        }
+        workspace_runtime.deleteSuiteRelease(suite_name.arg, release_name.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-release-delete failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("workspace suite release deleted {s} {s}\n", .{ suite_name.arg, release_name.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "workspace-suite-release-prune")) {
+        const suite_name = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-prune <suite> <keep>");
+            return;
+        };
+        const keep_arg = parseFirstArg(suite_name.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "workspace-suite-release-prune <suite> <keep>");
+            return;
+        };
+        if (keep_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-prune <suite> <keep>");
+            return;
+        }
+        const keep = std.fmt.parseInt(usize, keep_arg.arg, 10) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: workspace-suite-release-prune <suite> <keep>");
+            return;
+        };
+        const result = workspace_runtime.pruneSuiteReleases(suite_name.arg, keep, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("workspace-suite-release-prune failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt(
+            "workspace suite release pruned {s} keep={d} deleted={d} kept={d}\n",
+            .{ suite_name.arg, keep, result.deleted_count, result.kept_count },
+        );
         return;
     }
 
@@ -3912,6 +4067,111 @@ test "baremetal tool exec persists and runs workspace suites" {
     defer workspace_suite_list_after_delete.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), workspace_suite_list_after_delete.exit_code);
     try std.testing.expectEqualStrings("", workspace_suite_list_after_delete.stdout);
+}
+
+test "baremetal tool exec manages workspace suite releases" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    display_output.resetForTest();
+    framebuffer_console.resetForTest();
+    vga_text_console.resetForTest();
+
+    try trust_store.installBundle("root-a", "root-a-cert", 1);
+    try trust_store.installBundle("root-b", "root-b-cert", 2);
+    try package_store.installScriptPackage("demo", "echo demo-workspace", 3);
+    try package_store.installScriptPackage("aux", "echo aux-workspace", 4);
+    try app_runtime.savePlan("demo", "boot", "", "", abi.display_connector_virtual, 1024, 768, false, 5);
+    try app_runtime.savePlan("demo", "canary", "", "", abi.display_connector_virtual, 640, 400, false, 6);
+    try app_runtime.savePlan("aux", "sidecar", "", "", abi.display_connector_virtual, 800, 600, false, 7);
+    try app_runtime.saveSuite("demo-suite", "demo:boot", 8);
+    try app_runtime.saveSuite("aux-suite", "aux:sidecar", 9);
+
+    var save_ops = try runCapture(std.testing.allocator, "workspace-save ops demo-suite root-a 1024 768", 256, 256);
+    defer save_ops.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_ops.exit_code);
+
+    var save_sidecar = try runCapture(std.testing.allocator, "workspace-save sidecar aux-suite root-b 800 600", 256, 256);
+    defer save_sidecar.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_sidecar.exit_code);
+
+    var save_workspace_suite = try runCapture(std.testing.allocator, "workspace-suite-save crew ops sidecar", 256, 256);
+    defer save_workspace_suite.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_workspace_suite.exit_code);
+
+    var save_release_golden = try runCapture(std.testing.allocator, "workspace-suite-release-save crew golden", 256, 256);
+    defer save_release_golden.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_release_golden.exit_code);
+    try std.testing.expectEqualStrings("workspace suite release saved crew golden\n", save_release_golden.stdout);
+
+    var save_ops_canary = try runCapture(std.testing.allocator, "workspace-save ops demo-suite root-b 640 400", 256, 256);
+    defer save_ops_canary.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_ops_canary.exit_code);
+
+    var save_workspace_suite_staging = try runCapture(std.testing.allocator, "workspace-suite-save crew ops", 256, 256);
+    defer save_workspace_suite_staging.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_workspace_suite_staging.exit_code);
+
+    var save_release_staging = try runCapture(std.testing.allocator, "workspace-suite-release-save crew staging", 256, 256);
+    defer save_release_staging.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_release_staging.exit_code);
+    try std.testing.expectEqualStrings("workspace suite release saved crew staging\n", save_release_staging.stdout);
+
+    var release_list = try runCapture(std.testing.allocator, "workspace-suite-release-list crew", 256, 256);
+    defer release_list.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), release_list.exit_code);
+    try std.testing.expectEqualStrings("golden\nstaging\n", release_list.stdout);
+
+    var release_info = try runCapture(std.testing.allocator, "workspace-suite-release-info crew staging", 512, 256);
+    defer release_info.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), release_info.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, release_info.stdout, "suite=crew") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info.stdout, "release=staging") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info.stdout, "saved_seq=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info.stdout, "workspace=ops") != null);
+
+    var activate_release = try runCapture(std.testing.allocator, "workspace-suite-release-activate crew golden", 256, 256);
+    defer activate_release.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), activate_release.exit_code);
+    try std.testing.expectEqualStrings("workspace suite release activated crew golden\n", activate_release.stdout);
+
+    var suite_info = try runCapture(std.testing.allocator, "workspace-suite-info crew", 256, 256);
+    defer suite_info.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), suite_info.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info.stdout, "workspace=ops") != null);
+    try std.testing.expect(std.mem.indexOf(u8, suite_info.stdout, "workspace=sidecar") != null);
+
+    var delete_release = try runCapture(std.testing.allocator, "workspace-suite-release-delete crew staging", 256, 256);
+    defer delete_release.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), delete_release.exit_code);
+    try std.testing.expectEqualStrings("workspace suite release deleted crew staging\n", delete_release.stdout);
+
+    var release_list_after_delete = try runCapture(std.testing.allocator, "workspace-suite-release-list crew", 256, 256);
+    defer release_list_after_delete.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), release_list_after_delete.exit_code);
+    try std.testing.expectEqualStrings("golden\n", release_list_after_delete.stdout);
+
+    var save_ops_fallback = try runCapture(std.testing.allocator, "workspace-save ops demo-suite root-b 640 400", 256, 256);
+    defer save_ops_fallback.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_ops_fallback.exit_code);
+
+    var save_workspace_suite_fallback = try runCapture(std.testing.allocator, "workspace-suite-save crew ops", 256, 256);
+    defer save_workspace_suite_fallback.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_workspace_suite_fallback.exit_code);
+
+    var save_release_fallback = try runCapture(std.testing.allocator, "workspace-suite-release-save crew fallback", 256, 256);
+    defer save_release_fallback.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), save_release_fallback.exit_code);
+    try std.testing.expectEqualStrings("workspace suite release saved crew fallback\n", save_release_fallback.stdout);
+
+    var prune_release = try runCapture(std.testing.allocator, "workspace-suite-release-prune crew 1", 256, 256);
+    defer prune_release.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), prune_release.exit_code);
+    try std.testing.expectEqualStrings("workspace suite release pruned crew keep=1 deleted=1 kept=1\n", prune_release.stdout);
+
+    var release_list_after_prune = try runCapture(std.testing.allocator, "workspace-suite-release-list crew", 256, 256);
+    defer release_list_after_prune.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), release_list_after_prune.exit_code);
+    try std.testing.expectEqualStrings("fallback\n", release_list_after_prune.stdout);
 }
 
 test "baremetal tool exec persists and runs workspace autorun" {

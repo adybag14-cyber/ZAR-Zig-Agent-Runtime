@@ -3447,6 +3447,15 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const workspace_suite_run_request_id: u32 = 208;
     const workspace_suite_delete_request_id: u32 = 209;
     const workspace_suite_list_after_delete_request_id: u32 = 210;
+    const workspace_suite_release_save_golden_request_id: u32 = 211;
+    const workspace_suite_release_save_staging_request_id: u32 = 212;
+    const workspace_suite_release_list_request_id: u32 = 213;
+    const workspace_suite_release_info_request_id: u32 = 214;
+    const workspace_suite_release_activate_request_id: u32 = 215;
+    const workspace_suite_release_delete_request_id: u32 = 216;
+    const workspace_suite_release_save_fallback_request_id: u32 = 217;
+    const workspace_suite_release_prune_request_id: u32 = 218;
+    const workspace_suite_release_list_final_request_id: u32 = 219;
     const app_suite_name = "duo";
     const app_suite_aux_plan_name = "sidecar";
     const app_suite_aux_plan_save_request_id: u32 = 108;
@@ -3828,9 +3837,9 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     const service_response_long = tool_service.handleFramedRequest(
         service_fba.allocator(),
         scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
-        2048,
+        4096,
         256,
-        2048,
+        4096,
     ) catch return error.ToolServiceFailed;
     if (!std.mem.startsWith(u8, service_response_long, "RESP 3 ")) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, service_response_long, "OpenClaw bare-metal builtins:") == null) return error.ToolServiceResponseMismatch;
@@ -7904,6 +7913,322 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     if (!std.mem.startsWith(u8, workspace_suite_run_response, "RESP 208 ")) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, workspace_suite_run_response, workspace_suite_run_payload_expected) == null) return error.ToolServiceResponseMismatch;
 
+    var workspace_suite_release_golden_request_buffer: [128]u8 = undefined;
+    const workspace_suite_release_golden_request = std.fmt.bufPrint(
+        &workspace_suite_release_golden_request_buffer,
+        "REQ {d} WORKSPACESUITERELEASESAVE {s} golden",
+        .{ workspace_suite_release_save_golden_request_id, workspace_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_suite_release_golden_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_suite_release_golden_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_suite_release_golden_response, "RESP 211 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_release_golden_response, "WORKSPACESUITERELEASESAVE crew golden\n") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_suite_release_root_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const workspace_suite_release_root_path = std.fmt.bufPrint(
+        &workspace_suite_release_root_path_buffer,
+        "/runtime/workspace-suite-releases/{s}",
+        .{workspace_suite_name},
+    ) catch return error.ToolServiceFailed;
+    var workspace_suite_release_golden_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const workspace_suite_release_golden_path = std.fmt.bufPrint(
+        &workspace_suite_release_golden_path_buffer,
+        "/runtime/workspace-suite-releases/{s}/golden/suite.txt",
+        .{workspace_suite_name},
+    ) catch return error.ToolServiceFailed;
+    var workspace_suite_release_golden_metadata_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const workspace_suite_release_golden_metadata_path = std.fmt.bufPrint(
+        &workspace_suite_release_golden_metadata_path_buffer,
+        "/runtime/workspace-suite-releases/{s}/golden/release.txt",
+        .{workspace_suite_name},
+    ) catch return error.ToolServiceFailed;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const workspace_suite_release_golden_readback = filesystem.readFileAlloc(service_fba.allocator(), workspace_suite_release_golden_path, 128) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, workspace_suite_release_golden_readback, "workspace=ops\nworkspace=ops2\n")) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const workspace_suite_release_golden_metadata_readback = filesystem.readFileAlloc(service_fba.allocator(), workspace_suite_release_golden_metadata_path, 128) catch return error.ToolServiceFailed;
+    if (std.mem.indexOf(u8, workspace_suite_release_golden_metadata_readback, "release=golden") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_release_golden_metadata_readback, "saved_seq=1") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_suite_mutate_request_buffer: [160]u8 = undefined;
+    const workspace_suite_mutate_request = std.fmt.bufPrint(
+        &workspace_suite_mutate_request_buffer,
+        "REQ {d} WORKSPACESAVE {s} {s} none 640 400 {s}:{s}:{s}",
+        .{ workspace_release_mutate_request_id, workspace_name, app_suite_name, package_name, package_channel_name, package_release_three_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_suite_mutate_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_suite_mutate_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_suite_mutate_response, "RESP 145 18\nWORKSPACESAVE ops\n")) return error.ToolServiceResponseMismatch;
+
+    var workspace_suite_overwrite_request_buffer: [128]u8 = undefined;
+    const workspace_suite_overwrite_request = std.fmt.bufPrint(
+        &workspace_suite_overwrite_request_buffer,
+        "REQ {d} WORKSPACESUITESAVE {s} {s}",
+        .{ workspace_suite_save_request_id, workspace_suite_name, workspace_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_suite_overwrite_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_suite_overwrite_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_suite_overwrite_response, workspace_suite_save_response_expected)) return error.ToolServiceResponseMismatch;
+
+    var workspace_suite_release_staging_request_buffer: [128]u8 = undefined;
+    const workspace_suite_release_staging_request = std.fmt.bufPrint(
+        &workspace_suite_release_staging_request_buffer,
+        "REQ {d} WORKSPACESUITERELEASESAVE {s} staging",
+        .{ workspace_suite_release_save_staging_request_id, workspace_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_suite_release_staging_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_suite_release_staging_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_suite_release_staging_response, "RESP 212 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_release_staging_response, "WORKSPACESUITERELEASESAVE crew staging\n") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_suite_release_staging_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const workspace_suite_release_staging_path = std.fmt.bufPrint(
+        &workspace_suite_release_staging_path_buffer,
+        "/runtime/workspace-suite-releases/{s}/staging/suite.txt",
+        .{workspace_suite_name},
+    ) catch return error.ToolServiceFailed;
+    var workspace_suite_release_staging_metadata_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    const workspace_suite_release_staging_metadata_path = std.fmt.bufPrint(
+        &workspace_suite_release_staging_metadata_path_buffer,
+        "/runtime/workspace-suite-releases/{s}/staging/release.txt",
+        .{workspace_suite_name},
+    ) catch return error.ToolServiceFailed;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const workspace_suite_release_staging_readback = filesystem.readFileAlloc(service_fba.allocator(), workspace_suite_release_staging_path, 128) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, workspace_suite_release_staging_readback, "workspace=ops\n")) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const workspace_suite_release_staging_metadata_readback = filesystem.readFileAlloc(service_fba.allocator(), workspace_suite_release_staging_metadata_path, 128) catch return error.ToolServiceFailed;
+    if (std.mem.indexOf(u8, workspace_suite_release_staging_metadata_readback, "release=staging") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_release_staging_metadata_readback, "saved_seq=2") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_suite_release_list_request_buffer: [128]u8 = undefined;
+    const workspace_suite_release_list_request = std.fmt.bufPrint(
+        &workspace_suite_release_list_request_buffer,
+        "REQ {d} WORKSPACESUITERELEASELIST {s}",
+        .{ workspace_suite_release_list_request_id, workspace_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_suite_release_list_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_suite_release_list_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_suite_release_list_response, "RESP 213 15\ngolden\nstaging\n")) return error.ToolServiceResponseMismatch;
+
+    var workspace_suite_release_info_request_buffer: [160]u8 = undefined;
+    const workspace_suite_release_info_request = std.fmt.bufPrint(
+        &workspace_suite_release_info_request_buffer,
+        "REQ {d} WORKSPACESUITERELEASEINFO {s} staging",
+        .{ workspace_suite_release_info_request_id, workspace_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_suite_release_info_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_suite_release_info_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_suite_release_info_response, "RESP 214 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_release_info_response, "suite=crew") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_release_info_response, "release=staging") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_release_info_response, "saved_seq=2") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_release_info_response, "workspace=ops") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_suite_release_activate_request_buffer: [128]u8 = undefined;
+    const workspace_suite_release_activate_request = std.fmt.bufPrint(
+        &workspace_suite_release_activate_request_buffer,
+        "REQ {d} WORKSPACESUITERELEASEACTIVATE {s} golden",
+        .{ workspace_suite_release_activate_request_id, workspace_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_suite_release_activate_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_suite_release_activate_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_suite_release_activate_response, "RESP 215 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_release_activate_response, "WORKSPACESUITERELEASEACTIVATE crew golden\n") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_suite_restored_info_request_buffer: [128]u8 = undefined;
+    const workspace_suite_restored_info_request = std.fmt.bufPrint(
+        &workspace_suite_restored_info_request_buffer,
+        "REQ {d} WORKSPACESUITEINFO {s}",
+        .{ workspace_suite_info_request_id, workspace_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_suite_restored_info_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_suite_restored_info_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_suite_restored_info_response, "RESP 206 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_restored_info_response, "workspace=ops") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_restored_info_response, "workspace=ops2") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_suite_release_delete_request_buffer: [128]u8 = undefined;
+    const workspace_suite_release_delete_request = std.fmt.bufPrint(
+        &workspace_suite_release_delete_request_buffer,
+        "REQ {d} WORKSPACESUITERELEASEDELETE {s} staging",
+        .{ workspace_suite_release_delete_request_id, workspace_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_suite_release_delete_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_suite_release_delete_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_suite_release_delete_response, "RESP 216 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_release_delete_response, "WORKSPACESUITERELEASEDELETE crew staging\n") == null) return error.ToolServiceResponseMismatch;
+
+    if (filesystem.statSummary(workspace_suite_release_staging_path)) |_| {
+        return error.ToolServiceResponseMismatch;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return error.ToolServiceFailed,
+    }
+
+    var workspace_suite_release_fallback_request_buffer: [128]u8 = undefined;
+    const workspace_suite_release_fallback_request = std.fmt.bufPrint(
+        &workspace_suite_release_fallback_request_buffer,
+        "REQ {d} WORKSPACESUITERELEASESAVE {s} fallback",
+        .{ workspace_suite_release_save_fallback_request_id, workspace_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_suite_release_fallback_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_suite_release_fallback_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_suite_release_fallback_response, "RESP 217 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_release_fallback_response, "WORKSPACESUITERELEASESAVE crew fallback\n") == null) return error.ToolServiceResponseMismatch;
+
+    var workspace_suite_release_prune_request_buffer: [128]u8 = undefined;
+    const workspace_suite_release_prune_request = std.fmt.bufPrint(
+        &workspace_suite_release_prune_request_buffer,
+        "REQ {d} WORKSPACESUITERELEASEPRUNE {s} 1",
+        .{ workspace_suite_release_prune_request_id, workspace_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_suite_release_prune_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_suite_release_prune_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, workspace_suite_release_prune_response, "RESP 218 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, workspace_suite_release_prune_response, "WORKSPACESUITERELEASEPRUNE crew keep=1 deleted=1 kept=1\n") == null) return error.ToolServiceResponseMismatch;
+
+    if (filesystem.statSummary(workspace_suite_release_golden_path)) |_| {
+        return error.ToolServiceResponseMismatch;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return error.ToolServiceFailed,
+    }
+
+    var workspace_suite_release_list_final_request_buffer: [128]u8 = undefined;
+    const workspace_suite_release_list_final_request = std.fmt.bufPrint(
+        &workspace_suite_release_list_final_request_buffer,
+        "REQ {d} WORKSPACESUITERELEASELIST {s}",
+        .{ workspace_suite_release_list_final_request_id, workspace_suite_name },
+    ) catch return error.ToolServiceFailed;
+    const workspace_suite_release_list_final_response = try exchangeTcpProbeServiceRequest(
+        eth,
+        scratch,
+        client_b,
+        &server_b,
+        source_ip,
+        destination_ip,
+        workspace_suite_release_list_final_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, workspace_suite_release_list_final_response, "RESP 219 9\nfallback\n")) return error.ToolServiceResponseMismatch;
+
     var workspace_suite_delete_request_buffer: [128]u8 = undefined;
     const workspace_suite_delete_request = std.fmt.bufPrint(
         &workspace_suite_delete_request_buffer,
@@ -7952,6 +8277,12 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     if (!std.mem.eql(u8, workspace_suite_list_after_delete_response, "RESP 210 0\n")) return error.ToolServiceResponseMismatch;
 
     if (filesystem.statSummary(workspace_suite_path)) |_| {
+        return error.ToolServiceResponseMismatch;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return error.ToolServiceFailed,
+    }
+    if (filesystem.statSummary(workspace_suite_release_root_path)) |_| {
         return error.ToolServiceResponseMismatch;
     } else |err| switch (err) {
         error.FileNotFound => {},
@@ -9367,7 +9698,7 @@ fn runToolExecProbe() ToolExecProbeError!void {
     const allocator = fba.allocator();
     const io: std.Io = undefined;
 
-    var help = pal_proc.runCaptureFreestanding(allocator, io, &.{"help"}, 1000, 2048, 128) catch |err| switch (err) {
+    var help = pal_proc.runCaptureFreestanding(allocator, io, &.{"help"}, 1000, 4096, 128) catch |err| switch (err) {
         error.OutOfMemory => return error.AllocatorExhausted,
         else => return error.HelpRunFailed,
     };

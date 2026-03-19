@@ -13894,6 +13894,10 @@ test "dispatch browser.open and send aliases follow existing runtime paths" {
 test "dispatch file.write and file.read lifecycle updates status counters" {
     const allocator = std.testing.allocator;
     const io = std.Io.Threaded.global_single_threaded.io();
+    var cfg = config.defaults();
+    cfg.state_path = "memory://dispatcher-file-lifecycle";
+    setConfig(cfg);
+    defer setConfig(config.defaults());
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 

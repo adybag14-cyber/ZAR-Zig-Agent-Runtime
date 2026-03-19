@@ -14,6 +14,7 @@ pub const max_workspace_entries: usize = 8;
 
 const root_dir = "/runtime/workspaces";
 const suite_root_dir = "/runtime/workspace-suites";
+const suite_release_root_dir = "/runtime/workspace-suite-releases";
 const runtime_root_dir = "/runtime/workspace-runs";
 const release_root_dir = "/runtime/workspace-releases";
 const channel_root_dir = "/runtime/workspace-release-channels";
@@ -42,6 +43,8 @@ pub const Error = filesystem.Error || app_runtime.Error || package_store.Error |
     WorkspaceReleaseChannelNotFound,
     InvalidWorkspaceSuiteName,
     WorkspaceSuiteNotFound,
+    WorkspaceSuiteReleaseNotFound,
+    WorkspaceSuiteReleaseAlreadyExists,
     InvalidWorkspaceSuite,
     WorkspaceSuiteEmpty,
 };
@@ -198,6 +201,75 @@ pub fn suiteInfoAlloc(allocator: std.mem.Allocator, suite_name: []const u8, max_
     var path_buffer: [filesystem.max_path_len]u8 = undefined;
     const path = try workspaceSuitePath(suite_name, &path_buffer);
     return renderWorkspaceSuiteInfoAlloc(allocator, suite, path, max_bytes);
+}
+
+pub fn suiteReleaseListAlloc(allocator: std.mem.Allocator, suite_name: []const u8, max_bytes: usize) Error![]u8 {
+    try validateWorkspaceSuiteName(suite_name);
+    if (!try workspaceSuiteExists(suite_name)) return error.WorkspaceSuiteNotFound;
+
+    var records: [filesystem.max_entries]ReleaseRecord = undefined;
+    const record_count = try collectSuiteReleaseRecords(suite_name, &records);
+    sortReleaseRecordsOldestFirst(records[0..record_count]);
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    for (records[0..record_count]) |record| {
+        const release_name = record.name();
+        if (out.items.len + release_name.len + 1 > max_bytes) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, release_name);
+        try out.append(allocator, '\n');
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+pub fn suiteReleaseInfoAlloc(
+    allocator: std.mem.Allocator,
+    suite_name: []const u8,
+    release: []const u8,
+    max_bytes: usize,
+) Error![]u8 {
+    try validateWorkspaceSuiteName(suite_name);
+    try package_store.validateReleaseName(release);
+    if (!try suiteReleaseExists(suite_name, release)) return error.WorkspaceSuiteReleaseNotFound;
+
+    var metadata_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    var release_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    var release_root_buffer: [filesystem.max_path_len]u8 = undefined;
+    const metadata_path = try suiteReleaseMetadataPath(suite_name, release, &metadata_path_buffer);
+    const release_path = try suiteReleasePath(suite_name, release, &release_path_buffer);
+    const release_root = try suiteReleaseDirPath(suite_name, release, &release_root_buffer);
+
+    var metadata_scratch: [256]u8 = undefined;
+    var metadata_fba = std.heap.FixedBufferAllocator.init(&metadata_scratch);
+    const metadata_raw = filesystem.readFileAlloc(metadata_fba.allocator(), metadata_path, metadata_scratch.len) catch |err| switch (err) {
+        error.FileNotFound => return error.WorkspaceSuiteReleaseNotFound,
+        else => return err,
+    };
+    const metadata = try parseSuiteReleaseMetadata(metadata_raw);
+
+    var payload_scratch: [max_workspace_suite_bytes]u8 = undefined;
+    var payload_fba = std.heap.FixedBufferAllocator.init(&payload_scratch);
+    const payload = filesystem.readFileAlloc(payload_fba.allocator(), release_path, payload_scratch.len) catch |err| switch (err) {
+        error.FileNotFound => return error.WorkspaceSuiteReleaseNotFound,
+        else => return err,
+    };
+    const suite = try parseWorkspaceSuitePayload(suite_name, payload);
+
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "suite={s}\n", .{suite_name}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "release={s}\n", .{if (metadata.release.len == 0) release else metadata.release}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "saved_seq={d}\n", .{metadata.saved_seq}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "saved_tick={d}\n", .{metadata.saved_tick}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "root={s}\n", .{release_root}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "suite_path={s}\n", .{release_path}));
+    try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "metadata_path={s}\n", .{metadata_path}));
+    for (suite.entries[0..suite.entry_count]) |entry| {
+        try appendLine(&out, allocator, max_bytes, try std.fmt.allocPrint(allocator, "workspace={s}\n", .{entry.workspaceName()}));
+    }
+    return out.toOwnedSlice(allocator);
 }
 
 pub fn autorunListAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
@@ -405,6 +477,77 @@ pub fn saveSuite(suite_name: []const u8, entries_spec: []const u8, tick: u64) Er
     try filesystem.writeFile(try workspaceSuitePath(suite_name, &path_buffer), body, tick);
 }
 
+pub fn snapshotSuiteRelease(suite_name: []const u8, release: []const u8, tick: u64) Error!void {
+    try validateWorkspaceSuiteName(suite_name);
+    try package_store.validateReleaseName(release);
+    if (!try workspaceSuiteExists(suite_name)) return error.WorkspaceSuiteNotFound;
+    if (try suiteReleaseExists(suite_name, release)) return error.WorkspaceSuiteReleaseAlreadyExists;
+
+    const saved_seq = try nextSuiteReleaseSequence(suite_name);
+    try createSuiteReleaseDirectories(suite_name, release);
+
+    var canonical_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    var canonical_scratch: [max_workspace_suite_bytes]u8 = undefined;
+    var canonical_fba = std.heap.FixedBufferAllocator.init(&canonical_scratch);
+    const canonical_payload = filesystem.readFileAlloc(canonical_fba.allocator(), try workspaceSuitePath(suite_name, &canonical_path_buffer), canonical_scratch.len) catch |err| switch (err) {
+        error.FileNotFound => return error.WorkspaceSuiteNotFound,
+        else => return err,
+    };
+
+    var release_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    try filesystem.writeFile(try suiteReleasePath(suite_name, release, &release_path_buffer), canonical_payload, tick);
+    try writeSuiteReleaseMetadata(suite_name, release, saved_seq, tick);
+}
+
+pub fn activateSuiteRelease(suite_name: []const u8, release: []const u8, tick: u64) Error!void {
+    try validateWorkspaceSuiteName(suite_name);
+    try package_store.validateReleaseName(release);
+    if (!try suiteReleaseExists(suite_name, release)) return error.WorkspaceSuiteReleaseNotFound;
+
+    var release_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    var release_scratch: [max_workspace_suite_bytes]u8 = undefined;
+    var release_fba = std.heap.FixedBufferAllocator.init(&release_scratch);
+    const release_payload = filesystem.readFileAlloc(release_fba.allocator(), try suiteReleasePath(suite_name, release, &release_path_buffer), release_scratch.len) catch |err| switch (err) {
+        error.FileNotFound => return error.WorkspaceSuiteReleaseNotFound,
+        else => return err,
+    };
+    _ = try parseWorkspaceSuitePayload(suite_name, release_payload);
+
+    try filesystem.createDirPath(suite_root_dir);
+    var canonical_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    try filesystem.writeFile(try workspaceSuitePath(suite_name, &canonical_path_buffer), release_payload, tick);
+}
+
+pub fn deleteSuiteRelease(suite_name: []const u8, release: []const u8, tick: u64) Error!void {
+    try validateWorkspaceSuiteName(suite_name);
+    try package_store.validateReleaseName(release);
+    if (!try suiteReleaseExists(suite_name, release)) return error.WorkspaceSuiteReleaseNotFound;
+
+    var release_dir_buffer: [filesystem.max_path_len]u8 = undefined;
+    try filesystem.deleteTree(try suiteReleaseDirPath(suite_name, release, &release_dir_buffer), tick);
+}
+
+pub fn pruneSuiteReleases(suite_name: []const u8, keep: usize, tick: u64) Error!ReleasePruneResult {
+    try validateWorkspaceSuiteName(suite_name);
+    if (!try workspaceSuiteExists(suite_name)) return error.WorkspaceSuiteNotFound;
+
+    var records: [filesystem.max_entries]ReleaseRecord = undefined;
+    const record_count = try collectSuiteReleaseRecords(suite_name, &records);
+    sortReleaseRecordsNewestFirst(records[0..record_count]);
+
+    var deleted_count: u32 = 0;
+    var index = keep;
+    while (index < record_count) : (index += 1) {
+        try deleteSuiteRelease(suite_name, records[index].name(), tick);
+        deleted_count += 1;
+    }
+
+    return .{
+        .kept_count = @intCast(@min(keep, record_count)),
+        .deleted_count = deleted_count,
+    };
+}
+
 pub fn snapshotWorkspaceRelease(name: []const u8, release: []const u8, tick: u64) Error!void {
     try validateWorkspaceName(name);
     try package_store.validateReleaseName(release);
@@ -532,6 +675,12 @@ pub fn deleteSuite(suite_name: []const u8, tick: u64) Error!void {
     var path_buffer: [filesystem.max_path_len]u8 = undefined;
     filesystem.deleteFile(try workspaceSuitePath(suite_name, &path_buffer), tick) catch |err| switch (err) {
         error.FileNotFound => return error.WorkspaceSuiteNotFound,
+        else => return err,
+    };
+
+    var releases_buffer: [filesystem.max_path_len]u8 = undefined;
+    filesystem.deleteTree(suiteReleasesRootPath(suite_name, &releases_buffer), tick) catch |err| switch (err) {
+        error.FileNotFound => {},
         else => return err,
     };
 }
@@ -710,6 +859,10 @@ fn workspaceSuitePath(name: []const u8, buffer: *[filesystem.max_path_len]u8) Er
     return std.fmt.bufPrint(buffer, "{s}/{s}.txt", .{ suite_root_dir, name }) catch error.InvalidPath;
 }
 
+fn suiteReleasesRootPath(suite_name: []const u8, buffer: *[filesystem.max_path_len]u8) []const u8 {
+    return std.fmt.bufPrint(buffer, "{s}/{s}", .{ suite_release_root_dir, suite_name }) catch unreachable;
+}
+
 fn releasesRootPath(name: []const u8, buffer: *[filesystem.max_path_len]u8) []const u8 {
     return std.fmt.bufPrint(buffer, "{s}/{s}", .{ release_root_dir, name }) catch unreachable;
 }
@@ -734,6 +887,24 @@ fn releaseMetadataPath(name: []const u8, release: []const u8, buffer: *[filesyst
     try validateWorkspaceName(name);
     try package_store.validateReleaseName(release);
     return std.fmt.bufPrint(buffer, "{s}/{s}/{s}/release.txt", .{ release_root_dir, name, release }) catch error.InvalidPath;
+}
+
+fn suiteReleaseDirPath(suite_name: []const u8, release: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validateWorkspaceSuiteName(suite_name);
+    try package_store.validateReleaseName(release);
+    return std.fmt.bufPrint(buffer, "{s}/{s}/{s}", .{ suite_release_root_dir, suite_name, release }) catch error.InvalidPath;
+}
+
+fn suiteReleasePath(suite_name: []const u8, release: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validateWorkspaceSuiteName(suite_name);
+    try package_store.validateReleaseName(release);
+    return std.fmt.bufPrint(buffer, "{s}/{s}/{s}/suite.txt", .{ suite_release_root_dir, suite_name, release }) catch error.InvalidPath;
+}
+
+fn suiteReleaseMetadataPath(suite_name: []const u8, release: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
+    try validateWorkspaceSuiteName(suite_name);
+    try package_store.validateReleaseName(release);
+    return std.fmt.bufPrint(buffer, "{s}/{s}/{s}/release.txt", .{ suite_release_root_dir, suite_name, release }) catch error.InvalidPath;
 }
 
 fn channelPath(name: []const u8, channel: []const u8, buffer: *[filesystem.max_path_len]u8) Error![]const u8 {
@@ -918,6 +1089,15 @@ fn workspaceSuiteExists(name: []const u8) Error!bool {
 fn releaseExists(name: []const u8, release: []const u8) Error!bool {
     var path_buffer: [filesystem.max_path_len]u8 = undefined;
     _ = filesystem.statSummary(try releasePath(name, release, &path_buffer)) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => return err,
+    };
+    return true;
+}
+
+fn suiteReleaseExists(suite_name: []const u8, release: []const u8) Error!bool {
+    var path_buffer: [filesystem.max_path_len]u8 = undefined;
+    _ = filesystem.statSummary(try suiteReleasePath(suite_name, release, &path_buffer)) catch |err| switch (err) {
         error.FileNotFound => return false,
         else => return err,
     };
@@ -1113,6 +1293,13 @@ fn createReleaseDirectories(name: []const u8, release: []const u8) Error!void {
     try filesystem.createDirPath(try releaseDirPath(name, release, &release_dir_buffer));
 }
 
+fn createSuiteReleaseDirectories(suite_name: []const u8, release: []const u8) Error!void {
+    var releases_root_buffer: [filesystem.max_path_len]u8 = undefined;
+    var release_dir_buffer: [filesystem.max_path_len]u8 = undefined;
+    try filesystem.createDirPath(suiteReleasesRootPath(suite_name, &releases_root_buffer));
+    try filesystem.createDirPath(try suiteReleaseDirPath(suite_name, release, &release_dir_buffer));
+}
+
 fn writeReleaseMetadata(name: []const u8, release: []const u8, saved_seq: u32, saved_tick: u64) Error!void {
     var metadata_path_buffer: [filesystem.max_path_len]u8 = undefined;
     var body_buffer: [192]u8 = undefined;
@@ -1122,6 +1309,17 @@ fn writeReleaseMetadata(name: []const u8, release: []const u8, saved_seq: u32, s
         .{ name, release, saved_seq, saved_tick },
     ) catch return error.ResponseTooLarge;
     try filesystem.writeFile(try releaseMetadataPath(name, release, &metadata_path_buffer), body, saved_tick);
+}
+
+fn writeSuiteReleaseMetadata(suite_name: []const u8, release: []const u8, saved_seq: u32, saved_tick: u64) Error!void {
+    var metadata_path_buffer: [filesystem.max_path_len]u8 = undefined;
+    var body_buffer: [192]u8 = undefined;
+    const body = std.fmt.bufPrint(
+        &body_buffer,
+        "suite={s}\nrelease={s}\nsaved_seq={d}\nsaved_tick={d}\n",
+        .{ suite_name, release, saved_seq, saved_tick },
+    ) catch return error.ResponseTooLarge;
+    try filesystem.writeFile(try suiteReleaseMetadataPath(suite_name, release, &metadata_path_buffer), body, saved_tick);
 }
 
 fn parseReleaseMetadata(payload: []const u8) Error!ReleaseMetadata {
@@ -1151,9 +1349,46 @@ fn parseReleaseMetadata(payload: []const u8) Error!ReleaseMetadata {
     return metadata;
 }
 
+fn parseSuiteReleaseMetadata(payload: []const u8) Error!ReleaseMetadata {
+    var metadata = ReleaseMetadata{};
+    var lines = std.mem.splitScalar(u8, payload, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, "\r");
+        if (line.len == 0) continue;
+        if (std.mem.startsWith(u8, line, "suite=")) {
+            metadata.name = line["suite=".len..];
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "release=")) {
+            metadata.release = line["release=".len..];
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "saved_seq=")) {
+            metadata.saved_seq = std.fmt.parseInt(u32, line["saved_seq=".len..], 10) catch return error.InvalidWorkspaceSuite;
+            continue;
+        }
+        if (std.mem.startsWith(u8, line, "saved_tick=")) {
+            metadata.saved_tick = std.fmt.parseInt(u64, line["saved_tick=".len..], 10) catch return error.InvalidWorkspaceSuite;
+            continue;
+        }
+        return error.InvalidWorkspaceSuite;
+    }
+    return metadata;
+}
+
 fn nextReleaseSequence(name: []const u8) Error!u32 {
     var records: [filesystem.max_entries]ReleaseRecord = undefined;
     const record_count = try collectReleaseRecords(name, &records);
+    var max_seq: u32 = 0;
+    for (records[0..record_count]) |record| {
+        max_seq = @max(max_seq, record.saved_seq);
+    }
+    return max_seq + 1;
+}
+
+fn nextSuiteReleaseSequence(suite_name: []const u8) Error!u32 {
+    var records: [filesystem.max_entries]ReleaseRecord = undefined;
+    const record_count = try collectSuiteReleaseRecords(suite_name, &records);
     var max_seq: u32 = 0;
     for (records[0..record_count]) |record| {
         max_seq = @max(max_seq, record.saved_seq);
@@ -1186,6 +1421,44 @@ fn collectReleaseRecords(name: []const u8, records: *[filesystem.max_entries]Rel
         };
         if (metadata_raw) |raw| {
             const metadata = try parseReleaseMetadata(raw);
+            saved_seq = metadata.saved_seq;
+        }
+
+        records[count] = .{
+            .name_len = @intCast(release_name.len),
+            .saved_seq = saved_seq,
+        };
+        @memcpy(records[count].name_storage[0..release_name.len], release_name);
+        count += 1;
+    }
+    return count;
+}
+
+fn collectSuiteReleaseRecords(suite_name: []const u8, records: *[filesystem.max_entries]ReleaseRecord) Error!usize {
+    var releases_buffer: [filesystem.max_path_len]u8 = undefined;
+    const releases_root = suiteReleasesRootPath(suite_name, &releases_buffer);
+
+    var count: usize = 0;
+    var idx: u32 = 0;
+    while (idx < filesystem.max_entries) : (idx += 1) {
+        const record = filesystem.entry(idx);
+        if (record.kind != abi.filesystem_kind_directory) continue;
+        const path = record.path[0..record.path_len];
+        const release_name = directChildName(releases_root, path) orelse continue;
+        if (release_name.len == 0) continue;
+        if (findReleaseRecord(records[0..count], release_name) != null) continue;
+
+        var saved_seq: u32 = 0;
+        var metadata_path_buffer: [filesystem.max_path_len]u8 = undefined;
+        const metadata_path = try suiteReleaseMetadataPath(suite_name, release_name, &metadata_path_buffer);
+        var metadata_scratch: [release_list_scan_max_bytes]u8 = undefined;
+        var metadata_fba = std.heap.FixedBufferAllocator.init(&metadata_scratch);
+        const metadata_raw = filesystem.readFileAlloc(metadata_fba.allocator(), metadata_path, metadata_scratch.len) catch |err| switch (err) {
+            error.FileNotFound => null,
+            else => return err,
+        };
+        if (metadata_raw) |raw| {
+            const metadata = try parseSuiteReleaseMetadata(raw);
             saved_seq = metadata.saved_seq;
         }
 
@@ -1711,4 +1984,114 @@ test "workspace runtime workspace suites persist on ata-backed storage" {
     const display_state = framebuffer_console.statePtr();
     try std.testing.expectEqual(@as(u16, 1280), display_state.width);
     try std.testing.expectEqual(@as(u16, 720), display_state.height);
+}
+
+test "workspace runtime manages workspace suite releases" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    framebuffer_console.resetForTest();
+
+    try trust_store.installBundle("root-a", "root-a-cert", 1);
+    try trust_store.installBundle("root-b", "root-b-cert", 2);
+    try package_store.installScriptPackage("demo", "echo demo-suite", 3);
+    try package_store.installScriptPackage("aux", "echo aux-suite", 4);
+    try app_runtime.savePlan("demo", "boot", "", "", abi.display_connector_virtual, 1024, 768, false, 5);
+    try app_runtime.savePlan("demo", "canary", "", "", abi.display_connector_virtual, 640, 400, false, 6);
+    try app_runtime.savePlan("aux", "sidecar", "", "", abi.display_connector_virtual, 800, 600, false, 7);
+    try app_runtime.saveSuite("demo-suite", "demo:boot", 8);
+    try app_runtime.saveSuite("aux-suite", "aux:sidecar", 9);
+    try saveWorkspace("ops", "demo-suite", "root-a", 1024, 768, "", 10);
+    try saveWorkspace("sidecar", "aux-suite", "root-b", 800, 600, "", 11);
+    try saveSuite("crew", "ops sidecar", 12);
+    try snapshotSuiteRelease("crew", "golden", 13);
+
+    try saveWorkspace("ops", "demo-suite", "root-b", 640, 400, "", 14);
+    try saveSuite("crew", "ops", 15);
+    try snapshotSuiteRelease("crew", "staging", 16);
+
+    const release_list = try suiteReleaseListAlloc(std.testing.allocator, "crew", 64);
+    defer std.testing.allocator.free(release_list);
+    try std.testing.expectEqualStrings("golden\nstaging\n", release_list);
+
+    const release_info = try suiteReleaseInfoAlloc(std.testing.allocator, "crew", "staging", 512);
+    defer std.testing.allocator.free(release_info);
+    try std.testing.expect(std.mem.indexOf(u8, release_info, "suite=crew") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info, "release=staging") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info, "saved_seq=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info, "workspace=ops") != null);
+
+    try activateSuiteRelease("crew", "golden", 17);
+    const restored_suite = try suiteInfoAlloc(std.testing.allocator, "crew", 256);
+    defer std.testing.allocator.free(restored_suite);
+    try std.testing.expect(std.mem.indexOf(u8, restored_suite, "workspace=ops") != null);
+    try std.testing.expect(std.mem.indexOf(u8, restored_suite, "workspace=sidecar") != null);
+
+    try deleteSuiteRelease("crew", "staging", 18);
+    const list_after_delete = try suiteReleaseListAlloc(std.testing.allocator, "crew", 64);
+    defer std.testing.allocator.free(list_after_delete);
+    try std.testing.expectEqualStrings("golden\n", list_after_delete);
+
+    try saveWorkspace("ops", "demo-suite", "root-b", 640, 400, "", 19);
+    try saveSuite("crew", "ops", 20);
+    try snapshotSuiteRelease("crew", "fallback", 21);
+    const prune_result = try pruneSuiteReleases("crew", 1, 22);
+    try std.testing.expectEqual(@as(u32, 1), prune_result.kept_count);
+    try std.testing.expectEqual(@as(u32, 1), prune_result.deleted_count);
+
+    const final_list = try suiteReleaseListAlloc(std.testing.allocator, "crew", 64);
+    defer std.testing.allocator.free(final_list);
+    try std.testing.expectEqualStrings("fallback\n", final_list);
+
+    try deleteSuite("crew", 23);
+    try std.testing.expectError(error.WorkspaceSuiteNotFound, suiteReleaseListAlloc(std.testing.allocator, "crew", 64));
+    if (filesystem.statSummary("/runtime/workspace-suite-releases/crew")) |_| {
+        return error.InvalidWorkspaceSuite;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    }
+}
+
+test "workspace runtime workspace suite releases persist on ata-backed storage" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    framebuffer_console.resetForTest();
+    ata_pio_disk.testEnableMockDevice(8192);
+    ata_pio_disk.testInstallMockMbrPartition(2048, 4096, 0x83);
+    defer ata_pio_disk.testDisableMockDevice();
+
+    try trust_store.installBundle("persist-root-a", "persist-a", 1);
+    try trust_store.installBundle("persist-root-b", "persist-b", 2);
+    try package_store.installScriptPackage("demo", "echo demo-persist", 3);
+    try package_store.installScriptPackage("aux", "echo aux-persist", 4);
+    try app_runtime.savePlan("demo", "boot", "", "", abi.display_connector_virtual, 1024, 768, false, 5);
+    try app_runtime.savePlan("demo", "canary", "", "", abi.display_connector_virtual, 640, 400, false, 6);
+    try app_runtime.savePlan("aux", "sidecar", "", "", abi.display_connector_virtual, 1280, 720, false, 7);
+    try app_runtime.saveSuite("demo-suite", "demo:boot", 8);
+    try app_runtime.saveSuite("aux-suite", "aux:sidecar", 9);
+    try saveWorkspace("ops", "demo-suite", "persist-root-a", 1024, 768, "", 10);
+    try saveWorkspace("sidecar", "aux-suite", "persist-root-b", 1280, 720, "", 11);
+    try saveSuite("crew", "ops sidecar", 12);
+    try snapshotSuiteRelease("crew", "golden", 13);
+    try saveWorkspace("ops", "demo-suite", "persist-root-b", 640, 400, "", 14);
+
+    filesystem.resetForTest();
+    framebuffer_console.resetForTest();
+
+    const release_list = try suiteReleaseListAlloc(std.testing.allocator, "crew", 64);
+    defer std.testing.allocator.free(release_list);
+    try std.testing.expectEqualStrings("golden\n", release_list);
+
+    const release_info = try suiteReleaseInfoAlloc(std.testing.allocator, "crew", "golden", 512);
+    defer std.testing.allocator.free(release_info);
+    try std.testing.expect(std.mem.indexOf(u8, release_info, "release=golden") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info, "saved_seq=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info, "workspace=ops") != null);
+    try std.testing.expect(std.mem.indexOf(u8, release_info, "workspace=sidecar") != null);
+
+    try activateSuiteRelease("crew", "golden", 15);
+    const restored_suite = try suiteInfoAlloc(std.testing.allocator, "crew", 256);
+    defer std.testing.allocator.free(restored_suite);
+    try std.testing.expect(std.mem.indexOf(u8, restored_suite, "workspace=ops") != null);
+    try std.testing.expect(std.mem.indexOf(u8, restored_suite, "workspace=sidecar") != null);
 }
