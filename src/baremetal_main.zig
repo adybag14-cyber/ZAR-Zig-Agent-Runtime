@@ -6,8 +6,10 @@ const ata_pio_disk = @import("baremetal/ata_pio_disk.zig");
 const disk_installer = @import("baremetal/disk_installer.zig");
 const x86_bootstrap = @import("baremetal/x86_bootstrap.zig");
 const display_output = @import("baremetal/display_output.zig");
+const display_profile_store = @import("baremetal/display_profile_store.zig");
 const virtio_gpu = @import("baremetal/virtio_gpu.zig");
 const framebuffer_console = @import("baremetal/framebuffer_console.zig");
+const pal_framebuffer = @import("pal/framebuffer.zig");
 const vga_text_console = @import("baremetal/vga_text_console.zig");
 const rtl8139 = @import("baremetal/rtl8139.zig");
 const storage_backend = @import("baremetal/storage_backend.zig");
@@ -636,12 +638,17 @@ const VirtioGpuDisplayProbeError = error{
     InvalidEdid,
     InvalidControlResponse,
     FramebufferTooLarge,
+    UnsupportedMode,
     StateMagicMismatch,
     BackendMismatch,
     ControllerMismatch,
     ConnectorMismatch,
     ExplicitConnectorActivateMismatch,
     MissingConnectorMismatchFailure,
+    ExplicitOutputActivateMismatch,
+    MissingOutputMismatchFailure,
+    ExplicitOutputModeSetMismatch,
+    MissingOutputModeFailure,
     HardwareBackedMismatch,
     ConnectedMismatch,
     EdidPresenceMismatch,
@@ -661,6 +668,10 @@ const VirtioGpuDisplayProbeError = error{
     OutputEntryMismatch,
     PresentStatsMismatch,
     RenderedPixelMismatch,
+    DisplayProfileSaveMismatch,
+    DisplayProfileListMismatch,
+    DisplayProfileInfoMismatch,
+    DisplayProfileApplyMismatch,
 };
 
 const Multiboot2Header = extern struct {
@@ -968,6 +979,19 @@ pub export fn oc_display_output_entry_count() u16 {
 
 pub export fn oc_display_output_entry(index: u16) abi.BaremetalDisplayOutputEntry {
     return display_output.outputEntry(index);
+}
+
+pub export fn oc_display_output_activate(index: u16) i16 {
+    pal_framebuffer.activateDisplayOutput(index) catch return abi.result_not_found;
+    return abi.result_ok;
+}
+
+pub export fn oc_display_output_set(index: u16, width: u16, height: u16) i16 {
+    pal_framebuffer.setDisplayOutputMode(index, width, height) catch |err| switch (err) {
+        error.NotFound => return abi.result_not_found,
+        error.UnsupportedMode => return abi.result_not_supported,
+    };
+    return abi.result_ok;
 }
 
 pub export fn oc_keyboard_state_ptr() *const BaremetalKeyboardState {
@@ -10396,31 +10420,40 @@ fn virtioGpuDisplayProbeFailureCode(err: VirtioGpuDisplayProbeError) u8 {
         error.InvalidEdid => 0x4E,
         error.InvalidControlResponse => 0x4F,
         error.FramebufferTooLarge => 0x50,
+        error.UnsupportedMode => 0x6C,
         error.StateMagicMismatch => 0x51,
         error.BackendMismatch => 0x52,
         error.ControllerMismatch => 0x53,
         error.ConnectorMismatch => 0x54,
         error.ExplicitConnectorActivateMismatch => 0x55,
         error.MissingConnectorMismatchFailure => 0x56,
-        error.HardwareBackedMismatch => 0x57,
-        error.ConnectedMismatch => 0x58,
-        error.EdidPresenceMismatch => 0x59,
-        error.VendorMismatch => 0x5A,
-        error.DeviceMismatch => 0x5B,
-        error.ActiveScanoutMismatch => 0x5C,
-        error.CurrentModeMismatch => 0x5D,
-        error.PreferredModeMismatch => 0x5E,
-        error.PhysicalSizeMismatch => 0x5F,
-        error.ManufacturerMismatch => 0x60,
-        error.ProductMismatch => 0x61,
-        error.SerialMismatch => 0x62,
-        error.EdidLengthMismatch => 0x63,
-        error.EdidHeaderMismatch => 0x64,
-        error.CapabilityFlagsMismatch => 0x65,
-        error.OutputEntryCountMismatch => 0x66,
-        error.OutputEntryMismatch => 0x67,
-        error.PresentStatsMismatch => 0x68,
-        error.RenderedPixelMismatch => 0x69,
+        error.ExplicitOutputActivateMismatch => 0x57,
+        error.MissingOutputMismatchFailure => 0x58,
+        error.ExplicitOutputModeSetMismatch => 0x59,
+        error.MissingOutputModeFailure => 0x5A,
+        error.HardwareBackedMismatch => 0x5B,
+        error.ConnectedMismatch => 0x5C,
+        error.EdidPresenceMismatch => 0x5D,
+        error.VendorMismatch => 0x5E,
+        error.DeviceMismatch => 0x5F,
+        error.ActiveScanoutMismatch => 0x60,
+        error.CurrentModeMismatch => 0x61,
+        error.PreferredModeMismatch => 0x62,
+        error.PhysicalSizeMismatch => 0x63,
+        error.ManufacturerMismatch => 0x64,
+        error.ProductMismatch => 0x65,
+        error.SerialMismatch => 0x66,
+        error.EdidLengthMismatch => 0x67,
+        error.EdidHeaderMismatch => 0x68,
+        error.CapabilityFlagsMismatch => 0x67,
+        error.OutputEntryCountMismatch => 0x68,
+        error.OutputEntryMismatch => 0x69,
+        error.PresentStatsMismatch => 0x6A,
+        error.RenderedPixelMismatch => 0x6B,
+        error.DisplayProfileSaveMismatch => 0x6D,
+        error.DisplayProfileListMismatch => 0x6E,
+        error.DisplayProfileInfoMismatch => 0x6F,
+        error.DisplayProfileApplyMismatch => 0x70,
     };
 }
 
@@ -10635,6 +10668,7 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
         error.InvalidEdid => return error.InvalidEdid,
         error.InvalidControlResponse => return error.InvalidControlResponse,
         error.FramebufferTooLarge => return error.FramebufferTooLarge,
+        error.UnsupportedMode => return error.UnsupportedMode,
     };
 
     const output = oc_display_output_state_ptr();
@@ -10708,9 +10742,122 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
         error.InvalidEdid => return error.InvalidEdid,
         error.InvalidControlResponse => return error.InvalidControlResponse,
         error.FramebufferTooLarge => return error.FramebufferTooLarge,
+        error.UnsupportedMode => return error.UnsupportedMode,
     };
     if (explicit.active_scanout != result.active_scanout or explicit.capability_flags != result.capability_flags) {
         return error.ExplicitConnectorActivateMismatch;
+    }
+
+    const explicit_output = virtio_gpu.probeAndPresentPatternForOutputIndex(result.active_scanout) catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.DeviceNotFound => return error.DeviceNotFound,
+        error.MissingCapabilities => return error.MissingCapabilities,
+        error.MissingVersion1 => return error.MissingVersion1,
+        error.MissingEdidFeature => return error.MissingEdidFeature,
+        error.FeaturesRejected => return error.FeaturesRejected,
+        error.QueueUnavailable => return error.QueueUnavailable,
+        error.QueueTooSmall => return error.QueueTooSmall,
+        error.RequestTimedOut => return error.RequestTimedOut,
+        error.InvalidDisplayInfoResponse => return error.InvalidDisplayInfoResponse,
+        error.InvalidEdidResponse => return error.InvalidEdidResponse,
+        error.NoConnectedScanout => return error.ExplicitOutputActivateMismatch,
+        error.InvalidEdid => return error.InvalidEdid,
+        error.InvalidControlResponse => return error.InvalidControlResponse,
+        error.FramebufferTooLarge => return error.FramebufferTooLarge,
+        error.UnsupportedMode => return error.UnsupportedMode,
+    };
+    if (explicit_output.active_scanout != result.active_scanout or explicit_output.capability_flags != result.capability_flags) {
+        return error.ExplicitOutputActivateMismatch;
+    }
+
+    const requested_output_width: u16 = 1024;
+    const requested_output_height: u16 = 768;
+    const explicit_output_mode = virtio_gpu.probeAndPresentPatternForOutputIndexMode(result.active_scanout, requested_output_width, requested_output_height) catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.DeviceNotFound => return error.DeviceNotFound,
+        error.MissingCapabilities => return error.MissingCapabilities,
+        error.MissingVersion1 => return error.MissingVersion1,
+        error.MissingEdidFeature => return error.MissingEdidFeature,
+        error.FeaturesRejected => return error.FeaturesRejected,
+        error.QueueUnavailable => return error.QueueUnavailable,
+        error.QueueTooSmall => return error.QueueTooSmall,
+        error.RequestTimedOut => return error.RequestTimedOut,
+        error.InvalidDisplayInfoResponse => return error.InvalidDisplayInfoResponse,
+        error.InvalidEdidResponse => return error.InvalidEdidResponse,
+        error.NoConnectedScanout => return error.ExplicitOutputModeSetMismatch,
+        error.InvalidEdid => return error.InvalidEdid,
+        error.InvalidControlResponse => return error.InvalidControlResponse,
+        error.FramebufferTooLarge, error.UnsupportedMode => return error.ExplicitOutputModeSetMismatch,
+    };
+    if (explicit_output_mode.active_scanout != result.active_scanout or
+        explicit_output_mode.current_width != requested_output_width or
+        explicit_output_mode.current_height != requested_output_height or
+        oc_display_output_state_ptr().current_width != requested_output_width or
+        oc_display_output_state_ptr().current_height != requested_output_height or
+        oc_display_output_entry(result.active_scanout).current_width != requested_output_width or
+        oc_display_output_entry(result.active_scanout).current_height != requested_output_height)
+    {
+        return error.ExplicitOutputModeSetMismatch;
+    }
+
+    display_profile_store.saveCurrentProfile("golden", 0) catch return error.DisplayProfileSaveMismatch;
+
+    var profile_list_scratch: [64]u8 = undefined;
+    var profile_list_fba = std.heap.FixedBufferAllocator.init(&profile_list_scratch);
+    const profile_list = display_profile_store.listProfilesAlloc(profile_list_fba.allocator(), profile_list_scratch.len) catch {
+        return error.DisplayProfileListMismatch;
+    };
+    if (!std.mem.eql(u8, profile_list, "golden\n")) return error.DisplayProfileListMismatch;
+
+    var profile_info_scratch: [256]u8 = undefined;
+    var profile_info_fba = std.heap.FixedBufferAllocator.init(&profile_info_scratch);
+    const profile_info = display_profile_store.infoAlloc(profile_info_fba.allocator(), "golden", profile_info_scratch.len) catch {
+        return error.DisplayProfileInfoMismatch;
+    };
+    var output_index_buffer: [32]u8 = undefined;
+    const output_index_expected = std.fmt.bufPrint(&output_index_buffer, "output_index={d}", .{result.active_scanout}) catch {
+        return error.DisplayProfileInfoMismatch;
+    };
+    if (std.mem.indexOf(u8, profile_info, "name=golden") == null or
+        std.mem.indexOf(u8, profile_info, output_index_expected) == null or
+        std.mem.indexOf(u8, profile_info, "width=1024") == null or
+        std.mem.indexOf(u8, profile_info, "height=768") == null or
+        std.mem.indexOf(u8, profile_info, "selected=0") == null)
+    {
+        return error.DisplayProfileInfoMismatch;
+    }
+
+    const alternate_output_width: u16 = 800;
+    const alternate_output_height: u16 = 600;
+    pal_framebuffer.setDisplayOutputMode(result.active_scanout, alternate_output_width, alternate_output_height) catch {
+        return error.DisplayProfileApplyMismatch;
+    };
+    if (oc_display_output_state_ptr().current_width != alternate_output_width or
+        oc_display_output_state_ptr().current_height != alternate_output_height or
+        oc_display_output_entry(result.active_scanout).current_width != alternate_output_width or
+        oc_display_output_entry(result.active_scanout).current_height != alternate_output_height)
+    {
+        return error.DisplayProfileApplyMismatch;
+    }
+
+    display_profile_store.applyProfile("golden", 0) catch return error.DisplayProfileApplyMismatch;
+    if (oc_display_output_state_ptr().current_width != requested_output_width or
+        oc_display_output_state_ptr().current_height != requested_output_height or
+        oc_display_output_entry(result.active_scanout).current_width != requested_output_width or
+        oc_display_output_entry(result.active_scanout).current_height != requested_output_height)
+    {
+        return error.DisplayProfileApplyMismatch;
+    }
+
+    var active_profile_scratch: [256]u8 = undefined;
+    var active_profile_fba = std.heap.FixedBufferAllocator.init(&active_profile_scratch);
+    const active_profile = display_profile_store.activeProfileInfoAlloc(active_profile_fba.allocator(), active_profile_scratch.len) catch {
+        return error.DisplayProfileInfoMismatch;
+    };
+    if (std.mem.indexOf(u8, active_profile, "name=golden") == null or
+        std.mem.indexOf(u8, active_profile, "selected=1") == null)
+    {
+        return error.DisplayProfileInfoMismatch;
     }
 
     const wrong_connector: u8 = switch (expected_connector) {
@@ -10718,8 +10865,11 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
         abi.display_connector_displayport, abi.display_connector_embedded_displayport => abi.display_connector_hdmi,
         else => abi.display_connector_hdmi,
     };
+    var connector_mismatch_rejected = false;
     _ = virtio_gpu.probeAndPresentPatternForConnector(wrong_connector) catch |err| switch (err) {
-        error.NoConnectedScanout => return,
+        error.NoConnectedScanout => {
+            connector_mismatch_rejected = true;
+        },
         error.UnsupportedPlatform => return error.UnsupportedPlatform,
         error.DeviceNotFound => return error.DeviceNotFound,
         error.MissingCapabilities => return error.MissingCapabilities,
@@ -10734,8 +10884,59 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
         error.InvalidEdid => return error.InvalidEdid,
         error.InvalidControlResponse => return error.InvalidControlResponse,
         error.FramebufferTooLarge => return error.FramebufferTooLarge,
+        error.UnsupportedMode => return error.UnsupportedMode,
     };
-    return error.MissingConnectorMismatchFailure;
+    if (!connector_mismatch_rejected) {
+        return error.MissingConnectorMismatchFailure;
+    }
+    var output_mismatch_rejected = false;
+    _ = virtio_gpu.probeAndPresentPatternForOutputIndex(result.scanout_count) catch |err| switch (err) {
+        error.NoConnectedScanout => {
+            output_mismatch_rejected = true;
+        },
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.DeviceNotFound => return error.DeviceNotFound,
+        error.MissingCapabilities => return error.MissingCapabilities,
+        error.MissingVersion1 => return error.MissingVersion1,
+        error.MissingEdidFeature => return error.MissingEdidFeature,
+        error.FeaturesRejected => return error.FeaturesRejected,
+        error.QueueUnavailable => return error.QueueUnavailable,
+        error.QueueTooSmall => return error.QueueTooSmall,
+        error.RequestTimedOut => return error.RequestTimedOut,
+        error.InvalidDisplayInfoResponse => return error.InvalidDisplayInfoResponse,
+        error.InvalidEdidResponse => return error.InvalidEdidResponse,
+        error.InvalidEdid => return error.InvalidEdid,
+        error.InvalidControlResponse => return error.InvalidControlResponse,
+        error.FramebufferTooLarge => return error.FramebufferTooLarge,
+        error.UnsupportedMode => return error.UnsupportedMode,
+    };
+    if (!output_mismatch_rejected) {
+        return error.MissingOutputMismatchFailure;
+    }
+    var output_mode_rejected = false;
+    _ = virtio_gpu.probeAndPresentPatternForOutputIndexMode(result.active_scanout, result.current_width + 1, result.current_height) catch |err| switch (err) {
+        error.UnsupportedMode => {
+            output_mode_rejected = true;
+        },
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.DeviceNotFound => return error.DeviceNotFound,
+        error.MissingCapabilities => return error.MissingCapabilities,
+        error.MissingVersion1 => return error.MissingVersion1,
+        error.MissingEdidFeature => return error.MissingEdidFeature,
+        error.FeaturesRejected => return error.FeaturesRejected,
+        error.QueueUnavailable => return error.QueueUnavailable,
+        error.QueueTooSmall => return error.QueueTooSmall,
+        error.RequestTimedOut => return error.RequestTimedOut,
+        error.InvalidDisplayInfoResponse => return error.InvalidDisplayInfoResponse,
+        error.InvalidEdidResponse => return error.InvalidEdidResponse,
+        error.NoConnectedScanout => return error.NoConnectedScanout,
+        error.InvalidEdid => return error.InvalidEdid,
+        error.InvalidControlResponse => return error.InvalidControlResponse,
+        error.FramebufferTooLarge => return error.FramebufferTooLarge,
+    };
+    if (!output_mode_rejected) {
+        return error.MissingOutputModeFailure;
+    }
 }
 
 fn ataStorageProbeFailureCode(err: AtaStorageProbeError) u8 {
@@ -18950,6 +19151,17 @@ test "baremetal display output export surface mirrors bounded bga framebuffer st
     const updated_entry = oc_display_output_entry(0);
     try std.testing.expectEqual(@as(u16, 1280), updated_entry.current_width);
     try std.testing.expectEqual(@as(u16, 720), updated_entry.current_height);
+    try std.testing.expectEqual(abi.result_ok, oc_display_output_set(0, 800, 600));
+    output = oc_display_output_state_ptr();
+    try std.testing.expectEqual(@as(u16, 800), output.current_width);
+    try std.testing.expectEqual(@as(u16, 600), output.current_height);
+    const resized_entry = oc_display_output_entry(0);
+    try std.testing.expectEqual(@as(u16, 800), resized_entry.current_width);
+    try std.testing.expectEqual(@as(u16, 600), resized_entry.current_height);
+    try std.testing.expectEqual(abi.result_not_found, oc_display_output_activate(0));
+    try std.testing.expectEqual(abi.result_not_found, oc_display_output_activate(1));
+    try std.testing.expectEqual(abi.result_not_found, oc_display_output_set(1, 800, 600));
+    try std.testing.expectEqual(abi.result_not_supported, oc_display_output_set(0, 1920, 1080));
 }
 
 test "baremetal ethernet export surface initializes mock rtl8139 and loops a frame" {

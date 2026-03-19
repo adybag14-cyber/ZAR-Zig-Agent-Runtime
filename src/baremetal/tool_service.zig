@@ -4,6 +4,7 @@ const abi = @import("abi.zig");
 const app_runtime = @import("app_runtime.zig");
 const disk_installer = @import("disk_installer.zig");
 const display_output = @import("display_output.zig");
+const display_profile_store = @import("display_profile_store.zig");
 const filesystem = @import("filesystem.zig");
 const framebuffer_console = @import("framebuffer_console.zig");
 const package_store = @import("package_store.zig");
@@ -309,6 +310,14 @@ fn handleFramedPayload(
         .display_modes => try handleDisplayModesRequest(allocator, payload_limit),
         .display_set => |display_mode| try handleDisplaySetRequest(allocator, display_mode.width, display_mode.height, payload_limit),
         .display_activate => |connector_name| try handleDisplayActivateRequest(allocator, connector_name, payload_limit),
+        .display_activate_output => |output_index| try handleDisplayActivateOutputRequest(allocator, output_index, payload_limit),
+        .display_output_set => |request| try handleDisplayOutputSetRequest(allocator, request.index, request.width, request.height, payload_limit),
+        .display_profile_list => try handleDisplayProfileListRequest(allocator, payload_limit),
+        .display_profile_info => |profile_name| try handleDisplayProfileInfoRequest(allocator, profile_name, payload_limit),
+        .display_profile_active => try handleDisplayProfileActiveRequest(allocator, payload_limit),
+        .display_profile_save => |profile_name| try handleDisplayProfileSaveRequest(allocator, profile_name, payload_limit),
+        .display_profile_apply => |profile_name| try handleDisplayProfileApplyRequest(allocator, profile_name, payload_limit),
+        .display_profile_delete => |profile_name| try handleDisplayProfileDeleteRequest(allocator, profile_name, payload_limit),
         .trust_install => |trust_request| try handleTrustInstallRequest(allocator, trust_request.path, trust_request.body, payload_limit),
         .trust_list => try handleTrustListRequest(allocator, payload_limit),
         .trust_info => |trust_name| try handleTrustInfoRequest(allocator, trust_name, payload_limit),
@@ -1948,6 +1957,121 @@ fn handleDisplayActivateRequest(allocator: std.mem.Allocator, connector_name: []
     return response;
 }
 
+fn handleDisplayActivateOutputRequest(allocator: std.mem.Allocator, output_index_text: []const u8, payload_limit: usize) Error![]u8 {
+    const output_index = std.fmt.parseInt(u16, output_index_text, 10) catch {
+        return formatOperationError(allocator, "DISPLAYACTIVATEOUTPUT", error.InvalidFrame, payload_limit);
+    };
+    tool_exec.activateDisplayOutput(output_index) catch |err| {
+        return formatOperationError(allocator, "DISPLAYACTIVATEOUTPUT", err, payload_limit);
+    };
+    const output = display_output.statePtr();
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "DISPLAYACTIVATEOUTPUT {d} connector={s} scanout={d} current={d}x{d}\n",
+        .{
+            output_index,
+            displayConnectorName(output.connector_type),
+            output.active_scanout,
+            output.current_width,
+            output.current_height,
+        },
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleDisplayOutputSetRequest(allocator: std.mem.Allocator, output_index: u16, width: u16, height: u16, payload_limit: usize) Error![]u8 {
+    tool_exec.setDisplayOutputMode(output_index, width, height) catch |err| {
+        return formatOperationError(allocator, "DISPLAYOUTPUTSET", err, payload_limit);
+    };
+    const output = display_output.statePtr();
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "DISPLAYOUTPUTSET {d} {d}x{d} connector={s} scanout={d}\n",
+        .{
+            output_index,
+            output.current_width,
+            output.current_height,
+            displayConnectorName(output.connector_type),
+            output.active_scanout,
+        },
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleDisplayProfileListRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    return display_profile_store.listProfilesAlloc(allocator, payload_limit) catch |err| {
+        return formatOperationError(allocator, "DISPLAYPROFILELIST", err, payload_limit);
+    };
+}
+
+fn handleDisplayProfileInfoRequest(allocator: std.mem.Allocator, profile_name: []const u8, payload_limit: usize) Error![]u8 {
+    return display_profile_store.infoAlloc(allocator, profile_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "DISPLAYPROFILEINFO", err, payload_limit);
+    };
+}
+
+fn handleDisplayProfileActiveRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    return display_profile_store.activeProfileInfoAlloc(allocator, payload_limit) catch |err| {
+        return formatOperationError(allocator, "DISPLAYPROFILEACTIVE", err, payload_limit);
+    };
+}
+
+fn handleDisplayProfileSaveRequest(allocator: std.mem.Allocator, profile_name: []const u8, payload_limit: usize) Error![]u8 {
+    display_profile_store.saveCurrentProfile(profile_name, 0) catch |err| {
+        return formatOperationError(allocator, "DISPLAYPROFILESAVE", err, payload_limit);
+    };
+    const output = display_output.statePtr();
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "DISPLAYPROFILESAVE {s} output={d} current={d}x{d} connector={s}\n",
+        .{
+            profile_name,
+            output.active_scanout,
+            output.current_width,
+            output.current_height,
+            displayConnectorName(output.connector_type),
+        },
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleDisplayProfileApplyRequest(allocator: std.mem.Allocator, profile_name: []const u8, payload_limit: usize) Error![]u8 {
+    display_profile_store.applyProfile(profile_name, 0) catch |err| {
+        return formatOperationError(allocator, "DISPLAYPROFILEAPPLY", err, payload_limit);
+    };
+    const output = display_output.statePtr();
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "DISPLAYPROFILEAPPLY {s} output={d} current={d}x{d} connector={s}\n",
+        .{
+            profile_name,
+            output.active_scanout,
+            output.current_width,
+            output.current_height,
+            displayConnectorName(output.connector_type),
+        },
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleDisplayProfileDeleteRequest(allocator: std.mem.Allocator, profile_name: []const u8, payload_limit: usize) Error![]u8 {
+    display_profile_store.deleteProfile(profile_name, 0) catch |err| {
+        return formatOperationError(allocator, "DISPLAYPROFILEDELETE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "DISPLAYPROFILEDELETE {s}\n", .{profile_name});
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
 fn handleTrustListRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
     return trust_store.listBundlesAlloc(allocator, payload_limit) catch |err| {
         return formatOperationError(allocator, "TRUSTLIST", err, payload_limit);
@@ -2349,6 +2473,52 @@ test "baremetal tool service parses typed framed requests" {
             try std.testing.expectEqual(@as(u16, 800), payload.width);
             try std.testing.expectEqual(@as(u16, 600), payload.height);
         },
+        else => return error.InvalidFrame,
+    }
+
+    const display_output_set = try parseFramedRequest("REQ 31 DISPLAYOUTPUTSET 1 1024 768");
+    switch (display_output_set.operation) {
+        .display_output_set => |payload| {
+            try std.testing.expectEqual(@as(u16, 1), payload.index);
+            try std.testing.expectEqual(@as(u16, 1024), payload.width);
+            try std.testing.expectEqual(@as(u16, 768), payload.height);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const display_profile_list = try parseFramedRequest("REQ 32 DISPLAYPROFILELIST");
+    switch (display_profile_list.operation) {
+        .display_profile_list => {},
+        else => return error.InvalidFrame,
+    }
+
+    const display_profile_info = try parseFramedRequest("REQ 33 DISPLAYPROFILEINFO golden");
+    switch (display_profile_info.operation) {
+        .display_profile_info => |payload| try std.testing.expectEqualStrings("golden", payload),
+        else => return error.InvalidFrame,
+    }
+
+    const display_profile_active = try parseFramedRequest("REQ 34 DISPLAYPROFILEACTIVE");
+    switch (display_profile_active.operation) {
+        .display_profile_active => {},
+        else => return error.InvalidFrame,
+    }
+
+    const display_profile_save = try parseFramedRequest("REQ 35 DISPLAYPROFILESAVE golden");
+    switch (display_profile_save.operation) {
+        .display_profile_save => |payload| try std.testing.expectEqualStrings("golden", payload),
+        else => return error.InvalidFrame,
+    }
+
+    const display_profile_apply = try parseFramedRequest("REQ 36 DISPLAYPROFILEAPPLY golden");
+    switch (display_profile_apply.operation) {
+        .display_profile_apply => |payload| try std.testing.expectEqualStrings("golden", payload),
+        else => return error.InvalidFrame,
+    }
+
+    const display_profile_delete = try parseFramedRequest("REQ 37 DISPLAYPROFILEDELETE golden");
+    switch (display_profile_delete.operation) {
+        .display_profile_delete => |payload| try std.testing.expectEqualStrings("golden", payload),
         else => return error.InvalidFrame,
     }
 
@@ -3421,6 +3591,58 @@ test "baremetal tool service activates requested display connector" {
     const mismatch_response = try handleFramedRequest(std.testing.allocator, "REQ 68 DISPLAYACTIVATE embedded-displayport", 512, 256, 512);
     defer std.testing.allocator.free(mismatch_response);
     try std.testing.expectEqualStrings("RESP 68 46\nERR DISPLAYACTIVATE: DisplayConnectorMismatch\n", mismatch_response);
+
+    const activate_output_response = try handleFramedRequest(std.testing.allocator, "REQ 69 DISPLAYACTIVATEOUTPUT 1", 512, 256, 512);
+    defer std.testing.allocator.free(activate_output_response);
+    try std.testing.expectEqualStrings("RESP 69 74\nDISPLAYACTIVATEOUTPUT 1 connector=displayport scanout=1 current=1920x1080\n", activate_output_response);
+
+    const missing_output_response = try handleFramedRequest(std.testing.allocator, "REQ 70 DISPLAYACTIVATEOUTPUT 2", 512, 256, 512);
+    defer std.testing.allocator.free(missing_output_response);
+    try std.testing.expectEqualStrings("RESP 70 49\nERR DISPLAYACTIVATEOUTPUT: DisplayOutputNotFound\n", missing_output_response);
+
+    const set_output_response = try handleFramedRequest(std.testing.allocator, "REQ 71 DISPLAYOUTPUTSET 1 1024 768", 512, 256, 512);
+    defer std.testing.allocator.free(set_output_response);
+    try std.testing.expectEqualStrings("RESP 71 60\nDISPLAYOUTPUTSET 1 1024x768 connector=displayport scanout=1\n", set_output_response);
+
+    const unsupported_output_set_response = try handleFramedRequest(std.testing.allocator, "REQ 72 DISPLAYOUTPUTSET 1 2560 1440", 512, 256, 512);
+    defer std.testing.allocator.free(unsupported_output_set_response);
+    try std.testing.expectEqualStrings("RESP 72 51\nERR DISPLAYOUTPUTSET: DisplayOutputUnsupportedMode\n", unsupported_output_set_response);
+
+    const missing_output_set_response = try handleFramedRequest(std.testing.allocator, "REQ 73 DISPLAYOUTPUTSET 2 800 600", 512, 256, 512);
+    defer std.testing.allocator.free(missing_output_set_response);
+    try std.testing.expectEqualStrings("RESP 73 44\nERR DISPLAYOUTPUTSET: DisplayOutputNotFound\n", missing_output_set_response);
+
+    const save_profile_response = try handleFramedRequest(std.testing.allocator, "REQ 74 DISPLAYPROFILESAVE golden", 512, 256, 512);
+    defer std.testing.allocator.free(save_profile_response);
+    try std.testing.expectEqualStrings("RESP 74 74\nDISPLAYPROFILESAVE golden output=1 current=1024x768 connector=displayport\n", save_profile_response);
+
+    const list_profile_response = try handleFramedRequest(std.testing.allocator, "REQ 75 DISPLAYPROFILELIST", 512, 256, 512);
+    defer std.testing.allocator.free(list_profile_response);
+    try std.testing.expectEqualStrings("RESP 75 7\ngolden\n", list_profile_response);
+
+    const info_profile_response = try handleFramedRequest(std.testing.allocator, "REQ 76 DISPLAYPROFILEINFO golden", 512, 256, 512);
+    defer std.testing.allocator.free(info_profile_response);
+    try std.testing.expect(std.mem.indexOf(u8, info_profile_response, "name=golden") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_profile_response, "output_index=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_profile_response, "width=1024") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_profile_response, "height=768") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_profile_response, "selected=0") != null);
+
+    const mutate_profile_response = try handleFramedRequest(std.testing.allocator, "REQ 77 DISPLAYOUTPUTSET 1 800 600", 512, 256, 512);
+    defer std.testing.allocator.free(mutate_profile_response);
+    try std.testing.expectEqualStrings("RESP 77 59\nDISPLAYOUTPUTSET 1 800x600 connector=displayport scanout=1\n", mutate_profile_response);
+
+    const apply_profile_response = try handleFramedRequest(std.testing.allocator, "REQ 78 DISPLAYPROFILEAPPLY golden", 512, 256, 512);
+    defer std.testing.allocator.free(apply_profile_response);
+    try std.testing.expectEqualStrings("RESP 78 75\nDISPLAYPROFILEAPPLY golden output=1 current=1024x768 connector=displayport\n", apply_profile_response);
+
+    const active_profile_response = try handleFramedRequest(std.testing.allocator, "REQ 79 DISPLAYPROFILEACTIVE", 512, 256, 512);
+    defer std.testing.allocator.free(active_profile_response);
+    try std.testing.expect(std.mem.indexOf(u8, active_profile_response, "selected=1") != null);
+
+    const delete_profile_response = try handleFramedRequest(std.testing.allocator, "REQ 80 DISPLAYPROFILEDELETE golden", 512, 256, 512);
+    defer std.testing.allocator.free(delete_profile_response);
+    try std.testing.expectEqualStrings("RESP 80 28\nDISPLAYPROFILEDELETE golden\n", delete_profile_response);
 }
 
 test "baremetal tool service rotates queries and deletes trust bundles" {
