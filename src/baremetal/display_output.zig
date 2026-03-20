@@ -196,6 +196,27 @@ pub fn outputMode(index: u16, mode_index: u16) ?OutputMode {
     return oc_display_output_modes_data[idx][mode_idx];
 }
 
+fn outputIndexForInterface(interface_type: u8) ?u16 {
+    var index: usize = 0;
+    while (index < oc_display_output_entry_count_data and index < oc_display_output_entries_data.len) : (index += 1) {
+        const entry = oc_display_output_entries_data[index];
+        if (entry.connected == 0) continue;
+        if (oc_display_output_interface_type_data[index] != interface_type) continue;
+        return @intCast(index);
+    }
+    return null;
+}
+
+pub fn outputModeCountForInterface(interface_type: u8) u16 {
+    const index = outputIndexForInterface(interface_type) orelse return 0;
+    return outputModeCount(index);
+}
+
+pub fn outputModeForInterface(interface_type: u8, mode_index: u16) ?OutputMode {
+    const index = outputIndexForInterface(interface_type) orelse return null;
+    return outputMode(index, mode_index);
+}
+
 fn setOutputModes(index: usize, modes: []const OutputMode) void {
     if (index >= oc_display_output_mode_count_data.len or index >= oc_display_output_modes_data.len) return;
     oc_display_output_mode_count_data[index] = @intCast(@min(modes.len, oc_display_output_modes_data[index].len));
@@ -307,6 +328,16 @@ pub fn setOutputMode(index: u16, width: u16, height: u16) bool {
 pub fn setOutputModeByIndex(index: u16, mode_index: u16) bool {
     const mode = outputMode(index, mode_index) orelse return false;
     return setOutputMode(index, mode.width, mode.height);
+}
+
+pub fn setOutputModeForInterface(interface_type: u8, width: u16, height: u16) bool {
+    const index = outputIndexForInterface(interface_type) orelse return false;
+    return setOutputMode(index, width, height);
+}
+
+pub fn setOutputModeByInterfaceIndex(interface_type: u8, mode_index: u16) bool {
+    const index = outputIndexForInterface(interface_type) orelse return false;
+    return setOutputModeByIndex(index, mode_index);
 }
 
 pub fn preferredMode(index: u16) ?OutputMode {
@@ -898,6 +929,104 @@ test "display output can retarget active interface from stored entries" {
     try std.testing.expectEqual(@as(u8, 1), output.active_scanout);
     try std.testing.expectEqual(@as(u16, 1920), output.current_width);
     try std.testing.expect(!selectOutputInterface(abi.display_interface_hdmi_b));
+}
+
+test "display output exposes and applies interface mode inventory" {
+    resetForTest();
+    updateFromVirtioGpu(.{
+        .vendor_id = 0x1AF4,
+        .device_id = 0x1050,
+        .pci_bus = 0,
+        .pci_device = 2,
+        .pci_function = 0,
+        .hardware_backed = true,
+        .connected = true,
+        .scanout_count = 2,
+        .active_scanout = 0,
+        .current_width = 1280,
+        .current_height = 800,
+        .preferred_width = 1280,
+        .preferred_height = 800,
+        .physical_width_mm = 300,
+        .physical_height_mm = 190,
+        .manufacturer_id = 0x1234,
+        .product_code = 0x5678,
+        .serial_number = 0xCAFEBABE,
+        .capability_flags = abi.display_capability_digital_input | abi.display_capability_hdmi_vendor_data,
+        .edid = &.{ 0x00, 0xFF, 0xFF, 0xFF },
+        .scanouts = &.{
+            .{
+                .connected = true,
+                .scanout_index = 0,
+                .current_width = 1280,
+                .current_height = 800,
+                .preferred_width = 1280,
+                .preferred_height = 800,
+                .physical_width_mm = 300,
+                .physical_height_mm = 190,
+                .manufacturer_id = 0x1234,
+                .product_code = 0x5678,
+                .serial_number = 0xCAFEBABE,
+                .interface_type = abi.display_interface_hdmi_a,
+                .capability_flags = abi.display_capability_digital_input | abi.display_capability_hdmi_vendor_data,
+                .edid_length = 128,
+                .supported_mode_count = 2,
+                .supported_modes = [_]OutputMode{
+                    .{ .width = 1280, .height = 800, .refresh_hz = 60 },
+                    .{ .width = 1024, .height = 768, .refresh_hz = 60 },
+                } ++ [_]OutputMode{.{
+                    .width = 0,
+                    .height = 0,
+                    .refresh_hz = 0,
+                }} ** (max_output_modes - 2),
+            },
+            .{
+                .connected = true,
+                .scanout_index = 1,
+                .current_width = 1920,
+                .current_height = 1080,
+                .preferred_width = 1920,
+                .preferred_height = 1080,
+                .physical_width_mm = 520,
+                .physical_height_mm = 320,
+                .manufacturer_id = 0x4321,
+                .product_code = 0x8765,
+                .serial_number = 0xABCD1234,
+                .interface_type = abi.display_interface_displayport,
+                .capability_flags = abi.display_capability_digital_input | abi.display_capability_displayid_extension,
+                .edid_length = 256,
+                .supported_mode_count = 2,
+                .supported_modes = [_]OutputMode{
+                    .{ .width = 1920, .height = 1080, .refresh_hz = 60 },
+                    .{ .width = 1024, .height = 768, .refresh_hz = 60 },
+                } ++ [_]OutputMode{.{
+                    .width = 0,
+                    .height = 0,
+                    .refresh_hz = 0,
+                }} ** (max_output_modes - 2),
+            },
+        },
+    });
+
+    try std.testing.expectEqual(@as(u16, 2), outputModeCountForInterface(abi.display_interface_displayport));
+    const preferred = outputModeForInterface(abi.display_interface_displayport, 0) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u16, 1920), preferred.width);
+    try std.testing.expectEqual(@as(u16, 1080), preferred.height);
+    const alternate = outputModeForInterface(abi.display_interface_displayport, 1) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u16, 1024), alternate.width);
+    try std.testing.expectEqual(@as(u16, 768), alternate.height);
+    try std.testing.expect(outputModeForInterface(abi.display_interface_hdmi_b, 0) == null);
+
+    try std.testing.expect(setOutputModeForInterface(abi.display_interface_displayport, 1024, 768));
+    try std.testing.expectEqual(@as(u8, abi.display_interface_displayport), stateInterfaceType());
+    try std.testing.expectEqual(@as(u8, 1), statePtr().active_scanout);
+    try std.testing.expectEqual(@as(u16, 1024), statePtr().current_width);
+    try std.testing.expectEqual(@as(u16, 768), statePtr().current_height);
+    try std.testing.expect(setOutputModeByInterfaceIndex(abi.display_interface_displayport, 0));
+    try std.testing.expectEqual(@as(u16, 1920), statePtr().current_width);
+    try std.testing.expectEqual(@as(u16, 1080), statePtr().current_height);
+    try std.testing.expect(!setOutputModeForInterface(abi.display_interface_hdmi_b, 1024, 768));
+    try std.testing.expect(!setOutputModeByInterfaceIndex(abi.display_interface_hdmi_b, 0));
 }
 
 test "display output can retarget active output mode from stored entries" {

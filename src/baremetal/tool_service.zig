@@ -315,6 +315,9 @@ fn handleFramedPayload(
         .display_activate_preferred => |connector_name| try handleDisplayActivatePreferredRequest(allocator, connector_name, payload_limit),
         .display_activate_interface => |interface_name| try handleDisplayActivateInterfaceRequest(allocator, interface_name, payload_limit),
         .display_activate_interface_preferred => |interface_name| try handleDisplayActivateInterfacePreferredRequest(allocator, interface_name, payload_limit),
+        .display_interface_modes => |interface_name| try handleDisplayInterfaceModesRequest(allocator, interface_name, payload_limit),
+        .display_interface_set => |request| try handleDisplayInterfaceSetRequest(allocator, request.interface_name, request.width, request.height, payload_limit),
+        .display_interface_activate_mode => |request| try handleDisplayInterfaceActivateModeRequest(allocator, request.interface_name, request.mode_index, payload_limit),
         .display_activate_output => |output_index| try handleDisplayActivateOutputRequest(allocator, output_index, payload_limit),
         .display_activate_output_preferred => |output_index| try handleDisplayActivateOutputPreferredRequest(allocator, output_index, payload_limit),
         .display_output_set => |request| try handleDisplayOutputSetRequest(allocator, request.index, request.width, request.height, payload_limit),
@@ -1948,6 +1951,28 @@ fn handleDisplayOutputModesRequest(allocator: std.mem.Allocator, output_index_te
     return out.toOwnedSlice(allocator);
 }
 
+fn handleDisplayInterfaceModesRequest(allocator: std.mem.Allocator, interface_name: []const u8, payload_limit: usize) Error![]u8 {
+    ensureDisplayReady();
+    const interface_type = display_output.interfaceTypeFromName(interface_name) orelse {
+        return formatOperationError(allocator, "DISPLAYINTERFACEMODES", error.InvalidFrame, payload_limit);
+    };
+    const mode_count = pal_framebuffer.displayOutputModeCountForInterface(interface_type);
+    if (mode_count == 0) {
+        return formatOperationError(allocator, "DISPLAYINTERFACEMODES", error.NotFound, payload_limit);
+    }
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    var mode_index: u16 = 0;
+    while (mode_index < mode_count) : (mode_index += 1) {
+        const mode = pal_framebuffer.displayOutputModeForInterface(interface_type, mode_index) orelse continue;
+        try appendDisplayModeLine(&out, allocator, payload_limit, mode_index, mode);
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
 fn handleDisplayModesRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
     ensureDisplayReady();
     var out: std.ArrayList(u8) = .empty;
@@ -2065,6 +2090,58 @@ fn handleDisplayActivateInterfacePreferredRequest(allocator: std.mem.Allocator, 
             output.current_height,
             if (output.preferred_width != 0) output.preferred_width else output.current_width,
             if (output.preferred_height != 0) output.preferred_height else output.current_height,
+        },
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleDisplayInterfaceSetRequest(allocator: std.mem.Allocator, interface_name: []const u8, width: u16, height: u16, payload_limit: usize) Error![]u8 {
+    const interface_type = display_output.interfaceTypeFromName(interface_name) orelse {
+        return formatOperationError(allocator, "DISPLAYINTERFACESET", error.InvalidFrame, payload_limit);
+    };
+    tool_exec.setDisplayInterfaceMode(interface_type, width, height) catch |err| {
+        return formatOperationError(allocator, "DISPLAYINTERFACESET", err, payload_limit);
+    };
+    const output = display_output.statePtr();
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "DISPLAYINTERFACESET {s} {d}x{d} connector={s} scanout={d}\n",
+        .{
+            displayInterfaceName(output.reserved0),
+            output.current_width,
+            output.current_height,
+            displayConnectorName(output.connector_type),
+            output.active_scanout,
+        },
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleDisplayInterfaceActivateModeRequest(allocator: std.mem.Allocator, interface_name: []const u8, mode_index: u16, payload_limit: usize) Error![]u8 {
+    const interface_type = display_output.interfaceTypeFromName(interface_name) orelse {
+        return formatOperationError(allocator, "DISPLAYINTERFACEACTIVATEMODE", error.InvalidFrame, payload_limit);
+    };
+    tool_exec.activateDisplayInterfaceMode(interface_type, mode_index) catch |err| {
+        return formatOperationError(allocator, "DISPLAYINTERFACEACTIVATEMODE", err, payload_limit);
+    };
+    const mode = pal_framebuffer.displayOutputModeForInterface(interface_type, mode_index) orelse {
+        return formatOperationError(allocator, "DISPLAYINTERFACEACTIVATEMODE", error.UnsupportedMode, payload_limit);
+    };
+    const output = display_output.statePtr();
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "DISPLAYINTERFACEACTIVATEMODE {s} {d} {d}x{d} connector={s} scanout={d}\n",
+        .{
+            displayInterfaceName(output.reserved0),
+            mode_index,
+            mode.width,
+            mode.height,
+            displayConnectorName(output.connector_type),
+            output.active_scanout,
         },
     );
     errdefer allocator.free(response);
@@ -2667,6 +2744,31 @@ test "baremetal tool service parses typed framed requests" {
     const display_activate_interface_preferred = try parseFramedRequest("REQ 139 DISPLAYACTIVATEINTERFACEPREFERRED displayport");
     switch (display_activate_interface_preferred.operation) {
         .display_activate_interface_preferred => |payload| try std.testing.expectEqualStrings("displayport", payload),
+        else => return error.InvalidFrame,
+    }
+
+    const display_interface_modes = try parseFramedRequest("REQ 283 DISPLAYINTERFACEMODES displayport");
+    switch (display_interface_modes.operation) {
+        .display_interface_modes => |payload| try std.testing.expectEqualStrings("displayport", payload),
+        else => return error.InvalidFrame,
+    }
+
+    const display_interface_set = try parseFramedRequest("REQ 284 DISPLAYINTERFACESET displayport 1024 768");
+    switch (display_interface_set.operation) {
+        .display_interface_set => |payload| {
+            try std.testing.expectEqualStrings("displayport", payload.interface_name);
+            try std.testing.expectEqual(@as(u16, 1024), payload.width);
+            try std.testing.expectEqual(@as(u16, 768), payload.height);
+        },
+        else => return error.InvalidFrame,
+    }
+
+    const display_interface_activate_mode = try parseFramedRequest("REQ 285 DISPLAYINTERFACEACTIVATEMODE displayport 1");
+    switch (display_interface_activate_mode.operation) {
+        .display_interface_activate_mode => |payload| {
+            try std.testing.expectEqualStrings("displayport", payload.interface_name);
+            try std.testing.expectEqual(@as(u16, 1), payload.mode_index);
+        },
         else => return error.InvalidFrame,
     }
 
@@ -3846,6 +3948,11 @@ test "baremetal tool service activates requested display connector" {
     try std.testing.expect(std.mem.startsWith(u8, output_modes_response, "RESP 168 "));
     try std.testing.expect(std.mem.indexOf(u8, output_modes_response, "mode 1 1024x768 refresh=60") != null);
 
+    const interface_modes_response = try handleFramedRequest(std.testing.allocator, "REQ 283 DISPLAYINTERFACEMODES displayport", 512, 256, 512);
+    defer std.testing.allocator.free(interface_modes_response);
+    try std.testing.expect(std.mem.startsWith(u8, interface_modes_response, "RESP 283 "));
+    try std.testing.expect(std.mem.indexOf(u8, interface_modes_response, "mode 1 1024x768 refresh=60") != null);
+
     const mismatch_response = try handleFramedRequest(std.testing.allocator, "REQ 68 DISPLAYACTIVATE embedded-displayport", 512, 256, 512);
     defer std.testing.allocator.free(mismatch_response);
     try std.testing.expectEqualStrings("RESP 68 46\nERR DISPLAYACTIVATE: DisplayConnectorMismatch\n", mismatch_response);
@@ -3862,6 +3969,14 @@ test "baremetal tool service activates requested display connector" {
     const activate_output_mode_response = try handleFramedRequest(std.testing.allocator, "REQ 170 DISPLAYOUTPUTACTIVATEMODE 1 1", 512, 256, 512);
     defer std.testing.allocator.free(activate_output_mode_response);
     try std.testing.expectEqualStrings("RESP 170 71\nDISPLAYOUTPUTACTIVATEMODE 1 1 1024x768 connector=displayport scanout=1\n", activate_output_mode_response);
+
+    const set_interface_mode_response = try handleFramedRequest(std.testing.allocator, "REQ 284 DISPLAYINTERFACESET displayport 1024 768", 512, 256, 512);
+    defer std.testing.allocator.free(set_interface_mode_response);
+    try std.testing.expectEqualStrings("RESP 284 73\nDISPLAYINTERFACESET displayport 1024x768 connector=displayport scanout=1\n", set_interface_mode_response);
+
+    const activate_interface_mode_response = try handleFramedRequest(std.testing.allocator, "REQ 285 DISPLAYINTERFACEACTIVATEMODE displayport 0", 512, 256, 512);
+    defer std.testing.allocator.free(activate_interface_mode_response);
+    try std.testing.expectEqualStrings("RESP 285 85\nDISPLAYINTERFACEACTIVATEMODE displayport 0 1920x1080 connector=displayport scanout=1\n", activate_interface_mode_response);
 
     const missing_output_response = try handleFramedRequest(std.testing.allocator, "REQ 70 DISPLAYACTIVATEOUTPUT 2", 512, 256, 512);
     defer std.testing.allocator.free(missing_output_response);
@@ -3883,9 +3998,17 @@ test "baremetal tool service activates requested display connector" {
     defer std.testing.allocator.free(missing_output_modes_response);
     try std.testing.expectEqualStrings("RESP 74 33\nERR DISPLAYOUTPUTMODES: NotFound\n", missing_output_modes_response);
 
+    const missing_interface_modes_response = try handleFramedRequest(std.testing.allocator, "REQ 286 DISPLAYINTERFACEMODES hdmi-b", 512, 256, 512);
+    defer std.testing.allocator.free(missing_interface_modes_response);
+    try std.testing.expectEqualStrings("RESP 286 36\nERR DISPLAYINTERFACEMODES: NotFound\n", missing_interface_modes_response);
+
     const invalid_output_mode_response = try handleFramedRequest(std.testing.allocator, "REQ 75 DISPLAYOUTPUTACTIVATEMODE 1 7", 512, 256, 512);
     defer std.testing.allocator.free(invalid_output_mode_response);
     try std.testing.expectEqualStrings("RESP 75 60\nERR DISPLAYOUTPUTACTIVATEMODE: DisplayOutputUnsupportedMode\n", invalid_output_mode_response);
+
+    const invalid_interface_mode_response = try handleFramedRequest(std.testing.allocator, "REQ 287 DISPLAYINTERFACEACTIVATEMODE displayport 7", 512, 256, 512);
+    defer std.testing.allocator.free(invalid_interface_mode_response);
+    try std.testing.expectEqualStrings("RESP 287 63\nERR DISPLAYINTERFACEACTIVATEMODE: DisplayOutputUnsupportedMode\n", invalid_interface_mode_response);
 
     const save_profile_response = try handleFramedRequest(std.testing.allocator, "REQ 74 DISPLAYPROFILESAVE golden", 512, 256, 512);
     defer std.testing.allocator.free(save_profile_response);

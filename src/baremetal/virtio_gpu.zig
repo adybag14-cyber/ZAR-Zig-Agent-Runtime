@@ -1001,6 +1001,82 @@ pub fn probeAndPresentPatternForOutputIndexModeIndex(output_index: u8, mode_inde
     return presentDetailedMode(detailed, result, updated_scanouts[0..detailed.scanout_count]);
 }
 
+pub fn probeAndPresentPatternForInterfaceMode(preferred_interface: u8, width: u16, height: u16) ProbeError!ProbeResult {
+    if (!hardwareBacked()) return error.UnsupportedPlatform;
+    last_present_stats = .{};
+    @memset(&scanout_pixels, 0);
+
+    const detailed = try probeDisplayDetailedInterface(preferred_interface);
+    const selected = detailed.result;
+    try validateRequestedMode(detailed.scanouts[selected.active_scanout], width, height);
+
+    var updated_scanouts = detailed.scanouts;
+    updated_scanouts[selected.active_scanout].current_width = width;
+    updated_scanouts[selected.active_scanout].current_height = height;
+
+    const result = ProbeResult{
+        .vendor_id = selected.vendor_id,
+        .device_id = selected.device_id,
+        .pci_bus = selected.pci_bus,
+        .pci_device = selected.pci_device,
+        .pci_function = selected.pci_function,
+        .scanout_count = selected.scanout_count,
+        .active_scanout = selected.active_scanout,
+        .current_width = width,
+        .current_height = height,
+        .preferred_width = selected.preferred_width,
+        .preferred_height = selected.preferred_height,
+        .physical_width_mm = selected.physical_width_mm,
+        .physical_height_mm = selected.physical_height_mm,
+        .manufacturer_id = selected.manufacturer_id,
+        .product_code = selected.product_code,
+        .serial_number = selected.serial_number,
+        .interface_type = selected.interface_type,
+        .capability_flags = selected.capability_flags,
+        .edid_length = selected.edid_length,
+    };
+
+    return presentDetailedMode(detailed, result, updated_scanouts[0..detailed.scanout_count]);
+}
+
+pub fn probeAndPresentPatternForInterfaceModeIndex(preferred_interface: u8, mode_index: u8) ProbeError!ProbeResult {
+    if (!hardwareBacked()) return error.UnsupportedPlatform;
+    last_present_stats = .{};
+    @memset(&scanout_pixels, 0);
+
+    const detailed = try probeDisplayDetailedInterface(preferred_interface);
+    const selected = detailed.result;
+    const requested_mode = try modeForScanout(detailed.scanouts[selected.active_scanout], mode_index);
+
+    var updated_scanouts = detailed.scanouts;
+    updated_scanouts[selected.active_scanout].current_width = requested_mode.width;
+    updated_scanouts[selected.active_scanout].current_height = requested_mode.height;
+
+    const result = ProbeResult{
+        .vendor_id = selected.vendor_id,
+        .device_id = selected.device_id,
+        .pci_bus = selected.pci_bus,
+        .pci_device = selected.pci_device,
+        .pci_function = selected.pci_function,
+        .scanout_count = selected.scanout_count,
+        .active_scanout = selected.active_scanout,
+        .current_width = requested_mode.width,
+        .current_height = requested_mode.height,
+        .preferred_width = selected.preferred_width,
+        .preferred_height = selected.preferred_height,
+        .physical_width_mm = selected.physical_width_mm,
+        .physical_height_mm = selected.physical_height_mm,
+        .manufacturer_id = selected.manufacturer_id,
+        .product_code = selected.product_code,
+        .serial_number = selected.serial_number,
+        .interface_type = selected.interface_type,
+        .capability_flags = selected.capability_flags,
+        .edid_length = selected.edid_length,
+    };
+
+    return presentDetailedMode(detailed, result, updated_scanouts[0..detailed.scanout_count]);
+}
+
 pub fn probeAndPresentPatternForConnector(preferred_connector: ?u8) ProbeError!ProbeResult {
     if (!hardwareBacked()) return error.UnsupportedPlatform;
     last_present_stats = .{};

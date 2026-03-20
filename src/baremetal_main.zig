@@ -648,6 +648,9 @@ const VirtioGpuDisplayProbeError = error{
     ExplicitInterfaceActivateMismatch,
     MissingInterfaceMismatchFailure,
     ExplicitInterfacePreferredMismatch,
+    InterfaceModeInventoryMismatch,
+    ExplicitInterfaceModeSetMismatch,
+    ExplicitInterfaceModeActivateMismatch,
     ExplicitOutputActivateMismatch,
     MissingOutputMismatchFailure,
     ExplicitOutputModeSetMismatch,
@@ -1003,6 +1006,41 @@ pub export fn oc_display_activate_interface(interface_type: u8) i16 {
 
 pub export fn oc_display_activate_interface_preferred(interface_type: u8) i16 {
     pal_framebuffer.activateDisplayInterfacePreferred(interface_type) catch |err| switch (err) {
+        error.NotFound => return abi.result_not_found,
+        error.UnsupportedMode => return abi.result_not_supported,
+    };
+    return abi.result_ok;
+}
+
+pub export fn oc_display_interface_set(interface_type: u8, width: u16, height: u16) i16 {
+    pal_framebuffer.setDisplayInterfaceMode(interface_type, width, height) catch |err| switch (err) {
+        error.NotFound => return abi.result_not_found,
+        error.UnsupportedMode => return abi.result_not_supported,
+    };
+    return abi.result_ok;
+}
+
+pub export fn oc_display_interface_mode_count(interface_type: u8) u16 {
+    return pal_framebuffer.displayOutputModeCountForInterface(interface_type);
+}
+
+pub export fn oc_display_interface_mode_width(interface_type: u8, mode_index: u16) u16 {
+    const mode = pal_framebuffer.displayOutputModeForInterface(interface_type, mode_index) orelse return 0;
+    return mode.width;
+}
+
+pub export fn oc_display_interface_mode_height(interface_type: u8, mode_index: u16) u16 {
+    const mode = pal_framebuffer.displayOutputModeForInterface(interface_type, mode_index) orelse return 0;
+    return mode.height;
+}
+
+pub export fn oc_display_interface_mode_refresh_hz(interface_type: u8, mode_index: u16) u16 {
+    const mode = pal_framebuffer.displayOutputModeForInterface(interface_type, mode_index) orelse return 0;
+    return mode.refresh_hz;
+}
+
+pub export fn oc_display_interface_activate_mode(interface_type: u8, mode_index: u16) i16 {
+    pal_framebuffer.activateDisplayInterfaceMode(interface_type, mode_index) catch |err| switch (err) {
         error.NotFound => return abi.result_not_found,
         error.UnsupportedMode => return abi.result_not_supported,
     };
@@ -10484,6 +10522,9 @@ fn virtioGpuDisplayProbeFailureCode(err: VirtioGpuDisplayProbeError) u8 {
         error.ExplicitInterfaceActivateMismatch => 0x74,
         error.MissingInterfaceMismatchFailure => 0x75,
         error.ExplicitInterfacePreferredMismatch => 0x76,
+        error.InterfaceModeInventoryMismatch => 0x77,
+        error.ExplicitInterfaceModeSetMismatch => 0x78,
+        error.ExplicitInterfaceModeActivateMismatch => 0x79,
         error.ExplicitOutputActivateMismatch => 0x57,
         error.MissingOutputMismatchFailure => 0x58,
         error.ExplicitOutputModeSetMismatch => 0x59,
@@ -10813,6 +10854,31 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
     }
     if (alternate_mode_index == null) return error.MissingOutputModeFailure;
 
+    const interface_mode_count = oc_display_interface_mode_count(expected_interface);
+    if (interface_mode_count != output_mode_count or interface_mode_count == 0) return error.InterfaceModeInventoryMismatch;
+    if (oc_display_interface_mode_width(expected_interface, 0) != result.preferred_width or
+        oc_display_interface_mode_height(expected_interface, 0) != result.preferred_height)
+    {
+        return error.InterfaceModeInventoryMismatch;
+    }
+
+    var alternate_interface_mode_index: ?u16 = null;
+    var interface_mode_index: u16 = 0;
+    while (interface_mode_index < interface_mode_count) : (interface_mode_index += 1) {
+        const mode_width = oc_display_interface_mode_width(expected_interface, interface_mode_index);
+        const mode_height = oc_display_interface_mode_height(expected_interface, interface_mode_index);
+        if (mode_width == 0 or mode_height == 0) continue;
+        if (mode_width == result.preferred_width and mode_height == result.preferred_height) continue;
+        alternate_interface_mode_index = interface_mode_index;
+        break;
+    }
+    if (alternate_interface_mode_index == null or
+        oc_display_interface_mode_width(expected_interface, alternate_interface_mode_index.?) != alternate_mode_width or
+        oc_display_interface_mode_height(expected_interface, alternate_interface_mode_index.?) != alternate_mode_height)
+    {
+        return error.InterfaceModeInventoryMismatch;
+    }
+
     if (oc_display_output_activate_mode(result.active_scanout, alternate_mode_index.?) != abi.result_ok or
         oc_display_output_state_ptr().current_width != alternate_mode_width or
         oc_display_output_state_ptr().current_height != alternate_mode_height or
@@ -10950,29 +11016,15 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
         return error.ExplicitConnectorPreferredMismatch;
     }
 
-    const explicit_interface_mode_again = virtio_gpu.probeAndPresentPatternForOutputIndexMode(result.active_scanout, requested_output_width, requested_output_height) catch |err| switch (err) {
-        error.UnsupportedPlatform => return error.UnsupportedPlatform,
-        error.DeviceNotFound => return error.DeviceNotFound,
-        error.MissingCapabilities => return error.MissingCapabilities,
-        error.MissingVersion1 => return error.MissingVersion1,
-        error.MissingEdidFeature => return error.MissingEdidFeature,
-        error.FeaturesRejected => return error.FeaturesRejected,
-        error.QueueUnavailable => return error.QueueUnavailable,
-        error.QueueTooSmall => return error.QueueTooSmall,
-        error.RequestTimedOut => return error.RequestTimedOut,
-        error.InvalidDisplayInfoResponse => return error.InvalidDisplayInfoResponse,
-        error.InvalidEdidResponse => return error.InvalidEdidResponse,
-        error.NoConnectedScanout => return error.ExplicitOutputModeSetMismatch,
-        error.InvalidEdid => return error.InvalidEdid,
-        error.InvalidControlResponse => return error.InvalidControlResponse,
-        error.FramebufferTooLarge, error.UnsupportedMode => return error.ExplicitOutputModeSetMismatch,
-    };
-    if (explicit_interface_mode_again.current_width != requested_output_width or
-        explicit_interface_mode_again.current_height != requested_output_height or
+    if (oc_display_interface_set(expected_interface, requested_output_width, requested_output_height) != abi.result_ok or
+        display_output.stateInterfaceType() != expected_interface or
+        oc_display_output_interface_type(result.active_scanout) != expected_interface or
         oc_display_output_state_ptr().current_width != requested_output_width or
-        oc_display_output_state_ptr().current_height != requested_output_height)
+        oc_display_output_state_ptr().current_height != requested_output_height or
+        oc_display_output_entry(result.active_scanout).current_width != requested_output_width or
+        oc_display_output_entry(result.active_scanout).current_height != requested_output_height)
     {
-        return error.ExplicitOutputModeSetMismatch;
+        return error.ExplicitInterfaceModeSetMismatch;
     }
 
     const explicit_interface_preferred = virtio_gpu.probeAndPresentPatternForInterfacePreferred(expected_interface) catch |err| switch (err) {
@@ -11005,29 +11057,15 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
         return error.ExplicitInterfacePreferredMismatch;
     }
 
-    const explicit_output_mode_again = virtio_gpu.probeAndPresentPatternForOutputIndexMode(result.active_scanout, requested_output_width, requested_output_height) catch |err| switch (err) {
-        error.UnsupportedPlatform => return error.UnsupportedPlatform,
-        error.DeviceNotFound => return error.DeviceNotFound,
-        error.MissingCapabilities => return error.MissingCapabilities,
-        error.MissingVersion1 => return error.MissingVersion1,
-        error.MissingEdidFeature => return error.MissingEdidFeature,
-        error.FeaturesRejected => return error.FeaturesRejected,
-        error.QueueUnavailable => return error.QueueUnavailable,
-        error.QueueTooSmall => return error.QueueTooSmall,
-        error.RequestTimedOut => return error.RequestTimedOut,
-        error.InvalidDisplayInfoResponse => return error.InvalidDisplayInfoResponse,
-        error.InvalidEdidResponse => return error.InvalidEdidResponse,
-        error.NoConnectedScanout => return error.ExplicitOutputModeSetMismatch,
-        error.InvalidEdid => return error.InvalidEdid,
-        error.InvalidControlResponse => return error.InvalidControlResponse,
-        error.FramebufferTooLarge, error.UnsupportedMode => return error.ExplicitOutputModeSetMismatch,
-    };
-    if (explicit_output_mode_again.current_width != requested_output_width or
-        explicit_output_mode_again.current_height != requested_output_height or
-        oc_display_output_state_ptr().current_width != requested_output_width or
-        oc_display_output_state_ptr().current_height != requested_output_height)
+    if (oc_display_interface_activate_mode(expected_interface, alternate_interface_mode_index.?) != abi.result_ok or
+        display_output.stateInterfaceType() != expected_interface or
+        oc_display_output_interface_type(result.active_scanout) != expected_interface or
+        oc_display_output_state_ptr().current_width != alternate_mode_width or
+        oc_display_output_state_ptr().current_height != alternate_mode_height or
+        oc_display_output_entry(result.active_scanout).current_width != alternate_mode_width or
+        oc_display_output_entry(result.active_scanout).current_height != alternate_mode_height)
     {
-        return error.ExplicitOutputModeSetMismatch;
+        return error.ExplicitInterfaceModeActivateMismatch;
     }
 
     display_profile_store.saveCurrentProfile("golden", 0) catch return error.DisplayProfileSaveMismatch;
@@ -11044,9 +11082,15 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
     const profile_info = display_profile_store.infoAlloc(profile_info_fba.allocator(), "golden", profile_info_scratch.len) catch {
         return error.DisplayProfileInfoMismatch;
     };
+    const expected_profile_width = std.fmt.allocPrint(profile_info_fba.allocator(), "width={d}", .{alternate_mode_width}) catch {
+        return error.DisplayProfileInfoMismatch;
+    };
+    const expected_profile_height = std.fmt.allocPrint(profile_info_fba.allocator(), "height={d}", .{alternate_mode_height}) catch {
+        return error.DisplayProfileInfoMismatch;
+    };
     if (std.mem.indexOf(u8, profile_info, "name=golden") == null or
-        std.mem.indexOf(u8, profile_info, "width=1024") == null or
-        std.mem.indexOf(u8, profile_info, "height=768") == null)
+        std.mem.indexOf(u8, profile_info, expected_profile_width) == null or
+        std.mem.indexOf(u8, profile_info, expected_profile_height) == null)
     {
         return error.DisplayProfileInfoMismatch;
     }
@@ -11064,10 +11108,10 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
         return error.DisplayProfileApplyMismatch;
     }
     display_profile_store.applyProfile("golden", 0) catch return error.DisplayProfileApplyMismatch;
-    if (oc_display_output_state_ptr().current_width != requested_output_width or
-        oc_display_output_state_ptr().current_height != requested_output_height or
-        oc_display_output_entry(result.active_scanout).current_width != requested_output_width or
-        oc_display_output_entry(result.active_scanout).current_height != requested_output_height)
+    if (oc_display_output_state_ptr().current_width != alternate_mode_width or
+        oc_display_output_state_ptr().current_height != alternate_mode_height or
+        oc_display_output_entry(result.active_scanout).current_width != alternate_mode_width or
+        oc_display_output_entry(result.active_scanout).current_height != alternate_mode_height)
     {
         return error.DisplayProfileApplyMismatch;
     }
@@ -19417,6 +19461,7 @@ test "baremetal display output export surface mirrors bounded bga framebuffer st
     try std.testing.expectEqual(@as(u16, 1), oc_display_output_mode_count(0));
     try std.testing.expectEqual(@as(u16, 640), oc_display_output_mode_width(0, 0));
     try std.testing.expectEqual(@as(u16, 400), oc_display_output_mode_height(0, 0));
+    try std.testing.expectEqual(@as(u16, 0), oc_display_interface_mode_count(abi.display_interface_hdmi_a));
     const entry = oc_display_output_entry(0);
     try std.testing.expectEqual(@as(u8, 0), entry.connected);
     try std.testing.expectEqual(@as(u8, abi.display_connector_virtual), entry.connector_type);
@@ -19445,6 +19490,8 @@ test "baremetal display output export surface mirrors bounded bga framebuffer st
     try std.testing.expectEqual(@as(u16, 600), output.current_height);
     try std.testing.expectEqual(abi.result_not_found, oc_display_activate_interface(abi.display_interface_hdmi_a));
     try std.testing.expectEqual(abi.result_not_found, oc_display_activate_interface_preferred(abi.display_interface_hdmi_a));
+    try std.testing.expectEqual(abi.result_not_found, oc_display_interface_set(abi.display_interface_hdmi_a, 800, 600));
+    try std.testing.expectEqual(abi.result_not_found, oc_display_interface_activate_mode(abi.display_interface_hdmi_a, 0));
     try std.testing.expectEqual(abi.result_not_found, oc_display_output_activate(0));
     try std.testing.expectEqual(abi.result_not_found, oc_display_output_activate(1));
     try std.testing.expectEqual(abi.result_not_found, oc_display_output_set(1, 800, 600));

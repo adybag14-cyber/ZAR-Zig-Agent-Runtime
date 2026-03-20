@@ -57,6 +57,14 @@ pub fn displayOutputMode(index: u16, mode_index: u16) ?DisplayOutputMode {
     return display_output.outputMode(index, mode_index);
 }
 
+pub fn displayOutputModeCountForInterface(interface_type: u8) u16 {
+    return display_output.outputModeCountForInterface(interface_type);
+}
+
+pub fn displayOutputModeForInterface(interface_type: u8, mode_index: u16) ?DisplayOutputMode {
+    return display_output.outputModeForInterface(interface_type, mode_index);
+}
+
 pub fn activateDisplayOutput(index: u16) error{NotFound}!void {
     const display_state = display_output.statePtr();
     if (display_state.controller == abi.display_controller_virtio_gpu) {
@@ -81,6 +89,45 @@ pub fn activateDisplayInterface(interface_type: u8) error{NotFound}!void {
         return;
     }
     if (display_output.stateInterfaceType() != interface_type) return error.NotFound;
+}
+
+pub fn activateDisplayInterfaceMode(interface_type: u8, mode_index: u16) error{ NotFound, UnsupportedMode }!void {
+    const display_state = display_output.statePtr();
+    if (display_state.controller == abi.display_controller_virtio_gpu) {
+        if (display_state.hardware_backed != 0) {
+            _ = virtio_gpu.probeAndPresentPatternForInterfaceModeIndex(@intCast(interface_type), @intCast(mode_index)) catch |err| switch (err) {
+                error.NoConnectedScanout => return error.NotFound,
+                error.UnsupportedMode, error.FramebufferTooLarge => return error.UnsupportedMode,
+                else => return error.NotFound,
+            };
+            return;
+        }
+        if (display_output.outputModeCountForInterface(interface_type) == 0) return error.NotFound;
+        if (!display_output.setOutputModeByInterfaceIndex(interface_type, mode_index)) return error.UnsupportedMode;
+        return;
+    }
+    if (display_output.stateInterfaceType() != interface_type) return error.NotFound;
+    const mode = display_output.outputModeForInterface(interface_type, mode_index) orelse return error.UnsupportedMode;
+    framebuffer_console.setMode(mode.width, mode.height) catch return error.UnsupportedMode;
+}
+
+pub fn setDisplayInterfaceMode(interface_type: u8, width: u16, height: u16) error{ NotFound, UnsupportedMode }!void {
+    const display_state = display_output.statePtr();
+    if (display_state.controller == abi.display_controller_virtio_gpu) {
+        if (display_state.hardware_backed != 0) {
+            _ = virtio_gpu.probeAndPresentPatternForInterfaceMode(@intCast(interface_type), width, height) catch |err| switch (err) {
+                error.NoConnectedScanout => return error.NotFound,
+                error.UnsupportedMode, error.FramebufferTooLarge => return error.UnsupportedMode,
+                else => return error.NotFound,
+            };
+            return;
+        }
+        if (display_output.outputModeCountForInterface(interface_type) == 0) return error.NotFound;
+        if (!display_output.setOutputModeForInterface(interface_type, width, height)) return error.UnsupportedMode;
+        return;
+    }
+    if (display_output.stateInterfaceType() != interface_type) return error.NotFound;
+    framebuffer_console.setMode(width, height) catch return error.UnsupportedMode;
 }
 
 pub fn activateDisplayConnectorPreferred(connector_type: u8) error{ NotFound, UnsupportedMode }!void {
