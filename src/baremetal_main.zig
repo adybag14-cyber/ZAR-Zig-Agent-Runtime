@@ -675,6 +675,7 @@ const VirtioGpuDisplayProbeError = error{
     CapabilityFlagsMismatch,
     OutputEntryCountMismatch,
     OutputEntryMismatch,
+    OutputDetailMismatch,
     PresentStatsMismatch,
     RenderedPixelMismatch,
     DisplayProfileSaveMismatch,
@@ -10549,6 +10550,7 @@ fn virtioGpuDisplayProbeFailureCode(err: VirtioGpuDisplayProbeError) u8 {
         error.CapabilityFlagsMismatch => 0x67,
         error.OutputEntryCountMismatch => 0x68,
         error.OutputEntryMismatch => 0x69,
+        error.OutputDetailMismatch => 0x7A,
         error.PresentStatsMismatch => 0x6A,
         error.RenderedPixelMismatch => 0x6B,
         error.DisplayProfileSaveMismatch => 0x6D,
@@ -10812,6 +10814,30 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
         active_entry.edid_present != 1)
     {
         return error.OutputEntryMismatch;
+    }
+    const declared_interface = display_output.outputDeclaredInterfaceType(result.active_scanout);
+    if (display_output.connectedOutputIndexForInterface(expected_interface) != result.active_scanout) return error.OutputDetailMismatch;
+    if (result.interface_type != abi.display_interface_none and
+        result.interface_type != abi.display_interface_undefined and
+        declared_interface != result.interface_type)
+    {
+        return error.OutputDetailMismatch;
+    }
+    const manufacturer_name = display_output.outputManufacturerName(result.active_scanout);
+    const display_name = display_output.outputDisplayName(result.active_scanout);
+    if (manufacturer_name.len != 3) return error.OutputDetailMismatch;
+    if (display_output.outputManufactureYear(result.active_scanout) < 1990 or
+        display_output.outputEdidVersion(result.active_scanout) == 0 or
+        display_output.outputEdidRevision(result.active_scanout) == 0)
+    {
+        return error.OutputDetailMismatch;
+    }
+    if (display_name.len > display_output.max_display_name_len) return error.OutputDetailMismatch;
+    if (((result.capability_flags & abi.display_capability_cea_extension) != 0 or
+        (result.capability_flags & abi.display_capability_displayid_extension) != 0) and
+        display_output.outputExtensionCount(result.active_scanout) == 0)
+    {
+        return error.OutputDetailMismatch;
     }
     if (present_stats.resource_create_count == 0 or
         present_stats.attach_backing_count == 0 or
