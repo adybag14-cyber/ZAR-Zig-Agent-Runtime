@@ -54,6 +54,12 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
   - `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1` now proves live MMIO banner pixels plus exported adapter metadata against the freestanding PVH artifact at `640x400`, `1024x768`, and `1280x720`
   - `scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1` now proves live `virtio-gpu-pci` EDID/controller capability export plus output-entry count/entry metadata, exported interface typing through `oc_display_output_interface_type`, per-output mode count and mode inventory readback, explicit mode-index activation, explicit output-index mode change, explicit interface-targeted activation, explicit interface-preferred restore, explicit connector/output preferred reactivation, persisted display-profile save/list/info/apply, and resource-create/attach/set-scanout/flush behavior with non-zero scanout pixel readback over QEMU with `edid=on`
   - real HDMI/DisplayPort connector-specific scanout paths are still future depth and are not claimed by this branch
+  - ZigOS reference integration is now tracked as a clean-room plan only:
+    - no ZigOS source may be copied until upstream licensing is explicit
+    - tracked docs:
+      - [`docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md`](docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md)
+      - [`docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`](docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md)
+    - first planned adoption slice is a clean-room `E1000` NIC path that reuses ZAR's existing network stack
   - keyboard/mouse is now strict-closed in [`docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md`](docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md)
   - `src/baremetal/ps2_input.zig` now contains a real x86 port-I/O backed PS/2 controller path
   - `scripts/baremetal-qemu-ps2-input-probe-check.ps1` proves IRQ-driven keyboard/mouse state updates against the freestanding PVH artifact
