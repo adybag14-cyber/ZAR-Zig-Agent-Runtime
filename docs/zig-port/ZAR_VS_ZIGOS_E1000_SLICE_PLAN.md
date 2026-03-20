@@ -64,6 +64,23 @@ over the same higher network stack:
 - HTTP
 - HTTPS
 
+## Current Status
+
+Delivered so far:
+
+- `E0. Discovery And Hardware Contract`
+- `E1. Driver Module`
+- `E3. Host Regression Layer`
+- `E4. Live L2 Probe`
+
+Current delivered raw-frame slice:
+
+- `src/baremetal/e1000.zig` now provides a ZAR-owned `82540EM`-class `E1000` path with PCI bind, MMIO + legacy I/O reset, EEPROM MAC readout, bounded TX/RX rings, and raw-frame send/receive telemetry
+- `src/baremetal/pci.zig` now discovers the `E1000` MMIO + I/O BAR pair and enables I/O, memory, and bus-master decode on the selected PCI function
+- host regressions now prove init, MAC readout, TX, RX, and export-surface stability on the clean-room `E1000` path
+- `scripts/baremetal-qemu-e1000-probe-check.ps1` plus `scripts/qemu-e1000-dgram-echo.ps1` now prove live QEMU `E1000` PCI bind, MAC readout, TX, RX, payload validation, and counter advance over the freestanding PVH artifact
+- current strict delivery is the raw-frame `L2` slice only; protocol/service reuse over `E1000` remains future depth
+
 ## Deliverables
 
 ### E0. Discovery And Hardware Contract
@@ -151,27 +168,27 @@ Not in this slice:
 
 The slice is complete only when all of the following are true:
 
-1. `src/baremetal/e1000.zig` exists and is not a stub
-2. host regressions prove init/TX/RX behavior
-3. live QEMU `e1000` raw-frame proof is green
-4. live QEMU ARP/IPv4/UDP/TCP proof is green over E1000
-5. existing RTL8139 proofs stay green
-6. `zig build test --summary all` is green
-7. parity gate is green
-8. docs status gate is green
-9. `zig-ci` is green
-10. `docs-pages` is green
+1. `src/baremetal/e1000.zig` exists and is not a stub. Status: `Done`
+2. host regressions prove init/TX/RX behavior. Status: `Done`
+3. live QEMU `e1000` raw-frame proof is green. Status: `Done`
+4. live QEMU ARP/IPv4/UDP/TCP proof is green over E1000. Status: `Pending`
+5. existing RTL8139 proofs stay green. Status: `Done`
+6. `zig build test --summary all` is green. Status: `Done`
+7. parity gate is green. Status: `Done`
+8. docs status gate is green. Status: `Done`
+9. `zig-ci` is green. Status: `Pending push verification`
+10. `docs-pages` is green. Status: `Pending push verification`
 
 ## Implementation Order
 
 Strict order:
 
-1. clean-room driver skeleton with real register contract
-2. host regression harness
-3. live raw-frame proof
-4. protocol reuse over E1000
-5. optional service/http/https reuse proof
-6. docs/tracking signoff
+1. clean-room driver skeleton with real register contract. Status: `Done`
+2. host regression harness. Status: `Done`
+3. live raw-frame proof. Status: `Done`
+4. protocol reuse over E1000. Status: `Next`
+5. optional service/http/https reuse proof. Status: `Later`
+6. docs/tracking signoff. Status: `In progress`
 
 ## Exit Criteria
 
