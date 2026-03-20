@@ -139,6 +139,8 @@ pub const RequestOp = enum {
     display_set,
     display_activate,
     display_activate_preferred,
+    display_activate_interface,
+    display_activate_interface_preferred,
     display_activate_output,
     display_activate_output_preferred,
     display_output_set,
@@ -463,6 +465,8 @@ pub const FramedRequest = struct {
         display_set: DisplayModeRequest,
         display_activate: []const u8,
         display_activate_preferred: []const u8,
+        display_activate_interface: []const u8,
+        display_activate_interface_preferred: []const u8,
         display_activate_output: []const u8,
         display_activate_output_preferred: []const u8,
         display_output_set: DisplayOutputModeRequest,
@@ -2801,6 +2805,36 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         }
         return .{
             .framed = .{ .request_id = request_id, .operation = .{ .display_activate_preferred = connector_part.token } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYACTIVATEINTERFACE")) {
+        const interface_part = try splitFirstToken(op_part.rest);
+        if (interface_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .display_activate_interface = interface_part.token } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .display_activate_interface = interface_part.token } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYACTIVATEINTERFACEPREFERRED")) {
+        const interface_part = try splitFirstToken(op_part.rest);
+        if (interface_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .display_activate_interface_preferred = interface_part.token } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .display_activate_interface_preferred = interface_part.token } },
             .consumed_len = request.len,
         };
     }

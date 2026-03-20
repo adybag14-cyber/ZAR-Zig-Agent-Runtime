@@ -22,6 +22,7 @@ pub const Error = filesystem.Error || trust_store.Error || app_runtime.Error || 
     InvalidQuotedArgument,
     ScriptDepthExceeded,
     DisplayConnectorMismatch,
+    DisplayInterfaceMismatch,
     DisplayOutputNotFound,
     DisplayOutputUnsupportedMode,
 };
@@ -159,7 +160,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-plan-list, workspace-plan-info, workspace-plan-active, workspace-plan-save, workspace-plan-apply, workspace-plan-delete, workspace-plan-release-list, workspace-plan-release-info, workspace-plan-release-save, workspace-plan-release-activate, workspace-plan-release-delete, workspace-plan-release-prune, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-suite-release-channel-list, workspace-suite-release-channel-info, workspace-suite-release-channel-set, workspace-suite-release-channel-activate, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-outputs, display-output, display-output-modes, display-modes, display-set, display-activate, display-activate-preferred, display-activate-output, display-activate-output-preferred, display-output-set, display-output-activate-mode, display-profile-list, display-profile-info, display-profile-active, display-profile-save, display-profile-apply, display-profile-delete, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-plan-list, workspace-plan-info, workspace-plan-active, workspace-plan-save, workspace-plan-apply, workspace-plan-delete, workspace-plan-release-list, workspace-plan-release-info, workspace-plan-release-save, workspace-plan-release-activate, workspace-plan-release-delete, workspace-plan-release-prune, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-suite-release-channel-list, workspace-suite-release-channel-info, workspace-suite-release-channel-set, workspace-suite-release-channel-activate, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-outputs, display-output, display-output-modes, display-modes, display-set, display-activate, display-activate-preferred, display-activate-interface, display-activate-interface-preferred, display-activate-output, display-activate-output-preferred, display-output-set, display-output-activate-mode, display-profile-list, display-profile-info, display-profile-active, display-profile-save, display-profile-apply, display-profile-delete, run-script, run-package, app-run");
         return;
     }
 
@@ -2951,11 +2952,12 @@ fn execute(
         ensureDisplayReady();
         const output = display_output.statePtr();
         try stdout_buffer.appendFmt(
-            "backend={s} controller={s} connector={s} connected={d} hardware_backed={d} current={d}x{d} preferred={d}x{d} scanouts={d} active={d} capabilities=0x{x}\n",
+            "backend={s} controller={s} connector={s} interface={s} connected={d} hardware_backed={d} current={d}x{d} preferred={d}x{d} scanouts={d} active={d} capabilities=0x{x}\n",
             .{
                 displayBackendName(output.backend),
                 displayControllerName(output.controller),
                 displayConnectorName(output.connector_type),
+                displayInterfaceName(display_output.stateInterfaceType()),
                 output.connected,
                 output.hardware_backed,
                 output.current_width,
@@ -2981,11 +2983,12 @@ fn execute(
         while (index < display_output.outputCount()) : (index += 1) {
             const entry = display_output.outputEntry(index);
             try stdout_buffer.appendFmt(
-                "output {d} scanout={d} connector={s} connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x}\n",
+                "output {d} scanout={d} connector={s} interface={s} connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x}\n",
                 .{
                     index,
                     entry.scanout_index,
                     displayConnectorName(entry.connector_type),
+                    displayInterfaceName(display_output.outputInterfaceType(index)),
                     entry.connected,
                     entry.current_width,
                     entry.current_height,
@@ -3022,11 +3025,12 @@ fn execute(
         }
         const entry = display_output.outputEntry(index);
         try stdout_buffer.appendFmt(
-            "index={d} scanout={d} connector={s} connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x} edid_present={d} mode_count={d}\n",
+            "index={d} scanout={d} connector={s} interface={s} connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x} edid_present={d} mode_count={d}\n",
             .{
                 index,
                 entry.scanout_index,
                 displayConnectorName(entry.connector_type),
+                displayInterfaceName(display_output.outputInterfaceType(index)),
                 entry.connected,
                 entry.current_width,
                 entry.current_height,
@@ -3182,6 +3186,78 @@ fn execute(
         try stdout_buffer.appendFmt(
             "display connector preferred {s} scanout={d} current={d}x{d} preferred={d}x{d}\n",
             .{
+                displayConnectorName(output.connector_type),
+                output.active_scanout,
+                output.current_width,
+                output.current_height,
+                if (output.preferred_width != 0) output.preferred_width else output.current_width,
+                if (output.preferred_height != 0) output.preferred_height else output.current_height,
+            },
+        );
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "display-activate-interface")) {
+        const interface_arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "display-activate-interface <interface>");
+            return;
+        };
+        if (interface_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-activate-interface <interface>");
+            return;
+        }
+        const interface_type = display_output.interfaceTypeFromName(interface_arg.arg) orelse {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-activate-interface <interface>");
+            return;
+        };
+        activateDisplayInterface(interface_type) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("display-activate-interface failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        const output = display_output.statePtr();
+        try stdout_buffer.appendFmt(
+            "display interface {s} active connector={s} scanout={d} current={d}x{d}\n",
+            .{
+                displayInterfaceName(output.reserved0),
+                displayConnectorName(output.connector_type),
+                output.active_scanout,
+                output.current_width,
+                output.current_height,
+            },
+        );
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "display-activate-interface-preferred")) {
+        const interface_arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "display-activate-interface-preferred <interface>");
+            return;
+        };
+        if (interface_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-activate-interface-preferred <interface>");
+            return;
+        }
+        const interface_type = display_output.interfaceTypeFromName(interface_arg.arg) orelse {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-activate-interface-preferred <interface>");
+            return;
+        };
+        activateDisplayInterfacePreferred(interface_type) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("display-activate-interface-preferred failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        const output = display_output.statePtr();
+        try stdout_buffer.appendFmt(
+            "display interface preferred {s} connector={s} scanout={d} current={d}x{d} preferred={d}x{d}\n",
+            .{
+                displayInterfaceName(output.reserved0),
                 displayConnectorName(output.connector_type),
                 output.active_scanout,
                 output.current_width,
@@ -3661,6 +3737,68 @@ pub fn activateDisplayConnectorPreferred(connector_type: u8) Error!void {
     }
 }
 
+pub fn activateDisplayInterface(interface_type: u8) Error!void {
+    if (interface_type == abi.display_interface_none) return;
+    ensureDisplayReady();
+    const display_state = display_output.statePtr();
+    if (display_output.stateInterfaceType() == interface_type and
+        (display_state.connected == 1 or display_state.controller != abi.display_controller_virtio_gpu))
+    {
+        return;
+    }
+
+    if (display_state.controller == abi.display_controller_virtio_gpu) {
+        if (display_state.hardware_backed != 0) {
+            _ = virtio_gpu.probeAndPresentPatternForInterface(interface_type) catch return error.DisplayInterfaceMismatch;
+        } else if (!display_output.selectOutputInterface(interface_type)) {
+            return error.DisplayInterfaceMismatch;
+        }
+    } else if (display_output.stateInterfaceType() == interface_type) {
+        return;
+    }
+
+    const refreshed = display_output.statePtr();
+    if (display_output.stateInterfaceType() != interface_type) return error.DisplayInterfaceMismatch;
+    if (refreshed.controller == abi.display_controller_virtio_gpu and refreshed.connected != 1) {
+        return error.DisplayInterfaceMismatch;
+    }
+}
+
+pub fn activateDisplayInterfacePreferred(interface_type: u8) Error!void {
+    if (interface_type == abi.display_interface_none) return;
+    ensureDisplayReady();
+    const display_state = display_output.statePtr();
+    if (display_state.controller == abi.display_controller_virtio_gpu) {
+        if (display_state.hardware_backed != 0) {
+            _ = virtio_gpu.probeAndPresentPatternForInterfacePreferred(interface_type) catch |err| switch (err) {
+                error.NoConnectedScanout => return error.DisplayInterfaceMismatch,
+                error.UnsupportedMode, error.FramebufferTooLarge => return error.DisplayOutputUnsupportedMode,
+                else => return error.DisplayInterfaceMismatch,
+            };
+        } else {
+            if (!display_output.selectOutputInterface(interface_type)) return error.DisplayInterfaceMismatch;
+            if (!display_output.setOutputPreferredMode(@as(u16, display_output.statePtr().active_scanout))) {
+                return error.DisplayOutputUnsupportedMode;
+            }
+        }
+    } else {
+        if (display_output.stateInterfaceType() != interface_type) return error.DisplayInterfaceMismatch;
+        const mode = display_output.preferredMode(@as(u16, display_state.active_scanout)) orelse return error.DisplayOutputUnsupportedMode;
+        ensureDisplayReadyForMode(mode.width, mode.height) catch return error.DisplayOutputUnsupportedMode;
+    }
+
+    const refreshed = display_output.statePtr();
+    if (display_output.stateInterfaceType() != interface_type) return error.DisplayInterfaceMismatch;
+    if (refreshed.controller == abi.display_controller_virtio_gpu and refreshed.connected != 1) {
+        return error.DisplayInterfaceMismatch;
+    }
+    const preferred_width = if (refreshed.preferred_width != 0) refreshed.preferred_width else refreshed.current_width;
+    const preferred_height = if (refreshed.preferred_height != 0) refreshed.preferred_height else refreshed.current_height;
+    if (refreshed.current_width != preferred_width or refreshed.current_height != preferred_height) {
+        return error.DisplayOutputUnsupportedMode;
+    }
+}
+
 pub fn activateDisplayOutput(index: u16) Error!void {
     ensureDisplayReady();
     const display_state = display_output.statePtr();
@@ -3773,6 +3911,10 @@ fn displayConnectorName(value: u8) []const u8 {
         abi.display_connector_virtual => "virtual",
         else => "none",
     };
+}
+
+fn displayInterfaceName(value: u8) []const u8 {
+    return display_output.interfaceName(value);
 }
 
 fn appendDisplayModeLine(buffer: anytype, mode_index: u16, mode: pal_framebuffer.DisplayOutputMode) !void {
@@ -4366,12 +4508,12 @@ test "baremetal tool exec reports current display info and supported modes" {
     var outputs_result = try runCapture(std.testing.allocator, "display-outputs", 256, 256);
     defer outputs_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), outputs_result.exit_code);
-    try std.testing.expect(std.mem.indexOf(u8, outputs_result.stdout, "output 0 scanout=0 connector=virtual connected=0 current=640x400 preferred=640x400") != null);
+    try std.testing.expect(std.mem.indexOf(u8, outputs_result.stdout, "output 0 scanout=0 connector=virtual interface=none connected=0 current=640x400 preferred=640x400") != null);
 
     var output_result = try runCapture(std.testing.allocator, "display-output 0", 256, 256);
     defer output_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), output_result.exit_code);
-    try std.testing.expect(std.mem.indexOf(u8, output_result.stdout, "index=0 scanout=0 connector=virtual connected=0 current=640x400 preferred=640x400") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output_result.stdout, "index=0 scanout=0 connector=virtual interface=none connected=0 current=640x400 preferred=640x400") != null);
     try std.testing.expect(std.mem.indexOf(u8, output_result.stdout, "mode_count=1") != null);
 
     var output_modes_result = try runCapture(std.testing.allocator, "display-output-modes 0", 256, 256);
@@ -4494,6 +4636,21 @@ test "baremetal tool exec activates requested display connector from stored outp
     defer preferred_connector_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), preferred_connector_result.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, preferred_connector_result.stdout, "display connector preferred displayport scanout=1 current=1920x1080 preferred=1920x1080") != null);
+
+    var activate_interface_result = try runCapture(std.testing.allocator, "display-activate-interface displayport", 256, 256);
+    defer activate_interface_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), activate_interface_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, activate_interface_result.stdout, "display interface displayport active connector=displayport scanout=1 current=1920x1080") != null);
+
+    var preferred_interface_result = try runCapture(std.testing.allocator, "display-activate-interface-preferred displayport", 256, 256);
+    defer preferred_interface_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), preferred_interface_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, preferred_interface_result.stdout, "display interface preferred displayport connector=displayport scanout=1 current=1920x1080 preferred=1920x1080") != null);
+
+    var mismatch_interface_result = try runCapture(std.testing.allocator, "display-activate-interface hdmi-b", 256, 256);
+    defer mismatch_interface_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 1), mismatch_interface_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, mismatch_interface_result.stderr, "display-activate-interface failed: DisplayInterfaceMismatch") != null);
 
     var output_modes_result = try runCapture(std.testing.allocator, "display-output-modes 1", 256, 256);
     defer output_modes_result.deinit(std.testing.allocator);

@@ -30,6 +30,7 @@ pub const ParsedEdid = struct {
     version: u8,
     revision: u8,
     input_digital: bool,
+    digital_interface_type: u8,
     physical_width_mm: u16,
     physical_height_mm: u16,
     extension_count: u8,
@@ -82,6 +83,19 @@ fn decodeManufacturer(word: u16) [3]u8 {
         @as(u8, @intCast(((word >> 10) & 0x1F) + 0x40)),
         @as(u8, @intCast(((word >> 5) & 0x1F) + 0x40)),
         @as(u8, @intCast((word & 0x1F) + 0x40)),
+    };
+}
+
+fn decodeDigitalInterfaceType(raw: u8) u8 {
+    if ((raw & 0x80) == 0) return abi.display_interface_none;
+    return switch ((raw >> 4) & 0x07) {
+        0 => abi.display_interface_undefined,
+        1 => abi.display_interface_dvi,
+        2 => abi.display_interface_hdmi_a,
+        3 => abi.display_interface_hdmi_b,
+        4 => abi.display_interface_mddi,
+        5 => abi.display_interface_displayport,
+        else => abi.display_interface_undefined,
     };
 }
 
@@ -276,6 +290,7 @@ pub fn parse(raw: []const u8) ParseError!ParsedEdid {
         .version = raw[18],
         .revision = raw[19],
         .input_digital = (raw[20] & 0x80) != 0,
+        .digital_interface_type = decodeDigitalInterfaceType(raw[20]),
         .physical_width_mm = @as(u16, raw[21]) * 10,
         .physical_height_mm = @as(u16, raw[22]) * 10,
         .extension_count = raw[126],
@@ -382,6 +397,13 @@ fn sampleEdid() [block_len]u8 {
     return bytes;
 }
 
+fn sampleEdidWithInterface(interface_bits: u8) [block_len]u8 {
+    var bytes = sampleEdid();
+    bytes[20] = 0x80 | ((interface_bits & 0x07) << 4);
+    finalizeChecksum(&bytes);
+    return bytes;
+}
+
 fn sampleEdidWithCeaExtension() [block_len * 2]u8 {
     var bytes: [block_len * 2]u8 = [_]u8{0} ** (block_len * 2);
     const base = sampleEdid();
@@ -436,6 +458,7 @@ test "edid parser decodes preferred timing and display name" {
     try std.testing.expectEqual(@as(u16, 600), parsed.physical_width_mm);
     try std.testing.expectEqual(@as(u16, 340), parsed.physical_height_mm);
     try std.testing.expect(parsed.input_digital);
+    try std.testing.expectEqual(@as(u8, abi.display_interface_undefined), parsed.digital_interface_type);
     const preferred = parsed.preferred_timing orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u16, 1280), preferred.h_active);
     try std.testing.expectEqual(@as(u16, 720), preferred.v_active);
@@ -448,6 +471,14 @@ test "edid parser decodes preferred timing and display name" {
     try expectTimingPresent(parsed, 1280, 800);
     try expectTimingPresent(parsed, 1024, 768);
     try expectTimingPresent(parsed, 800, 600);
+}
+
+test "edid parser decodes digital interface type" {
+    const hdmi_a = try parse(&sampleEdidWithInterface(2));
+    try std.testing.expectEqual(@as(u8, abi.display_interface_hdmi_a), hdmi_a.digital_interface_type);
+
+    const displayport = try parse(&sampleEdidWithInterface(5));
+    try std.testing.expectEqual(@as(u8, abi.display_interface_displayport), displayport.digital_interface_type);
 }
 
 test "edid parser decodes cea capability flags" {

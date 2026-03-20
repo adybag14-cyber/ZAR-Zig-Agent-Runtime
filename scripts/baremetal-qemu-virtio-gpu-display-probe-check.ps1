@@ -16,7 +16,6 @@ $apiVersion = 2
 $expectedExitCode = 0x41
 $expectedBackend = 2
 $expectedController = 2
-$expectedConnector = 1
 $expectedVendorId = 0x1AF4
 $expectedDeviceId = 0x1050
 $expectedWidth = 1280
@@ -39,6 +38,7 @@ $stateActiveScanoutOffset = 13
 $statePciBusOffset = 14
 $statePciDeviceOffset = 15
 $statePciFunctionOffset = 16
+$stateInterfaceOffset = 17
 $stateVendorIdOffset = 18
 $stateDeviceIdOffset = 20
 $stateCurrentWidthOffset = 22
@@ -258,6 +258,7 @@ $displayStateAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern
 $edidBytesAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal\.display_output\.edid_bytes$' -SymbolName "baremetal.display_output.edid_bytes"
 $outputEntryCountAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\soc_display_output_entry_count_data$' -SymbolName "oc_display_output_entry_count_data"
 $outputEntriesAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\soc_display_output_entries_data$' -SymbolName "oc_display_output_entries_data"
+$outputInterfaceTypeAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[tT]\soc_display_output_interface_type$' -SymbolName "oc_display_output_interface_type"
 $outputModeCountAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\soc_display_output_mode_count_data$' -SymbolName "oc_display_output_mode_count_data"
 $outputModesAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\soc_display_output_modes_data$' -SymbolName "oc_display_output_modes_data"
 $artifactForGdb = $artifact.Replace('\', '/')
@@ -293,6 +294,7 @@ commands
   printf "DISPLAY_PCI_BUS=%u\n", *(unsigned char*)(__DISPLAY_STATE_ADDR__ + __PCI_BUS_OFFSET__)
   printf "DISPLAY_PCI_DEVICE=%u\n", *(unsigned char*)(__DISPLAY_STATE_ADDR__ + __PCI_DEVICE_OFFSET__)
   printf "DISPLAY_PCI_FUNCTION=%u\n", *(unsigned char*)(__DISPLAY_STATE_ADDR__ + __PCI_FUNCTION_OFFSET__)
+  printf "DISPLAY_INTERFACE=%u\n", *(unsigned char*)(__DISPLAY_STATE_ADDR__ + __INTERFACE_OFFSET__)
   printf "DISPLAY_VENDOR_ID=%u\n", *(unsigned short*)(__DISPLAY_STATE_ADDR__ + __VENDOR_ID_OFFSET__)
   printf "DISPLAY_DEVICE_ID=%u\n", *(unsigned short*)(__DISPLAY_STATE_ADDR__ + __DEVICE_ID_OFFSET__)
   printf "DISPLAY_CURRENT_WIDTH=%u\n", *(unsigned short*)(__DISPLAY_STATE_ADDR__ + __CURRENT_WIDTH_OFFSET__)
@@ -310,6 +312,7 @@ commands
   printf "DISPLAY_OUTPUT0_CONNECTED=%u\n", *(unsigned char*)(__OUTPUT_ENTRIES_ADDR__ + __OUTPUT_ENTRY_CONNECTED_OFFSET__)
   printf "DISPLAY_OUTPUT0_SCANOUT=%u\n", *(unsigned char*)(__OUTPUT_ENTRIES_ADDR__ + __OUTPUT_ENTRY_SCANOUT_OFFSET__)
   printf "DISPLAY_OUTPUT0_CONNECTOR=%u\n", *(unsigned char*)(__OUTPUT_ENTRIES_ADDR__ + __OUTPUT_ENTRY_CONNECTOR_OFFSET__)
+  printf "DISPLAY_OUTPUT0_INTERFACE=%u\n", (unsigned int)(((unsigned char(*)(unsigned short))__OUTPUT_INTERFACE_TYPE_ADDR__)((unsigned short)0))
   printf "DISPLAY_OUTPUT0_EDID_PRESENT=%u\n", *(unsigned char*)(__OUTPUT_ENTRIES_ADDR__ + __OUTPUT_ENTRY_EDID_PRESENT_OFFSET__)
   printf "DISPLAY_OUTPUT0_CURRENT_WIDTH=%u\n", *(unsigned short*)(__OUTPUT_ENTRIES_ADDR__ + __OUTPUT_ENTRY_CURRENT_WIDTH_OFFSET__)
   printf "DISPLAY_OUTPUT0_CURRENT_HEIGHT=%u\n", *(unsigned short*)(__OUTPUT_ENTRIES_ADDR__ + __OUTPUT_ENTRY_CURRENT_HEIGHT_OFFSET__)
@@ -344,6 +347,7 @@ $gdbScriptContent = $gdbTemplate `
     -replace '__EDID_BYTES_ADDR__', ('0x' + $edidBytesAddress) `
     -replace '__OUTPUT_ENTRY_COUNT_ADDR__', ('0x' + $outputEntryCountAddress) `
     -replace '__OUTPUT_ENTRIES_ADDR__', ('0x' + $outputEntriesAddress) `
+    -replace '__OUTPUT_INTERFACE_TYPE_ADDR__', ('0x' + $outputInterfaceTypeAddress) `
     -replace '__OUTPUT_MODE_COUNT_ADDR__', ('0x' + $outputModeCountAddress) `
     -replace '__OUTPUT_MODES_ADDR__', ('0x' + $outputModesAddress) `
     -replace '__MAGIC_OFFSET__', $stateMagicOffset `
@@ -359,6 +363,7 @@ $gdbScriptContent = $gdbTemplate `
     -replace '__PCI_BUS_OFFSET__', $statePciBusOffset `
     -replace '__PCI_DEVICE_OFFSET__', $statePciDeviceOffset `
     -replace '__PCI_FUNCTION_OFFSET__', $statePciFunctionOffset `
+    -replace '__INTERFACE_OFFSET__', $stateInterfaceOffset `
     -replace '__VENDOR_ID_OFFSET__', $stateVendorIdOffset `
     -replace '__DEVICE_ID_OFFSET__', $stateDeviceIdOffset `
     -replace '__CURRENT_WIDTH_OFFSET__', $stateCurrentWidthOffset `
@@ -445,6 +450,7 @@ $activeScanout = Extract-IntValue -Text $out -Name 'DISPLAY_ACTIVE_SCANOUT'
 $pciBus = Extract-IntValue -Text $out -Name 'DISPLAY_PCI_BUS'
 $pciDevice = Extract-IntValue -Text $out -Name 'DISPLAY_PCI_DEVICE'
 $pciFunction = Extract-IntValue -Text $out -Name 'DISPLAY_PCI_FUNCTION'
+$displayInterface = Extract-IntValue -Text $out -Name 'DISPLAY_INTERFACE'
 $vendorId = Extract-IntValue -Text $out -Name 'DISPLAY_VENDOR_ID'
 $deviceId = Extract-IntValue -Text $out -Name 'DISPLAY_DEVICE_ID'
 $currentWidth = Extract-IntValue -Text $out -Name 'DISPLAY_CURRENT_WIDTH'
@@ -462,6 +468,7 @@ $outputEntryCount = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT_ENTRY_COUN
 $output0Connected = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_CONNECTED'
 $output0Scanout = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_SCANOUT'
 $output0Connector = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_CONNECTOR'
+$output0Interface = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_INTERFACE'
 $output0EdidPresent = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_EDID_PRESENT'
 $output0CurrentWidth = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_CURRENT_WIDTH'
 $output0CurrentHeight = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_CURRENT_HEIGHT'
@@ -508,6 +515,7 @@ Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_ACTIVE_SCANOUT=$activeScan
 Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_PCI_BUS=$pciBus"
 Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_PCI_DEVICE=$pciDevice"
 Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_PCI_FUNCTION=$pciFunction"
+Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_INTERFACE=$displayInterface"
 Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_VENDOR_ID=$vendorId"
 Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_DEVICE_ID=$deviceId"
 Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_CURRENT_WIDTH=$currentWidth"
@@ -524,6 +532,7 @@ Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT_ENTRY_COUNT=$output
 Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_CONNECTED=$output0Connected"
 Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_SCANOUT=$output0Scanout"
 Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_CONNECTOR=$output0Connector"
+Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_INTERFACE=$output0Interface"
 Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_EDID_PRESENT=$output0EdidPresent"
 Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_CURRENT_WIDTH=$output0CurrentWidth"
 Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_CURRENT_HEIGHT=$output0CurrentHeight"
@@ -543,7 +552,7 @@ $pass = (
     $version -eq $apiVersion -and
     $backend -eq $expectedBackend -and
     $controller -eq $expectedController -and
-    $connector -eq $expectedConnector -and
+    $connector -ge 1 -and
     $hardwareBacked -eq 1 -and
     $connected -eq 1 -and
     $edidPresent -eq 1 -and
@@ -552,6 +561,7 @@ $pass = (
     $pciBus -ge 0 -and
     $pciDevice -ge 0 -and
     $pciFunction -eq 0 -and
+    $displayInterface -ne 0 -and
     $vendorId -eq $expectedVendorId -and
     $deviceId -eq $expectedDeviceId -and
     $currentWidth -eq $expectedWidth -and
@@ -566,7 +576,8 @@ $pass = (
     $outputEntryCount -eq $expectedOutputEntryCount -and
     $output0Connected -eq 1 -and
     $output0Scanout -eq 0 -and
-    $output0Connector -eq $expectedConnector -and
+    $output0Connector -eq $connector -and
+    $output0Interface -eq $displayInterface -and
     $output0EdidPresent -eq 1 -and
     $output0CurrentWidth -eq $expectedWidth -and
     $output0CurrentHeight -eq $expectedHeight -and

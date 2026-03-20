@@ -70,6 +70,19 @@ pub fn activateDisplayOutput(index: u16) error{NotFound}!void {
     if (!display_output.selectOutputIndex(index)) return error.NotFound;
 }
 
+pub fn activateDisplayInterface(interface_type: u8) error{NotFound}!void {
+    const display_state = display_output.statePtr();
+    if (display_state.controller == abi.display_controller_virtio_gpu) {
+        if (display_state.hardware_backed != 0) {
+            _ = virtio_gpu.probeAndPresentPatternForInterface(interface_type) catch return error.NotFound;
+            return;
+        }
+        if (!display_output.selectOutputInterface(interface_type)) return error.NotFound;
+        return;
+    }
+    if (display_output.stateInterfaceType() != interface_type) return error.NotFound;
+}
+
 pub fn activateDisplayConnectorPreferred(connector_type: u8) error{ NotFound, UnsupportedMode }!void {
     const display_state = display_output.statePtr();
     if (display_state.controller == abi.display_controller_virtio_gpu) {
@@ -87,6 +100,27 @@ pub fn activateDisplayConnectorPreferred(connector_type: u8) error{ NotFound, Un
         return;
     }
     if (display_state.connector_type != connector_type) return error.NotFound;
+    const mode = display_output.preferredMode(@as(u16, display_state.active_scanout)) orelse return error.UnsupportedMode;
+    framebuffer_console.setMode(mode.width, mode.height) catch return error.UnsupportedMode;
+}
+
+pub fn activateDisplayInterfacePreferred(interface_type: u8) error{ NotFound, UnsupportedMode }!void {
+    const display_state = display_output.statePtr();
+    if (display_state.controller == abi.display_controller_virtio_gpu) {
+        if (display_state.hardware_backed != 0) {
+            _ = virtio_gpu.probeAndPresentPatternForInterfacePreferred(interface_type) catch |err| switch (err) {
+                error.NoConnectedScanout => return error.NotFound,
+                error.UnsupportedMode, error.FramebufferTooLarge => return error.UnsupportedMode,
+                else => return error.NotFound,
+            };
+            return;
+        }
+        if (!display_output.selectOutputInterface(interface_type)) return error.NotFound;
+        const active_index = display_output.statePtr().active_scanout;
+        if (!display_output.setOutputPreferredMode(@as(u16, active_index))) return error.UnsupportedMode;
+        return;
+    }
+    if (display_output.stateInterfaceType() != interface_type) return error.NotFound;
     const mode = display_output.preferredMode(@as(u16, display_state.active_scanout)) orelse return error.UnsupportedMode;
     framebuffer_console.setMode(mode.width, mode.height) catch return error.UnsupportedMode;
 }
