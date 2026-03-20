@@ -308,6 +308,7 @@ fn handleFramedPayload(
         .display_info => try handleDisplayInfoRequest(allocator, payload_limit),
         .display_outputs => try handleDisplayOutputsRequest(allocator, payload_limit),
         .display_output => |output_index| try handleDisplayOutputRequest(allocator, output_index, payload_limit),
+        .display_output_detail => |output_index| try handleDisplayOutputDetailRequest(allocator, output_index, payload_limit),
         .display_output_modes => |output_index| try handleDisplayOutputModesRequest(allocator, output_index, payload_limit),
         .display_modes => try handleDisplayModesRequest(allocator, payload_limit),
         .display_set => |display_mode| try handleDisplaySetRequest(allocator, display_mode.width, display_mode.height, payload_limit),
@@ -315,6 +316,7 @@ fn handleFramedPayload(
         .display_activate_preferred => |connector_name| try handleDisplayActivatePreferredRequest(allocator, connector_name, payload_limit),
         .display_activate_interface => |interface_name| try handleDisplayActivateInterfaceRequest(allocator, interface_name, payload_limit),
         .display_activate_interface_preferred => |interface_name| try handleDisplayActivateInterfacePreferredRequest(allocator, interface_name, payload_limit),
+        .display_interface_detail => |interface_name| try handleDisplayInterfaceDetailRequest(allocator, interface_name, payload_limit),
         .display_interface_modes => |interface_name| try handleDisplayInterfaceModesRequest(allocator, interface_name, payload_limit),
         .display_interface_set => |request| try handleDisplayInterfaceSetRequest(allocator, request.interface_name, request.width, request.height, payload_limit),
         .display_interface_activate_mode => |request| try handleDisplayInterfaceActivateModeRequest(allocator, request.interface_name, request.mode_index, payload_limit),
@@ -1918,6 +1920,54 @@ fn handleDisplayOutputRequest(allocator: std.mem.Allocator, output_index_text: [
     return response;
 }
 
+fn formatDisplayOutputDetailResponse(allocator: std.mem.Allocator, index: u16, payload_limit: usize) Error![]u8 {
+    const entry = display_output.outputEntry(index);
+    const capability_flags = entry.capability_flags;
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "index={d} scanout={d} connector={s} interface={s} declared_interface={s} connected={d} current={d}x{d} preferred={d}x{d} name={s} manufacturer={s} week={d} year={d} edid={d}.{d} extensions={d} physical={d}x{d}mm audio={d} hdmi_vendor={d} displayid={d} capabilities=0x{x}\n",
+        .{
+            index,
+            entry.scanout_index,
+            displayConnectorName(entry.connector_type),
+            displayInterfaceName(display_output.outputInterfaceType(index)),
+            displayInterfaceName(display_output.outputDeclaredInterfaceType(index)),
+            entry.connected,
+            entry.current_width,
+            entry.current_height,
+            entry.preferred_width,
+            entry.preferred_height,
+            display_output.outputDisplayName(index),
+            display_output.outputManufacturerName(index),
+            display_output.outputManufactureWeek(index),
+            display_output.outputManufactureYear(index),
+            display_output.outputEdidVersion(index),
+            display_output.outputEdidRevision(index),
+            display_output.outputExtensionCount(index),
+            entry.physical_width_mm,
+            entry.physical_height_mm,
+            if ((capability_flags & abi.display_capability_basic_audio) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((capability_flags & abi.display_capability_hdmi_vendor_data) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((capability_flags & abi.display_capability_displayid_extension) != 0) @as(u8, 1) else @as(u8, 0),
+            capability_flags,
+        },
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleDisplayOutputDetailRequest(allocator: std.mem.Allocator, output_index_text: []const u8, payload_limit: usize) Error![]u8 {
+    ensureDisplayReady();
+    const index = std.fmt.parseInt(u16, output_index_text, 10) catch {
+        return formatOperationError(allocator, "DISPLAYOUTPUTDETAIL", error.InvalidFrame, payload_limit);
+    };
+    if (index >= display_output.outputCount()) {
+        return formatOperationError(allocator, "DISPLAYOUTPUTDETAIL", error.NotFound, payload_limit);
+    }
+    return formatDisplayOutputDetailResponse(allocator, index, payload_limit);
+}
+
 fn appendDisplayModeLine(out: *std.ArrayList(u8), allocator: std.mem.Allocator, payload_limit: usize, mode_index: u16, mode: pal_framebuffer.DisplayOutputMode) Error!void {
     const line = try std.fmt.allocPrint(
         allocator,
@@ -1971,6 +2021,17 @@ fn handleDisplayInterfaceModesRequest(allocator: std.mem.Allocator, interface_na
     }
 
     return out.toOwnedSlice(allocator);
+}
+
+fn handleDisplayInterfaceDetailRequest(allocator: std.mem.Allocator, interface_name: []const u8, payload_limit: usize) Error![]u8 {
+    ensureDisplayReady();
+    const interface_type = display_output.interfaceTypeFromName(interface_name) orelse {
+        return formatOperationError(allocator, "DISPLAYINTERFACEDETAIL", error.InvalidFrame, payload_limit);
+    };
+    const index = display_output.connectedOutputIndexForInterface(interface_type) orelse {
+        return formatOperationError(allocator, "DISPLAYINTERFACEDETAIL", error.NotFound, payload_limit);
+    };
+    return formatDisplayOutputDetailResponse(allocator, index, payload_limit);
 }
 
 fn handleDisplayModesRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
@@ -2708,6 +2769,12 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
+    const display_output_detail = try parseFramedRequest("REQ 280 DISPLAYOUTPUTDETAIL 0");
+    switch (display_output_detail.operation) {
+        .display_output_detail => |payload| try std.testing.expectEqualStrings("0", payload),
+        else => return error.InvalidFrame,
+    }
+
     const display_output_modes = try parseFramedRequest("REQ 281 DISPLAYOUTPUTMODES 1");
     switch (display_output_modes.operation) {
         .display_output_modes => |payload| try std.testing.expectEqualStrings("1", payload),
@@ -2744,6 +2811,12 @@ test "baremetal tool service parses typed framed requests" {
     const display_activate_interface_preferred = try parseFramedRequest("REQ 139 DISPLAYACTIVATEINTERFACEPREFERRED displayport");
     switch (display_activate_interface_preferred.operation) {
         .display_activate_interface_preferred => |payload| try std.testing.expectEqualStrings("displayport", payload),
+        else => return error.InvalidFrame,
+    }
+
+    const display_interface_detail = try parseFramedRequest("REQ 140 DISPLAYINTERFACEDETAIL displayport");
+    switch (display_interface_detail.operation) {
+        .display_interface_detail => |payload| try std.testing.expectEqualStrings("displayport", payload),
         else => return error.InvalidFrame,
     }
 
@@ -4041,6 +4114,89 @@ test "baremetal tool service activates requested display connector" {
     const delete_profile_response = try handleFramedRequest(std.testing.allocator, "REQ 80 DISPLAYPROFILEDELETE golden", 512, 256, 512);
     defer std.testing.allocator.free(delete_profile_response);
     try std.testing.expectEqualStrings("RESP 80 28\nDISPLAYPROFILEDELETE golden\n", delete_profile_response);
+}
+
+test "baremetal tool service reports detailed display sink metadata" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    framebuffer_console.resetForTest();
+    display_output.resetForTest();
+    display_output.updateFromVirtioGpu(.{
+        .vendor_id = 0x1AF4,
+        .device_id = 0x1050,
+        .pci_bus = 0,
+        .pci_device = 2,
+        .pci_function = 0,
+        .hardware_backed = false,
+        .connected = true,
+        .scanout_count = 1,
+        .active_scanout = 0,
+        .current_width = 1280,
+        .current_height = 800,
+        .preferred_width = 1280,
+        .preferred_height = 800,
+        .physical_width_mm = 300,
+        .physical_height_mm = 190,
+        .manufacturer_id = 0x1234,
+        .product_code = 0x5678,
+        .serial_number = 0xCAFEBABE,
+        .capability_flags = abi.display_capability_digital_input | abi.display_capability_displayid_extension | abi.display_capability_basic_audio | abi.display_capability_preferred_timing,
+        .edid = &.{ 0x00, 0xFF, 0xFF, 0xFF },
+        .scanouts = &.{
+            .{
+                .connected = true,
+                .scanout_index = 0,
+                .current_width = 1280,
+                .current_height = 800,
+                .preferred_width = 1280,
+                .preferred_height = 800,
+                .physical_width_mm = 300,
+                .physical_height_mm = 190,
+                .manufacturer_id = 0x1234,
+                .product_code = 0x5678,
+                .serial_number = 0xCAFEBABE,
+                .manufacturer_name = [_]u8{ 'Q', 'E', 'M' },
+                .manufacture_week = 1,
+                .manufacture_year = 2024,
+                .edid_version = 1,
+                .edid_revision = 4,
+                .declared_interface_type = abi.display_interface_displayport,
+                .extension_count = 1,
+                .display_name_len = 9,
+                .display_name = [_]u8{ 'Q', 'E', 'M', 'U', '-', 'E', 'D', 'I', 'D' } ++ [_]u8{0} ** (display_output.max_display_name_len - 9),
+                .interface_type = abi.display_interface_displayport,
+                .capability_flags = abi.display_capability_digital_input | abi.display_capability_displayid_extension | abi.display_capability_basic_audio | abi.display_capability_preferred_timing,
+                .edid_length = 128,
+                .supported_mode_count = 2,
+                .supported_modes = [_]display_output.OutputMode{
+                    .{ .width = 1280, .height = 800, .refresh_hz = 60 },
+                    .{ .width = 1024, .height = 768, .refresh_hz = 60 },
+                } ++ [_]display_output.OutputMode{.{
+                    .width = 0,
+                    .height = 0,
+                    .refresh_hz = 0,
+                }} ** (display_output.max_output_modes - 2),
+            },
+        },
+    });
+
+    const detail_response = try handleFramedRequest(std.testing.allocator, "REQ 500 DISPLAYOUTPUTDETAIL 0", 512, 256, 512);
+    defer std.testing.allocator.free(detail_response);
+    try std.testing.expect(std.mem.startsWith(u8, detail_response, "RESP 500 "));
+    try std.testing.expect(std.mem.indexOf(u8, detail_response, "connector=displayport interface=displayport declared_interface=displayport") != null);
+    try std.testing.expect(std.mem.indexOf(u8, detail_response, "name=QEMU-EDID manufacturer=QEM") != null);
+    try std.testing.expect(std.mem.indexOf(u8, detail_response, "week=1 year=2024 edid=1.4 extensions=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, detail_response, "physical=300x190mm audio=1 hdmi_vendor=0 displayid=1") != null);
+
+    const interface_response = try handleFramedRequest(std.testing.allocator, "REQ 501 DISPLAYINTERFACEDETAIL displayport", 512, 256, 512);
+    defer std.testing.allocator.free(interface_response);
+    try std.testing.expect(std.mem.startsWith(u8, interface_response, "RESP 501 "));
+    try std.testing.expect(std.mem.indexOf(u8, interface_response, "name=QEMU-EDID manufacturer=QEM") != null);
+
+    const missing_response = try handleFramedRequest(std.testing.allocator, "REQ 502 DISPLAYINTERFACEDETAIL hdmi-a", 512, 256, 512);
+    defer std.testing.allocator.free(missing_response);
+    try std.testing.expect(std.mem.startsWith(u8, missing_response, "RESP 502 "));
+    try std.testing.expect(std.mem.indexOf(u8, missing_response, "ERR DISPLAYINTERFACEDETAIL: NotFound\n") != null);
 }
 
 test "baremetal tool service rotates queries and deletes trust bundles" {

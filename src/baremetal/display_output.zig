@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
 const abi = @import("abi.zig");
+const edid = @import("edid.zig");
 
 pub const max_edid_bytes: usize = 1024;
 pub const max_output_entries: usize = 16;
 pub const max_output_modes: usize = 16;
+pub const max_manufacturer_name_len: usize = 3;
+pub const max_display_name_len: usize = edid.max_name_len;
 pub const OutputEntry = abi.BaremetalDisplayOutputEntry;
 pub const OutputMode = abi.BaremetalDisplayModeInfo;
 
@@ -39,6 +42,15 @@ pub const VirtioGpuUpdate = struct {
     manufacturer_id: u16,
     product_code: u16,
     serial_number: u32,
+    manufacturer_name: [max_manufacturer_name_len]u8 = [_]u8{0} ** max_manufacturer_name_len,
+    manufacture_week: u8 = 0,
+    manufacture_year: u16 = 0,
+    edid_version: u8 = 0,
+    edid_revision: u8 = 0,
+    declared_interface_type: u8 = abi.display_interface_none,
+    extension_count: u8 = 0,
+    display_name_len: u8 = 0,
+    display_name: [max_display_name_len]u8 = [_]u8{0} ** max_display_name_len,
     interface_type: u8 = abi.display_interface_none,
     capability_flags: u16,
     edid: []const u8,
@@ -57,6 +69,15 @@ pub const VirtioGpuScanoutUpdate = struct {
     manufacturer_id: u16,
     product_code: u16,
     serial_number: u32,
+    manufacturer_name: [max_manufacturer_name_len]u8 = [_]u8{0} ** max_manufacturer_name_len,
+    manufacture_week: u8 = 0,
+    manufacture_year: u16 = 0,
+    edid_version: u8 = 0,
+    edid_revision: u8 = 0,
+    declared_interface_type: u8 = abi.display_interface_none,
+    extension_count: u8 = 0,
+    display_name_len: u8 = 0,
+    display_name: [max_display_name_len]u8 = [_]u8{0} ** max_display_name_len,
     interface_type: u8 = abi.display_interface_none,
     capability_flags: u16,
     edid_length: u16,
@@ -69,6 +90,15 @@ var edid_bytes: [max_edid_bytes]u8 = [_]u8{0} ** max_edid_bytes;
 pub export var oc_display_output_entry_count_data: u16 = 0;
 pub export var oc_display_output_entries_data: [max_output_entries]OutputEntry = [_]OutputEntry{zeroOutputEntry()} ** max_output_entries;
 pub export var oc_display_output_interface_type_data: [max_output_entries]u8 = [_]u8{abi.display_interface_none} ** max_output_entries;
+pub export var oc_display_output_declared_interface_type_data: [max_output_entries]u8 = [_]u8{abi.display_interface_none} ** max_output_entries;
+pub export var oc_display_output_manufacturer_name_data: [max_output_entries][max_manufacturer_name_len]u8 = [_][max_manufacturer_name_len]u8{[_]u8{0} ** max_manufacturer_name_len} ** max_output_entries;
+pub export var oc_display_output_manufacture_week_data: [max_output_entries]u8 = [_]u8{0} ** max_output_entries;
+pub export var oc_display_output_manufacture_year_data: [max_output_entries]u16 = [_]u16{0} ** max_output_entries;
+pub export var oc_display_output_edid_version_data: [max_output_entries]u8 = [_]u8{0} ** max_output_entries;
+pub export var oc_display_output_edid_revision_data: [max_output_entries]u8 = [_]u8{0} ** max_output_entries;
+pub export var oc_display_output_extension_count_data: [max_output_entries]u8 = [_]u8{0} ** max_output_entries;
+pub export var oc_display_output_display_name_len_data: [max_output_entries]u8 = [_]u8{0} ** max_output_entries;
+pub export var oc_display_output_display_name_data: [max_output_entries][max_display_name_len]u8 = [_][max_display_name_len]u8{[_]u8{0} ** max_display_name_len} ** max_output_entries;
 pub export var oc_display_output_mode_count_data: [max_output_entries]u16 = [_]u16{0} ** max_output_entries;
 pub export var oc_display_output_modes_data: [max_output_entries][max_output_modes]OutputMode = [_][max_output_modes]OutputMode{[_]OutputMode{zeroOutputMode()} ** max_output_modes} ** max_output_entries;
 
@@ -106,6 +136,19 @@ fn clearOutputEntries() void {
         entry.* = zeroOutputEntry();
     }
     @memset(&oc_display_output_interface_type_data, abi.display_interface_none);
+    @memset(&oc_display_output_declared_interface_type_data, abi.display_interface_none);
+    for (&oc_display_output_manufacturer_name_data) |*name| {
+        name.* = [_]u8{0} ** max_manufacturer_name_len;
+    }
+    @memset(&oc_display_output_manufacture_week_data, 0);
+    @memset(&oc_display_output_manufacture_year_data, 0);
+    @memset(&oc_display_output_edid_version_data, 0);
+    @memset(&oc_display_output_edid_revision_data, 0);
+    @memset(&oc_display_output_extension_count_data, 0);
+    @memset(&oc_display_output_display_name_len_data, 0);
+    for (&oc_display_output_display_name_data) |*name| {
+        name.* = [_]u8{0} ** max_display_name_len;
+    }
 }
 
 fn clearOutputModes() void {
@@ -182,6 +225,57 @@ pub fn outputInterfaceType(index: u16) u8 {
     return oc_display_output_interface_type_data[idx];
 }
 
+pub fn outputDeclaredInterfaceType(index: u16) u8 {
+    const idx: usize = @intCast(index);
+    if (idx >= oc_display_output_entry_count_data or idx >= oc_display_output_declared_interface_type_data.len) return abi.display_interface_none;
+    return oc_display_output_declared_interface_type_data[idx];
+}
+
+pub fn outputManufacturerName(index: u16) []const u8 {
+    const idx: usize = @intCast(index);
+    if (idx >= oc_display_output_entry_count_data or idx >= oc_display_output_manufacturer_name_data.len) return "";
+    const row = oc_display_output_manufacturer_name_data[idx][0..];
+    const len = std.mem.indexOfScalar(u8, row, 0) orelse row.len;
+    return row[0..len];
+}
+
+pub fn outputManufactureWeek(index: u16) u8 {
+    const idx: usize = @intCast(index);
+    if (idx >= oc_display_output_entry_count_data or idx >= oc_display_output_manufacture_week_data.len) return 0;
+    return oc_display_output_manufacture_week_data[idx];
+}
+
+pub fn outputManufactureYear(index: u16) u16 {
+    const idx: usize = @intCast(index);
+    if (idx >= oc_display_output_entry_count_data or idx >= oc_display_output_manufacture_year_data.len) return 0;
+    return oc_display_output_manufacture_year_data[idx];
+}
+
+pub fn outputEdidVersion(index: u16) u8 {
+    const idx: usize = @intCast(index);
+    if (idx >= oc_display_output_entry_count_data or idx >= oc_display_output_edid_version_data.len) return 0;
+    return oc_display_output_edid_version_data[idx];
+}
+
+pub fn outputEdidRevision(index: u16) u8 {
+    const idx: usize = @intCast(index);
+    if (idx >= oc_display_output_entry_count_data or idx >= oc_display_output_edid_revision_data.len) return 0;
+    return oc_display_output_edid_revision_data[idx];
+}
+
+pub fn outputExtensionCount(index: u16) u8 {
+    const idx: usize = @intCast(index);
+    if (idx >= oc_display_output_entry_count_data or idx >= oc_display_output_extension_count_data.len) return 0;
+    return oc_display_output_extension_count_data[idx];
+}
+
+pub fn outputDisplayName(index: u16) []const u8 {
+    const idx: usize = @intCast(index);
+    if (idx >= oc_display_output_entry_count_data or idx >= oc_display_output_display_name_data.len) return "";
+    const len = @min(@as(usize, oc_display_output_display_name_len_data[idx]), oc_display_output_display_name_data[idx].len);
+    return oc_display_output_display_name_data[idx][0..len];
+}
+
 pub fn outputModeCount(index: u16) u16 {
     const idx: usize = @intCast(index);
     if (idx >= oc_display_output_entry_count_data or idx >= oc_display_output_mode_count_data.len) return 0;
@@ -205,6 +299,10 @@ fn outputIndexForInterface(interface_type: u8) ?u16 {
         return @intCast(index);
     }
     return null;
+}
+
+pub fn connectedOutputIndexForInterface(interface_type: u8) ?u16 {
+    return outputIndexForInterface(interface_type);
 }
 
 pub fn outputModeCountForInterface(interface_type: u8) u16 {
@@ -505,6 +603,15 @@ pub fn updateFromVirtioGpu(update: VirtioGpuUpdate) void {
             .serial_number = update.serial_number,
         };
         oc_display_output_interface_type_data[0] = state.reserved0;
+        oc_display_output_declared_interface_type_data[0] = update.declared_interface_type;
+        oc_display_output_manufacturer_name_data[0] = update.manufacturer_name;
+        oc_display_output_manufacture_week_data[0] = update.manufacture_week;
+        oc_display_output_manufacture_year_data[0] = update.manufacture_year;
+        oc_display_output_edid_version_data[0] = update.edid_version;
+        oc_display_output_edid_revision_data[0] = update.edid_revision;
+        oc_display_output_extension_count_data[0] = update.extension_count;
+        oc_display_output_display_name_len_data[0] = update.display_name_len;
+        oc_display_output_display_name_data[0] = update.display_name;
         setSingleOutputMode(0, update.current_width, update.current_height);
         return;
     }
@@ -529,6 +636,15 @@ pub fn updateFromVirtioGpu(update: VirtioGpuUpdate) void {
             .serial_number = scanout.serial_number,
         };
         oc_display_output_interface_type_data[index] = if (scanout.connected) inferInterfaceType(scanout.interface_type, scanout.capability_flags) else abi.display_interface_none;
+        oc_display_output_declared_interface_type_data[index] = if (scanout.connected) scanout.declared_interface_type else abi.display_interface_none;
+        oc_display_output_manufacturer_name_data[index] = scanout.manufacturer_name;
+        oc_display_output_manufacture_week_data[index] = scanout.manufacture_week;
+        oc_display_output_manufacture_year_data[index] = scanout.manufacture_year;
+        oc_display_output_edid_version_data[index] = scanout.edid_version;
+        oc_display_output_edid_revision_data[index] = scanout.edid_revision;
+        oc_display_output_extension_count_data[index] = scanout.extension_count;
+        oc_display_output_display_name_len_data[index] = scanout.display_name_len;
+        oc_display_output_display_name_data[index] = scanout.display_name;
         if (scanout.supported_mode_count != 0) {
             setOutputModes(index, scanout.supported_modes[0..scanout.supported_mode_count]);
         } else if (scanout.current_width != 0 and scanout.current_height != 0) {
@@ -575,7 +691,7 @@ test "display output state updates from bga metadata" {
 
 test "display output state copies virtio gpu edid payload" {
     resetForTest();
-    const edid = [_]u8{ 0x00, 0xFF, 0xFF, 0xFF };
+    const sample_edid = [_]u8{ 0x00, 0xFF, 0xFF, 0xFF };
     updateFromVirtioGpu(.{
         .vendor_id = 0x1AF4,
         .device_id = 0x1050,
@@ -596,7 +712,7 @@ test "display output state copies virtio gpu edid payload" {
         .product_code = 0x5678,
         .serial_number = 0xCAFEBABE,
         .capability_flags = abi.display_capability_digital_input | abi.display_capability_preferred_timing,
-        .edid = &edid,
+        .edid = &sample_edid,
         .scanouts = &.{
             .{
                 .connected = true,
@@ -611,7 +727,7 @@ test "display output state copies virtio gpu edid payload" {
                 .product_code = 0x5678,
                 .serial_number = 0xCAFEBABE,
                 .capability_flags = abi.display_capability_digital_input | abi.display_capability_preferred_timing,
-                .edid_length = edid.len,
+                .edid_length = sample_edid.len,
             },
         },
     });
@@ -1027,6 +1143,75 @@ test "display output exposes and applies interface mode inventory" {
     try std.testing.expectEqual(@as(u16, 1080), statePtr().current_height);
     try std.testing.expect(!setOutputModeForInterface(abi.display_interface_hdmi_b, 1024, 768));
     try std.testing.expect(!setOutputModeByInterfaceIndex(abi.display_interface_hdmi_b, 0));
+}
+
+test "display output preserves richer edid sink metadata" {
+    resetForTest();
+    updateFromVirtioGpu(.{
+        .vendor_id = 0x1AF4,
+        .device_id = 0x1050,
+        .pci_bus = 0,
+        .pci_device = 2,
+        .pci_function = 0,
+        .hardware_backed = true,
+        .connected = true,
+        .scanout_count = 1,
+        .active_scanout = 0,
+        .current_width = 1280,
+        .current_height = 800,
+        .preferred_width = 1280,
+        .preferred_height = 800,
+        .physical_width_mm = 300,
+        .physical_height_mm = 190,
+        .manufacturer_id = 0x1234,
+        .product_code = 0x5678,
+        .serial_number = 0xCAFEBABE,
+        .capability_flags = abi.display_capability_digital_input | abi.display_capability_displayid_extension | abi.display_capability_basic_audio | abi.display_capability_preferred_timing,
+        .edid = &.{ 0x00, 0xFF, 0xFF, 0xFF },
+        .scanouts = &.{
+            .{
+                .connected = true,
+                .scanout_index = 0,
+                .current_width = 1280,
+                .current_height = 800,
+                .preferred_width = 1280,
+                .preferred_height = 800,
+                .physical_width_mm = 300,
+                .physical_height_mm = 190,
+                .manufacturer_id = 0x1234,
+                .product_code = 0x5678,
+                .serial_number = 0xCAFEBABE,
+                .manufacturer_name = [_]u8{ 'Q', 'E', 'M' },
+                .manufacture_week = 1,
+                .manufacture_year = 2024,
+                .edid_version = 1,
+                .edid_revision = 4,
+                .declared_interface_type = abi.display_interface_displayport,
+                .extension_count = 1,
+                .display_name_len = 9,
+                .display_name = [_]u8{ 'Q', 'E', 'M', 'U', '-', 'E', 'D', 'I', 'D' } ++ [_]u8{0} ** (max_display_name_len - 9),
+                .interface_type = abi.display_interface_displayport,
+                .capability_flags = abi.display_capability_digital_input | abi.display_capability_displayid_extension | abi.display_capability_basic_audio | abi.display_capability_preferred_timing,
+                .edid_length = 128,
+                .supported_mode_count = 2,
+                .supported_modes = [_]OutputMode{
+                    makeOutputMode(1280, 800, 60),
+                    makeOutputMode(1024, 768, 60),
+                } ++ [_]OutputMode{zeroOutputMode()} ** (max_output_modes - 2),
+            },
+        },
+    });
+
+    try std.testing.expectEqual(@as(u8, abi.display_interface_displayport), outputDeclaredInterfaceType(0));
+    try std.testing.expectEqualStrings("QEM", outputManufacturerName(0));
+    try std.testing.expectEqualStrings("QEMU-EDID", outputDisplayName(0));
+    try std.testing.expectEqual(@as(u8, 1), outputManufactureWeek(0));
+    try std.testing.expectEqual(@as(u16, 2024), outputManufactureYear(0));
+    try std.testing.expectEqual(@as(u8, 1), outputEdidVersion(0));
+    try std.testing.expectEqual(@as(u8, 4), outputEdidRevision(0));
+    try std.testing.expectEqual(@as(u8, 1), outputExtensionCount(0));
+    try std.testing.expectEqual(@as(?u16, 0), connectedOutputIndexForInterface(abi.display_interface_displayport));
+    try std.testing.expectEqual(@as(?u16, null), connectedOutputIndexForInterface(abi.display_interface_hdmi_a));
 }
 
 test "display output can retarget active output mode from stored entries" {

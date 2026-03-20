@@ -160,7 +160,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-plan-list, workspace-plan-info, workspace-plan-active, workspace-plan-save, workspace-plan-apply, workspace-plan-delete, workspace-plan-release-list, workspace-plan-release-info, workspace-plan-release-save, workspace-plan-release-activate, workspace-plan-release-delete, workspace-plan-release-prune, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-suite-release-channel-list, workspace-suite-release-channel-info, workspace-suite-release-channel-set, workspace-suite-release-channel-activate, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-outputs, display-output, display-output-modes, display-interface-modes, display-modes, display-set, display-activate, display-activate-preferred, display-activate-interface, display-activate-interface-preferred, display-interface-set, display-interface-activate-mode, display-activate-output, display-activate-output-preferred, display-output-set, display-output-activate-mode, display-profile-list, display-profile-info, display-profile-active, display-profile-save, display-profile-apply, display-profile-delete, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-plan-list, workspace-plan-info, workspace-plan-active, workspace-plan-save, workspace-plan-apply, workspace-plan-delete, workspace-plan-release-list, workspace-plan-release-info, workspace-plan-release-save, workspace-plan-release-activate, workspace-plan-release-delete, workspace-plan-release-prune, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-suite-release-channel-list, workspace-suite-release-channel-info, workspace-suite-release-channel-set, workspace-suite-release-channel-activate, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-outputs, display-output, display-output-detail, display-output-modes, display-interface-detail, display-interface-modes, display-modes, display-set, display-activate, display-activate-preferred, display-activate-interface, display-activate-interface-preferred, display-interface-set, display-interface-activate-mode, display-activate-output, display-activate-output-preferred, display-output-set, display-output-activate-mode, display-profile-list, display-profile-info, display-profile-active, display-profile-save, display-profile-apply, display-profile-delete, run-script, run-package, app-run");
         return;
     }
 
@@ -3044,6 +3044,32 @@ fn execute(
         return;
     }
 
+    if (std.ascii.eqlIgnoreCase(parsed.name, "display-output-detail")) {
+        const index_arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "display-output-detail <index>");
+            return;
+        };
+        if (index_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-output-detail <index>");
+            return;
+        }
+        const index = std.fmt.parseInt(u16, index_arg.arg, 10) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-output-detail <index>");
+            return;
+        };
+        ensureDisplayReady();
+        if (index >= display_output.outputCount()) {
+            exit_code.* = 1;
+            try stderr_buffer.appendLine("display-output-detail failed: NotFound");
+            return;
+        }
+        try appendDisplayOutputDetailLine(stdout_buffer, index);
+        return;
+    }
+
     if (std.ascii.eqlIgnoreCase(parsed.name, "display-output-modes")) {
         const index_arg = parseFirstArg(parsed.rest) catch |err| {
             exit_code.* = 2;
@@ -3072,6 +3098,32 @@ fn execute(
             const mode = pal_framebuffer.displayOutputMode(index, mode_index) orelse continue;
             try appendDisplayModeLine(stdout_buffer, mode_index, mode);
         }
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "display-interface-detail")) {
+        const interface_arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "display-interface-detail <interface>");
+            return;
+        };
+        if (interface_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-interface-detail <interface>");
+            return;
+        }
+        const interface_type = display_output.interfaceTypeFromName(interface_arg.arg) orelse {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-interface-detail <interface>");
+            return;
+        };
+        ensureDisplayReady();
+        const index = display_output.connectedOutputIndexForInterface(interface_type) orelse {
+            exit_code.* = 1;
+            try stderr_buffer.appendLine("display-interface-detail failed: NotFound");
+            return;
+        };
+        try appendDisplayOutputDetailLine(stdout_buffer, index);
         return;
     }
 
@@ -4105,6 +4157,39 @@ fn displayInterfaceName(value: u8) []const u8 {
     return display_output.interfaceName(value);
 }
 
+fn appendDisplayOutputDetailLine(buffer: anytype, index: u16) !void {
+    const entry = display_output.outputEntry(index);
+    const capability_flags = entry.capability_flags;
+    try buffer.appendFmt(
+        "index={d} scanout={d} connector={s} interface={s} declared_interface={s} connected={d} current={d}x{d} preferred={d}x{d} name={s} manufacturer={s} week={d} year={d} edid={d}.{d} extensions={d} physical={d}x{d}mm audio={d} hdmi_vendor={d} displayid={d} capabilities=0x{x}\n",
+        .{
+            index,
+            entry.scanout_index,
+            displayConnectorName(entry.connector_type),
+            displayInterfaceName(display_output.outputInterfaceType(index)),
+            displayInterfaceName(display_output.outputDeclaredInterfaceType(index)),
+            entry.connected,
+            entry.current_width,
+            entry.current_height,
+            entry.preferred_width,
+            entry.preferred_height,
+            display_output.outputDisplayName(index),
+            display_output.outputManufacturerName(index),
+            display_output.outputManufactureWeek(index),
+            display_output.outputManufactureYear(index),
+            display_output.outputEdidVersion(index),
+            display_output.outputEdidRevision(index),
+            display_output.outputExtensionCount(index),
+            entry.physical_width_mm,
+            entry.physical_height_mm,
+            if ((capability_flags & abi.display_capability_basic_audio) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((capability_flags & abi.display_capability_hdmi_vendor_data) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((capability_flags & abi.display_capability_displayid_extension) != 0) @as(u8, 1) else @as(u8, 0),
+            capability_flags,
+        },
+    );
+}
+
 fn appendDisplayModeLine(buffer: anytype, mode_index: u16, mode: pal_framebuffer.DisplayOutputMode) !void {
     try buffer.appendFmt(
         "mode {d} {d}x{d} refresh={d}\n",
@@ -4951,6 +5036,90 @@ test "baremetal tool exec activates requested display connector from stored outp
     defer delete_profile_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), delete_profile_result.exit_code);
     try std.testing.expectEqualStrings("display profile deleted golden\n", delete_profile_result.stdout);
+}
+
+test "baremetal tool exec reports detailed display sink metadata" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    vga_text_console.resetForTest();
+    framebuffer_console.resetForTest();
+    display_output.resetForTest();
+    display_output.updateFromVirtioGpu(.{
+        .vendor_id = 0x1AF4,
+        .device_id = 0x1050,
+        .pci_bus = 0,
+        .pci_device = 2,
+        .pci_function = 0,
+        .hardware_backed = false,
+        .connected = true,
+        .scanout_count = 1,
+        .active_scanout = 0,
+        .current_width = 1280,
+        .current_height = 800,
+        .preferred_width = 1280,
+        .preferred_height = 800,
+        .physical_width_mm = 300,
+        .physical_height_mm = 190,
+        .manufacturer_id = 0x1234,
+        .product_code = 0x5678,
+        .serial_number = 0xCAFEBABE,
+        .capability_flags = abi.display_capability_digital_input | abi.display_capability_displayid_extension | abi.display_capability_basic_audio | abi.display_capability_preferred_timing,
+        .edid = &.{ 0x00, 0xFF, 0xFF, 0xFF },
+        .scanouts = &.{
+            .{
+                .connected = true,
+                .scanout_index = 0,
+                .current_width = 1280,
+                .current_height = 800,
+                .preferred_width = 1280,
+                .preferred_height = 800,
+                .physical_width_mm = 300,
+                .physical_height_mm = 190,
+                .manufacturer_id = 0x1234,
+                .product_code = 0x5678,
+                .serial_number = 0xCAFEBABE,
+                .manufacturer_name = [_]u8{ 'Q', 'E', 'M' },
+                .manufacture_week = 1,
+                .manufacture_year = 2024,
+                .edid_version = 1,
+                .edid_revision = 4,
+                .declared_interface_type = abi.display_interface_displayport,
+                .extension_count = 1,
+                .display_name_len = 9,
+                .display_name = [_]u8{ 'Q', 'E', 'M', 'U', '-', 'E', 'D', 'I', 'D' } ++ [_]u8{0} ** (display_output.max_display_name_len - 9),
+                .interface_type = abi.display_interface_displayport,
+                .capability_flags = abi.display_capability_digital_input | abi.display_capability_displayid_extension | abi.display_capability_basic_audio | abi.display_capability_preferred_timing,
+                .edid_length = 128,
+                .supported_mode_count = 2,
+                .supported_modes = [_]display_output.OutputMode{
+                    .{ .width = 1280, .height = 800, .refresh_hz = 60 },
+                    .{ .width = 1024, .height = 768, .refresh_hz = 60 },
+                } ++ [_]display_output.OutputMode{.{
+                    .width = 0,
+                    .height = 0,
+                    .refresh_hz = 0,
+                }} ** (display_output.max_output_modes - 2),
+            },
+        },
+    });
+
+    var detail_result = try runCapture(std.testing.allocator, "display-output-detail 0", 512, 256);
+    defer detail_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), detail_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, detail_result.stdout, "connector=displayport interface=displayport declared_interface=displayport") != null);
+    try std.testing.expect(std.mem.indexOf(u8, detail_result.stdout, "name=QEMU-EDID manufacturer=QEM") != null);
+    try std.testing.expect(std.mem.indexOf(u8, detail_result.stdout, "week=1 year=2024 edid=1.4 extensions=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, detail_result.stdout, "physical=300x190mm audio=1 hdmi_vendor=0 displayid=1") != null);
+
+    var interface_result = try runCapture(std.testing.allocator, "display-interface-detail displayport", 512, 256);
+    defer interface_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), interface_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, interface_result.stdout, "name=QEMU-EDID manufacturer=QEM") != null);
+
+    var missing_result = try runCapture(std.testing.allocator, "display-interface-detail hdmi-a", 512, 256);
+    defer missing_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 1), missing_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, missing_result.stderr, "display-interface-detail failed: NotFound") != null);
 }
 
 test "baremetal tool exec persists package display mode and applies it during package launch" {
