@@ -137,7 +137,9 @@ pub const RequestOp = enum {
     display_modes,
     display_set,
     display_activate,
+    display_activate_preferred,
     display_activate_output,
+    display_activate_output_preferred,
     display_output_set,
     display_profile_list,
     display_profile_info,
@@ -452,7 +454,9 @@ pub const FramedRequest = struct {
         display_modes: void,
         display_set: DisplayModeRequest,
         display_activate: []const u8,
+        display_activate_preferred: []const u8,
         display_activate_output: []const u8,
+        display_activate_output_preferred: []const u8,
         display_output_set: DisplayOutputModeRequest,
         display_profile_list: void,
         display_profile_info: []const u8,
@@ -2762,6 +2766,21 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         };
     }
 
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYACTIVATEPREFERRED")) {
+        const connector_part = try splitFirstToken(op_part.rest);
+        if (connector_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .display_activate_preferred = connector_part.token } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .display_activate_preferred = connector_part.token } },
+            .consumed_len = request.len,
+        };
+    }
+
     if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYACTIVATEOUTPUT")) {
         const output_part = try splitFirstToken(op_part.rest);
         if (output_part.rest.len != 0) return error.InvalidFrame;
@@ -2773,6 +2792,21 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         }
         return .{
             .framed = .{ .request_id = request_id, .operation = .{ .display_activate_output = output_part.token } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYACTIVATEOUTPUTPREFERRED")) {
+        const output_part = try splitFirstToken(op_part.rest);
+        if (output_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .display_activate_output_preferred = output_part.token } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .display_activate_output_preferred = output_part.token } },
             .consumed_len = request.len,
         };
     }

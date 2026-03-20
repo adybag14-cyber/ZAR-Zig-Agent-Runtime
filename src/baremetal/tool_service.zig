@@ -310,7 +310,9 @@ fn handleFramedPayload(
         .display_modes => try handleDisplayModesRequest(allocator, payload_limit),
         .display_set => |display_mode| try handleDisplaySetRequest(allocator, display_mode.width, display_mode.height, payload_limit),
         .display_activate => |connector_name| try handleDisplayActivateRequest(allocator, connector_name, payload_limit),
+        .display_activate_preferred => |connector_name| try handleDisplayActivatePreferredRequest(allocator, connector_name, payload_limit),
         .display_activate_output => |output_index| try handleDisplayActivateOutputRequest(allocator, output_index, payload_limit),
+        .display_activate_output_preferred => |output_index| try handleDisplayActivateOutputPreferredRequest(allocator, output_index, payload_limit),
         .display_output_set => |request| try handleDisplayOutputSetRequest(allocator, request.index, request.width, request.height, payload_limit),
         .display_profile_list => try handleDisplayProfileListRequest(allocator, payload_limit),
         .display_profile_info => |profile_name| try handleDisplayProfileInfoRequest(allocator, profile_name, payload_limit),
@@ -1957,6 +1959,31 @@ fn handleDisplayActivateRequest(allocator: std.mem.Allocator, connector_name: []
     return response;
 }
 
+fn handleDisplayActivatePreferredRequest(allocator: std.mem.Allocator, connector_name: []const u8, payload_limit: usize) Error![]u8 {
+    const connector_type = package_store.parseConnectorType(connector_name) catch |err| {
+        return formatOperationError(allocator, "DISPLAYACTIVATEPREFERRED", err, payload_limit);
+    };
+    tool_exec.activateDisplayConnectorPreferred(connector_type) catch |err| {
+        return formatOperationError(allocator, "DISPLAYACTIVATEPREFERRED", err, payload_limit);
+    };
+    const output = display_output.statePtr();
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "DISPLAYACTIVATEPREFERRED {s} scanout={d} current={d}x{d} preferred={d}x{d}\n",
+        .{
+            displayConnectorName(output.connector_type),
+            output.active_scanout,
+            output.current_width,
+            output.current_height,
+            if (output.preferred_width != 0) output.preferred_width else output.current_width,
+            if (output.preferred_height != 0) output.preferred_height else output.current_height,
+        },
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
 fn handleDisplayActivateOutputRequest(allocator: std.mem.Allocator, output_index_text: []const u8, payload_limit: usize) Error![]u8 {
     const output_index = std.fmt.parseInt(u16, output_index_text, 10) catch {
         return formatOperationError(allocator, "DISPLAYACTIVATEOUTPUT", error.InvalidFrame, payload_limit);
@@ -1974,6 +2001,32 @@ fn handleDisplayActivateOutputRequest(allocator: std.mem.Allocator, output_index
             output.active_scanout,
             output.current_width,
             output.current_height,
+        },
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleDisplayActivateOutputPreferredRequest(allocator: std.mem.Allocator, output_index_text: []const u8, payload_limit: usize) Error![]u8 {
+    const output_index = std.fmt.parseInt(u16, output_index_text, 10) catch {
+        return formatOperationError(allocator, "DISPLAYACTIVATEOUTPUTPREFERRED", error.InvalidFrame, payload_limit);
+    };
+    tool_exec.activateDisplayOutputPreferred(output_index) catch |err| {
+        return formatOperationError(allocator, "DISPLAYACTIVATEOUTPUTPREFERRED", err, payload_limit);
+    };
+    const output = display_output.statePtr();
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "DISPLAYACTIVATEOUTPUTPREFERRED {d} connector={s} scanout={d} current={d}x{d} preferred={d}x{d}\n",
+        .{
+            output_index,
+            displayConnectorName(output.connector_type),
+            output.active_scanout,
+            output.current_width,
+            output.current_height,
+            if (output.preferred_width != 0) output.preferred_width else output.current_width,
+            if (output.preferred_height != 0) output.preferred_height else output.current_height,
         },
     );
     errdefer allocator.free(response);
@@ -2473,6 +2526,18 @@ test "baremetal tool service parses typed framed requests" {
             try std.testing.expectEqual(@as(u16, 800), payload.width);
             try std.testing.expectEqual(@as(u16, 600), payload.height);
         },
+        else => return error.InvalidFrame,
+    }
+
+    const display_activate_preferred = try parseFramedRequest("REQ 38 DISPLAYACTIVATEPREFERRED displayport");
+    switch (display_activate_preferred.operation) {
+        .display_activate_preferred => |payload| try std.testing.expectEqualStrings("displayport", payload),
+        else => return error.InvalidFrame,
+    }
+
+    const display_activate_output_preferred = try parseFramedRequest("REQ 39 DISPLAYACTIVATEOUTPUTPREFERRED 1");
+    switch (display_activate_output_preferred.operation) {
+        .display_activate_output_preferred => |payload| try std.testing.expectEqualStrings("1", payload),
         else => return error.InvalidFrame,
     }
 
@@ -3588,6 +3653,11 @@ test "baremetal tool service activates requested display connector" {
     defer std.testing.allocator.free(activate_response);
     try std.testing.expectEqualStrings("RESP 67 56\nDISPLAYACTIVATE displayport scanout=1 current=1920x1080\n", activate_response);
 
+    const activate_preferred_response = try handleFramedRequest(std.testing.allocator, "REQ 167 DISPLAYACTIVATEPREFERRED displayport", 512, 256, 512);
+    defer std.testing.allocator.free(activate_preferred_response);
+    try std.testing.expect(std.mem.startsWith(u8, activate_preferred_response, "RESP 167 "));
+    try std.testing.expect(std.mem.indexOf(u8, activate_preferred_response, "DISPLAYACTIVATEPREFERRED displayport scanout=1 current=1920x1080 preferred=1920x1080\n") != null);
+
     const mismatch_response = try handleFramedRequest(std.testing.allocator, "REQ 68 DISPLAYACTIVATE embedded-displayport", 512, 256, 512);
     defer std.testing.allocator.free(mismatch_response);
     try std.testing.expectEqualStrings("RESP 68 46\nERR DISPLAYACTIVATE: DisplayConnectorMismatch\n", mismatch_response);
@@ -3595,6 +3665,11 @@ test "baremetal tool service activates requested display connector" {
     const activate_output_response = try handleFramedRequest(std.testing.allocator, "REQ 69 DISPLAYACTIVATEOUTPUT 1", 512, 256, 512);
     defer std.testing.allocator.free(activate_output_response);
     try std.testing.expectEqualStrings("RESP 69 74\nDISPLAYACTIVATEOUTPUT 1 connector=displayport scanout=1 current=1920x1080\n", activate_output_response);
+
+    const activate_output_preferred_response = try handleFramedRequest(std.testing.allocator, "REQ 169 DISPLAYACTIVATEOUTPUTPREFERRED 1", 512, 256, 512);
+    defer std.testing.allocator.free(activate_output_preferred_response);
+    try std.testing.expect(std.mem.startsWith(u8, activate_output_preferred_response, "RESP 169 "));
+    try std.testing.expect(std.mem.indexOf(u8, activate_output_preferred_response, "DISPLAYACTIVATEOUTPUTPREFERRED 1 connector=displayport scanout=1 current=1920x1080 preferred=1920x1080\n") != null);
 
     const missing_output_response = try handleFramedRequest(std.testing.allocator, "REQ 70 DISPLAYACTIVATEOUTPUT 2", 512, 256, 512);
     defer std.testing.allocator.free(missing_output_response);

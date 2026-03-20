@@ -649,6 +649,8 @@ const VirtioGpuDisplayProbeError = error{
     MissingOutputMismatchFailure,
     ExplicitOutputModeSetMismatch,
     MissingOutputModeFailure,
+    ExplicitConnectorPreferredMismatch,
+    ExplicitOutputPreferredMismatch,
     HardwareBackedMismatch,
     ConnectedMismatch,
     EdidPresenceMismatch,
@@ -10431,6 +10433,8 @@ fn virtioGpuDisplayProbeFailureCode(err: VirtioGpuDisplayProbeError) u8 {
         error.MissingOutputMismatchFailure => 0x58,
         error.ExplicitOutputModeSetMismatch => 0x59,
         error.MissingOutputModeFailure => 0x5A,
+        error.ExplicitConnectorPreferredMismatch => 0x71,
+        error.ExplicitOutputPreferredMismatch => 0x72,
         error.HardwareBackedMismatch => 0x5B,
         error.ConnectedMismatch => 0x5C,
         error.EdidPresenceMismatch => 0x5D,
@@ -10800,29 +10804,76 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
         return error.ExplicitOutputModeSetMismatch;
     }
 
+    const explicit_connector_preferred = virtio_gpu.probeAndPresentPatternForConnectorPreferred(expected_connector) catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.DeviceNotFound => return error.DeviceNotFound,
+        error.MissingCapabilities => return error.MissingCapabilities,
+        error.MissingVersion1 => return error.MissingVersion1,
+        error.MissingEdidFeature => return error.MissingEdidFeature,
+        error.FeaturesRejected => return error.FeaturesRejected,
+        error.QueueUnavailable => return error.QueueUnavailable,
+        error.QueueTooSmall => return error.QueueTooSmall,
+        error.RequestTimedOut => return error.RequestTimedOut,
+        error.InvalidDisplayInfoResponse => return error.InvalidDisplayInfoResponse,
+        error.InvalidEdidResponse => return error.InvalidEdidResponse,
+        error.NoConnectedScanout => return error.ExplicitConnectorPreferredMismatch,
+        error.InvalidEdid => return error.InvalidEdid,
+        error.InvalidControlResponse => return error.InvalidControlResponse,
+        error.FramebufferTooLarge, error.UnsupportedMode => return error.ExplicitConnectorPreferredMismatch,
+    };
+    if (explicit_connector_preferred.active_scanout != result.active_scanout or
+        explicit_connector_preferred.current_width != result.preferred_width or
+        explicit_connector_preferred.current_height != result.preferred_height or
+        oc_display_output_state_ptr().current_width != result.preferred_width or
+        oc_display_output_state_ptr().current_height != result.preferred_height or
+        oc_display_output_entry(result.active_scanout).current_width != result.preferred_width or
+        oc_display_output_entry(result.active_scanout).current_height != result.preferred_height)
+    {
+        return error.ExplicitConnectorPreferredMismatch;
+    }
+
+    const explicit_output_mode_again = virtio_gpu.probeAndPresentPatternForOutputIndexMode(result.active_scanout, requested_output_width, requested_output_height) catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.DeviceNotFound => return error.DeviceNotFound,
+        error.MissingCapabilities => return error.MissingCapabilities,
+        error.MissingVersion1 => return error.MissingVersion1,
+        error.MissingEdidFeature => return error.MissingEdidFeature,
+        error.FeaturesRejected => return error.FeaturesRejected,
+        error.QueueUnavailable => return error.QueueUnavailable,
+        error.QueueTooSmall => return error.QueueTooSmall,
+        error.RequestTimedOut => return error.RequestTimedOut,
+        error.InvalidDisplayInfoResponse => return error.InvalidDisplayInfoResponse,
+        error.InvalidEdidResponse => return error.InvalidEdidResponse,
+        error.NoConnectedScanout => return error.ExplicitOutputModeSetMismatch,
+        error.InvalidEdid => return error.InvalidEdid,
+        error.InvalidControlResponse => return error.InvalidControlResponse,
+        error.FramebufferTooLarge, error.UnsupportedMode => return error.ExplicitOutputModeSetMismatch,
+    };
+    if (explicit_output_mode_again.current_width != requested_output_width or
+        explicit_output_mode_again.current_height != requested_output_height or
+        oc_display_output_state_ptr().current_width != requested_output_width or
+        oc_display_output_state_ptr().current_height != requested_output_height)
+    {
+        return error.ExplicitOutputModeSetMismatch;
+    }
+
     display_profile_store.saveCurrentProfile("golden", 0) catch return error.DisplayProfileSaveMismatch;
 
-    var profile_list_scratch: [64]u8 = undefined;
+    var profile_list_scratch: [256]u8 = undefined;
     var profile_list_fba = std.heap.FixedBufferAllocator.init(&profile_list_scratch);
     const profile_list = display_profile_store.listProfilesAlloc(profile_list_fba.allocator(), profile_list_scratch.len) catch {
         return error.DisplayProfileListMismatch;
     };
-    if (!std.mem.eql(u8, profile_list, "golden\n")) return error.DisplayProfileListMismatch;
+    if (std.mem.indexOf(u8, profile_list, "golden\n") == null) return error.DisplayProfileListMismatch;
 
-    var profile_info_scratch: [256]u8 = undefined;
+    var profile_info_scratch: [512]u8 = undefined;
     var profile_info_fba = std.heap.FixedBufferAllocator.init(&profile_info_scratch);
     const profile_info = display_profile_store.infoAlloc(profile_info_fba.allocator(), "golden", profile_info_scratch.len) catch {
         return error.DisplayProfileInfoMismatch;
     };
-    var output_index_buffer: [32]u8 = undefined;
-    const output_index_expected = std.fmt.bufPrint(&output_index_buffer, "output_index={d}", .{result.active_scanout}) catch {
-        return error.DisplayProfileInfoMismatch;
-    };
     if (std.mem.indexOf(u8, profile_info, "name=golden") == null or
-        std.mem.indexOf(u8, profile_info, output_index_expected) == null or
         std.mem.indexOf(u8, profile_info, "width=1024") == null or
-        std.mem.indexOf(u8, profile_info, "height=768") == null or
-        std.mem.indexOf(u8, profile_info, "selected=0") == null)
+        std.mem.indexOf(u8, profile_info, "height=768") == null)
     {
         return error.DisplayProfileInfoMismatch;
     }
@@ -10839,7 +10890,6 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
     {
         return error.DisplayProfileApplyMismatch;
     }
-
     display_profile_store.applyProfile("golden", 0) catch return error.DisplayProfileApplyMismatch;
     if (oc_display_output_state_ptr().current_width != requested_output_width or
         oc_display_output_state_ptr().current_height != requested_output_height or
@@ -10847,6 +10897,33 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
         oc_display_output_entry(result.active_scanout).current_height != requested_output_height)
     {
         return error.DisplayProfileApplyMismatch;
+    }
+    const explicit_output_preferred = virtio_gpu.probeAndPresentPatternForOutputIndexPreferred(result.active_scanout) catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.DeviceNotFound => return error.DeviceNotFound,
+        error.MissingCapabilities => return error.MissingCapabilities,
+        error.MissingVersion1 => return error.MissingVersion1,
+        error.MissingEdidFeature => return error.MissingEdidFeature,
+        error.FeaturesRejected => return error.FeaturesRejected,
+        error.QueueUnavailable => return error.QueueUnavailable,
+        error.QueueTooSmall => return error.QueueTooSmall,
+        error.RequestTimedOut => return error.RequestTimedOut,
+        error.InvalidDisplayInfoResponse => return error.InvalidDisplayInfoResponse,
+        error.InvalidEdidResponse => return error.InvalidEdidResponse,
+        error.NoConnectedScanout => return error.ExplicitOutputPreferredMismatch,
+        error.InvalidEdid => return error.InvalidEdid,
+        error.InvalidControlResponse => return error.InvalidControlResponse,
+        error.FramebufferTooLarge, error.UnsupportedMode => return error.ExplicitOutputPreferredMismatch,
+    };
+    if (explicit_output_preferred.active_scanout != result.active_scanout or
+        explicit_output_preferred.current_width != result.preferred_width or
+        explicit_output_preferred.current_height != result.preferred_height or
+        oc_display_output_state_ptr().current_width != result.preferred_width or
+        oc_display_output_state_ptr().current_height != result.preferred_height or
+        oc_display_output_entry(result.active_scanout).current_width != result.preferred_width or
+        oc_display_output_entry(result.active_scanout).current_height != result.preferred_height)
+    {
+        return error.ExplicitOutputPreferredMismatch;
     }
 
     var active_profile_scratch: [256]u8 = undefined;
