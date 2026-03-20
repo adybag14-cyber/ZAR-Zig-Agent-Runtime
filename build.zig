@@ -14,6 +14,7 @@ pub fn build(b: *std.Build) void {
     const baremetal_e1000_arp_probe = b.option(bool, "baremetal-e1000-arp-probe", "Enable the E1000 ARP validation path in the freestanding image") orelse false;
     const baremetal_e1000_ipv4_probe = b.option(bool, "baremetal-e1000-ipv4-probe", "Enable the E1000 IPv4 validation path in the freestanding image") orelse false;
     const baremetal_e1000_udp_probe = b.option(bool, "baremetal-e1000-udp-probe", "Enable the E1000 UDP validation path in the freestanding image") orelse false;
+    const baremetal_e1000_tcp_probe = b.option(bool, "baremetal-e1000-tcp-probe", "Enable the E1000 TCP validation path in the freestanding image") orelse false;
     const baremetal_rtl8139_probe = b.option(bool, "baremetal-rtl8139-probe", "Enable the RTL8139 Ethernet validation path in the freestanding image") orelse false;
     const baremetal_rtl8139_arp_probe = b.option(bool, "baremetal-rtl8139-arp-probe", "Enable the RTL8139 ARP validation path in the freestanding image") orelse false;
     const baremetal_rtl8139_ipv4_probe = b.option(bool, "baremetal-rtl8139-ipv4-probe", "Enable the RTL8139 IPv4 validation path in the freestanding image") orelse false;
@@ -110,6 +111,7 @@ pub fn build(b: *std.Build) void {
     baremetal_options.addOption(bool, "e1000_arp_probe", baremetal_e1000_arp_probe);
     baremetal_options.addOption(bool, "e1000_ipv4_probe", baremetal_e1000_ipv4_probe);
     baremetal_options.addOption(bool, "e1000_udp_probe", baremetal_e1000_udp_probe);
+    baremetal_options.addOption(bool, "e1000_tcp_probe", baremetal_e1000_tcp_probe);
     baremetal_options.addOption(bool, "rtl8139_probe", baremetal_rtl8139_probe);
     baremetal_options.addOption(bool, "rtl8139_arp_probe", baremetal_rtl8139_arp_probe);
     baremetal_options.addOption(bool, "rtl8139_ipv4_probe", baremetal_rtl8139_ipv4_probe);
