@@ -102,6 +102,9 @@ const qemu_rtl8139_https_post_probe_ok_code: u8 = 0x42;
 const qemu_tool_runtime_probe_ok_code: u8 = 0x43;
 const qemu_rtl8139_runtime_service_probe_ok_code: u8 = 0x44;
 const qemu_e1000_probe_ok_code: u8 = 0x45;
+const qemu_e1000_arp_probe_ok_code: u8 = 0x46;
+const qemu_e1000_ipv4_probe_ok_code: u8 = 0x47;
+const qemu_e1000_udp_probe_ok_code: u8 = 0x48;
 const build_options = if (builtin.is_test)
     struct {
         pub const qemu_smoke: bool = false;
@@ -111,6 +114,9 @@ const build_options = if (builtin.is_test)
         pub const framebuffer_probe_height: u16 = 0;
         pub const ata_storage_probe: bool = false;
         pub const e1000_probe: bool = false;
+        pub const e1000_arp_probe: bool = false;
+        pub const e1000_ipv4_probe: bool = false;
+        pub const e1000_udp_probe: bool = false;
         pub const rtl8139_probe: bool = false;
         pub const rtl8139_arp_probe: bool = false;
         pub const rtl8139_ipv4_probe: bool = false;
@@ -136,6 +142,9 @@ const framebuffer_probe_width: u16 = if (@hasDecl(build_options, "framebuffer_pr
 const framebuffer_probe_height: u16 = if (@hasDecl(build_options, "framebuffer_probe_height")) build_options.framebuffer_probe_height else 0;
 const ata_storage_probe_enabled: bool = build_options.ata_storage_probe;
 const e1000_probe_enabled: bool = if (@hasDecl(build_options, "e1000_probe")) build_options.e1000_probe else false;
+const e1000_arp_probe_enabled: bool = if (@hasDecl(build_options, "e1000_arp_probe")) build_options.e1000_arp_probe else false;
+const e1000_ipv4_probe_enabled: bool = if (@hasDecl(build_options, "e1000_ipv4_probe")) build_options.e1000_ipv4_probe else false;
+const e1000_udp_probe_enabled: bool = if (@hasDecl(build_options, "e1000_udp_probe")) build_options.e1000_udp_probe else false;
 const rtl8139_probe_enabled: bool = build_options.rtl8139_probe;
 const rtl8139_arp_probe_enabled: bool = build_options.rtl8139_arp_probe;
 const rtl8139_ipv4_probe_enabled: bool = build_options.rtl8139_ipv4_probe;
@@ -264,6 +273,110 @@ const E1000ProbeError = error{
     RxTimedOut,
     RxLengthMismatch,
     RxPatternMismatch,
+    CounterMismatch,
+};
+
+const E1000ArpProbeError = error{
+    UnsupportedPlatform,
+    DeviceNotFound,
+    MissingMmioBar,
+    MissingIoBar,
+    ResetTimeout,
+    AutoReadTimeout,
+    EepromReadFailed,
+    EepromChecksumMismatch,
+    MacReadFailed,
+    RingProgramFailed,
+    StateMagicMismatch,
+    BackendMismatch,
+    InitFlagMismatch,
+    HardwareBackedMismatch,
+    IoBaseMismatch,
+    TxFailed,
+    LinkDropped,
+    TxCompletedNoRxProgress,
+    RxHeadAdvancedNoFrame,
+    RxTimedOut,
+    PacketMissing,
+    PacketDestinationMismatch,
+    PacketSourceMismatch,
+    PacketOperationMismatch,
+    PacketSenderMismatch,
+    PacketTargetMismatch,
+    CounterMismatch,
+};
+
+const E1000Ipv4ProbeError = error{
+    UnsupportedPlatform,
+    DeviceNotFound,
+    MissingMmioBar,
+    MissingIoBar,
+    ResetTimeout,
+    AutoReadTimeout,
+    EepromReadFailed,
+    EepromChecksumMismatch,
+    MacReadFailed,
+    RingProgramFailed,
+    StateMagicMismatch,
+    BackendMismatch,
+    InitFlagMismatch,
+    HardwareBackedMismatch,
+    IoBaseMismatch,
+    TxFailed,
+    LinkDropped,
+    TxCompletedNoRxProgress,
+    RxHeadAdvancedNoFrame,
+    RxTimedOut,
+    LastFrameTooShort,
+    LastFrameNotIpv4,
+    LastIpv4DecodeFailed,
+    PacketMissing,
+    PacketDestinationMismatch,
+    PacketSourceMismatch,
+    PacketProtocolMismatch,
+    PacketSenderMismatch,
+    PacketTargetMismatch,
+    PayloadMismatch,
+    FrameLengthMismatch,
+    CounterMismatch,
+};
+
+const E1000UdpProbeError = error{
+    UnsupportedPlatform,
+    DeviceNotFound,
+    MissingMmioBar,
+    MissingIoBar,
+    ResetTimeout,
+    AutoReadTimeout,
+    EepromReadFailed,
+    EepromChecksumMismatch,
+    MacReadFailed,
+    RingProgramFailed,
+    StateMagicMismatch,
+    BackendMismatch,
+    InitFlagMismatch,
+    HardwareBackedMismatch,
+    IoBaseMismatch,
+    TxFailed,
+    LinkDropped,
+    TxCompletedNoRxProgress,
+    RxHeadAdvancedNoFrame,
+    RxTimedOut,
+    LastFrameTooShort,
+    LastFrameNotIpv4,
+    LastIpv4DecodeFailed,
+    LastPacketNotUdp,
+    LastUdpDecodeFailed,
+    PacketMissing,
+    PacketDestinationMismatch,
+    PacketSourceMismatch,
+    PacketProtocolMismatch,
+    PacketSenderMismatch,
+    PacketTargetMismatch,
+    PacketPortsMismatch,
+    ChecksumMissing,
+    PayloadMismatch,
+    FrameLengthMismatch,
     CounterMismatch,
 };
 
@@ -712,6 +825,7 @@ const VirtioGpuDisplayProbeError = error{
     OutputEntryCountMismatch,
     OutputEntryMismatch,
     OutputDetailMismatch,
+    DisplayCapabilityResponseMismatch,
     PresentStatsMismatch,
     RenderedPixelMismatch,
     DisplayProfileSaveMismatch,
@@ -1989,6 +2103,18 @@ fn baremetalStart() callconv(.c) noreturn {
         runE1000Probe() catch |err| qemuExit(e1000ProbeFailureCode(err));
         qemuExit(qemu_e1000_probe_ok_code);
     }
+    if (e1000_arp_probe_enabled) {
+        runE1000ArpProbe() catch |err| qemuExit(e1000ArpProbeFailureCode(err));
+        qemuExit(qemu_e1000_arp_probe_ok_code);
+    }
+    if (e1000_ipv4_probe_enabled) {
+        runE1000Ipv4Probe() catch |err| qemuExit(e1000Ipv4ProbeFailureCode(err));
+        qemuExit(qemu_e1000_ipv4_probe_ok_code);
+    }
+    if (e1000_udp_probe_enabled) {
+        runE1000UdpProbe() catch |err| qemuExit(e1000UdpProbeFailureCode(err));
+        qemuExit(qemu_e1000_udp_probe_ok_code);
+    }
     if (rtl8139_probe_enabled) {
         runRtl8139Probe() catch |err| qemuExit(rtl8139ProbeFailureCode(err));
         qemuExit(qemu_rtl8139_probe_ok_code);
@@ -2440,6 +2566,360 @@ fn buildE1000ProbeFrame(frame: []u8, destination_mac: [6]u8, source_mac: [6]u8, 
     while (index < frame.len) : (index += 1) {
         frame[index] = seed +% @as(u8, @truncate(index - 14));
     }
+}
+
+const E1000DataPathTimeout = enum {
+    LinkDropped,
+    TxCompletedNoRxProgress,
+    RxHeadAdvancedNoFrame,
+    RxTimedOut,
+};
+
+fn warmE1000ProbeTransport(expect_mock_echo: bool) void {
+    if (expect_mock_echo) return;
+    var warmup: usize = 0;
+    while (warmup < e1000_probe_receive_warmup_loops) : (warmup += 1) {
+        spinPause(1);
+    }
+}
+
+fn classifyE1000DataPathTimeout(eth: *const BaremetalEthernetState) E1000DataPathTimeout {
+    const nic_status = e1000.debugStatus();
+    const tx_head = e1000.debugTxHead();
+    const tx_tail = e1000.debugTxTail();
+    const rx_head = e1000.debugRxHead();
+
+    if ((nic_status & 0x2) == 0) return .LinkDropped;
+    if (eth.tx_packets != 0 and tx_head == tx_tail) {
+        return if (rx_head != 0) .RxHeadAdvancedNoFrame else .TxCompletedNoRxProgress;
+    }
+    return .RxTimedOut;
+}
+
+fn classifyE1000ArpProbeTimeout(eth: *const BaremetalEthernetState) E1000ArpProbeError {
+    return switch (classifyE1000DataPathTimeout(eth)) {
+        .LinkDropped => error.LinkDropped,
+        .TxCompletedNoRxProgress => error.TxCompletedNoRxProgress,
+        .RxHeadAdvancedNoFrame => error.RxHeadAdvancedNoFrame,
+        .RxTimedOut => error.RxTimedOut,
+    };
+}
+
+fn classifyE1000Ipv4ProbeTimeout(eth: *const BaremetalEthernetState) E1000Ipv4ProbeError {
+    return switch (classifyE1000DataPathTimeout(eth)) {
+        .LinkDropped => error.LinkDropped,
+        .TxCompletedNoRxProgress => error.TxCompletedNoRxProgress,
+        .RxHeadAdvancedNoFrame => error.RxHeadAdvancedNoFrame,
+        .RxTimedOut => error.RxTimedOut,
+    };
+}
+
+fn classifyE1000UdpProbeTimeout(eth: *const BaremetalEthernetState) E1000UdpProbeError {
+    return switch (classifyE1000DataPathTimeout(eth)) {
+        .LinkDropped => error.LinkDropped,
+        .TxCompletedNoRxProgress => error.TxCompletedNoRxProgress,
+        .RxHeadAdvancedNoFrame => error.RxHeadAdvancedNoFrame,
+        .RxTimedOut => error.RxTimedOut,
+    };
+}
+
+fn runE1000ArpProbe() E1000ArpProbeError!void {
+    setProbeInterruptsEnabled(false);
+    pal_net.selectBackend(.e1000);
+
+    e1000.initDetailed() catch |err| return switch (err) {
+        error.UnsupportedPlatform => error.UnsupportedPlatform,
+        error.DeviceNotFound => error.DeviceNotFound,
+        error.MissingMmioBar => error.MissingMmioBar,
+        error.MissingIoBar => error.MissingIoBar,
+        error.ResetTimeout => error.ResetTimeout,
+        error.AutoReadTimeout => error.AutoReadTimeout,
+        error.EepromReadFailed => error.EepromReadFailed,
+        error.EepromChecksumMismatch => error.EepromChecksumMismatch,
+        error.MacReadFailed => error.MacReadFailed,
+        error.RingProgramFailed => error.RingProgramFailed,
+    };
+
+    const eth = e1000.statePtr();
+    if (eth.magic != abi.ethernet_magic) return error.StateMagicMismatch;
+    if (eth.backend != abi.ethernet_backend_e1000) return error.BackendMismatch;
+    if (eth.initialized == 0) return error.InitFlagMismatch;
+    if (!builtin.is_test and eth.hardware_backed == 0) return error.HardwareBackedMismatch;
+    if (eth.io_base == 0) return error.IoBaseMismatch;
+
+    const expect_mock_echo = builtin.is_test or eth.hardware_backed == 0;
+    warmE1000ProbeTransport(expect_mock_echo);
+
+    pal_net.clearRouteState();
+    defer pal_net.clearRouteState();
+    const sender_ip = [4]u8{ 10, 0, 2, 15 };
+    const target_ip = [4]u8{ 10, 0, 2, 2 };
+    pal_net.configureIpv4Route(sender_ip, .{ 255, 255, 255, 0 }, null);
+    if ((pal_net.sendArpRequest(sender_ip, target_ip) catch return error.TxFailed) != arp_protocol.frame_len) {
+        return error.TxFailed;
+    }
+
+    var attempts: usize = 0;
+    var packet_opt: ?pal_net.ArpPacket = null;
+    while (attempts < 200_000) : (attempts += 1) {
+        packet_opt = pal_net.pollArpPacket() catch return error.PacketMissing;
+        if (packet_opt != null) break;
+        spinPause(1);
+    }
+    const packet = packet_opt orelse return classifyE1000ArpProbeTimeout(eth);
+
+    const expected_destination = if (expect_mock_echo) ethernet_protocol.broadcast_mac else eth.mac;
+    const expected_source = if (expect_mock_echo) eth.mac else e1000_probe_remote_mac;
+    if (!std.mem.eql(u8, expected_destination[0..], packet.ethernet_destination[0..])) return error.PacketDestinationMismatch;
+    if (!std.mem.eql(u8, expected_source[0..], packet.ethernet_source[0..])) return error.PacketSourceMismatch;
+    if (packet.operation != arp_protocol.operation_request) return error.PacketOperationMismatch;
+    if (!std.mem.eql(u8, eth.mac[0..], packet.sender_mac[0..]) or !std.mem.eql(u8, sender_ip[0..], packet.sender_ip[0..])) {
+        return error.PacketSenderMismatch;
+    }
+    if (!std.mem.eql(u8, target_ip[0..], packet.target_ip[0..]) or !std.mem.eql(u8, &[_]u8{ 0, 0, 0, 0, 0, 0 }, packet.target_mac[0..])) {
+        return error.PacketTargetMismatch;
+    }
+    if (eth.tx_packets == 0 or eth.rx_packets == 0 or eth.last_rx_len < arp_protocol.frame_len) return error.CounterMismatch;
+}
+
+fn runE1000Ipv4Probe() E1000Ipv4ProbeError!void {
+    pal_net.selectBackend(.e1000);
+
+    e1000.initDetailed() catch |err| return switch (err) {
+        error.UnsupportedPlatform => error.UnsupportedPlatform,
+        error.DeviceNotFound => error.DeviceNotFound,
+        error.MissingMmioBar => error.MissingMmioBar,
+        error.MissingIoBar => error.MissingIoBar,
+        error.ResetTimeout => error.ResetTimeout,
+        error.AutoReadTimeout => error.AutoReadTimeout,
+        error.EepromReadFailed => error.EepromReadFailed,
+        error.EepromChecksumMismatch => error.EepromChecksumMismatch,
+        error.MacReadFailed => error.MacReadFailed,
+        error.RingProgramFailed => error.RingProgramFailed,
+    };
+
+    const eth = e1000.statePtr();
+    if (eth.magic != abi.ethernet_magic) return error.StateMagicMismatch;
+    if (eth.backend != abi.ethernet_backend_e1000) return error.BackendMismatch;
+    if (eth.initialized == 0) return error.InitFlagMismatch;
+    if (!builtin.is_test and eth.hardware_backed == 0) return error.HardwareBackedMismatch;
+    if (eth.io_base == 0) return error.IoBaseMismatch;
+
+    const expect_mock_echo = builtin.is_test or eth.hardware_backed == 0;
+    warmE1000ProbeTransport(expect_mock_echo);
+
+    const source_ip = [4]u8{ 192, 168, 56, 10 };
+    const destination_ip = [4]u8{ 192, 168, 56, 1 };
+    const payload = "PING";
+    const expected_wire_len: u32 = ethernet_protocol.header_len + ipv4_protocol.header_len + payload.len;
+    const expected_frame_len: u32 = @max(expected_wire_len, 60);
+    if ((pal_net.sendIpv4Frame(ethernet_protocol.broadcast_mac, source_ip, destination_ip, ipv4_protocol.protocol_udp, payload) catch return error.TxFailed) != expected_wire_len) {
+        return error.TxFailed;
+    }
+
+    var attempts: usize = 0;
+    var packet_opt: ?pal_net.Ipv4Packet = null;
+    while (attempts < 200_000) : (attempts += 1) {
+        packet_opt = pal_net.pollIpv4PacketStrict() catch |err| return switch (err) {
+            error.NotIpv4 => error.LastFrameNotIpv4,
+            error.FrameTooShort, error.PacketTooShort => error.LastFrameTooShort,
+            error.InvalidVersion, error.UnsupportedOptions, error.InvalidTotalLength, error.HeaderChecksumMismatch => error.LastIpv4DecodeFailed,
+            else => error.PacketMissing,
+        };
+        if (packet_opt != null) break;
+        spinPause(1);
+    }
+    const packet = packet_opt orelse return classifyE1000Ipv4ProbeTimeout(eth);
+
+    const expected_destination = if (expect_mock_echo) ethernet_protocol.broadcast_mac else eth.mac;
+    const expected_source = if (expect_mock_echo) eth.mac else e1000_probe_remote_mac;
+    if (!std.mem.eql(u8, expected_destination[0..], packet.ethernet_destination[0..])) return error.PacketDestinationMismatch;
+    if (!std.mem.eql(u8, expected_source[0..], packet.ethernet_source[0..])) return error.PacketSourceMismatch;
+    if (packet.header.protocol != ipv4_protocol.protocol_udp) return error.PacketProtocolMismatch;
+    if (!std.mem.eql(u8, source_ip[0..], packet.header.source_ip[0..])) return error.PacketSenderMismatch;
+    if (!std.mem.eql(u8, destination_ip[0..], packet.header.destination_ip[0..])) return error.PacketTargetMismatch;
+    if (!std.mem.eql(u8, payload, packet.payload[0..packet.payload_len])) return error.PayloadMismatch;
+    if (eth.last_rx_len != expected_frame_len) return error.FrameLengthMismatch;
+    if (eth.tx_packets == 0 or eth.rx_packets == 0) return error.CounterMismatch;
+}
+
+fn runE1000UdpProbe() E1000UdpProbeError!void {
+    pal_net.selectBackend(.e1000);
+
+    e1000.initDetailed() catch |err| return switch (err) {
+        error.UnsupportedPlatform => error.UnsupportedPlatform,
+        error.DeviceNotFound => error.DeviceNotFound,
+        error.MissingMmioBar => error.MissingMmioBar,
+        error.MissingIoBar => error.MissingIoBar,
+        error.ResetTimeout => error.ResetTimeout,
+        error.AutoReadTimeout => error.AutoReadTimeout,
+        error.EepromReadFailed => error.EepromReadFailed,
+        error.EepromChecksumMismatch => error.EepromChecksumMismatch,
+        error.MacReadFailed => error.MacReadFailed,
+        error.RingProgramFailed => error.RingProgramFailed,
+    };
+
+    const eth = e1000.statePtr();
+    if (eth.magic != abi.ethernet_magic) return error.StateMagicMismatch;
+    if (eth.backend != abi.ethernet_backend_e1000) return error.BackendMismatch;
+    if (eth.initialized == 0) return error.InitFlagMismatch;
+    if (!builtin.is_test and eth.hardware_backed == 0) return error.HardwareBackedMismatch;
+    if (eth.io_base == 0) return error.IoBaseMismatch;
+
+    const expect_mock_echo = builtin.is_test or eth.hardware_backed == 0;
+    warmE1000ProbeTransport(expect_mock_echo);
+
+    const source_ip = [4]u8{ 192, 168, 56, 10 };
+    const destination_ip = [4]u8{ 192, 168, 56, 1 };
+    const source_port: u16 = 4321;
+    const destination_port: u16 = 9001;
+    const payload = "OPENCLAW-UDP";
+    const expected_wire_len: u32 = ethernet_protocol.header_len + ipv4_protocol.header_len + udp_protocol.header_len + payload.len;
+    const expected_frame_len: u32 = @max(expected_wire_len, 60);
+    if ((pal_net.sendUdpPacket(ethernet_protocol.broadcast_mac, source_ip, destination_ip, source_port, destination_port, payload) catch return error.TxFailed) != expected_wire_len) {
+        return error.TxFailed;
+    }
+
+    var attempts: usize = 0;
+    var packet_received = false;
+    var packet_storage: pal_net.UdpPacket = undefined;
+    while (attempts < 200_000) : (attempts += 1) {
+        packet_received = pal_net.pollUdpPacketStrictInto(&packet_storage) catch |err| return switch (err) {
+            error.NotIpv4 => error.LastFrameNotIpv4,
+            error.NotUdp => error.LastPacketNotUdp,
+            error.FrameTooShort, error.PacketTooShort => error.LastFrameTooShort,
+            error.InvalidVersion, error.UnsupportedOptions, error.InvalidTotalLength, error.HeaderChecksumMismatch => error.LastIpv4DecodeFailed,
+            error.InvalidLength, error.ChecksumMismatch => error.LastUdpDecodeFailed,
+            else => error.PacketMissing,
+        };
+        if (packet_received) break;
+        spinPause(1);
+    }
+    if (!packet_received) return classifyE1000UdpProbeTimeout(eth);
+
+    const packet = &packet_storage;
+    const expected_destination = if (expect_mock_echo) ethernet_protocol.broadcast_mac else eth.mac;
+    const expected_source = if (expect_mock_echo) eth.mac else e1000_probe_remote_mac;
+    if (!std.mem.eql(u8, expected_destination[0..], packet.ethernet_destination[0..])) return error.PacketDestinationMismatch;
+    if (!std.mem.eql(u8, expected_source[0..], packet.ethernet_source[0..])) return error.PacketSourceMismatch;
+    if (packet.ipv4_header.protocol != ipv4_protocol.protocol_udp) return error.PacketProtocolMismatch;
+    if (!std.mem.eql(u8, source_ip[0..], packet.ipv4_header.source_ip[0..])) return error.PacketSenderMismatch;
+    if (!std.mem.eql(u8, destination_ip[0..], packet.ipv4_header.destination_ip[0..])) return error.PacketTargetMismatch;
+    if (packet.source_port != source_port or packet.destination_port != destination_port) return error.PacketPortsMismatch;
+    if (packet.checksum_value == 0) return error.ChecksumMissing;
+    if (!std.mem.eql(u8, payload, packet.payload[0..packet.payload_len])) return error.PayloadMismatch;
+    if (eth.last_rx_len != expected_frame_len) return error.FrameLengthMismatch;
+    if (eth.tx_packets == 0 or eth.rx_packets == 0) return error.CounterMismatch;
+}
+
+fn e1000ArpProbeFailureCode(err: E1000ArpProbeError) u8 {
+    return switch (err) {
+        error.UnsupportedPlatform => 0x46,
+        error.DeviceNotFound => 0x47,
+        error.MissingMmioBar => 0x48,
+        error.MissingIoBar => 0x49,
+        error.ResetTimeout => 0x4A,
+        error.AutoReadTimeout => 0x4B,
+        error.EepromReadFailed => 0x4C,
+        error.EepromChecksumMismatch => 0x4D,
+        error.MacReadFailed => 0x4E,
+        error.RingProgramFailed => 0x4F,
+        error.StateMagicMismatch => 0x50,
+        error.BackendMismatch => 0x51,
+        error.InitFlagMismatch => 0x52,
+        error.HardwareBackedMismatch => 0x53,
+        error.IoBaseMismatch => 0x54,
+        error.TxFailed => 0x55,
+        error.LinkDropped => 0x56,
+        error.TxCompletedNoRxProgress => 0x57,
+        error.RxHeadAdvancedNoFrame => 0x58,
+        error.RxTimedOut => 0x59,
+        error.PacketMissing => 0x5A,
+        error.PacketDestinationMismatch => 0x5B,
+        error.PacketSourceMismatch => 0x5C,
+        error.PacketOperationMismatch => 0x5D,
+        error.PacketSenderMismatch => 0x5E,
+        error.PacketTargetMismatch => 0x5F,
+        error.CounterMismatch => 0x60,
+    };
+}
+
+fn e1000Ipv4ProbeFailureCode(err: E1000Ipv4ProbeError) u8 {
+    return switch (err) {
+        error.UnsupportedPlatform => 0x61,
+        error.DeviceNotFound => 0x62,
+        error.MissingMmioBar => 0x63,
+        error.MissingIoBar => 0x64,
+        error.ResetTimeout => 0x65,
+        error.AutoReadTimeout => 0x66,
+        error.EepromReadFailed => 0x67,
+        error.EepromChecksumMismatch => 0x68,
+        error.MacReadFailed => 0x69,
+        error.RingProgramFailed => 0x6A,
+        error.StateMagicMismatch => 0x6B,
+        error.BackendMismatch => 0x6C,
+        error.InitFlagMismatch => 0x6D,
+        error.HardwareBackedMismatch => 0x6E,
+        error.IoBaseMismatch => 0x6F,
+        error.TxFailed => 0x70,
+        error.LinkDropped => 0x71,
+        error.TxCompletedNoRxProgress => 0x72,
+        error.RxHeadAdvancedNoFrame => 0x73,
+        error.RxTimedOut => 0x74,
+        error.LastFrameTooShort => 0x75,
+        error.LastFrameNotIpv4 => 0x76,
+        error.LastIpv4DecodeFailed => 0x77,
+        error.PacketMissing => 0x78,
+        error.PacketDestinationMismatch => 0x79,
+        error.PacketSourceMismatch => 0x7A,
+        error.PacketProtocolMismatch => 0x7B,
+        error.PacketSenderMismatch => 0x7C,
+        error.PacketTargetMismatch => 0x7D,
+        error.PayloadMismatch => 0x7E,
+        error.FrameLengthMismatch => 0x7F,
+        error.CounterMismatch => 0x80,
+    };
+}
+
+fn e1000UdpProbeFailureCode(err: E1000UdpProbeError) u8 {
+    return switch (err) {
+        error.UnsupportedPlatform => 0x81,
+        error.DeviceNotFound => 0x82,
+        error.MissingMmioBar => 0x83,
+        error.MissingIoBar => 0x84,
+        error.ResetTimeout => 0x85,
+        error.AutoReadTimeout => 0x86,
+        error.EepromReadFailed => 0x87,
+        error.EepromChecksumMismatch => 0x88,
+        error.MacReadFailed => 0x89,
+        error.RingProgramFailed => 0x8A,
+        error.StateMagicMismatch => 0x8B,
+        error.BackendMismatch => 0x8C,
+        error.InitFlagMismatch => 0x8D,
+        error.HardwareBackedMismatch => 0x8E,
+        error.IoBaseMismatch => 0x8F,
+        error.TxFailed => 0x90,
+        error.LinkDropped => 0x91,
+        error.TxCompletedNoRxProgress => 0x92,
+        error.RxHeadAdvancedNoFrame => 0x93,
+        error.RxTimedOut => 0x94,
+        error.LastFrameTooShort => 0x95,
+        error.LastFrameNotIpv4 => 0x96,
+        error.LastIpv4DecodeFailed => 0x97,
+        error.LastPacketNotUdp => 0x98,
+        error.LastUdpDecodeFailed => 0x99,
+        error.PacketMissing => 0x9A,
+        error.PacketDestinationMismatch => 0x9B,
+        error.PacketSourceMismatch => 0x9C,
+        error.PacketProtocolMismatch => 0x9D,
+        error.PacketSenderMismatch => 0x9E,
+        error.PacketTargetMismatch => 0x9F,
+        error.PacketPortsMismatch => 0xA0,
+        error.ChecksumMissing => 0xA1,
+        error.PayloadMismatch => 0xA2,
+        error.FrameLengthMismatch => 0xA3,
+        error.CounterMismatch => 0xA4,
+    };
 }
 
 fn runRtl8139Probe() Rtl8139ProbeError!void {
@@ -10727,6 +11207,7 @@ fn virtioGpuDisplayProbeFailureCode(err: VirtioGpuDisplayProbeError) u8 {
         error.OutputEntryCountMismatch => 0x68,
         error.OutputEntryMismatch => 0x69,
         error.OutputDetailMismatch => 0x7A,
+        error.DisplayCapabilityResponseMismatch => 0x7B,
         error.PresentStatsMismatch => 0x6A,
         error.RenderedPixelMismatch => 0x6B,
         error.DisplayProfileSaveMismatch => 0x6D,
@@ -11015,6 +11496,81 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
     {
         return error.OutputDetailMismatch;
     }
+
+    var capability_response_scratch: [768]u8 = undefined;
+    var capability_response_fba = std.heap.FixedBufferAllocator.init(&capability_response_scratch);
+    const output_capability_response = tool_service.handleFramedRequest(
+        capability_response_fba.allocator(),
+        "REQ 601 DISPLAYOUTPUTCAPABILITIES 0",
+        512,
+        256,
+        512,
+    ) catch return error.DisplayCapabilityResponseMismatch;
+    const interface_name = display_output.interfaceName(expected_interface);
+    const declared_interface_name = display_output.interfaceName(display_output.outputDeclaredInterfaceType(result.active_scanout));
+    const connector_name = switch (expected_connector) {
+        abi.display_connector_displayport => "displayport",
+        abi.display_connector_hdmi => "hdmi",
+        abi.display_connector_embedded_displayport => "embedded-displayport",
+        abi.display_connector_virtual => "virtual",
+        else => "none",
+    };
+    var output_capability_expected_payload_buffer: [320]u8 = undefined;
+    const output_capability_expected_payload = std.fmt.bufPrint(
+        &output_capability_expected_payload_buffer,
+        "index={d} scanout={d} connector={s} interface={s} declared_interface={s} connected=1 digital={d} preferred={d} cea={d} audio={d} hdmi_vendor={d} displayid={d} underscan={d} ycbcr444={d} ycbcr422={d} capabilities=0x{x}\n",
+        .{
+            result.active_scanout,
+            result.active_scanout,
+            connector_name,
+            interface_name,
+            declared_interface_name,
+            if ((result.capability_flags & abi.display_capability_digital_input) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((result.capability_flags & abi.display_capability_preferred_timing) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((result.capability_flags & abi.display_capability_cea_extension) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((result.capability_flags & abi.display_capability_basic_audio) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((result.capability_flags & abi.display_capability_hdmi_vendor_data) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((result.capability_flags & abi.display_capability_displayid_extension) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((result.capability_flags & abi.display_capability_underscan) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((result.capability_flags & abi.display_capability_ycbcr444) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((result.capability_flags & abi.display_capability_ycbcr422) != 0) @as(u8, 1) else @as(u8, 0),
+            result.capability_flags,
+        },
+    ) catch return error.DisplayCapabilityResponseMismatch;
+    var output_capability_expected_response_buffer: [384]u8 = undefined;
+    const output_capability_expected_response = std.fmt.bufPrint(
+        &output_capability_expected_response_buffer,
+        "RESP 601 {d}\n{s}",
+        .{ output_capability_expected_payload.len, output_capability_expected_payload },
+    ) catch return error.DisplayCapabilityResponseMismatch;
+    if (!std.mem.eql(u8, output_capability_response, output_capability_expected_response)) {
+        return error.DisplayCapabilityResponseMismatch;
+    }
+
+    capability_response_fba = std.heap.FixedBufferAllocator.init(&capability_response_scratch);
+    var interface_capability_request_buffer: [96]u8 = undefined;
+    const interface_capability_request = std.fmt.bufPrint(
+        &interface_capability_request_buffer,
+        "REQ 602 DISPLAYINTERFACECAPABILITIES {s}",
+        .{interface_name},
+    ) catch return error.DisplayCapabilityResponseMismatch;
+    const interface_capability_response = tool_service.handleFramedRequest(
+        capability_response_fba.allocator(),
+        interface_capability_request,
+        512,
+        256,
+        512,
+    ) catch return error.DisplayCapabilityResponseMismatch;
+    var interface_capability_expected_response_buffer: [384]u8 = undefined;
+    const interface_capability_expected_response = std.fmt.bufPrint(
+        &interface_capability_expected_response_buffer,
+        "RESP 602 {d}\n{s}",
+        .{ output_capability_expected_payload.len, output_capability_expected_payload },
+    ) catch return error.DisplayCapabilityResponseMismatch;
+    if (!std.mem.eql(u8, interface_capability_response, interface_capability_expected_response)) {
+        return error.DisplayCapabilityResponseMismatch;
+    }
+
     if (present_stats.resource_create_count == 0 or
         present_stats.attach_backing_count == 0 or
         present_stats.scanout_set_count == 0 or
@@ -12967,6 +13523,8 @@ fn resetBaremetalRuntimeForTest() void {
     ps2_input.resetForTest();
     tool_layout.resetForTest();
     filesystem.resetForTest();
+    pal_net.selectBackend(.rtl8139);
+    pal_net.clearRouteState();
 }
 
 fn captureStackPointer() u64 {
@@ -19740,6 +20298,31 @@ test "baremetal e1000 raw frame transport loops through mock e1000 and exports s
     try std.testing.expectEqual(@as(u8, 1), eth.loopback_enabled);
     try std.testing.expectEqual(@as(u32, 1), eth.tx_packets);
     try std.testing.expectEqual(@as(u32, 1), eth.rx_packets);
+}
+
+test "baremetal e1000 arp request loops through mock e1000 and parses request" {
+    resetBaremetalRuntimeForTest();
+    e1000.testEnableMockDevice();
+    defer e1000.testDisableMockDevice();
+
+    try runE1000ArpProbe();
+    try std.testing.expectEqual(@as(u8, abi.ethernet_backend_e1000), e1000.statePtr().backend);
+}
+
+test "baremetal e1000 ipv4 probe succeeds through mock device" {
+    resetBaremetalRuntimeForTest();
+    e1000.testEnableMockDevice();
+    defer e1000.testDisableMockDevice();
+
+    try runE1000Ipv4Probe();
+}
+
+test "baremetal e1000 udp probe succeeds through mock device" {
+    resetBaremetalRuntimeForTest();
+    e1000.testEnableMockDevice();
+    defer e1000.testDisableMockDevice();
+
+    try runE1000UdpProbe();
 }
 
 test "baremetal ethernet arp request loops through mock rtl8139 and parses request" {

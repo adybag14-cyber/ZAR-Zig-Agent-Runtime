@@ -37,9 +37,6 @@ try {
     if ($frame.Length -lt 60) {
         throw "Frame too short: $($frame.Length)"
     }
-    if ($frame[12] -ne 0x88 -or $frame[13] -ne 0xB5) {
-        throw ('Unexpected EtherType: 0x{0:X2}{1:X2}' -f $frame[12], $frame[13])
-    }
 
     $reply = New-Object byte[] $frame.Length
     [Array]::Copy($frame, $reply, $frame.Length)

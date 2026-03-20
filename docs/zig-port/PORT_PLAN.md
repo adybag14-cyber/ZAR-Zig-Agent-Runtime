@@ -14,12 +14,14 @@ Full-stack replacement execution reference:
   - `docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md`
   - `docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`
   - current hard boundary: no ZigOS source import until upstream licensing is explicit
-  - first delivered adoption slice is clean-room `E1000` raw-frame support, because it expands hardware breadth without forcing a VFS/ELF/syscall redesign
+  - first delivered adoption slice is clean-room `E1000` protocol reuse through `ARP` / `IPv4` / `UDP`, because it expands hardware breadth without forcing a VFS/ELF/syscall redesign
   - `src/baremetal/e1000.zig` now provides the first ZAR-owned `82540EM`-class `E1000` path with PCI bind, MMIO + legacy I/O reset, EEPROM MAC readout, bounded TX/RX rings, and raw-frame send/receive telemetry
   - `src/baremetal/pci.zig` now discovers the `E1000` MMIO + I/O BAR pair and enables I/O, memory, and bus-master decode on the selected PCI function
-  - host regressions now prove init, MAC readout, TX, RX, and export-surface stability on the clean-room `E1000` path
+  - host regressions now prove init, MAC readout, TX, RX, export-surface stability, and `ARP` / `IPv4` / `UDP` protocol reuse on the clean-room `E1000` path
   - `scripts/baremetal-qemu-e1000-probe-check.ps1` plus `scripts/qemu-e1000-dgram-echo.ps1` now prove live QEMU `E1000` PCI bind, MAC readout, TX, RX, payload validation, and counter advance over the freestanding PVH artifact
-  - protocol/service reuse over `E1000` remains the next depth step (`ARP` / `IPv4` / `UDP` / `TCP` / `HTTP` / `HTTPS`)
+  - `src/pal/net.zig` now routes the same raw-frame PAL seam through selectable `RTL8139` and `E1000` backends without regressing the existing RTL8139 path
+  - `scripts/baremetal-qemu-e1000-arp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-ipv4-probe-check.ps1`, and `scripts/baremetal-qemu-e1000-udp-probe-check.ps1` now prove live QEMU `E1000` ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, and TX/RX counter advance over the freestanding PVH artifact
+  - `TCP` / `HTTP` / `HTTPS` reuse over `E1000` remains the next depth step
 - `FS5.5` hardware-driver pivot update:
   - framebuffer/console strict closure is now reached locally.
   - real linear-framebuffer path shipped in `src/baremetal/framebuffer_console.zig`:
@@ -1970,6 +1972,7 @@ Full-stack replacement execution reference:
   - `src/baremetal/display_profile_store.zig` now persists connector-aware display profiles under `/runtime/display-profiles/profiles/<name>.txt` plus `/runtime/display-profiles/active.txt`, `src/baremetal/tool_exec.zig` now exposes `display-profile-list`, `display-profile-info`, `display-profile-active`, `display-profile-save`, `display-profile-apply`, and `display-profile-delete`, `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `DISPLAYPROFILELIST`, `DISPLAYPROFILEINFO`, `DISPLAYPROFILEACTIVE`, `DISPLAYPROFILESAVE`, `DISPLAYPROFILEAPPLY`, and `DISPLAYPROFILEDELETE`, and the host + live virtio-gpu proofs now cover save -> list -> info -> mutate -> apply -> active -> preferred-restore -> delete on the persisted display-profile surface.
   - `src/baremetal/display_output.zig` now restores a previously reduced mode up to the preferred output bounds, which fixes the non-hardware virtio-gpu host model so saved profiles can reapply a larger valid mode after an intermediate shrink, and the same preferred-mode contract is now enforced on the live controller path through explicit connector/output preferred activation.
   - `src/baremetal/display_output.zig` now also exports richer EDID-backed sink detail on the active/output surface including declared-interface type, manufacturer name, manufacture week/year, EDID version/revision, extension count, and bounded display name; `src/baremetal/virtio_gpu.zig` now carries that same metadata through the real `virtio-gpu-pci` controller path; `src/baremetal/tool_exec.zig` now exposes `display-output-detail` plus `display-interface-detail`; `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `DISPLAYOUTPUTDETAIL` plus `DISPLAYINTERFACEDETAIL`; and the host + live virtio-gpu proofs now validate bounded manufacturer/name export, non-zero EDID version/revision, sane manufacture year, and extension-count consistency with the exported CEA/DisplayID capability flags.
+  - `src/baremetal/abi.zig` now exports explicit CEA underscan / YCbCr 4:4:4 / YCbCr 4:2:2 capability bits, `src/baremetal/edid.zig` now parses those flags from the live sink payload, `src/baremetal/tool_exec.zig` now exposes `display-output-capabilities` plus `display-interface-capabilities`, `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `DISPLAYOUTPUTCAPABILITIES` plus `DISPLAYINTERFACECAPABILITIES`, and the host + live virtio-gpu proofs now validate exact framed capability payloads plus missing-interface rejection on the real controller path.
   - `src/pal/tls_client_light.zig` now provides the bounded freestanding TLS client used by the PAL network layer.
   - `src/pal/net.zig` now carries a real freestanding `https://` POST transport path on top of the RTL8139 + TCP seam for the deterministic live probe, keeps structured TLS stage/transport diagnostics for failure classification, surfaces precise last-certificate-error buckets, explicitly flushes the underlying transport after TLS writer flush so ciphertext is actually emitted on the live path, and now binds the live proof to the persisted trust-store selection path instead of an ad hoc filesystem file.
   - `src/protocol/tcp.zig` now accepts valid option-bearing headers and valid `ACK+payload` packets without requiring `PSH`, which was necessary for the live HTTPS response path.
@@ -1998,7 +2001,7 @@ Full-stack replacement execution reference:
     - docs status gate -> pass
     - the real regressions fixed during the slice were a dangling `sessionId` slice in `runtime.session.get`, Windows-hosted path separator drift for the logical `/runtime/state` contract, and hosted-test PAL filesystem leakage that kept the runtime bridge off the persisted bare-metal filesystem surface
   - current local validation after the display-detail slice is green:
-    - `zig build test --summary all` -> hosted `426/426`, bare-metal host `400 passed / 1 skipped`
+    - `zig build test --summary all` -> hosted `427/427`, bare-metal host `404 passed / 1 skipped`
     - `scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1 -TimeoutSeconds 120` -> pass
     - `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1 -ModeWidth 1280 -ModeHeight 720 -TimeoutSeconds 120` -> pass
     - parity gate -> pass (`union 141/141`, `events 19/19`)

@@ -40,12 +40,14 @@ Tracked docs:
 Delivered first adoption slice:
 
 - clean-room `E1000` NIC support
-- first strict delivery is the raw-frame/L2 path only
+- first strict delivery now includes raw-frame/L2 plus `ARP`, `IPv4`, and `UDP`
 - `src/baremetal/e1000.zig` now provides a ZAR-owned `82540EM`-class driver with PCI bind, MMIO + legacy I/O reset, EEPROM MAC readout, bounded TX/RX rings, and raw-frame send/receive telemetry
 - `src/baremetal/pci.zig` now discovers the `E1000` MMIO + I/O BAR pair and enables I/O, memory, and bus-master decode on the selected function
-- host regressions now prove init, MAC readout, TX, RX, and export-surface stability on the clean-room `E1000` path
+- host regressions now prove init, MAC readout, TX, RX, export-surface stability, and `ARP` / `IPv4` / `UDP` protocol reuse on the clean-room `E1000` path
 - `scripts/baremetal-qemu-e1000-probe-check.ps1` plus `scripts/qemu-e1000-dgram-echo.ps1` now prove live QEMU `E1000` PCI bind, MAC readout, TX, RX, payload validation, and counter advance over the freestanding PVH artifact
-- protocol reuse over `E1000` (`ARP` / `IPv4` / `UDP` / `TCP` / `HTTP` / `HTTPS`) remains the next depth step
+- `src/pal/net.zig` now routes the same raw-frame PAL seam through selectable `RTL8139` and `E1000` backends without regressing the existing RTL8139 path
+- `scripts/baremetal-qemu-e1000-arp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-ipv4-probe-check.ps1`, and `scripts/baremetal-qemu-e1000-udp-probe-check.ps1` now prove live QEMU `E1000` ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, and TX/RX counter advance over the freestanding PVH artifact
+- `TCP` / `HTTP` / `HTTPS` reuse over `E1000` remains the next depth step
 - do not widen scope to VFS/ELF/syscalls/userspace in this slice
 
 `FS5.5` is not complete until each subsystem has:
@@ -178,13 +180,14 @@ Current local source-of-truth evidence:
   - `src/baremetal/edid.zig` provides bounded EDID header/checksum/timing/name parsing
   - `src/baremetal/edid.zig` now also exports the digital-interface subtype for the parsed sink (`undefined`, `DVI`, `HDMI-A`, `HDMI-B`, `MDDI`, or `DisplayPort`)
   - EDID parsing now also exports capability flags for digital input, preferred timing, CEA extension presence, DisplayID extension presence, HDMI vendor data, and basic audio when those descriptors are present
-  - `src/baremetal/display_output.zig` provides the exported display-output ABI surface plus EDID byte export, explicit interface-type export, explicit declared-interface export, bounded manufacturer/display-name export, EDID manufacture-week/year and version/revision export, extension-count export, a bounded per-output entry table, and a bounded per-output mode inventory derived from the parsed EDID timings
+  - `src/baremetal/display_output.zig` provides the exported display-output ABI surface plus EDID byte export, explicit interface-type export, explicit declared-interface export, bounded manufacturer/display-name export, EDID manufacture-week/year and version/revision export, extension-count export, a bounded per-output entry table, a bounded per-output mode inventory derived from the parsed EDID timings, and explicit capability-response formatting on the active/output surface
   - `src/baremetal/virtio_gpu.zig` probes the first real controller-specific path, `virtio-gpu-pci`, through modern virtio PCI capabilities plus `GET_DISPLAY_INFO`, `GET_EDID`, bounded multi-scanout enumeration, connector-aware scanout selection, bounded 2D resource creation, guest-backing attach, transfer-to-host, and flush
   - the same path now also supports explicit connector-targeted reactivation through the runtime surface, so the selected connector is no longer only inferred/exported but can be actively reselected on the real virtio-gpu path
   - the same path now also supports explicit interface-targeted activation and interface-preferred restore, so the live sink can be reselected by its EDID-derived interface type instead of only by connector class or output index
   - the same path now also supports explicit connector-preferred and output-preferred reactivation, so the connected output can be restored to the EDID-preferred geometry after an intermediate shrink instead of only staying at the last requested reduced mode
   - the same path now also supports explicit per-output mode retargeting plus explicit mode-index activation against the advertised mode inventory, so the connected output can be driven to a bounded requested mode through the runtime surface, oversized requests are rejected on the real controller path, and the preferred-mode restore path is proven on the same controller
   - the same path now also supports interface-scoped mode inventory plus interface-targeted mode set and mode-index activation against that same advertised EDID-derived inventory, so the live HDMI/DisplayPort-class sink can be retargeted through its exported interface view instead of only by output index
+  - EDID CEA parsing now also exports underscan, YCbCr 4:4:4, and YCbCr 4:2:2 capability bits when present in the sink payload instead of collapsing those flags into a generic CEA-only result
   - `src/pal/framebuffer.zig` now also exposes the display-output state and EDID byte surface through the PAL seam
 - host regressions now prove the framebuffer export surface updates host-backed framebuffer state, glyph pixels, supported-mode enumeration, high-resolution mode switching, per-output entry export, per-output mode inventory export, explicit mode-index activation, preferred-mode restore after an intermediate shrink, and preservation of the last valid mode on unsupported requests
 - a live bare-metal PVH/QEMU proof now passes:
@@ -205,7 +208,13 @@ Current local source-of-truth evidence:
   - the same proof now also validates that explicit `display-output-set` retargets the connected output to `1024x768`, explicit `display-output-activate-mode` succeeds against an advertised alternate mode, and an oversized requested mode is rejected without corrupting the exported output state
   - the same proof now also validates that the connected HDMI/DisplayPort-class sink reports the same bounded mode inventory through the interface view, that explicit `display-interface-set` retargets the live sink by interface to `1024x768`, and that explicit `display-interface-activate-mode` succeeds against the alternate advertised interface mode without corrupting the exported sink identity
   - the same proof now also validates richer exported sink metadata invariants for the connected output, including manufacturer-name width, non-zero EDID version/revision, sane manufacture year, bounded display-name export, and non-zero extension count whenever exported CEA/DisplayID capability bits are set
+  - the same proof now also validates exact `display-output-capabilities` and `display-interface-capabilities` response payloads for the connected sink, including the current live HDMI-class flag set on the `virtio-gpu-pci` controller path
   - the same proof now also validates persisted display-profile save/list/info/apply/delete, including mutating the active output down to `800x600`, reapplying the saved profile, and restoring the live output to `1024x768`
+- a real display-capability query layer now exists on top of the connector-aware display path:
+  - `src/baremetal/tool_exec.zig` now exposes `display-output-capabilities` and `display-interface-capabilities`
+  - `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `DISPLAYOUTPUTCAPABILITIES` and `DISPLAYINTERFACECAPABILITIES`
+  - host/module validation proves the same capability payload surface for both output-index and interface-index queries, including explicit `NotFound` behavior on a missing interface
+  - the live `virtio-gpu-pci` proof now validates the exact framed capability responses for the connected sink on the real controller path
   - the same proof now also validates that explicit interface-preferred activation and explicit output-preferred activation each restore the connected output from `1024x768` back to the EDID-preferred `1280x800`
   - the same proof now also validates non-zero present statistics plus non-zero scanout pixels from the guest-backed render pattern after resource-create/attach/set-scanout/flush
 - a real persisted display-profile layer now exists on top of the connector-aware display path:
@@ -215,7 +224,7 @@ Current local source-of-truth evidence:
   - host/module validation proves save -> list -> info -> mutate -> apply -> active -> delete on both RAM-disk and ATA-backed storage
   - `src/baremetal/display_output.zig` now restores a previously reduced mode up to the preferred output bounds, so the non-hardware virtio-gpu host model matches the real controller path when a saved profile reapplies a larger valid mode
 - current real source-of-truth rendered display support now covers bounded Bochs/QEMU BGA mode-setting plus virtio-gpu present/flush over the virtual scanout path
-- real HDMI/DisplayPort connector-specific scanout paths are not yet implemented and are not claimed by this branch
+- real HDMI/DisplayPort connector-specific scanout paths are not yet implemented and are not claimed by this branch; the current slice closes deeper HDMI/DisplayPort-class sink capability export on the real `virtio-gpu-pci` controller path instead
 
 ### Keyboard / Mouse
 

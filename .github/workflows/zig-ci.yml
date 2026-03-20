@@ -169,6 +169,22 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-rtl8139-probe-check.ps1
 
+      - name: Bare-metal QEMU E1000 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-e1000-probe-check.ps1
+
+      - name: Bare-metal QEMU E1000 ARP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-e1000-arp-probe-check.ps1
+
+      - name: Bare-metal QEMU E1000 IPv4 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-e1000-ipv4-probe-check.ps1
+
+      - name: Bare-metal QEMU E1000 UDP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-e1000-udp-probe-check.ps1
+
       - name: Bare-metal QEMU RTL8139 ARP probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1

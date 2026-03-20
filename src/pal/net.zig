@@ -3,6 +3,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const time_util = @import("../util/time.zig");
 const abi = @import("../baremetal/abi.zig");
+const e1000 = @import("../baremetal/e1000.zig");
 const rtl8139 = @import("../baremetal/rtl8139.zig");
 const ethernet = @import("../protocol/ethernet.zig");
 const arp = @import("../protocol/arp.zig");
@@ -31,15 +32,20 @@ pub const FreestandingHeader = struct {
     value: []const u8,
 };
 
+pub const Backend = enum(u8) {
+    rtl8139 = abi.ethernet_backend_rtl8139,
+    e1000 = abi.ethernet_backend_e1000,
+};
+
 pub const EthernetState = abi.BaremetalEthernetState;
-pub const Error = rtl8139.Error;
+pub const Error = rtl8139.Error || e1000.Error;
 pub const ArpPacket = arp.Packet;
-pub const ArpError = rtl8139.Error || arp.Error;
-pub const DhcpError = rtl8139.Error || ethernet.Error || ipv4.Error || udp.Error || dhcp.Error;
-pub const DnsError = rtl8139.Error || ethernet.Error || ipv4.Error || udp.Error || dns.Error;
-pub const Ipv4Error = rtl8139.Error || ethernet.Error || ipv4.Error;
-pub const TcpError = rtl8139.Error || ethernet.Error || ipv4.Error || tcp.Error;
-pub const UdpError = rtl8139.Error || ethernet.Error || ipv4.Error || udp.Error;
+pub const ArpError = Error || arp.Error;
+pub const DhcpError = Error || ethernet.Error || ipv4.Error || udp.Error || dhcp.Error;
+pub const DnsError = Error || ethernet.Error || ipv4.Error || udp.Error || dns.Error;
+pub const Ipv4Error = Error || ethernet.Error || ipv4.Error;
+pub const TcpError = Error || ethernet.Error || ipv4.Error || tcp.Error;
+pub const UdpError = Error || ethernet.Error || ipv4.Error || udp.Error;
 pub const RouteError = error{
     RouteUnconfigured,
     MissingLeaseIp,
@@ -47,11 +53,11 @@ pub const RouteError = error{
     AddressUnresolved,
 };
 pub const RoutedUdpError = UdpError || RouteError;
-pub const StrictDhcpPollError = rtl8139.Error || ethernet.Error || ipv4.Error || udp.Error || dhcp.Error || error{ NotIpv4, NotUdp, NotDhcp };
-pub const StrictDnsPollError = rtl8139.Error || ethernet.Error || ipv4.Error || udp.Error || dns.Error || error{ NotIpv4, NotUdp, NotDns };
-pub const StrictIpv4PollError = rtl8139.Error || ethernet.Error || ipv4.Error || error{NotIpv4};
-pub const StrictTcpPollError = rtl8139.Error || ethernet.Error || ipv4.Error || tcp.Error || error{ NotIpv4, NotTcp };
-pub const StrictUdpPollError = rtl8139.Error || ethernet.Error || ipv4.Error || udp.Error || error{ NotIpv4, NotUdp };
+pub const StrictDhcpPollError = Error || ethernet.Error || ipv4.Error || udp.Error || dhcp.Error || error{ NotIpv4, NotUdp, NotDhcp };
+pub const StrictDnsPollError = Error || ethernet.Error || ipv4.Error || udp.Error || dns.Error || error{ NotIpv4, NotUdp, NotDns };
+pub const StrictIpv4PollError = Error || ethernet.Error || ipv4.Error || error{NotIpv4};
+pub const StrictTcpPollError = Error || ethernet.Error || ipv4.Error || tcp.Error || error{ NotIpv4, NotTcp };
+pub const StrictUdpPollError = Error || ethernet.Error || ipv4.Error || udp.Error || error{ NotIpv4, NotUdp };
 pub const max_frame_len: usize = 2048;
 pub const max_ipv4_payload_len: usize = max_frame_len - ethernet.header_len - ipv4.header_len;
 pub const max_tcp_payload_len: usize = max_ipv4_payload_len - tcp.header_len;
@@ -233,6 +239,7 @@ var route_state: RouteState = defaultRouteState();
 var route_cache_insert_index: usize = 0;
 var dns_state: DnsState = defaultDnsState();
 var next_tcp_local_port: u16 = 49152;
+var active_backend: Backend = .rtl8139;
 
 fn ipv4IsZero(ip: [4]u8) bool {
     return std.mem.eql(u8, ip[0..], &[_]u8{ 0, 0, 0, 0 });
@@ -293,6 +300,14 @@ pub fn clearRouteStateForTest() void {
 
 pub fn routeStatePtr() *const RouteState {
     return &route_state;
+}
+
+pub fn selectBackend(backend: Backend) void {
+    active_backend = backend;
+}
+
+pub fn currentBackend() Backend {
+    return active_backend;
 }
 
 pub fn configureIpv4Route(local_ip: [4]u8, subnet_mask: ?[4]u8, gateway: ?[4]u8) void {
@@ -1448,32 +1463,49 @@ fn tcpPacketView(packet: *const TcpPacket) tcp.Packet {
 }
 
 pub fn initDevice() bool {
-    return rtl8139.init();
+    return switch (active_backend) {
+        .rtl8139 => rtl8139.init(),
+        .e1000 => e1000.init(),
+    };
 }
 
 pub fn resetDeviceForTest() void {
     if (!builtin.is_test) return;
+    active_backend = .rtl8139;
     rtl8139.resetForTest();
+    e1000.resetForTest();
 }
 
 pub fn deviceState() *const EthernetState {
-    return rtl8139.statePtr();
+    return switch (active_backend) {
+        .rtl8139 => rtl8139.statePtr(),
+        .e1000 => e1000.statePtr(),
+    };
 }
 
 pub fn macAddress() [6]u8 {
-    return rtl8139.statePtr().mac;
+    return deviceState().mac;
 }
 
 pub fn sendFrame(frame: []const u8) Error!void {
-    try rtl8139.sendFrame(frame);
+    switch (active_backend) {
+        .rtl8139 => try rtl8139.sendFrame(frame),
+        .e1000 => try e1000.sendFrame(frame),
+    }
 }
 
 pub fn pollReceive() Error!u32 {
-    return try rtl8139.pollReceive();
+    return switch (active_backend) {
+        .rtl8139 => try rtl8139.pollReceive(),
+        .e1000 => try e1000.pollReceive(),
+    };
 }
 
 pub fn rxByte(index: u32) u8 {
-    return rtl8139.rxByte(index);
+    return switch (active_backend) {
+        .rtl8139 => rtl8139.rxByte(index),
+        .e1000 => e1000.rxByte(index),
+    };
 }
 
 pub fn sendArpRequest(sender_ip: [4]u8, target_ip: [4]u8) ArpError!u32 {
