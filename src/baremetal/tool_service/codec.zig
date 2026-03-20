@@ -141,6 +141,9 @@ pub const RequestOp = enum {
     display_activate_preferred,
     display_activate_interface,
     display_activate_interface_preferred,
+    display_interface_modes,
+    display_interface_set,
+    display_interface_activate_mode,
     display_activate_output,
     display_activate_output_preferred,
     display_output_set,
@@ -203,6 +206,17 @@ pub const DisplayOutputModeRequest = struct {
 
 pub const DisplayOutputModeIndexRequest = struct {
     index: u16,
+    mode_index: u16,
+};
+
+pub const DisplayInterfaceModeRequest = struct {
+    interface_name: []const u8,
+    width: u16,
+    height: u16,
+};
+
+pub const DisplayInterfaceModeIndexRequest = struct {
+    interface_name: []const u8,
     mode_index: u16,
 };
 
@@ -467,6 +481,9 @@ pub const FramedRequest = struct {
         display_activate_preferred: []const u8,
         display_activate_interface: []const u8,
         display_activate_interface_preferred: []const u8,
+        display_interface_modes: []const u8,
+        display_interface_set: DisplayInterfaceModeRequest,
+        display_interface_activate_mode: DisplayInterfaceModeIndexRequest,
         display_activate_output: []const u8,
         display_activate_output_preferred: []const u8,
         display_output_set: DisplayOutputModeRequest,
@@ -2835,6 +2852,69 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         }
         return .{
             .framed = .{ .request_id = request_id, .operation = .{ .display_activate_interface_preferred = interface_part.token } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYINTERFACEMODES")) {
+        const interface_part = try splitFirstToken(op_part.rest);
+        if (interface_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .display_interface_modes = interface_part.token } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .display_interface_modes = interface_part.token } },
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYINTERFACESET")) {
+        const interface_part = try splitFirstToken(op_part.rest);
+        const width_part = try splitFirstToken(interface_part.rest);
+        const height_part = try splitFirstToken(width_part.rest);
+        if (height_part.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .display_interface_set = .{
+                .interface_name = interface_part.token,
+                .width = std.fmt.parseInt(u16, width_part.token, 10) catch return error.InvalidFrame,
+                .height = std.fmt.parseInt(u16, height_part.token, 10) catch return error.InvalidFrame,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYINTERFACEACTIVATEMODE")) {
+        const interface_part = try splitFirstToken(op_part.rest);
+        const mode_part = try splitFirstToken(interface_part.rest);
+        if (mode_part.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .display_interface_activate_mode = .{
+                .interface_name = interface_part.token,
+                .mode_index = std.fmt.parseInt(u16, mode_part.token, 10) catch return error.InvalidFrame,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
             .consumed_len = request.len,
         };
     }
