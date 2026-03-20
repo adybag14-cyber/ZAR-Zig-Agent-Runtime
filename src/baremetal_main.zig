@@ -645,6 +645,9 @@ const VirtioGpuDisplayProbeError = error{
     ConnectorMismatch,
     ExplicitConnectorActivateMismatch,
     MissingConnectorMismatchFailure,
+    ExplicitInterfaceActivateMismatch,
+    MissingInterfaceMismatchFailure,
+    ExplicitInterfacePreferredMismatch,
     ExplicitOutputActivateMismatch,
     MissingOutputMismatchFailure,
     ExplicitOutputModeSetMismatch,
@@ -984,8 +987,25 @@ pub export fn oc_display_output_entry(index: u16) abi.BaremetalDisplayOutputEntr
     return display_output.outputEntry(index);
 }
 
+pub export fn oc_display_output_interface_type(index: u16) u8 {
+    return display_output.outputInterfaceType(index);
+}
+
 pub export fn oc_display_output_activate(index: u16) i16 {
     pal_framebuffer.activateDisplayOutput(index) catch return abi.result_not_found;
+    return abi.result_ok;
+}
+
+pub export fn oc_display_activate_interface(interface_type: u8) i16 {
+    pal_framebuffer.activateDisplayInterface(interface_type) catch return abi.result_not_found;
+    return abi.result_ok;
+}
+
+pub export fn oc_display_activate_interface_preferred(interface_type: u8) i16 {
+    pal_framebuffer.activateDisplayInterfacePreferred(interface_type) catch |err| switch (err) {
+        error.NotFound => return abi.result_not_found,
+        error.UnsupportedMode => return abi.result_not_supported,
+    };
     return abi.result_ok;
 }
 
@@ -5829,14 +5849,15 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
         _ = oc_framebuffer_init();
     }
     const display_state = oc_display_output_state_ptr();
-    var display_info_payload_buffer: [224]u8 = undefined;
+    var display_info_payload_buffer: [256]u8 = undefined;
     const display_info_payload_expected = std.fmt.bufPrint(
         &display_info_payload_buffer,
-        "backend={s} controller={s} connector={s} connected={d} hardware_backed={d} current={d}x{d} preferred={d}x{d} scanouts={d} active={d} capabilities=0x{x}\n",
+        "backend={s} controller={s} connector={s} interface={s} connected={d} hardware_backed={d} current={d}x{d} preferred={d}x{d} scanouts={d} active={d} capabilities=0x{x}\n",
         .{
             "bga",
             "bochs-bga",
             "virtual",
+            display_output.interfaceName(display_output.stateInterfaceType()),
             display_state.connected,
             display_state.hardware_backed,
             display_state.current_width,
@@ -5848,11 +5869,12 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
             display_state.capability_flags,
         },
     ) catch return error.ToolServiceFailed;
-    var display_outputs_payload_buffer: [160]u8 = undefined;
+    var display_outputs_payload_buffer: [192]u8 = undefined;
     const display_outputs_payload_expected = std.fmt.bufPrint(
         &display_outputs_payload_buffer,
-        "output 0 scanout=0 connector=virtual connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x}\n",
+        "output 0 scanout=0 connector=virtual interface={s} connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x}\n",
         .{
+            display_output.interfaceName(display_output.outputInterfaceType(0)),
             display_state.connected,
             display_state.current_width,
             display_state.current_height,
@@ -5861,11 +5883,12 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
             display_state.capability_flags,
         },
     ) catch return error.ToolServiceFailed;
-    var display_output_payload_buffer: [176]u8 = undefined;
+    var display_output_payload_buffer: [208]u8 = undefined;
     const display_output_payload_expected = std.fmt.bufPrint(
         &display_output_payload_buffer,
-        "index=0 scanout=0 connector=virtual connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x} edid_present=0 mode_count={d}\n",
+        "index=0 scanout=0 connector=virtual interface={s} connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x} edid_present=0 mode_count={d}\n",
         .{
+            display_output.interfaceName(display_output.outputInterfaceType(0)),
             display_state.connected,
             display_state.current_width,
             display_state.current_height,
@@ -10458,6 +10481,9 @@ fn virtioGpuDisplayProbeFailureCode(err: VirtioGpuDisplayProbeError) u8 {
         error.ConnectorMismatch => 0x54,
         error.ExplicitConnectorActivateMismatch => 0x55,
         error.MissingConnectorMismatchFailure => 0x56,
+        error.ExplicitInterfaceActivateMismatch => 0x74,
+        error.MissingInterfaceMismatchFailure => 0x75,
+        error.ExplicitInterfacePreferredMismatch => 0x76,
         error.ExplicitOutputActivateMismatch => 0x57,
         error.MissingOutputMismatchFailure => 0x58,
         error.ExplicitOutputModeSetMismatch => 0x59,
@@ -10686,7 +10712,7 @@ fn runToolRuntimeProbe() ToolRuntimeProbeError!void {
 
 fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
     resetBaremetalRuntimeForTest();
-    const result = virtio_gpu.probeAndPresentPatternForConnector(abi.display_connector_virtual) catch |err| switch (err) {
+    const result = virtio_gpu.probeAndPresentPattern() catch |err| switch (err) {
         error.UnsupportedPlatform => return error.UnsupportedPlatform,
         error.DeviceNotFound => return error.DeviceNotFound,
         error.MissingCapabilities => return error.MissingCapabilities,
@@ -10707,11 +10733,13 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
 
     const output = oc_display_output_state_ptr();
     const present_stats = virtio_gpu.lastPresentStats();
-    const expected_connector = display_output.inferConnectorType(result.capability_flags);
+    const expected_interface = display_output.inferInterfaceType(result.interface_type, result.capability_flags);
+    const expected_connector = display_output.inferConnectorType(result.capability_flags, result.interface_type);
     if (output.magic != abi.display_output_magic or output.api_version != abi.api_version) return error.StateMagicMismatch;
     if (output.backend != abi.display_backend_virtio_gpu) return error.BackendMismatch;
     if (output.controller != abi.display_controller_virtio_gpu) return error.ControllerMismatch;
     if (output.connector_type != expected_connector) return error.ConnectorMismatch;
+    if (display_output.stateInterfaceType() != expected_interface) return error.ConnectorMismatch;
     if (output.hardware_backed != 1) return error.HardwareBackedMismatch;
     if (output.connected != 1) return error.ConnectedMismatch;
     if (output.edid_present != 1) return error.EdidPresenceMismatch;
@@ -10734,6 +10762,7 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
     if (active_entry.connected != 1 or
         active_entry.scanout_index != result.active_scanout or
         active_entry.connector_type != expected_connector or
+        oc_display_output_interface_type(result.active_scanout) != expected_interface or
         active_entry.current_width != result.current_width or
         active_entry.current_height != result.current_height or
         active_entry.preferred_width != result.preferred_width or
@@ -10815,6 +10844,32 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
         return error.ExplicitConnectorActivateMismatch;
     }
 
+    const explicit_interface = virtio_gpu.probeAndPresentPatternForInterface(expected_interface) catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.DeviceNotFound => return error.DeviceNotFound,
+        error.MissingCapabilities => return error.MissingCapabilities,
+        error.MissingVersion1 => return error.MissingVersion1,
+        error.MissingEdidFeature => return error.MissingEdidFeature,
+        error.FeaturesRejected => return error.FeaturesRejected,
+        error.QueueUnavailable => return error.QueueUnavailable,
+        error.QueueTooSmall => return error.QueueTooSmall,
+        error.RequestTimedOut => return error.RequestTimedOut,
+        error.InvalidDisplayInfoResponse => return error.InvalidDisplayInfoResponse,
+        error.InvalidEdidResponse => return error.InvalidEdidResponse,
+        error.NoConnectedScanout => return error.ExplicitInterfaceActivateMismatch,
+        error.InvalidEdid => return error.InvalidEdid,
+        error.InvalidControlResponse => return error.InvalidControlResponse,
+        error.FramebufferTooLarge => return error.FramebufferTooLarge,
+        error.UnsupportedMode => return error.UnsupportedMode,
+    };
+    if (explicit_interface.active_scanout != result.active_scanout or
+        explicit_interface.capability_flags != result.capability_flags or
+        display_output.stateInterfaceType() != expected_interface or
+        oc_display_output_interface_type(result.active_scanout) != expected_interface)
+    {
+        return error.ExplicitInterfaceActivateMismatch;
+    }
+
     const explicit_output = virtio_gpu.probeAndPresentPatternForOutputIndex(result.active_scanout) catch |err| switch (err) {
         error.UnsupportedPlatform => return error.UnsupportedPlatform,
         error.DeviceNotFound => return error.DeviceNotFound,
@@ -10893,6 +10948,61 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
         oc_display_output_entry(result.active_scanout).current_height != result.preferred_height)
     {
         return error.ExplicitConnectorPreferredMismatch;
+    }
+
+    const explicit_interface_mode_again = virtio_gpu.probeAndPresentPatternForOutputIndexMode(result.active_scanout, requested_output_width, requested_output_height) catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.DeviceNotFound => return error.DeviceNotFound,
+        error.MissingCapabilities => return error.MissingCapabilities,
+        error.MissingVersion1 => return error.MissingVersion1,
+        error.MissingEdidFeature => return error.MissingEdidFeature,
+        error.FeaturesRejected => return error.FeaturesRejected,
+        error.QueueUnavailable => return error.QueueUnavailable,
+        error.QueueTooSmall => return error.QueueTooSmall,
+        error.RequestTimedOut => return error.RequestTimedOut,
+        error.InvalidDisplayInfoResponse => return error.InvalidDisplayInfoResponse,
+        error.InvalidEdidResponse => return error.InvalidEdidResponse,
+        error.NoConnectedScanout => return error.ExplicitOutputModeSetMismatch,
+        error.InvalidEdid => return error.InvalidEdid,
+        error.InvalidControlResponse => return error.InvalidControlResponse,
+        error.FramebufferTooLarge, error.UnsupportedMode => return error.ExplicitOutputModeSetMismatch,
+    };
+    if (explicit_interface_mode_again.current_width != requested_output_width or
+        explicit_interface_mode_again.current_height != requested_output_height or
+        oc_display_output_state_ptr().current_width != requested_output_width or
+        oc_display_output_state_ptr().current_height != requested_output_height)
+    {
+        return error.ExplicitOutputModeSetMismatch;
+    }
+
+    const explicit_interface_preferred = virtio_gpu.probeAndPresentPatternForInterfacePreferred(expected_interface) catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.DeviceNotFound => return error.DeviceNotFound,
+        error.MissingCapabilities => return error.MissingCapabilities,
+        error.MissingVersion1 => return error.MissingVersion1,
+        error.MissingEdidFeature => return error.MissingEdidFeature,
+        error.FeaturesRejected => return error.FeaturesRejected,
+        error.QueueUnavailable => return error.QueueUnavailable,
+        error.QueueTooSmall => return error.QueueTooSmall,
+        error.RequestTimedOut => return error.RequestTimedOut,
+        error.InvalidDisplayInfoResponse => return error.InvalidDisplayInfoResponse,
+        error.InvalidEdidResponse => return error.InvalidEdidResponse,
+        error.NoConnectedScanout => return error.ExplicitInterfacePreferredMismatch,
+        error.InvalidEdid => return error.InvalidEdid,
+        error.InvalidControlResponse => return error.InvalidControlResponse,
+        error.FramebufferTooLarge, error.UnsupportedMode => return error.ExplicitInterfacePreferredMismatch,
+    };
+    if (explicit_interface_preferred.active_scanout != result.active_scanout or
+        explicit_interface_preferred.current_width != result.preferred_width or
+        explicit_interface_preferred.current_height != result.preferred_height or
+        display_output.stateInterfaceType() != expected_interface or
+        oc_display_output_interface_type(result.active_scanout) != expected_interface or
+        oc_display_output_state_ptr().current_width != result.preferred_width or
+        oc_display_output_state_ptr().current_height != result.preferred_height or
+        oc_display_output_entry(result.active_scanout).current_width != result.preferred_width or
+        oc_display_output_entry(result.active_scanout).current_height != result.preferred_height)
+    {
+        return error.ExplicitInterfacePreferredMismatch;
     }
 
     const explicit_output_mode_again = virtio_gpu.probeAndPresentPatternForOutputIndexMode(result.active_scanout, requested_output_width, requested_output_height) catch |err| switch (err) {
@@ -11005,6 +11115,11 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
         abi.display_connector_displayport, abi.display_connector_embedded_displayport => abi.display_connector_hdmi,
         else => abi.display_connector_hdmi,
     };
+    const wrong_interface: u8 = switch (expected_interface) {
+        abi.display_interface_hdmi_a, abi.display_interface_hdmi_b => abi.display_interface_displayport,
+        abi.display_interface_displayport => abi.display_interface_hdmi_a,
+        else => abi.display_interface_hdmi_a,
+    };
     var connector_mismatch_rejected = false;
     _ = virtio_gpu.probeAndPresentPatternForConnector(wrong_connector) catch |err| switch (err) {
         error.NoConnectedScanout => {
@@ -11028,6 +11143,30 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
     };
     if (!connector_mismatch_rejected) {
         return error.MissingConnectorMismatchFailure;
+    }
+    var interface_mismatch_rejected = false;
+    _ = virtio_gpu.probeAndPresentPatternForInterface(wrong_interface) catch |err| switch (err) {
+        error.NoConnectedScanout => {
+            interface_mismatch_rejected = true;
+        },
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.DeviceNotFound => return error.DeviceNotFound,
+        error.MissingCapabilities => return error.MissingCapabilities,
+        error.MissingVersion1 => return error.MissingVersion1,
+        error.MissingEdidFeature => return error.MissingEdidFeature,
+        error.FeaturesRejected => return error.FeaturesRejected,
+        error.QueueUnavailable => return error.QueueUnavailable,
+        error.QueueTooSmall => return error.QueueTooSmall,
+        error.RequestTimedOut => return error.RequestTimedOut,
+        error.InvalidDisplayInfoResponse => return error.InvalidDisplayInfoResponse,
+        error.InvalidEdidResponse => return error.InvalidEdidResponse,
+        error.InvalidEdid => return error.InvalidEdid,
+        error.InvalidControlResponse => return error.InvalidControlResponse,
+        error.FramebufferTooLarge => return error.FramebufferTooLarge,
+        error.UnsupportedMode => return error.UnsupportedMode,
+    };
+    if (!interface_mismatch_rejected) {
+        return error.MissingInterfaceMismatchFailure;
     }
     var output_mismatch_rejected = false;
     _ = virtio_gpu.probeAndPresentPatternForOutputIndex(result.scanout_count) catch |err| switch (err) {
@@ -19304,6 +19443,8 @@ test "baremetal display output export surface mirrors bounded bga framebuffer st
     try std.testing.expectEqual(abi.result_ok, oc_display_output_activate_mode(0, 0));
     try std.testing.expectEqual(@as(u16, 800), output.current_width);
     try std.testing.expectEqual(@as(u16, 600), output.current_height);
+    try std.testing.expectEqual(abi.result_not_found, oc_display_activate_interface(abi.display_interface_hdmi_a));
+    try std.testing.expectEqual(abi.result_not_found, oc_display_activate_interface_preferred(abi.display_interface_hdmi_a));
     try std.testing.expectEqual(abi.result_not_found, oc_display_output_activate(0));
     try std.testing.expectEqual(abi.result_not_found, oc_display_output_activate(1));
     try std.testing.expectEqual(abi.result_not_found, oc_display_output_set(1, 800, 600));

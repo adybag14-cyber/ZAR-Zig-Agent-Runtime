@@ -313,6 +313,8 @@ fn handleFramedPayload(
         .display_set => |display_mode| try handleDisplaySetRequest(allocator, display_mode.width, display_mode.height, payload_limit),
         .display_activate => |connector_name| try handleDisplayActivateRequest(allocator, connector_name, payload_limit),
         .display_activate_preferred => |connector_name| try handleDisplayActivatePreferredRequest(allocator, connector_name, payload_limit),
+        .display_activate_interface => |interface_name| try handleDisplayActivateInterfaceRequest(allocator, interface_name, payload_limit),
+        .display_activate_interface_preferred => |interface_name| try handleDisplayActivateInterfacePreferredRequest(allocator, interface_name, payload_limit),
         .display_activate_output => |output_index| try handleDisplayActivateOutputRequest(allocator, output_index, payload_limit),
         .display_activate_output_preferred => |output_index| try handleDisplayActivateOutputPreferredRequest(allocator, output_index, payload_limit),
         .display_output_set => |request| try handleDisplayOutputSetRequest(allocator, request.index, request.width, request.height, payload_limit),
@@ -1827,11 +1829,12 @@ fn handleDisplayInfoRequest(allocator: std.mem.Allocator, payload_limit: usize) 
     const output = display_output.statePtr();
     const response = try std.fmt.allocPrint(
         allocator,
-        "backend={s} controller={s} connector={s} connected={d} hardware_backed={d} current={d}x{d} preferred={d}x{d} scanouts={d} active={d} capabilities=0x{x}\n",
+        "backend={s} controller={s} connector={s} interface={s} connected={d} hardware_backed={d} current={d}x{d} preferred={d}x{d} scanouts={d} active={d} capabilities=0x{x}\n",
         .{
             displayBackendName(output.backend),
             displayControllerName(output.controller),
             displayConnectorName(output.connector_type),
+            displayInterfaceName(display_output.stateInterfaceType()),
             output.connected,
             output.hardware_backed,
             output.current_width,
@@ -1858,11 +1861,12 @@ fn handleDisplayOutputsRequest(allocator: std.mem.Allocator, payload_limit: usiz
         const entry = display_output.outputEntry(index);
         const line = try std.fmt.allocPrint(
             allocator,
-            "output {d} scanout={d} connector={s} connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x}\n",
+            "output {d} scanout={d} connector={s} interface={s} connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x}\n",
             .{
                 index,
                 entry.scanout_index,
                 displayConnectorName(entry.connector_type),
+                displayInterfaceName(display_output.outputInterfaceType(index)),
                 entry.connected,
                 entry.current_width,
                 entry.current_height,
@@ -1890,11 +1894,12 @@ fn handleDisplayOutputRequest(allocator: std.mem.Allocator, output_index_text: [
     const entry = display_output.outputEntry(index);
     const response = try std.fmt.allocPrint(
         allocator,
-        "index={d} scanout={d} connector={s} connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x} edid_present={d} mode_count={d}\n",
+        "index={d} scanout={d} connector={s} interface={s} connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x} edid_present={d} mode_count={d}\n",
         .{
             index,
             entry.scanout_index,
             displayConnectorName(entry.connector_type),
+            displayInterfaceName(display_output.outputInterfaceType(index)),
             entry.connected,
             entry.current_width,
             entry.current_height,
@@ -2004,6 +2009,56 @@ fn handleDisplayActivatePreferredRequest(allocator: std.mem.Allocator, connector
         allocator,
         "DISPLAYACTIVATEPREFERRED {s} scanout={d} current={d}x{d} preferred={d}x{d}\n",
         .{
+            displayConnectorName(output.connector_type),
+            output.active_scanout,
+            output.current_width,
+            output.current_height,
+            if (output.preferred_width != 0) output.preferred_width else output.current_width,
+            if (output.preferred_height != 0) output.preferred_height else output.current_height,
+        },
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleDisplayActivateInterfaceRequest(allocator: std.mem.Allocator, interface_name: []const u8, payload_limit: usize) Error![]u8 {
+    const interface_type = display_output.interfaceTypeFromName(interface_name) orelse {
+        return formatOperationError(allocator, "DISPLAYACTIVATEINTERFACE", error.InvalidFrame, payload_limit);
+    };
+    tool_exec.activateDisplayInterface(interface_type) catch |err| {
+        return formatOperationError(allocator, "DISPLAYACTIVATEINTERFACE", err, payload_limit);
+    };
+    const output = display_output.statePtr();
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "DISPLAYACTIVATEINTERFACE {s} connector={s} scanout={d} current={d}x{d}\n",
+        .{
+            displayInterfaceName(output.reserved0),
+            displayConnectorName(output.connector_type),
+            output.active_scanout,
+            output.current_width,
+            output.current_height,
+        },
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleDisplayActivateInterfacePreferredRequest(allocator: std.mem.Allocator, interface_name: []const u8, payload_limit: usize) Error![]u8 {
+    const interface_type = display_output.interfaceTypeFromName(interface_name) orelse {
+        return formatOperationError(allocator, "DISPLAYACTIVATEINTERFACEPREFERRED", error.InvalidFrame, payload_limit);
+    };
+    tool_exec.activateDisplayInterfacePreferred(interface_type) catch |err| {
+        return formatOperationError(allocator, "DISPLAYACTIVATEINTERFACEPREFERRED", err, payload_limit);
+    };
+    const output = display_output.statePtr();
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "DISPLAYACTIVATEINTERFACEPREFERRED {s} connector={s} scanout={d} current={d}x{d} preferred={d}x{d}\n",
+        .{
+            displayInterfaceName(output.reserved0),
             displayConnectorName(output.connector_type),
             output.active_scanout,
             output.current_width,
@@ -2289,6 +2344,10 @@ fn displayConnectorName(value: u8) []const u8 {
         abi.display_connector_virtual => "virtual",
         else => "none",
     };
+}
+
+fn displayInterfaceName(value: u8) []const u8 {
+    return display_output.interfaceName(value);
 }
 
 fn resetPersistentStateForTest() void {
@@ -2596,6 +2655,18 @@ test "baremetal tool service parses typed framed requests" {
     const display_activate_preferred = try parseFramedRequest("REQ 38 DISPLAYACTIVATEPREFERRED displayport");
     switch (display_activate_preferred.operation) {
         .display_activate_preferred => |payload| try std.testing.expectEqualStrings("displayport", payload),
+        else => return error.InvalidFrame,
+    }
+
+    const display_activate_interface = try parseFramedRequest("REQ 138 DISPLAYACTIVATEINTERFACE displayport");
+    switch (display_activate_interface.operation) {
+        .display_activate_interface => |payload| try std.testing.expectEqualStrings("displayport", payload),
+        else => return error.InvalidFrame,
+    }
+
+    const display_activate_interface_preferred = try parseFramedRequest("REQ 139 DISPLAYACTIVATEINTERFACEPREFERRED displayport");
+    switch (display_activate_interface_preferred.operation) {
+        .display_activate_interface_preferred => |payload| try std.testing.expectEqualStrings("displayport", payload),
         else => return error.InvalidFrame,
     }
 
@@ -3640,12 +3711,12 @@ test "baremetal tool service reports display info and supported modes" {
     const outputs_response = try handleFramedRequest(std.testing.allocator, "REQ 62 DISPLAYOUTPUTS", 512, 256, 512);
     defer std.testing.allocator.free(outputs_response);
     try std.testing.expect(std.mem.startsWith(u8, outputs_response, "RESP 62 "));
-    try std.testing.expect(std.mem.indexOf(u8, outputs_response, "output 0 scanout=0 connector=virtual connected=0 current=640x400 preferred=640x400") != null);
+    try std.testing.expect(std.mem.indexOf(u8, outputs_response, "output 0 scanout=0 connector=virtual interface=none connected=0 current=640x400 preferred=640x400") != null);
 
     const output_response = try handleFramedRequest(std.testing.allocator, "REQ 63 DISPLAYOUTPUT 0", 512, 256, 512);
     defer std.testing.allocator.free(output_response);
     try std.testing.expect(std.mem.startsWith(u8, output_response, "RESP 63 "));
-    try std.testing.expect(std.mem.indexOf(u8, output_response, "index=0 scanout=0 connector=virtual connected=0 current=640x400 preferred=640x400") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output_response, "index=0 scanout=0 connector=virtual interface=none connected=0 current=640x400 preferred=640x400") != null);
     try std.testing.expect(std.mem.indexOf(u8, output_response, "mode_count=1") != null);
 
     const output_modes_response = try handleFramedRequest(std.testing.allocator, "REQ 163 DISPLAYOUTPUTMODES 0", 512, 256, 512);
@@ -3754,6 +3825,21 @@ test "baremetal tool service activates requested display connector" {
     defer std.testing.allocator.free(activate_preferred_response);
     try std.testing.expect(std.mem.startsWith(u8, activate_preferred_response, "RESP 167 "));
     try std.testing.expect(std.mem.indexOf(u8, activate_preferred_response, "DISPLAYACTIVATEPREFERRED displayport scanout=1 current=1920x1080 preferred=1920x1080\n") != null);
+
+    const activate_interface_response = try handleFramedRequest(std.testing.allocator, "REQ 267 DISPLAYACTIVATEINTERFACE displayport", 512, 256, 512);
+    defer std.testing.allocator.free(activate_interface_response);
+    try std.testing.expect(std.mem.startsWith(u8, activate_interface_response, "RESP 267 "));
+    try std.testing.expect(std.mem.indexOf(u8, activate_interface_response, "DISPLAYACTIVATEINTERFACE displayport connector=displayport scanout=1 current=1920x1080\n") != null);
+
+    const activate_interface_preferred_response = try handleFramedRequest(std.testing.allocator, "REQ 268 DISPLAYACTIVATEINTERFACEPREFERRED displayport", 512, 256, 512);
+    defer std.testing.allocator.free(activate_interface_preferred_response);
+    try std.testing.expect(std.mem.startsWith(u8, activate_interface_preferred_response, "RESP 268 "));
+    try std.testing.expect(std.mem.indexOf(u8, activate_interface_preferred_response, "DISPLAYACTIVATEINTERFACEPREFERRED displayport connector=displayport scanout=1 current=1920x1080 preferred=1920x1080\n") != null);
+
+    const activate_interface_mismatch_response = try handleFramedRequest(std.testing.allocator, "REQ 269 DISPLAYACTIVATEINTERFACE hdmi-b", 512, 256, 512);
+    defer std.testing.allocator.free(activate_interface_mismatch_response);
+    try std.testing.expect(std.mem.startsWith(u8, activate_interface_mismatch_response, "RESP 269 "));
+    try std.testing.expect(std.mem.indexOf(u8, activate_interface_mismatch_response, "ERR DISPLAYACTIVATEINTERFACE: DisplayInterfaceMismatch\n") != null);
 
     const output_modes_response = try handleFramedRequest(std.testing.allocator, "REQ 168 DISPLAYOUTPUTMODES 1", 512, 256, 512);
     defer std.testing.allocator.free(output_modes_response);

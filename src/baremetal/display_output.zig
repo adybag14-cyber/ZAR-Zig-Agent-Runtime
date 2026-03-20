@@ -39,6 +39,7 @@ pub const VirtioGpuUpdate = struct {
     manufacturer_id: u16,
     product_code: u16,
     serial_number: u32,
+    interface_type: u8 = abi.display_interface_none,
     capability_flags: u16,
     edid: []const u8,
     scanouts: []const VirtioGpuScanoutUpdate = &.{},
@@ -56,6 +57,7 @@ pub const VirtioGpuScanoutUpdate = struct {
     manufacturer_id: u16,
     product_code: u16,
     serial_number: u32,
+    interface_type: u8 = abi.display_interface_none,
     capability_flags: u16,
     edid_length: u16,
     supported_mode_count: u8 = 0,
@@ -66,6 +68,7 @@ var state: abi.BaremetalDisplayOutputState = undefined;
 var edid_bytes: [max_edid_bytes]u8 = [_]u8{0} ** max_edid_bytes;
 pub export var oc_display_output_entry_count_data: u16 = 0;
 pub export var oc_display_output_entries_data: [max_output_entries]OutputEntry = [_]OutputEntry{zeroOutputEntry()} ** max_output_entries;
+pub export var oc_display_output_interface_type_data: [max_output_entries]u8 = [_]u8{abi.display_interface_none} ** max_output_entries;
 pub export var oc_display_output_mode_count_data: [max_output_entries]u16 = [_]u16{0} ** max_output_entries;
 pub export var oc_display_output_modes_data: [max_output_entries][max_output_modes]OutputMode = [_][max_output_modes]OutputMode{[_]OutputMode{zeroOutputMode()} ** max_output_modes} ** max_output_entries;
 
@@ -102,6 +105,7 @@ fn clearOutputEntries() void {
     for (&oc_display_output_entries_data) |*entry| {
         entry.* = zeroOutputEntry();
     }
+    @memset(&oc_display_output_interface_type_data, abi.display_interface_none);
 }
 
 fn clearOutputModes() void {
@@ -130,7 +134,7 @@ fn initState() void {
         .pci_bus = 0,
         .pci_device = 0,
         .pci_function = 0,
-        .reserved0 = 0,
+        .reserved0 = abi.display_interface_none,
         .vendor_id = 0,
         .device_id = 0,
         .current_width = 0,
@@ -166,6 +170,16 @@ pub fn outputEntry(index: u16) OutputEntry {
     const idx: usize = @intCast(index);
     if (idx >= oc_display_output_entry_count_data or idx >= oc_display_output_entries_data.len) return zeroOutputEntry();
     return oc_display_output_entries_data[idx];
+}
+
+pub fn stateInterfaceType() u8 {
+    return state.reserved0;
+}
+
+pub fn outputInterfaceType(index: u16) u8 {
+    const idx: usize = @intCast(index);
+    if (idx >= oc_display_output_entry_count_data or idx >= oc_display_output_interface_type_data.len) return abi.display_interface_none;
+    return oc_display_output_interface_type_data[idx];
 }
 
 pub fn outputModeCount(index: u16) u16 {
@@ -204,8 +218,9 @@ fn setSingleOutputMode(index: usize, width: u16, height: u16) void {
     setOutputModes(index, &mode);
 }
 
-fn applyEntryToState(entry: OutputEntry) void {
+fn applyEntryToState(entry: OutputEntry, interface_type: u8) void {
     state.connector_type = entry.connector_type;
+    state.reserved0 = interface_type;
     state.connected = entry.connected;
     state.edid_present = entry.edid_present;
     state.active_scanout = entry.scanout_index;
@@ -248,7 +263,19 @@ pub fn selectOutputConnector(connector_type: u8) bool {
     while (index < oc_display_output_entry_count_data and index < oc_display_output_entries_data.len) : (index += 1) {
         const entry = oc_display_output_entries_data[index];
         if (entry.connected == 0 or entry.connector_type != connector_type) continue;
-        applyEntryToState(entry);
+        applyEntryToState(entry, oc_display_output_interface_type_data[index]);
+        return true;
+    }
+    return false;
+}
+
+pub fn selectOutputInterface(interface_type: u8) bool {
+    var index: usize = 0;
+    while (index < oc_display_output_entry_count_data and index < oc_display_output_entries_data.len) : (index += 1) {
+        const entry = oc_display_output_entries_data[index];
+        if (entry.connected == 0) continue;
+        if (oc_display_output_interface_type_data[index] != interface_type) continue;
+        applyEntryToState(entry, oc_display_output_interface_type_data[index]);
         return true;
     }
     return false;
@@ -259,7 +286,7 @@ pub fn selectOutputIndex(index: u16) bool {
     if (idx >= oc_display_output_entry_count_data or idx >= oc_display_output_entries_data.len) return false;
     const entry = oc_display_output_entries_data[idx];
     if (entry.connected == 0) return false;
-    applyEntryToState(entry);
+    applyEntryToState(entry, oc_display_output_interface_type_data[idx]);
     return true;
 }
 
@@ -273,7 +300,7 @@ pub fn setOutputMode(index: u16, width: u16, height: u16) bool {
     const max_height = if (entry.preferred_height != 0) entry.preferred_height else entry.current_height;
     if (width > max_width or height > max_height) return false;
     applyModeToEntry(entry, width, height);
-    applyEntryToState(entry.*);
+    applyEntryToState(entry.*, oc_display_output_interface_type_data[idx]);
     return true;
 }
 
@@ -338,7 +365,28 @@ pub fn updateFromBga(update: BgaUpdate) void {
     setSingleOutputMode(0, update.width, update.height);
 }
 
-pub fn inferConnectorType(capability_flags: u16) u8 {
+pub fn inferInterfaceType(raw_interface_type: u8, capability_flags: u16) u8 {
+    if (raw_interface_type != abi.display_interface_none and raw_interface_type != abi.display_interface_undefined) {
+        return raw_interface_type;
+    }
+    if ((capability_flags & abi.display_capability_hdmi_vendor_data) != 0) {
+        return abi.display_interface_hdmi_a;
+    }
+    if ((capability_flags & abi.display_capability_displayid_extension) != 0) {
+        return abi.display_interface_displayport;
+    }
+    if ((capability_flags & abi.display_capability_digital_input) != 0) {
+        return abi.display_interface_undefined;
+    }
+    return abi.display_interface_none;
+}
+
+pub fn inferConnectorType(capability_flags: u16, raw_interface_type: u8) u8 {
+    switch (inferInterfaceType(raw_interface_type, capability_flags)) {
+        abi.display_interface_hdmi_a, abi.display_interface_hdmi_b => return abi.display_connector_hdmi,
+        abi.display_interface_displayport => return abi.display_connector_displayport,
+        else => {},
+    }
     if ((capability_flags & abi.display_capability_hdmi_vendor_data) != 0) {
         return abi.display_connector_hdmi;
     }
@@ -348,11 +396,35 @@ pub fn inferConnectorType(capability_flags: u16) u8 {
     return abi.display_connector_virtual;
 }
 
+pub fn interfaceName(interface_type: u8) []const u8 {
+    return switch (interface_type) {
+        abi.display_interface_undefined => "undefined",
+        abi.display_interface_dvi => "dvi",
+        abi.display_interface_hdmi_a => "hdmi-a",
+        abi.display_interface_hdmi_b => "hdmi-b",
+        abi.display_interface_mddi => "mddi",
+        abi.display_interface_displayport => "displayport",
+        else => "none",
+    };
+}
+
+pub fn interfaceTypeFromName(name: []const u8) ?u8 {
+    if (std.ascii.eqlIgnoreCase(name, "none")) return abi.display_interface_none;
+    if (std.ascii.eqlIgnoreCase(name, "undefined")) return abi.display_interface_undefined;
+    if (std.ascii.eqlIgnoreCase(name, "dvi")) return abi.display_interface_dvi;
+    if (std.ascii.eqlIgnoreCase(name, "hdmi-a")) return abi.display_interface_hdmi_a;
+    if (std.ascii.eqlIgnoreCase(name, "hdmi-b")) return abi.display_interface_hdmi_b;
+    if (std.ascii.eqlIgnoreCase(name, "mddi")) return abi.display_interface_mddi;
+    if (std.ascii.eqlIgnoreCase(name, "displayport") or std.ascii.eqlIgnoreCase(name, "dp")) return abi.display_interface_displayport;
+    return null;
+}
+
 pub fn updateFromVirtioGpu(update: VirtioGpuUpdate) void {
     initState();
     state.backend = abi.display_backend_virtio_gpu;
     state.controller = abi.display_controller_virtio_gpu;
-    state.connector_type = inferConnectorType(update.capability_flags);
+    state.reserved0 = inferInterfaceType(update.interface_type, update.capability_flags);
+    state.connector_type = inferConnectorType(update.capability_flags, state.reserved0);
     state.hardware_backed = if (update.hardware_backed) 1 else 0;
     state.connected = if (update.connected) 1 else 0;
     state.edid_present = if (update.edid.len > 0) 1 else 0;
@@ -401,6 +473,7 @@ pub fn updateFromVirtioGpu(update: VirtioGpuUpdate) void {
             .edid_length = @intCast(edid_len),
             .serial_number = update.serial_number,
         };
+        oc_display_output_interface_type_data[0] = state.reserved0;
         setSingleOutputMode(0, update.current_width, update.current_height);
         return;
     }
@@ -410,7 +483,7 @@ pub fn updateFromVirtioGpu(update: VirtioGpuUpdate) void {
         oc_display_output_entries_data[index] = .{
             .connected = if (scanout.connected) 1 else 0,
             .scanout_index = scanout.scanout_index,
-            .connector_type = if (scanout.connected) inferConnectorType(scanout.capability_flags) else abi.display_connector_none,
+            .connector_type = if (scanout.connected) inferConnectorType(scanout.capability_flags, scanout.interface_type) else abi.display_connector_none,
             .edid_present = if (scanout.edid_length > 0) 1 else 0,
             .current_width = scanout.current_width,
             .current_height = scanout.current_height,
@@ -424,6 +497,7 @@ pub fn updateFromVirtioGpu(update: VirtioGpuUpdate) void {
             .edid_length = scanout.edid_length,
             .serial_number = scanout.serial_number,
         };
+        oc_display_output_interface_type_data[index] = if (scanout.connected) inferInterfaceType(scanout.interface_type, scanout.capability_flags) else abi.display_interface_none;
         if (scanout.supported_mode_count != 0) {
             setOutputModes(index, scanout.supported_modes[0..scanout.supported_mode_count]);
         } else if (scanout.current_width != 0 and scanout.current_height != 0) {
@@ -514,6 +588,7 @@ test "display output state copies virtio gpu edid payload" {
     try std.testing.expectEqual(@as(u8, abi.display_backend_virtio_gpu), output.backend);
     try std.testing.expectEqual(@as(u8, abi.display_controller_virtio_gpu), output.controller);
     try std.testing.expectEqual(@as(u8, abi.display_connector_virtual), output.connector_type);
+    try std.testing.expectEqual(@as(u8, abi.display_interface_undefined), stateInterfaceType());
     try std.testing.expectEqual(@as(u16, 4), output.edid_length);
     try std.testing.expectEqual(@as(u16, abi.display_capability_digital_input | abi.display_capability_preferred_timing), output.capability_flags);
     try std.testing.expectEqual(@as(u8, 0xFF), edidByte(1));
@@ -521,14 +596,27 @@ test "display output state copies virtio gpu edid payload" {
     const entry = outputEntry(0);
     try std.testing.expectEqual(@as(u8, 0), entry.scanout_index);
     try std.testing.expectEqual(@as(u8, abi.display_connector_virtual), entry.connector_type);
+    try std.testing.expectEqual(@as(u8, abi.display_interface_undefined), outputInterfaceType(0));
     try std.testing.expectEqual(@as(u16, 1280), entry.current_width);
     try std.testing.expectEqual(@as(u16, 1), outputModeCount(0));
 }
 
 test "display output infers connector type from edid capability flags" {
-    try std.testing.expectEqual(@as(u8, abi.display_connector_hdmi), inferConnectorType(abi.display_capability_hdmi_vendor_data));
-    try std.testing.expectEqual(@as(u8, abi.display_connector_displayport), inferConnectorType(abi.display_capability_displayid_extension));
-    try std.testing.expectEqual(@as(u8, abi.display_connector_virtual), inferConnectorType(abi.display_capability_digital_input));
+    try std.testing.expectEqual(@as(u8, abi.display_connector_hdmi), inferConnectorType(abi.display_capability_hdmi_vendor_data, abi.display_interface_none));
+    try std.testing.expectEqual(@as(u8, abi.display_connector_displayport), inferConnectorType(abi.display_capability_displayid_extension, abi.display_interface_none));
+    try std.testing.expectEqual(@as(u8, abi.display_connector_hdmi), inferConnectorType(abi.display_capability_digital_input, abi.display_interface_hdmi_a));
+    try std.testing.expectEqual(@as(u8, abi.display_connector_displayport), inferConnectorType(abi.display_capability_digital_input, abi.display_interface_displayport));
+    try std.testing.expectEqual(@as(u8, abi.display_connector_virtual), inferConnectorType(abi.display_capability_digital_input, abi.display_interface_undefined));
+}
+
+test "display output parses interface names" {
+    try std.testing.expectEqual(@as(?u8, abi.display_interface_hdmi_a), interfaceTypeFromName("hdmi-a"));
+    try std.testing.expectEqual(@as(?u8, abi.display_interface_hdmi_b), interfaceTypeFromName("hdmi-b"));
+    try std.testing.expectEqual(@as(?u8, abi.display_interface_displayport), interfaceTypeFromName("displayport"));
+    try std.testing.expectEqual(@as(?u8, abi.display_interface_displayport), interfaceTypeFromName("dp"));
+    try std.testing.expectEqual(@as(?u8, abi.display_interface_dvi), interfaceTypeFromName("dvi"));
+    try std.testing.expectEqual(@as(?u8, abi.display_interface_mddi), interfaceTypeFromName("mddi"));
+    try std.testing.expectEqual(@as(?u8, null), interfaceTypeFromName("hdmi"));
 }
 
 test "display output state stores multiple virtio scanout entries" {
@@ -601,6 +689,7 @@ test "display output state stores multiple virtio scanout entries" {
     try std.testing.expectEqual(@as(u8, 1), connected.connected);
     try std.testing.expectEqual(@as(u8, 1), connected.scanout_index);
     try std.testing.expectEqual(@as(u8, abi.display_connector_displayport), connected.connector_type);
+    try std.testing.expectEqual(@as(u8, abi.display_interface_displayport), outputInterfaceType(1));
     try std.testing.expectEqual(@as(u16, 1920), connected.current_width);
     try std.testing.expectEqual(@as(u16, 2), outputModeCount(1));
     const alternate = outputMode(1, 1) orelse return error.TestUnexpectedResult;
@@ -668,6 +757,7 @@ test "display output can retarget active connector from stored entries" {
     try std.testing.expect(selectOutputConnector(abi.display_connector_displayport));
     const output = statePtr();
     try std.testing.expectEqual(@as(u8, abi.display_connector_displayport), output.connector_type);
+    try std.testing.expectEqual(@as(u8, abi.display_interface_displayport), stateInterfaceType());
     try std.testing.expectEqual(@as(u8, 1), output.active_scanout);
     try std.testing.expectEqual(@as(u16, 1920), output.current_width);
     try std.testing.expectEqual(@as(u16, 1080), output.current_height);
@@ -734,10 +824,80 @@ test "display output can retarget active output index from stored entries" {
     try std.testing.expect(selectOutputIndex(1));
     const output = statePtr();
     try std.testing.expectEqual(@as(u8, abi.display_connector_displayport), output.connector_type);
+    try std.testing.expectEqual(@as(u8, abi.display_interface_displayport), stateInterfaceType());
     try std.testing.expectEqual(@as(u8, 1), output.active_scanout);
     try std.testing.expectEqual(@as(u16, 1920), output.current_width);
     try std.testing.expectEqual(@as(u16, 1080), output.current_height);
     try std.testing.expect(!selectOutputIndex(2));
+}
+
+test "display output can retarget active interface from stored entries" {
+    resetForTest();
+    updateFromVirtioGpu(.{
+        .vendor_id = 0x1AF4,
+        .device_id = 0x1050,
+        .pci_bus = 0,
+        .pci_device = 8,
+        .pci_function = 0,
+        .hardware_backed = true,
+        .connected = true,
+        .scanout_count = 2,
+        .active_scanout = 0,
+        .current_width = 1280,
+        .current_height = 800,
+        .preferred_width = 1280,
+        .preferred_height = 800,
+        .physical_width_mm = 300,
+        .physical_height_mm = 190,
+        .manufacturer_id = 0x1234,
+        .product_code = 0x5678,
+        .serial_number = 0xCAFEBABE,
+        .interface_type = abi.display_interface_hdmi_a,
+        .capability_flags = abi.display_capability_digital_input | abi.display_capability_hdmi_vendor_data,
+        .edid = &.{ 0x00, 0xFF, 0xFF, 0xFF },
+        .scanouts = &.{
+            .{
+                .connected = true,
+                .scanout_index = 0,
+                .current_width = 1280,
+                .current_height = 800,
+                .preferred_width = 1280,
+                .preferred_height = 800,
+                .physical_width_mm = 300,
+                .physical_height_mm = 190,
+                .manufacturer_id = 0x1234,
+                .product_code = 0x5678,
+                .serial_number = 0xCAFEBABE,
+                .interface_type = abi.display_interface_hdmi_a,
+                .capability_flags = abi.display_capability_digital_input | abi.display_capability_hdmi_vendor_data,
+                .edid_length = 128,
+            },
+            .{
+                .connected = true,
+                .scanout_index = 1,
+                .current_width = 1920,
+                .current_height = 1080,
+                .preferred_width = 1920,
+                .preferred_height = 1080,
+                .physical_width_mm = 520,
+                .physical_height_mm = 320,
+                .manufacturer_id = 0x4321,
+                .product_code = 0x8765,
+                .serial_number = 0xABCD1234,
+                .interface_type = abi.display_interface_displayport,
+                .capability_flags = abi.display_capability_digital_input | abi.display_capability_displayid_extension,
+                .edid_length = 256,
+            },
+        },
+    });
+
+    try std.testing.expect(selectOutputInterface(abi.display_interface_displayport));
+    const output = statePtr();
+    try std.testing.expectEqual(@as(u8, abi.display_connector_displayport), output.connector_type);
+    try std.testing.expectEqual(@as(u8, abi.display_interface_displayport), stateInterfaceType());
+    try std.testing.expectEqual(@as(u8, 1), output.active_scanout);
+    try std.testing.expectEqual(@as(u16, 1920), output.current_width);
+    try std.testing.expect(!selectOutputInterface(abi.display_interface_hdmi_b));
 }
 
 test "display output can retarget active output mode from stored entries" {
@@ -800,6 +960,7 @@ test "display output can retarget active output mode from stored entries" {
     try std.testing.expect(setOutputMode(1, 1024, 768));
     const output = statePtr();
     try std.testing.expectEqual(@as(u8, abi.display_connector_displayport), output.connector_type);
+    try std.testing.expectEqual(@as(u8, abi.display_interface_displayport), stateInterfaceType());
     try std.testing.expectEqual(@as(u8, 1), output.active_scanout);
     try std.testing.expectEqual(@as(u16, 1024), output.current_width);
     try std.testing.expectEqual(@as(u16, 768), output.current_height);
