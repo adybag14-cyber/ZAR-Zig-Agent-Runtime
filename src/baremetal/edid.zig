@@ -223,7 +223,10 @@ fn parseDisplayName(block: []const u8) ?struct { len: u8, value: [max_name_len]u
 fn parseCeaExtension(block: []const u8, parsed: *ParsedEdid) void {
     if (block.len < block_len) return;
     parsed.capability_flags |= abi.display_capability_cea_extension;
+    if ((block[3] & 0x80) != 0) parsed.capability_flags |= abi.display_capability_underscan;
     if ((block[3] & 0x40) != 0) parsed.capability_flags |= abi.display_capability_basic_audio;
+    if ((block[3] & 0x20) != 0) parsed.capability_flags |= abi.display_capability_ycbcr444;
+    if ((block[3] & 0x10) != 0) parsed.capability_flags |= abi.display_capability_ycbcr422;
 
     const dtd_offset = if (block[2] >= 4 and block[2] <= 127) @as(usize, block[2]) else block_len - 1;
     var offset: usize = 4;
@@ -415,7 +418,7 @@ fn sampleEdidWithCeaExtension() [block_len * 2]u8 {
     extension[0] = cea_extension_tag;
     extension[1] = 0x03;
     extension[2] = 8;
-    extension[3] = 0x40;
+    extension[3] = 0xF0;
     extension[4] = 0x63;
     extension[5] = hdmi_vendor_oui[0];
     extension[6] = hdmi_vendor_oui[1];
@@ -487,6 +490,9 @@ test "edid parser decodes cea capability flags" {
     try std.testing.expect((parsed.capability_flags & abi.display_capability_cea_extension) != 0);
     try std.testing.expect((parsed.capability_flags & abi.display_capability_basic_audio) != 0);
     try std.testing.expect((parsed.capability_flags & abi.display_capability_hdmi_vendor_data) != 0);
+    try std.testing.expect((parsed.capability_flags & abi.display_capability_underscan) != 0);
+    try std.testing.expect((parsed.capability_flags & abi.display_capability_ycbcr444) != 0);
+    try std.testing.expect((parsed.capability_flags & abi.display_capability_ycbcr422) != 0);
 }
 
 test "edid parser decodes displayid capability flags" {

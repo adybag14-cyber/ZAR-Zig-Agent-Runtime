@@ -712,6 +712,7 @@ const VirtioGpuDisplayProbeError = error{
     OutputEntryCountMismatch,
     OutputEntryMismatch,
     OutputDetailMismatch,
+    DisplayCapabilityResponseMismatch,
     PresentStatsMismatch,
     RenderedPixelMismatch,
     DisplayProfileSaveMismatch,
@@ -10727,6 +10728,7 @@ fn virtioGpuDisplayProbeFailureCode(err: VirtioGpuDisplayProbeError) u8 {
         error.OutputEntryCountMismatch => 0x68,
         error.OutputEntryMismatch => 0x69,
         error.OutputDetailMismatch => 0x7A,
+        error.DisplayCapabilityResponseMismatch => 0x7B,
         error.PresentStatsMismatch => 0x6A,
         error.RenderedPixelMismatch => 0x6B,
         error.DisplayProfileSaveMismatch => 0x6D,
@@ -11015,6 +11017,81 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
     {
         return error.OutputDetailMismatch;
     }
+
+    var capability_response_scratch: [768]u8 = undefined;
+    var capability_response_fba = std.heap.FixedBufferAllocator.init(&capability_response_scratch);
+    const output_capability_response = tool_service.handleFramedRequest(
+        capability_response_fba.allocator(),
+        "REQ 601 DISPLAYOUTPUTCAPABILITIES 0",
+        512,
+        256,
+        512,
+    ) catch return error.DisplayCapabilityResponseMismatch;
+    const interface_name = display_output.interfaceName(expected_interface);
+    const declared_interface_name = display_output.interfaceName(display_output.outputDeclaredInterfaceType(result.active_scanout));
+    const connector_name = switch (expected_connector) {
+        abi.display_connector_displayport => "displayport",
+        abi.display_connector_hdmi => "hdmi",
+        abi.display_connector_embedded_displayport => "embedded-displayport",
+        abi.display_connector_virtual => "virtual",
+        else => "none",
+    };
+    var output_capability_expected_payload_buffer: [320]u8 = undefined;
+    const output_capability_expected_payload = std.fmt.bufPrint(
+        &output_capability_expected_payload_buffer,
+        "index={d} scanout={d} connector={s} interface={s} declared_interface={s} connected=1 digital={d} preferred={d} cea={d} audio={d} hdmi_vendor={d} displayid={d} underscan={d} ycbcr444={d} ycbcr422={d} capabilities=0x{x}\n",
+        .{
+            result.active_scanout,
+            result.active_scanout,
+            connector_name,
+            interface_name,
+            declared_interface_name,
+            if ((result.capability_flags & abi.display_capability_digital_input) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((result.capability_flags & abi.display_capability_preferred_timing) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((result.capability_flags & abi.display_capability_cea_extension) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((result.capability_flags & abi.display_capability_basic_audio) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((result.capability_flags & abi.display_capability_hdmi_vendor_data) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((result.capability_flags & abi.display_capability_displayid_extension) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((result.capability_flags & abi.display_capability_underscan) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((result.capability_flags & abi.display_capability_ycbcr444) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((result.capability_flags & abi.display_capability_ycbcr422) != 0) @as(u8, 1) else @as(u8, 0),
+            result.capability_flags,
+        },
+    ) catch return error.DisplayCapabilityResponseMismatch;
+    var output_capability_expected_response_buffer: [384]u8 = undefined;
+    const output_capability_expected_response = std.fmt.bufPrint(
+        &output_capability_expected_response_buffer,
+        "RESP 601 {d}\n{s}",
+        .{ output_capability_expected_payload.len, output_capability_expected_payload },
+    ) catch return error.DisplayCapabilityResponseMismatch;
+    if (!std.mem.eql(u8, output_capability_response, output_capability_expected_response)) {
+        return error.DisplayCapabilityResponseMismatch;
+    }
+
+    capability_response_fba = std.heap.FixedBufferAllocator.init(&capability_response_scratch);
+    var interface_capability_request_buffer: [96]u8 = undefined;
+    const interface_capability_request = std.fmt.bufPrint(
+        &interface_capability_request_buffer,
+        "REQ 602 DISPLAYINTERFACECAPABILITIES {s}",
+        .{interface_name},
+    ) catch return error.DisplayCapabilityResponseMismatch;
+    const interface_capability_response = tool_service.handleFramedRequest(
+        capability_response_fba.allocator(),
+        interface_capability_request,
+        512,
+        256,
+        512,
+    ) catch return error.DisplayCapabilityResponseMismatch;
+    var interface_capability_expected_response_buffer: [384]u8 = undefined;
+    const interface_capability_expected_response = std.fmt.bufPrint(
+        &interface_capability_expected_response_buffer,
+        "RESP 602 {d}\n{s}",
+        .{ output_capability_expected_payload.len, output_capability_expected_payload },
+    ) catch return error.DisplayCapabilityResponseMismatch;
+    if (!std.mem.eql(u8, interface_capability_response, interface_capability_expected_response)) {
+        return error.DisplayCapabilityResponseMismatch;
+    }
+
     if (present_stats.resource_create_count == 0 or
         present_stats.attach_backing_count == 0 or
         present_stats.scanout_set_count == 0 or
