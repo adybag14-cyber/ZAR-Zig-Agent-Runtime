@@ -16,6 +16,33 @@ This track exists to remove guesswork. It defines the real bare-metal subsystems
 - bare-metal filesystem usage
 - bare-metal tool execution substrate
 
+## ZigOS Reference Track
+
+Status: `Planned`
+
+This track uses `Cameron-Lyons/zigos` as a reference architecture only.
+
+Hard boundary:
+
+- no source import
+- no mechanical translation
+- no direct code transplant
+
+Reason:
+
+- upstream licensing is not yet explicit in the checked source of truth
+
+Tracked docs:
+
+- `docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md`
+- `docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`
+
+Current first adoption slice:
+
+- clean-room `E1000` NIC support
+- reuse the existing ZAR protocol stack and proof harness
+- do not widen scope to VFS/ELF/syscalls/userspace in the first slice
+
 `FS5.5` is not complete until each subsystem has:
 
 1. a real Zig implementation path

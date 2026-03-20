@@ -10,6 +10,11 @@ Track and achieve OpenClaw Zig parity against upstream stable + beta baselines:
 while maintaining parity-first validation and release gating.
 
 Full-stack replacement execution reference:
+- ZigOS reference-only integration planning is now tracked in:
+  - `docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md`
+  - `docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`
+  - current hard boundary: no ZigOS source import until upstream licensing is explicit
+  - first realistic adoption slice is clean-room `E1000`, because it expands hardware breadth without forcing a VFS/ELF/syscall redesign
 - `FS5.5` hardware-driver pivot update:
   - framebuffer/console strict closure is now reached locally.
   - real linear-framebuffer path shipped in `src/baremetal/framebuffer_console.zig`:
