@@ -40,14 +40,14 @@ Tracked docs:
 Delivered first adoption slice:
 
 - clean-room `E1000` NIC support
-- first strict delivery now includes raw-frame/L2 plus `ARP`, `IPv4`, and `UDP`
+- first strict delivery now includes raw-frame/L2 plus `ARP`, `IPv4`, `UDP`, and bounded `TCP`
 - `src/baremetal/e1000.zig` now provides a ZAR-owned `82540EM`-class driver with PCI bind, MMIO + legacy I/O reset, EEPROM MAC readout, bounded TX/RX rings, and raw-frame send/receive telemetry
 - `src/baremetal/pci.zig` now discovers the `E1000` MMIO + I/O BAR pair and enables I/O, memory, and bus-master decode on the selected function
-- host regressions now prove init, MAC readout, TX, RX, export-surface stability, and `ARP` / `IPv4` / `UDP` protocol reuse on the clean-room `E1000` path
+- host regressions now prove init, MAC readout, TX, RX, export-surface stability, and `ARP` / `IPv4` / `UDP` / bounded `TCP` protocol reuse on the clean-room `E1000` path
 - `scripts/baremetal-qemu-e1000-probe-check.ps1` plus `scripts/qemu-e1000-dgram-echo.ps1` now prove live QEMU `E1000` PCI bind, MAC readout, TX, RX, payload validation, and counter advance over the freestanding PVH artifact
 - `src/pal/net.zig` now routes the same raw-frame PAL seam through selectable `RTL8139` and `E1000` backends without regressing the existing RTL8139 path
-- `scripts/baremetal-qemu-e1000-arp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-ipv4-probe-check.ps1`, and `scripts/baremetal-qemu-e1000-udp-probe-check.ps1` now prove live QEMU `E1000` ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, and TX/RX counter advance over the freestanding PVH artifact
-- `TCP` / `HTTP` / `HTTPS` reuse over `E1000` remains the next depth step
+- `scripts/baremetal-qemu-e1000-arp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-e1000-udp-probe-check.ps1`, and `scripts/baremetal-qemu-e1000-tcp-probe-check.ps1` now prove live QEMU `E1000` ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, bounded TCP handshake/payload/teardown, and TX/RX counter advance over the freestanding PVH artifact
+- `HTTP` / `HTTPS` reuse over `E1000` remains the next depth step
 - do not widen scope to VFS/ELF/syscalls/userspace in this slice
 
 `FS5.5` is not complete until each subsystem has:
@@ -372,12 +372,12 @@ Current local source-of-truth evidence:
   - `oc_ethernet_rx_len`
 - `src/pal/net.zig` now exposes the bare-metal raw-frame PAL seam through the same RTL8139 driver path instead of a fake transport
 - host regressions now prove mock-device initialization, raw-frame send, receive, ABI export, and PAL bridging
-- a second clean-room NIC family now exists for future depth:
+- a second clean-room NIC family now exists for broader FS5.5 depth:
   - `src/baremetal/e1000.zig` now provides a ZAR-owned `82540EM`-class `E1000` path with PCI bind, MMIO + legacy I/O reset, EEPROM MAC readout, bounded TX/RX rings, and raw-frame send/receive telemetry
   - `src/baremetal/pci.zig` now also discovers the `E1000` MMIO + I/O BAR pair and enables I/O, memory, and bus-master decode on the selected PCI function
-  - dedicated host regressions prove init, MAC readout, TX, RX, and export-surface stability on the clean-room `E1000` path
-  - `scripts/baremetal-qemu-e1000-probe-check.ps1` plus `scripts/qemu-e1000-dgram-echo.ps1` now prove live QEMU `E1000` PCI bind, MAC readout, TX, RX, payload validation, and counter advance over the freestanding PVH artifact
-  - the current strict delivery on `E1000` is raw-frame `L2` only; protocol/service reuse over `E1000` remains future depth
+  - dedicated host regressions prove init, MAC readout, TX, RX, export-surface stability, and bounded `TCP` reuse on the clean-room `E1000` path
+  - `scripts/baremetal-qemu-e1000-probe-check.ps1`, `scripts/baremetal-qemu-e1000-arp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-e1000-udp-probe-check.ps1`, and `scripts/baremetal-qemu-e1000-tcp-probe-check.ps1` now prove live QEMU `E1000` raw-frame, `ARP`, `IPv4`, `UDP`, and bounded `TCP` transport behavior over the freestanding PVH artifact
+  - `HTTP` / `HTTPS` and higher service reuse over `E1000` remain future depth
 - the live freestanding/QEMU proof is now green:
   - `scripts/baremetal-qemu-rtl8139-probe-check.ps1`
   - MAC readout succeeds

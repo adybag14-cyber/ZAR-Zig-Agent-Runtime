@@ -73,17 +73,17 @@ Delivered so far:
 - `E2. Shared NIC Surface`
 - `E3. Host Regression Layer`
 - `E4. Live L2 Probe`
-- `E5. Protocol Reuse Over E1000` (`ARP` / `IPv4` / `UDP`)
+- `E5. Protocol Reuse Over E1000` (`ARP` / `IPv4` / `UDP` / bounded `TCP`)
 
 Current delivered slice:
 
 - `src/baremetal/e1000.zig` now provides a ZAR-owned `82540EM`-class `E1000` path with PCI bind, MMIO + legacy I/O reset, EEPROM MAC readout, bounded TX/RX rings, and raw-frame send/receive telemetry
 - `src/baremetal/pci.zig` now discovers the `E1000` MMIO + I/O BAR pair and enables I/O, memory, and bus-master decode on the selected PCI function
 - `src/pal/net.zig` now routes the same raw-frame PAL seam through selectable `RTL8139` and `E1000` backends without regressing the existing RTL8139 path
-- host regressions now prove init, MAC readout, TX, RX, export-surface stability, and `ARP` / `IPv4` / `UDP` protocol reuse on the clean-room `E1000` path
+- host regressions now prove init, MAC readout, TX, RX, export-surface stability, and `ARP` / `IPv4` / `UDP` / bounded `TCP` protocol reuse on the clean-room `E1000` path
 - `scripts/baremetal-qemu-e1000-probe-check.ps1` plus `scripts/qemu-e1000-dgram-echo.ps1` now prove live QEMU `E1000` PCI bind, MAC readout, TX, RX, payload validation, and counter advance over the freestanding PVH artifact
-- `scripts/baremetal-qemu-e1000-arp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-ipv4-probe-check.ps1`, and `scripts/baremetal-qemu-e1000-udp-probe-check.ps1` now prove live QEMU `E1000` ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, and TX/RX counter advance over the freestanding PVH artifact
-- `TCP` / `HTTP` / `HTTPS` reuse over `E1000` remains future depth
+- `scripts/baremetal-qemu-e1000-arp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-e1000-udp-probe-check.ps1`, and `scripts/baremetal-qemu-e1000-tcp-probe-check.ps1` now prove live QEMU `E1000` ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, bounded TCP handshake/payload/teardown, and TX/RX counter advance over the freestanding PVH artifact
+- `HTTP` / `HTTPS` reuse over `E1000` remains future depth
 
 ## Deliverables
 
@@ -176,7 +176,7 @@ The slice is complete only when all of the following are true:
 2. host regressions prove init/TX/RX behavior. Status: `Done`
 3. live QEMU `e1000` raw-frame proof is green. Status: `Done`
 4. live QEMU `ARP` / `IPv4` / `UDP` proof is green over `E1000`. Status: `Done`
-5. live QEMU `TCP` proof is green over `E1000`. Status: `Pending`
+5. live QEMU `TCP` proof is green over `E1000`. Status: `Done`
 6. existing RTL8139 proofs stay green. Status: `Done`
 7. `zig build test --summary all` is green. Status: `Done`
 8. parity gate is green. Status: `Done`
@@ -192,8 +192,8 @@ Strict order:
 2. host regression harness. Status: `Done`
 3. live raw-frame proof. Status: `Done`
 4. protocol reuse over E1000 (`ARP` / `IPv4` / `UDP`). Status: `Done`
-5. `TCP` reuse over `E1000`. Status: `Next`
-6. optional service/http/https reuse proof. Status: `Later`
+5. bounded `TCP` reuse over `E1000`. Status: `Done`
+6. optional service/http/https reuse proof. Status: `Next`
 7. docs/tracking signoff. Status: `In progress`
 
 ## Exit Criteria
