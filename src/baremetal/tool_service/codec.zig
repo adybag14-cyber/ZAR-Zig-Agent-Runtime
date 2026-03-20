@@ -134,6 +134,7 @@ pub const RequestOp = enum {
     display_info,
     display_outputs,
     display_output,
+    display_output_modes,
     display_modes,
     display_set,
     display_activate,
@@ -141,6 +142,7 @@ pub const RequestOp = enum {
     display_activate_output,
     display_activate_output_preferred,
     display_output_set,
+    display_output_activate_mode,
     display_profile_list,
     display_profile_info,
     display_profile_active,
@@ -195,6 +197,11 @@ pub const DisplayOutputModeRequest = struct {
     index: u16,
     width: u16,
     height: u16,
+};
+
+pub const DisplayOutputModeIndexRequest = struct {
+    index: u16,
+    mode_index: u16,
 };
 
 pub const PackageReleasePruneRequest = struct {
@@ -451,6 +458,7 @@ pub const FramedRequest = struct {
         display_info: void,
         display_outputs: void,
         display_output: []const u8,
+        display_output_modes: []const u8,
         display_modes: void,
         display_set: DisplayModeRequest,
         display_activate: []const u8,
@@ -458,6 +466,7 @@ pub const FramedRequest = struct {
         display_activate_output: []const u8,
         display_activate_output_preferred: []const u8,
         display_output_set: DisplayOutputModeRequest,
+        display_output_activate_mode: DisplayOutputModeIndexRequest,
         display_profile_list: void,
         display_profile_info: []const u8,
         display_profile_active: void,
@@ -2714,6 +2723,21 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         };
     }
 
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYOUTPUTMODES")) {
+        const output_index_part = try splitFirstToken(op_part.rest);
+        if (output_index_part.rest.len != 0) return error.InvalidFrame;
+        if (newline_index != null) {
+            return .{
+                .framed = .{ .request_id = request_id, .operation = .{ .display_output_modes = output_index_part.token } },
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .display_output_modes = output_index_part.token } },
+            .consumed_len = request.len,
+        };
+    }
+
     if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYMODES")) {
         if (op_part.rest.len != 0) return error.InvalidFrame;
         if (newline_index != null) {
@@ -2822,6 +2846,29 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
                 .index = std.fmt.parseInt(u16, output_part.token, 10) catch return error.InvalidFrame,
                 .width = std.fmt.parseInt(u16, width_part.token, 10) catch return error.InvalidFrame,
                 .height = std.fmt.parseInt(u16, height_part.token, 10) catch return error.InvalidFrame,
+            } },
+        };
+        if (newline_index != null) {
+            return .{
+                .framed = request_value,
+                .consumed_len = prefix_len + newline_index.? + 1,
+            };
+        }
+        return .{
+            .framed = request_value,
+            .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "DISPLAYOUTPUTACTIVATEMODE")) {
+        const output_part = try splitFirstToken(op_part.rest);
+        const mode_part = try splitFirstToken(output_part.rest);
+        if (mode_part.rest.len != 0) return error.InvalidFrame;
+        const request_value = FramedRequest{
+            .request_id = request_id,
+            .operation = .{ .display_output_activate_mode = .{
+                .index = std.fmt.parseInt(u16, output_part.token, 10) catch return error.InvalidFrame,
+                .mode_index = std.fmt.parseInt(u16, mode_part.token, 10) catch return error.InvalidFrame,
             } },
         };
         if (newline_index != null) {

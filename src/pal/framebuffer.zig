@@ -7,6 +7,7 @@ const virtio_gpu = @import("../baremetal/virtio_gpu.zig");
 pub const State = abi.BaremetalFramebufferState;
 pub const DisplayOutputState = abi.BaremetalDisplayOutputState;
 pub const DisplayOutputEntry = abi.BaremetalDisplayOutputEntry;
+pub const DisplayOutputMode = abi.BaremetalDisplayModeInfo;
 
 pub fn init() bool {
     return framebuffer_console.init();
@@ -46,6 +47,14 @@ pub fn displayOutputEntry(index: u16) DisplayOutputEntry {
 
 pub fn displayOutputEdidByte(index: u16) u8 {
     return display_output.edidByte(index);
+}
+
+pub fn displayOutputModeCount(index: u16) u16 {
+    return display_output.outputModeCount(index);
+}
+
+pub fn displayOutputMode(index: u16, mode_index: u16) ?DisplayOutputMode {
+    return display_output.outputMode(index, mode_index);
 }
 
 pub fn activateDisplayOutput(index: u16) error{NotFound}!void {
@@ -98,6 +107,27 @@ pub fn activateDisplayOutputPreferred(index: u16) error{ NotFound, UnsupportedMo
     }
     if (index != 0) return error.NotFound;
     const mode = display_output.preferredMode(index) orelse return error.UnsupportedMode;
+    framebuffer_console.setMode(mode.width, mode.height) catch return error.UnsupportedMode;
+}
+
+pub fn activateDisplayOutputMode(index: u16, mode_index: u16) error{ NotFound, UnsupportedMode }!void {
+    const display_state = display_output.statePtr();
+    if (display_state.controller == abi.display_controller_virtio_gpu) {
+        if (display_state.hardware_backed != 0) {
+            _ = virtio_gpu.probeAndPresentPatternForOutputIndexModeIndex(@intCast(index), @intCast(mode_index)) catch |err| switch (err) {
+                error.NoConnectedScanout => return error.NotFound,
+                error.UnsupportedMode, error.FramebufferTooLarge => return error.UnsupportedMode,
+                else => return error.NotFound,
+            };
+            return;
+        }
+        const entry = display_output.outputEntry(index);
+        if (index >= display_output.outputCount() or entry.connected == 0) return error.NotFound;
+        if (!display_output.setOutputModeByIndex(index, mode_index)) return error.UnsupportedMode;
+        return;
+    }
+    if (index != 0) return error.NotFound;
+    const mode = display_output.outputMode(index, mode_index) orelse return error.UnsupportedMode;
     framebuffer_console.setMode(mode.width, mode.height) catch return error.UnsupportedMode;
 }
 
