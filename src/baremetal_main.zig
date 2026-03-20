@@ -11,6 +11,7 @@ const virtio_gpu = @import("baremetal/virtio_gpu.zig");
 const framebuffer_console = @import("baremetal/framebuffer_console.zig");
 const pal_framebuffer = @import("pal/framebuffer.zig");
 const vga_text_console = @import("baremetal/vga_text_console.zig");
+const e1000 = @import("baremetal/e1000.zig");
 const rtl8139 = @import("baremetal/rtl8139.zig");
 const storage_backend = @import("baremetal/storage_backend.zig");
 const filesystem = @import("baremetal/filesystem.zig");
@@ -100,6 +101,7 @@ const qemu_virtio_gpu_display_probe_ok_code: u8 = 0x41;
 const qemu_rtl8139_https_post_probe_ok_code: u8 = 0x42;
 const qemu_tool_runtime_probe_ok_code: u8 = 0x43;
 const qemu_rtl8139_runtime_service_probe_ok_code: u8 = 0x44;
+const qemu_e1000_probe_ok_code: u8 = 0x45;
 const build_options = if (builtin.is_test)
     struct {
         pub const qemu_smoke: bool = false;
@@ -108,6 +110,7 @@ const build_options = if (builtin.is_test)
         pub const framebuffer_probe_width: u16 = 0;
         pub const framebuffer_probe_height: u16 = 0;
         pub const ata_storage_probe: bool = false;
+        pub const e1000_probe: bool = false;
         pub const rtl8139_probe: bool = false;
         pub const rtl8139_arp_probe: bool = false;
         pub const rtl8139_ipv4_probe: bool = false;
@@ -132,6 +135,7 @@ const framebuffer_probe_banner_enabled: bool = build_options.framebuffer_probe_b
 const framebuffer_probe_width: u16 = if (@hasDecl(build_options, "framebuffer_probe_width")) build_options.framebuffer_probe_width else 0;
 const framebuffer_probe_height: u16 = if (@hasDecl(build_options, "framebuffer_probe_height")) build_options.framebuffer_probe_height else 0;
 const ata_storage_probe_enabled: bool = build_options.ata_storage_probe;
+const e1000_probe_enabled: bool = if (@hasDecl(build_options, "e1000_probe")) build_options.e1000_probe else false;
 const rtl8139_probe_enabled: bool = build_options.rtl8139_probe;
 const rtl8139_arp_probe_enabled: bool = build_options.rtl8139_arp_probe;
 const rtl8139_ipv4_probe_enabled: bool = build_options.rtl8139_ipv4_probe;
@@ -234,6 +238,38 @@ const Rtl8139ProbeError = error{
     RxPatternMismatch,
     CounterMismatch,
 };
+
+const E1000ProbeError = error{
+    UnsupportedPlatform,
+    DeviceNotFound,
+    MissingMmioBar,
+    MissingIoBar,
+    ResetTimeout,
+    AutoReadTimeout,
+    EepromReadFailed,
+    EepromChecksumMismatch,
+    MacReadFailed,
+    RingProgramFailed,
+    StateMagicMismatch,
+    BackendMismatch,
+    InitFlagMismatch,
+    HardwareBackedMismatch,
+    IoBaseMismatch,
+    TxFailed,
+    LoopbackEnableFailed,
+    LinkDropped,
+    LoopbackDropped,
+    TxCompletedNoRxProgress,
+    RxHeadAdvancedNoFrame,
+    RxTimedOut,
+    RxLengthMismatch,
+    RxPatternMismatch,
+    CounterMismatch,
+};
+
+const e1000_probe_remote_mac = [6]u8{ 0x02, 0x5A, 0x52, 0x10, 0x00, 0xE1 };
+const e1000_probe_ethertype = [2]u8{ 0x88, 0xB5 };
+const e1000_probe_receive_warmup_loops: usize = 8_000_000;
 
 const Rtl8139ArpProbeError = error{
     UnsupportedPlatform,
@@ -1949,6 +1985,10 @@ fn baremetalStart() callconv(.c) noreturn {
         runVirtioGpuDisplayProbe() catch |err| qemuExit(virtioGpuDisplayProbeFailureCode(err));
         qemuExit(qemu_virtio_gpu_display_probe_ok_code);
     }
+    if (e1000_probe_enabled) {
+        runE1000Probe() catch |err| qemuExit(e1000ProbeFailureCode(err));
+        qemuExit(qemu_e1000_probe_ok_code);
+    }
     if (rtl8139_probe_enabled) {
         runRtl8139Probe() catch |err| qemuExit(rtl8139ProbeFailureCode(err));
         qemuExit(qemu_rtl8139_probe_ok_code);
@@ -2304,6 +2344,104 @@ fn runAtaGptInstallerProbe() AtaGptInstallerProbeError!void {
     }
 }
 
+fn runE1000Probe() E1000ProbeError!void {
+    e1000.initDetailed() catch |err| return switch (err) {
+        error.UnsupportedPlatform => error.UnsupportedPlatform,
+        error.DeviceNotFound => error.DeviceNotFound,
+        error.MissingMmioBar => error.MissingMmioBar,
+        error.MissingIoBar => error.MissingIoBar,
+        error.ResetTimeout => error.ResetTimeout,
+        error.AutoReadTimeout => error.AutoReadTimeout,
+        error.EepromReadFailed => error.EepromReadFailed,
+        error.EepromChecksumMismatch => error.EepromChecksumMismatch,
+        error.MacReadFailed => error.MacReadFailed,
+        error.RingProgramFailed => error.RingProgramFailed,
+    };
+    const eth = e1000.statePtr();
+    if (eth.magic != abi.ethernet_magic) return error.StateMagicMismatch;
+    if (eth.backend != abi.ethernet_backend_e1000) return error.BackendMismatch;
+    if (eth.initialized == 0) return error.InitFlagMismatch;
+    if (!builtin.is_test and eth.hardware_backed == 0) return error.HardwareBackedMismatch;
+    if (eth.io_base == 0) return error.IoBaseMismatch;
+    if (macBytesAreZeroForDriver(e1000.macByte)) return error.MacReadFailed;
+
+    const expect_mock_echo = builtin.is_test or eth.hardware_backed == 0;
+    const expected_len: u32 = 96;
+    if (expect_mock_echo) {
+        e1000.enableMacLoopbackForProbe() catch return error.LoopbackEnableFailed;
+        _ = e1000.sendPattern(expected_len, 0x41) catch return error.TxFailed;
+    } else {
+        var warmup: usize = 0;
+        while (warmup < e1000_probe_receive_warmup_loops) : (warmup += 1) {
+            spinPause(1);
+        }
+        var guest_mac = [6]u8{ 0, 0, 0, 0, 0, 0 };
+        var mac_index: usize = 0;
+        while (mac_index < guest_mac.len) : (mac_index += 1) {
+            guest_mac[mac_index] = e1000.macByte(@as(u32, @intCast(mac_index)));
+        }
+        var probe_frame = [_]u8{0} ** expected_len;
+        buildE1000ProbeFrame(probe_frame[0..], e1000_probe_remote_mac, guest_mac, 0x41);
+        e1000.sendFrame(probe_frame[0..]) catch return error.TxFailed;
+    }
+
+    var attempts: usize = 0;
+    var observed_len: u32 = 0;
+    while (attempts < 200_000) : (attempts += 1) {
+        observed_len = e1000.pollReceive() catch return error.RxTimedOut;
+        if (observed_len != 0) break;
+        spinPause(1);
+    }
+    if (observed_len == 0) {
+        const nic_status = e1000.debugStatus();
+        const tx_head = e1000.debugTxHead();
+        const tx_tail = e1000.debugTxTail();
+        const rx_head = e1000.debugRxHead();
+        _ = e1000.debugRxTail();
+        if ((nic_status & 0x2) == 0) return error.LinkDropped;
+        if (expect_mock_echo and !e1000.debugLoopbackEnabled()) return error.LoopbackDropped;
+        if (eth.tx_packets != 0 and tx_head == tx_tail) {
+            return if (rx_head != 0) error.RxHeadAdvancedNoFrame else error.TxCompletedNoRxProgress;
+        }
+        return error.RxTimedOut;
+    }
+    if (observed_len != expected_len) return error.RxLengthMismatch;
+
+    var rx_index: u32 = 0;
+    while (rx_index < 6) : (rx_index += 1) {
+        if (e1000.rxByte(rx_index) != e1000.macByte(rx_index)) return error.RxPatternMismatch;
+        const expected_source = if (expect_mock_echo)
+            e1000.macByte(rx_index)
+        else
+            e1000_probe_remote_mac[@as(usize, @intCast(rx_index))];
+        if (e1000.rxByte(6 + rx_index) != expected_source) {
+            return error.RxPatternMismatch;
+        }
+    }
+    if (e1000.rxByte(12) != e1000_probe_ethertype[0] or e1000.rxByte(13) != e1000_probe_ethertype[1]) {
+        return error.RxPatternMismatch;
+    }
+
+    rx_index = 14;
+    while (rx_index < expected_len) : (rx_index += 1) {
+        const expected = 0x41 +% @as(u8, @truncate(rx_index - 14));
+        if (e1000.rxByte(rx_index) != expected) return error.RxPatternMismatch;
+    }
+
+    if (eth.tx_packets == 0 or eth.rx_packets == 0 or eth.last_rx_len != expected_len) return error.CounterMismatch;
+}
+
+fn buildE1000ProbeFrame(frame: []u8, destination_mac: [6]u8, source_mac: [6]u8, seed: u8) void {
+    std.mem.copyForwards(u8, frame[0..6], destination_mac[0..]);
+    std.mem.copyForwards(u8, frame[6..12], source_mac[0..]);
+    frame[12] = e1000_probe_ethertype[0];
+    frame[13] = e1000_probe_ethertype[1];
+    var index: usize = 14;
+    while (index < frame.len) : (index += 1) {
+        frame[index] = seed +% @as(u8, @truncate(index - 14));
+    }
+}
+
 fn runRtl8139Probe() Rtl8139ProbeError!void {
     rtl8139.initDetailed() catch |err| return switch (err) {
         error.UnsupportedPlatform => error.UnsupportedPlatform,
@@ -2370,6 +2508,14 @@ fn macBytesAreZero() bool {
     return true;
 }
 
+fn macBytesAreZeroForDriver(comptime reader: fn (u32) u8) bool {
+    var index: u32 = 0;
+    while (index < 6) : (index += 1) {
+        if (reader(index) != 0) return false;
+    }
+    return true;
+}
+
 fn rtl8139ProbeFailureCode(err: Rtl8139ProbeError) u8 {
     return switch (err) {
         error.UnsupportedPlatform => 0x60,
@@ -2392,6 +2538,36 @@ fn rtl8139ProbeFailureCode(err: Rtl8139ProbeError) u8 {
         error.TxCompletedNoRxInterrupt => 0x71,
         error.TxCompletedNoRxProgress => 0x72,
         error.DataPathEnableFailed => 0x73,
+    };
+}
+
+fn e1000ProbeFailureCode(err: E1000ProbeError) u8 {
+    return switch (err) {
+        error.UnsupportedPlatform => 0x90,
+        error.DeviceNotFound => 0x91,
+        error.MissingMmioBar => 0x92,
+        error.MissingIoBar => 0x93,
+        error.ResetTimeout => 0x94,
+        error.AutoReadTimeout => 0x95,
+        error.EepromReadFailed => 0x96,
+        error.EepromChecksumMismatch => 0x97,
+        error.MacReadFailed => 0x98,
+        error.RingProgramFailed => 0x99,
+        error.StateMagicMismatch => 0x9A,
+        error.BackendMismatch => 0x9B,
+        error.InitFlagMismatch => 0x9C,
+        error.HardwareBackedMismatch => 0x9D,
+        error.IoBaseMismatch => 0x9E,
+        error.TxFailed => 0x9F,
+        error.LoopbackEnableFailed => 0xA0,
+        error.LinkDropped => 0xA1,
+        error.LoopbackDropped => 0xA2,
+        error.TxCompletedNoRxProgress => 0xA3,
+        error.RxHeadAdvancedNoFrame => 0xA4,
+        error.RxTimedOut => 0xA5,
+        error.RxLengthMismatch => 0xA6,
+        error.RxPatternMismatch => 0xA7,
+        error.CounterMismatch => 0xA8,
     };
 }
 
@@ -12785,6 +12961,7 @@ fn resetBaremetalRuntimeForTest() void {
     display_output.resetForTest();
     framebuffer_console.resetForTest();
     vga_text_console.resetForTest();
+    e1000.resetForTest();
     rtl8139.resetForTest();
     storage_backend.resetForTest();
     ps2_input.resetForTest();
@@ -19545,6 +19722,22 @@ test "baremetal ethernet export surface initializes mock rtl8139 and loops a fra
     try std.testing.expectEqual(@as(u8, 0x52), oc_ethernet_rx_byte(0));
     try std.testing.expectEqual(@as(u8, 0x88), oc_ethernet_rx_byte(12));
     try std.testing.expectEqual(@as(u8, 0x41), oc_ethernet_rx_byte(14));
+    try std.testing.expectEqual(@as(u32, 1), eth.tx_packets);
+    try std.testing.expectEqual(@as(u32, 1), eth.rx_packets);
+}
+
+test "baremetal e1000 raw frame transport loops through mock e1000 and exports stable state" {
+    resetBaremetalRuntimeForTest();
+    e1000.testEnableMockDevice();
+    defer e1000.testDisableMockDevice();
+
+    try runE1000Probe();
+    const eth = e1000.statePtr();
+    try std.testing.expectEqual(@as(u32, abi.ethernet_magic), eth.magic);
+    try std.testing.expectEqual(@as(u16, abi.api_version), eth.api_version);
+    try std.testing.expectEqual(@as(u8, abi.ethernet_backend_e1000), eth.backend);
+    try std.testing.expectEqual(@as(u8, 1), eth.initialized);
+    try std.testing.expectEqual(@as(u8, 1), eth.loopback_enabled);
     try std.testing.expectEqual(@as(u32, 1), eth.tx_packets);
     try std.testing.expectEqual(@as(u32, 1), eth.rx_packets);
 }

@@ -27,6 +27,14 @@ pub const Rtl8139Device = struct {
     irq_line: u8,
 };
 
+pub const E1000Device = struct {
+    location: DeviceLocation,
+    mmio_base: u64,
+    io_base: u16,
+    irq_line: u8,
+    device_id: u16,
+};
+
 pub const DisplayDevice = struct {
     location: DeviceLocation,
     framebuffer_bar: u64,
@@ -254,6 +262,14 @@ fn enableIoAndBusMaster(location: DeviceLocation) void {
     }
 }
 
+fn enableMemoryAndBusMaster(location: DeviceLocation) void {
+    const command = readConfig16(location.bus, location.device, location.function, 0x04);
+    const wanted = command | 0x6;
+    if (wanted != command) {
+        writeConfig16(location.bus, location.device, location.function, 0x04, wanted);
+    }
+}
+
 fn firstIoBar(bus: u8, device: u8, function: u8) ?u16 {
     var bar_index: u8 = 0;
     while (bar_index < 6) : (bar_index += 1) {
@@ -441,6 +457,56 @@ pub fn enableRtl8139IoAndBusMaster(location: DeviceLocation) void {
     enableIoAndBusMaster(location);
 }
 
+pub fn discoverE1000() ?E1000Device {
+    if (!hardwareBacked() and !(builtin.is_test and mock_enabled)) return null;
+
+    var bus: usize = 0;
+    while (bus < max_bus_count) : (bus += 1) {
+        var device: usize = 0;
+        while (device < max_device_count) : (device += 1) {
+            const bus_id: u8 = @intCast(bus);
+            const device_id0: u8 = @intCast(device);
+            const first_vendor = vendorId(bus_id, device_id0, 0);
+            if (first_vendor == 0xFFFF) continue;
+
+            const function_limit: usize = if ((headerType(bus_id, device_id0, 0) & 0x80) != 0) max_function_count else 1;
+            var function: usize = 0;
+            while (function < function_limit) : (function += 1) {
+                const function_id: u8 = @intCast(function);
+                const vendor = vendorId(bus_id, device_id0, function_id);
+                if (vendor == 0xFFFF) continue;
+
+                const device_word = deviceId(bus_id, device_id0, function_id);
+                if (vendor != 0x8086 or device_word != 0x100E) continue;
+
+                const mmio_base = memoryBarAtIndex(bus_id, device_id0, function_id, 0) orelse continue;
+                const io_base = firstIoBar(bus_id, device_id0, function_id) orelse continue;
+                return .{
+                    .location = .{
+                        .bus = bus_id,
+                        .device = device_id0,
+                        .function = function_id,
+                    },
+                    .mmio_base = mmio_base,
+                    .io_base = io_base,
+                    .irq_line = readConfig8(bus_id, device_id0, function_id, 0x3C),
+                    .device_id = device_word,
+                };
+            }
+        }
+    }
+
+    return null;
+}
+
+pub fn enableE1000MemoryAndBusMaster(location: DeviceLocation) void {
+    const command = readConfig16(location.bus, location.device, location.function, 0x04);
+    const wanted = command | 0x7;
+    if (wanted != command) {
+        writeConfig16(location.bus, location.device, location.function, 0x04, wanted);
+    }
+}
+
 pub fn testResetForTest() void {
     if (!builtin.is_test) return;
     mock_enabled = false;
@@ -492,6 +558,29 @@ test "pci rtl8139 scan finds io bar and interrupt line and enables bus master" {
 
     enableRtl8139IoAndBusMaster(nic.location);
     try std.testing.expectEqual(@as(u16, 0x5), readConfig16(0, 3, 0, 0x04) & 0x5);
+}
+
+test "pci e1000 scan finds mmio and io bars and enables bus master" {
+    testResetForTest();
+    defer testResetForTest();
+
+    testSetConfig32(0, 4, 0, 0x00, 0x100E_8086);
+    testSetConfig32(0, 4, 0, 0x04, 0x0000_0000);
+    testSetConfig32(0, 4, 0, 0x0C, 0x0000_0000);
+    testSetConfig32(0, 4, 0, 0x10, 0xFEBC_0000);
+    testSetConfig32(0, 4, 0, 0x14, 0x0000_C001);
+    testSetConfig32(0, 4, 0, 0x3C, 0x0000_000B);
+
+    const nic = discoverE1000() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u8, 0), nic.location.bus);
+    try std.testing.expectEqual(@as(u8, 4), nic.location.device);
+    try std.testing.expectEqual(@as(u64, 0xFEBC_0000), nic.mmio_base);
+    try std.testing.expectEqual(@as(u16, 0xC000), nic.io_base);
+    try std.testing.expectEqual(@as(u8, 0x0B), nic.irq_line);
+    try std.testing.expectEqual(@as(u16, 0x100E), nic.device_id);
+
+    enableE1000MemoryAndBusMaster(nic.location);
+    try std.testing.expectEqual(@as(u16, 0x7), readConfig16(0, 4, 0, 0x04) & 0x7);
 }
 
 test "pci virtio gpu scan finds modern capability regions" {

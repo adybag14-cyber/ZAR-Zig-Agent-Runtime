@@ -14,7 +14,12 @@ Full-stack replacement execution reference:
   - `docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md`
   - `docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`
   - current hard boundary: no ZigOS source import until upstream licensing is explicit
-  - first realistic adoption slice is clean-room `E1000`, because it expands hardware breadth without forcing a VFS/ELF/syscall redesign
+  - first delivered adoption slice is clean-room `E1000` raw-frame support, because it expands hardware breadth without forcing a VFS/ELF/syscall redesign
+  - `src/baremetal/e1000.zig` now provides the first ZAR-owned `82540EM`-class `E1000` path with PCI bind, MMIO + legacy I/O reset, EEPROM MAC readout, bounded TX/RX rings, and raw-frame send/receive telemetry
+  - `src/baremetal/pci.zig` now discovers the `E1000` MMIO + I/O BAR pair and enables I/O, memory, and bus-master decode on the selected PCI function
+  - host regressions now prove init, MAC readout, TX, RX, and export-surface stability on the clean-room `E1000` path
+  - `scripts/baremetal-qemu-e1000-probe-check.ps1` plus `scripts/qemu-e1000-dgram-echo.ps1` now prove live QEMU `E1000` PCI bind, MAC readout, TX, RX, payload validation, and counter advance over the freestanding PVH artifact
+  - protocol/service reuse over `E1000` remains the next depth step (`ARP` / `IPv4` / `UDP` / `TCP` / `HTTP` / `HTTPS`)
 - `FS5.5` hardware-driver pivot update:
   - framebuffer/console strict closure is now reached locally.
   - real linear-framebuffer path shipped in `src/baremetal/framebuffer_console.zig`:

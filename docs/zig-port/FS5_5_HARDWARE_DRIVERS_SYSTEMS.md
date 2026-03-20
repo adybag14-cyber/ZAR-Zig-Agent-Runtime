@@ -18,7 +18,7 @@ This track exists to remove guesswork. It defines the real bare-metal subsystems
 
 ## ZigOS Reference Track
 
-Status: `Planned`
+Status: `Slice 1 delivered`
 
 This track uses `Cameron-Lyons/zigos` as a reference architecture only.
 
@@ -37,11 +37,16 @@ Tracked docs:
 - `docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md`
 - `docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`
 
-Current first adoption slice:
+Delivered first adoption slice:
 
 - clean-room `E1000` NIC support
-- reuse the existing ZAR protocol stack and proof harness
-- do not widen scope to VFS/ELF/syscalls/userspace in the first slice
+- first strict delivery is the raw-frame/L2 path only
+- `src/baremetal/e1000.zig` now provides a ZAR-owned `82540EM`-class driver with PCI bind, MMIO + legacy I/O reset, EEPROM MAC readout, bounded TX/RX rings, and raw-frame send/receive telemetry
+- `src/baremetal/pci.zig` now discovers the `E1000` MMIO + I/O BAR pair and enables I/O, memory, and bus-master decode on the selected function
+- host regressions now prove init, MAC readout, TX, RX, and export-surface stability on the clean-room `E1000` path
+- `scripts/baremetal-qemu-e1000-probe-check.ps1` plus `scripts/qemu-e1000-dgram-echo.ps1` now prove live QEMU `E1000` PCI bind, MAC readout, TX, RX, payload validation, and counter advance over the freestanding PVH artifact
+- protocol reuse over `E1000` (`ARP` / `IPv4` / `UDP` / `TCP` / `HTTP` / `HTTPS`) remains the next depth step
+- do not widen scope to VFS/ELF/syscalls/userspace in this slice
 
 `FS5.5` is not complete until each subsystem has:
 
@@ -358,6 +363,12 @@ Current local source-of-truth evidence:
   - `oc_ethernet_rx_len`
 - `src/pal/net.zig` now exposes the bare-metal raw-frame PAL seam through the same RTL8139 driver path instead of a fake transport
 - host regressions now prove mock-device initialization, raw-frame send, receive, ABI export, and PAL bridging
+- a second clean-room NIC family now exists for future depth:
+  - `src/baremetal/e1000.zig` now provides a ZAR-owned `82540EM`-class `E1000` path with PCI bind, MMIO + legacy I/O reset, EEPROM MAC readout, bounded TX/RX rings, and raw-frame send/receive telemetry
+  - `src/baremetal/pci.zig` now also discovers the `E1000` MMIO + I/O BAR pair and enables I/O, memory, and bus-master decode on the selected PCI function
+  - dedicated host regressions prove init, MAC readout, TX, RX, and export-surface stability on the clean-room `E1000` path
+  - `scripts/baremetal-qemu-e1000-probe-check.ps1` plus `scripts/qemu-e1000-dgram-echo.ps1` now prove live QEMU `E1000` PCI bind, MAC readout, TX, RX, payload validation, and counter advance over the freestanding PVH artifact
+  - the current strict delivery on `E1000` is raw-frame `L2` only; protocol/service reuse over `E1000` remains future depth
 - the live freestanding/QEMU proof is now green:
   - `scripts/baremetal-qemu-rtl8139-probe-check.ps1`
   - MAC readout succeeds
