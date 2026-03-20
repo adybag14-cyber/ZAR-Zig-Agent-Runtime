@@ -391,6 +391,12 @@ pub const BaremetalDisplayOutputEntry = extern struct {
     serial_number: u32,
 };
 
+pub const BaremetalDisplayModeInfo = extern struct {
+    width: u16,
+    height: u16,
+    refresh_hz: u16,
+};
+
 pub const BaremetalStorageState = extern struct {
     magic: u32,
     api_version: u16,

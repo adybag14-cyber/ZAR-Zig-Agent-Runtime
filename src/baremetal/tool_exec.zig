@@ -10,6 +10,7 @@ const workspace_runtime = @import("workspace_runtime.zig");
 const display_profile_store = @import("display_profile_store.zig");
 const display_output = @import("display_output.zig");
 const framebuffer_console = @import("framebuffer_console.zig");
+const pal_framebuffer = @import("../pal/framebuffer.zig");
 const vga_text_console = @import("vga_text_console.zig");
 const storage_backend = @import("storage_backend.zig");
 const virtio_gpu = @import("virtio_gpu.zig");
@@ -158,7 +159,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-plan-list, workspace-plan-info, workspace-plan-active, workspace-plan-save, workspace-plan-apply, workspace-plan-delete, workspace-plan-release-list, workspace-plan-release-info, workspace-plan-release-save, workspace-plan-release-activate, workspace-plan-release-delete, workspace-plan-release-prune, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-suite-release-channel-list, workspace-suite-release-channel-info, workspace-suite-release-channel-set, workspace-suite-release-channel-activate, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-outputs, display-output, display-modes, display-set, display-activate, display-activate-preferred, display-activate-output, display-activate-output-preferred, display-output-set, display-profile-list, display-profile-info, display-profile-active, display-profile-save, display-profile-apply, display-profile-delete, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-plan-list, workspace-plan-info, workspace-plan-active, workspace-plan-save, workspace-plan-apply, workspace-plan-delete, workspace-plan-release-list, workspace-plan-release-info, workspace-plan-release-save, workspace-plan-release-activate, workspace-plan-release-delete, workspace-plan-release-prune, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-suite-release-channel-list, workspace-suite-release-channel-info, workspace-suite-release-channel-set, workspace-suite-release-channel-activate, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-outputs, display-output, display-output-modes, display-modes, display-set, display-activate, display-activate-preferred, display-activate-output, display-activate-output-preferred, display-output-set, display-output-activate-mode, display-profile-list, display-profile-info, display-profile-active, display-profile-save, display-profile-apply, display-profile-delete, run-script, run-package, app-run");
         return;
     }
 
@@ -3021,7 +3022,7 @@ fn execute(
         }
         const entry = display_output.outputEntry(index);
         try stdout_buffer.appendFmt(
-            "index={d} scanout={d} connector={s} connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x} edid_present={d}\n",
+            "index={d} scanout={d} connector={s} connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x} edid_present={d} mode_count={d}\n",
             .{
                 index,
                 entry.scanout_index,
@@ -3033,8 +3034,40 @@ fn execute(
                 entry.preferred_height,
                 entry.capability_flags,
                 entry.edid_present,
+                pal_framebuffer.displayOutputModeCount(index),
             },
         );
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "display-output-modes")) {
+        const index_arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "display-output-modes <index>");
+            return;
+        };
+        if (index_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-output-modes <index>");
+            return;
+        }
+        const index = std.fmt.parseInt(u16, index_arg.arg, 10) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-output-modes <index>");
+            return;
+        };
+        ensureDisplayReady();
+        if (index >= display_output.outputCount()) {
+            exit_code.* = 1;
+            try stderr_buffer.appendLine("display-output-modes failed: NotFound");
+            return;
+        }
+        const mode_count = pal_framebuffer.displayOutputModeCount(index);
+        var mode_index: u16 = 0;
+        while (mode_index < mode_count) : (mode_index += 1) {
+            const mode = pal_framebuffer.displayOutputMode(index, mode_index) orelse continue;
+            try appendDisplayModeLine(stdout_buffer, mode_index, mode);
+        }
         return;
     }
 
@@ -3280,6 +3313,57 @@ fn execute(
                 output_index,
                 output.current_width,
                 output.current_height,
+                displayConnectorName(output.connector_type),
+                output.active_scanout,
+            },
+        );
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "display-output-activate-mode")) {
+        const output_arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "display-output-activate-mode <index> <mode-index>");
+            return;
+        };
+        const mode_arg = parseFirstArg(output_arg.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "display-output-activate-mode <index> <mode-index>");
+            return;
+        };
+        if (mode_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-output-activate-mode <index> <mode-index>");
+            return;
+        }
+        const output_index = std.fmt.parseInt(u16, output_arg.arg, 10) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-output-activate-mode <index> <mode-index>");
+            return;
+        };
+        const mode_index = std.fmt.parseInt(u16, mode_arg.arg, 10) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: display-output-activate-mode <index> <mode-index>");
+            return;
+        };
+        pal_framebuffer.activateDisplayOutputMode(output_index, mode_index) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("display-output-activate-mode failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        const mode = pal_framebuffer.displayOutputMode(output_index, mode_index) orelse {
+            exit_code.* = 1;
+            try stderr_buffer.appendLine("display-output-activate-mode failed: UnsupportedMode");
+            return;
+        };
+        const output = display_output.statePtr();
+        try stdout_buffer.appendFmt(
+            "display output mode {d}:{d} {d}x{d} connector={s} scanout={d}\n",
+            .{
+                output_index,
+                mode_index,
+                mode.width,
+                mode.height,
                 displayConnectorName(output.connector_type),
                 output.active_scanout,
             },
@@ -3657,6 +3741,22 @@ pub fn setDisplayOutputMode(index: u16, width: u16, height: u16) Error!void {
     }
 }
 
+pub fn activateDisplayOutputMode(index: u16, mode_index: u16) Error!void {
+    ensureDisplayReady();
+    const mode = pal_framebuffer.displayOutputMode(index, mode_index) orelse return error.DisplayOutputUnsupportedMode;
+    pal_framebuffer.activateDisplayOutputMode(index, mode_index) catch |err| switch (err) {
+        error.NotFound => return error.DisplayOutputNotFound,
+        error.UnsupportedMode => return error.DisplayOutputUnsupportedMode,
+    };
+    const refreshed = display_output.statePtr();
+    if (refreshed.active_scanout != @as(u8, @intCast(index)) or refreshed.connected != 1) {
+        return error.DisplayOutputNotFound;
+    }
+    if (refreshed.current_width != mode.width or refreshed.current_height != mode.height) {
+        return error.DisplayOutputUnsupportedMode;
+    }
+}
+
 fn displayControllerName(value: u8) []const u8 {
     return switch (value) {
         abi.display_controller_bochs_bga => "bochs-bga",
@@ -3673,6 +3773,13 @@ fn displayConnectorName(value: u8) []const u8 {
         abi.display_connector_virtual => "virtual",
         else => "none",
     };
+}
+
+fn appendDisplayModeLine(buffer: anytype, mode_index: u16, mode: pal_framebuffer.DisplayOutputMode) !void {
+    try buffer.appendFmt(
+        "mode {d} {d}x{d} refresh={d}\n",
+        .{ mode_index, mode.width, mode.height, mode.refresh_hz },
+    );
 }
 
 fn parseCommand(command: []const u8) Error!ParsedCommand {
@@ -4265,6 +4372,12 @@ test "baremetal tool exec reports current display info and supported modes" {
     defer output_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), output_result.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, output_result.stdout, "index=0 scanout=0 connector=virtual connected=0 current=640x400 preferred=640x400") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output_result.stdout, "mode_count=1") != null);
+
+    var output_modes_result = try runCapture(std.testing.allocator, "display-output-modes 0", 256, 256);
+    defer output_modes_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), output_modes_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, output_modes_result.stdout, "mode 0 640x400 refresh=0") != null);
 
     var modes_result = try runCapture(std.testing.allocator, "display-modes", 256, 256);
     defer modes_result.deinit(std.testing.allocator);
@@ -4325,6 +4438,15 @@ test "baremetal tool exec activates requested display connector from stored outp
                 .serial_number = 0x33334444,
                 .capability_flags = abi.display_capability_hdmi_vendor_data | abi.display_capability_preferred_timing,
                 .edid_length = 128,
+                .supported_mode_count = 2,
+                .supported_modes = [_]display_output.OutputMode{
+                    .{ .width = 1280, .height = 720, .refresh_hz = 60 },
+                    .{ .width = 1024, .height = 768, .refresh_hz = 60 },
+                } ++ [_]display_output.OutputMode{.{
+                    .width = 0,
+                    .height = 0,
+                    .refresh_hz = 0,
+                }} ** (display_output.max_output_modes - 2),
             },
             .{
                 .connected = true,
@@ -4340,6 +4462,15 @@ test "baremetal tool exec activates requested display connector from stored outp
                 .serial_number = 0xCCCCDDDD,
                 .capability_flags = abi.display_capability_displayid_extension | abi.display_capability_preferred_timing,
                 .edid_length = 128,
+                .supported_mode_count = 2,
+                .supported_modes = [_]display_output.OutputMode{
+                    .{ .width = 1920, .height = 1080, .refresh_hz = 60 },
+                    .{ .width = 1024, .height = 768, .refresh_hz = 60 },
+                } ++ [_]display_output.OutputMode{.{
+                    .width = 0,
+                    .height = 0,
+                    .refresh_hz = 0,
+                }} ** (display_output.max_output_modes - 2),
             },
         },
     });
@@ -4364,6 +4495,11 @@ test "baremetal tool exec activates requested display connector from stored outp
     try std.testing.expectEqual(@as(u8, 0), preferred_connector_result.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, preferred_connector_result.stdout, "display connector preferred displayport scanout=1 current=1920x1080 preferred=1920x1080") != null);
 
+    var output_modes_result = try runCapture(std.testing.allocator, "display-output-modes 1", 256, 256);
+    defer output_modes_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), output_modes_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, output_modes_result.stdout, "mode 1 1024x768 refresh=60") != null);
+
     var missing_output_result = try runCapture(std.testing.allocator, "display-activate-output 2", 256, 256);
     defer missing_output_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 1), missing_output_result.exit_code);
@@ -4379,6 +4515,11 @@ test "baremetal tool exec activates requested display connector from stored outp
     try std.testing.expectEqual(@as(u8, 0), preferred_output_result.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, preferred_output_result.stdout, "display output preferred 1 connector=displayport scanout=1 current=1920x1080 preferred=1920x1080") != null);
 
+    var activate_output_mode_result = try runCapture(std.testing.allocator, "display-output-activate-mode 1 1", 256, 256);
+    defer activate_output_mode_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), activate_output_mode_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, activate_output_mode_result.stdout, "display output mode 1:1 1024x768 connector=displayport scanout=1") != null);
+
     var reset_output_result = try runCapture(std.testing.allocator, "display-output-set 1 1024 768", 256, 256);
     defer reset_output_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), reset_output_result.exit_code);
@@ -4392,6 +4533,16 @@ test "baremetal tool exec activates requested display connector from stored outp
     defer missing_output_set_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 1), missing_output_set_result.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, missing_output_set_result.stderr, "display-output-set failed: DisplayOutputNotFound") != null);
+
+    var missing_output_modes_result = try runCapture(std.testing.allocator, "display-output-modes 2", 256, 256);
+    defer missing_output_modes_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 1), missing_output_modes_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, missing_output_modes_result.stderr, "display-output-modes failed: NotFound") != null);
+
+    var invalid_output_mode_result = try runCapture(std.testing.allocator, "display-output-activate-mode 1 7", 256, 256);
+    defer invalid_output_mode_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 1), invalid_output_mode_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, invalid_output_mode_result.stderr, "display-output-activate-mode failed: UnsupportedMode") != null);
 
     var save_profile_result = try runCapture(std.testing.allocator, "display-profile-save golden", 256, 256);
     defer save_profile_result.deinit(std.testing.allocator);

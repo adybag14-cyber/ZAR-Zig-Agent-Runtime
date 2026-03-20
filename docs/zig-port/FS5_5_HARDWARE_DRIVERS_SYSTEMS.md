@@ -145,18 +145,18 @@ Current local source-of-truth evidence:
 - a real EDID-backed display capability path now exists beyond the rendered BGA console:
   - `src/baremetal/edid.zig` provides bounded EDID header/checksum/timing/name parsing
   - EDID parsing now also exports capability flags for digital input, preferred timing, CEA extension presence, DisplayID extension presence, HDMI vendor data, and basic audio when those descriptors are present
-  - `src/baremetal/display_output.zig` provides the exported display-output ABI surface plus EDID byte export and a bounded per-output entry table
+  - `src/baremetal/display_output.zig` provides the exported display-output ABI surface plus EDID byte export, a bounded per-output entry table, and a bounded per-output mode inventory derived from the parsed EDID timings
   - `src/baremetal/virtio_gpu.zig` probes the first real controller-specific path, `virtio-gpu-pci`, through modern virtio PCI capabilities plus `GET_DISPLAY_INFO`, `GET_EDID`, bounded multi-scanout enumeration, connector-aware scanout selection, bounded 2D resource creation, guest-backing attach, transfer-to-host, and flush
   - the same path now also supports explicit connector-targeted reactivation through the runtime surface, so the selected connector is no longer only inferred/exported but can be actively reselected on the real virtio-gpu path
   - the same path now also supports explicit connector-preferred and output-preferred reactivation, so the connected output can be restored to the EDID-preferred geometry after an intermediate shrink instead of only staying at the last requested reduced mode
-  - the same path now also supports explicit per-output mode retargeting, so the connected output can be driven to a bounded requested mode through the runtime surface, oversized requests are rejected on the real controller path, and the preferred-mode restore path is proven on the same controller
+  - the same path now also supports explicit per-output mode retargeting plus explicit mode-index activation against the advertised mode inventory, so the connected output can be driven to a bounded requested mode through the runtime surface, oversized requests are rejected on the real controller path, and the preferred-mode restore path is proven on the same controller
   - `src/pal/framebuffer.zig` now also exposes the display-output state and EDID byte surface through the PAL seam
-- host regressions now prove the framebuffer export surface updates host-backed framebuffer state, glyph pixels, supported-mode enumeration, high-resolution mode switching, per-output entry export, preferred-mode restore after an intermediate shrink, and preservation of the last valid mode on unsupported requests
+- host regressions now prove the framebuffer export surface updates host-backed framebuffer state, glyph pixels, supported-mode enumeration, high-resolution mode switching, per-output entry export, per-output mode inventory export, explicit mode-index activation, preferred-mode restore after an intermediate shrink, and preservation of the last valid mode on unsupported requests
 - a live bare-metal PVH/QEMU proof now passes:
   - `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1`
   - exported framebuffer state has `magic=framebuffer_magic`, `api_version=2`, and now proves `640x400` (`cols=80`, `rows=25`), `1024x768` (`cols=128`, `rows=48`), and `1280x720` (`cols=160`, `rows=45`) surfaces over the same BGA path
   - `scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1`
-  - live `virtio-gpu-pci` proof now drives the connected output down to `1024x768`, saves a connector-aware profile, reapplies that saved reduced profile, and then proves explicit connector-preferred plus output-preferred activation restores the same scanout to the EDID-preferred `1280x800`
+  - live `virtio-gpu-pci` proof now reads back the advertised mode inventory for the connected output, proves mode `0` matches the EDID-preferred `1280x800` geometry, proves an alternate advertised mode exists, drives the connected output down to `1024x768`, saves a connector-aware profile, reapplies that saved reduced profile, and then proves explicit connector-preferred plus output-preferred activation restores the same scanout to the EDID-preferred `1280x800`
   - runtime reports `backend=linear_framebuffer`
   - runtime now also reports the selected display adapter vendor/device and PCI location plus the supported-mode count/current mode index through the exported framebuffer state
   - the startup banner writes `OK`
@@ -164,9 +164,9 @@ Current local source-of-truth evidence:
 - a second live bare-metal PVH/QEMU proof now passes:
   - `scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1`
   - exported display-output state has `magic=display_output_magic`, `api_version=2`, `backend=virtio_gpu`, `controller=virtio_gpu`, an EDID-derived connector type, and a real EDID header over `virtio-gpu-pci,edid=on`
-  - runtime now also reports the selected virtio-gpu PCI vendor/device, PCI location, active scanout, current mode, preferred mode, physical dimensions, manufacturer/product IDs, exported EDID byte surface, the exported capability flags derived from the EDID payload, and the bounded per-output entry export for the selected scanout
+  - runtime now also reports the selected virtio-gpu PCI vendor/device, PCI location, active scanout, current mode, preferred mode, physical dimensions, manufacturer/product IDs, exported EDID byte surface, the exported capability flags derived from the EDID payload, the bounded per-output entry export for the selected scanout, and the bounded advertised mode inventory for that output including per-mode refresh values
   - the same proof now also validates that explicit activation of the connected connector succeeds and that an explicit mismatched connector request is rejected on the live controller path
-  - the same proof now also validates that explicit `display-output-set` retargets the connected output to `1024x768` and that an oversized requested mode is rejected without corrupting the exported output state
+  - the same proof now also validates that explicit `display-output-set` retargets the connected output to `1024x768`, explicit `display-output-activate-mode` succeeds against an advertised alternate mode, and an oversized requested mode is rejected without corrupting the exported output state
   - the same proof now also validates persisted display-profile save/list/info/apply/delete, including mutating the active output down to `800x600`, reapplying the saved profile, and restoring the live output to `1024x768`
   - the same proof now also validates non-zero present statistics plus non-zero scanout pixels from the guest-backed render pattern after resource-create/attach/set-scanout/flush
 - a real persisted display-profile layer now exists on top of the connector-aware display path:

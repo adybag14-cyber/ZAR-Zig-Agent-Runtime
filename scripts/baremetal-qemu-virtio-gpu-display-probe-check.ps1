@@ -62,6 +62,11 @@ $outputEntryCurrentHeightOffset = 6
 $outputEntryPreferredWidthOffset = 8
 $outputEntryPreferredHeightOffset = 10
 $outputEntryCapabilityFlagsOffset = 20
+$outputModeWidthOffset = 0
+$outputModeHeightOffset = 2
+$outputModeRefreshHzOffset = 4
+$outputModeStride = 6
+$outputModeRowStride = 96
 
 function Resolve-ZigExecutable {
     $default = "C:\Users\Ady\Documents\toolchains\zig-master\current\zig.exe"
@@ -253,6 +258,8 @@ $displayStateAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern
 $edidBytesAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal\.display_output\.edid_bytes$' -SymbolName "baremetal.display_output.edid_bytes"
 $outputEntryCountAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\soc_display_output_entry_count_data$' -SymbolName "oc_display_output_entry_count_data"
 $outputEntriesAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\soc_display_output_entries_data$' -SymbolName "oc_display_output_entries_data"
+$outputModeCountAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\soc_display_output_mode_count_data$' -SymbolName "oc_display_output_mode_count_data"
+$outputModesAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\soc_display_output_modes_data$' -SymbolName "oc_display_output_modes_data"
 $artifactForGdb = $artifact.Replace('\', '/')
 
 Remove-PathWithRetry $gdbStdout
@@ -309,6 +316,13 @@ commands
   printf "DISPLAY_OUTPUT0_PREFERRED_WIDTH=%u\n", *(unsigned short*)(__OUTPUT_ENTRIES_ADDR__ + __OUTPUT_ENTRY_PREFERRED_WIDTH_OFFSET__)
   printf "DISPLAY_OUTPUT0_PREFERRED_HEIGHT=%u\n", *(unsigned short*)(__OUTPUT_ENTRIES_ADDR__ + __OUTPUT_ENTRY_PREFERRED_HEIGHT_OFFSET__)
   printf "DISPLAY_OUTPUT0_CAPABILITY_FLAGS=%u\n", *(unsigned short*)(__OUTPUT_ENTRIES_ADDR__ + __OUTPUT_ENTRY_CAPABILITY_FLAGS_OFFSET__)
+  printf "DISPLAY_OUTPUT0_MODE_COUNT=%u\n", *(unsigned short*)(__OUTPUT_MODE_COUNT_ADDR__)
+  printf "DISPLAY_OUTPUT0_MODE0_WIDTH=%u\n", *(unsigned short*)(__OUTPUT_MODES_ADDR__ + __OUTPUT_MODE_WIDTH_OFFSET__)
+  printf "DISPLAY_OUTPUT0_MODE0_HEIGHT=%u\n", *(unsigned short*)(__OUTPUT_MODES_ADDR__ + __OUTPUT_MODE_HEIGHT_OFFSET__)
+  printf "DISPLAY_OUTPUT0_MODE0_REFRESH_HZ=%u\n", *(unsigned short*)(__OUTPUT_MODES_ADDR__ + __OUTPUT_MODE_REFRESH_OFFSET__)
+  printf "DISPLAY_OUTPUT0_MODE1_WIDTH=%u\n", *(unsigned short*)(__OUTPUT_MODES_ADDR__ + __OUTPUT_MODE_STRIDE__ + __OUTPUT_MODE_WIDTH_OFFSET__)
+  printf "DISPLAY_OUTPUT0_MODE1_HEIGHT=%u\n", *(unsigned short*)(__OUTPUT_MODES_ADDR__ + __OUTPUT_MODE_STRIDE__ + __OUTPUT_MODE_HEIGHT_OFFSET__)
+  printf "DISPLAY_OUTPUT0_MODE1_REFRESH_HZ=%u\n", *(unsigned short*)(__OUTPUT_MODES_ADDR__ + __OUTPUT_MODE_STRIDE__ + __OUTPUT_MODE_REFRESH_OFFSET__)
   printf "DISPLAY_EDID_0=%u\n", *(unsigned char*)(__EDID_BYTES_ADDR__ + 0)
   printf "DISPLAY_EDID_1=%u\n", *(unsigned char*)(__EDID_BYTES_ADDR__ + 1)
   printf "DISPLAY_EDID_2=%u\n", *(unsigned char*)(__EDID_BYTES_ADDR__ + 2)
@@ -330,6 +344,8 @@ $gdbScriptContent = $gdbTemplate `
     -replace '__EDID_BYTES_ADDR__', ('0x' + $edidBytesAddress) `
     -replace '__OUTPUT_ENTRY_COUNT_ADDR__', ('0x' + $outputEntryCountAddress) `
     -replace '__OUTPUT_ENTRIES_ADDR__', ('0x' + $outputEntriesAddress) `
+    -replace '__OUTPUT_MODE_COUNT_ADDR__', ('0x' + $outputModeCountAddress) `
+    -replace '__OUTPUT_MODES_ADDR__', ('0x' + $outputModesAddress) `
     -replace '__MAGIC_OFFSET__', $stateMagicOffset `
     -replace '__API_VERSION_OFFSET__', $stateApiVersionOffset `
     -replace '__BACKEND_OFFSET__', $stateBackendOffset `
@@ -364,7 +380,12 @@ $gdbScriptContent = $gdbTemplate `
     -replace '__OUTPUT_ENTRY_CURRENT_HEIGHT_OFFSET__', $outputEntryCurrentHeightOffset `
     -replace '__OUTPUT_ENTRY_PREFERRED_WIDTH_OFFSET__', $outputEntryPreferredWidthOffset `
     -replace '__OUTPUT_ENTRY_PREFERRED_HEIGHT_OFFSET__', $outputEntryPreferredHeightOffset `
-    -replace '__OUTPUT_ENTRY_CAPABILITY_FLAGS_OFFSET__', $outputEntryCapabilityFlagsOffset
+    -replace '__OUTPUT_ENTRY_CAPABILITY_FLAGS_OFFSET__', $outputEntryCapabilityFlagsOffset `
+    -replace '__OUTPUT_MODE_WIDTH_OFFSET__', $outputModeWidthOffset `
+    -replace '__OUTPUT_MODE_HEIGHT_OFFSET__', $outputModeHeightOffset `
+    -replace '__OUTPUT_MODE_REFRESH_OFFSET__', $outputModeRefreshHzOffset `
+    -replace '__OUTPUT_MODE_STRIDE__', $outputModeStride `
+    -replace '__OUTPUT_MODE_ROW_STRIDE__', $outputModeRowStride
 $gdbScriptContent | Set-Content -Path $gdbScript -Encoding Ascii
 
 $qemuProcess = $null
@@ -447,6 +468,13 @@ $output0CurrentHeight = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_CURRE
 $output0PreferredWidth = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_PREFERRED_WIDTH'
 $output0PreferredHeight = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_PREFERRED_HEIGHT'
 $output0CapabilityFlags = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_CAPABILITY_FLAGS'
+$output0ModeCount = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_MODE_COUNT'
+$output0Mode0Width = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_MODE0_WIDTH'
+$output0Mode0Height = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_MODE0_HEIGHT'
+$output0Mode0RefreshHz = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_MODE0_REFRESH_HZ'
+$output0Mode1Width = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_MODE1_WIDTH'
+$output0Mode1Height = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_MODE1_HEIGHT'
+$output0Mode1RefreshHz = Extract-IntValue -Text $out -Name 'DISPLAY_OUTPUT0_MODE1_REFRESH_HZ'
 $edid0 = Extract-IntValue -Text $out -Name 'DISPLAY_EDID_0'
 $edid1 = Extract-IntValue -Text $out -Name 'DISPLAY_EDID_1'
 $edid2 = Extract-IntValue -Text $out -Name 'DISPLAY_EDID_2'
@@ -502,6 +530,13 @@ Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_CURRENT_HEIGHT=$ou
 Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_PREFERRED_WIDTH=$output0PreferredWidth"
 Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_PREFERRED_HEIGHT=$output0PreferredHeight"
 Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_CAPABILITY_FLAGS=$output0CapabilityFlags"
+Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_MODE_COUNT=$output0ModeCount"
+Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_MODE0_WIDTH=$output0Mode0Width"
+Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_MODE0_HEIGHT=$output0Mode0Height"
+Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_MODE0_REFRESH_HZ=$output0Mode0RefreshHz"
+Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_MODE1_WIDTH=$output0Mode1Width"
+Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_MODE1_HEIGHT=$output0Mode1Height"
+Write-Output "BAREMETAL_QEMU_VIRTIO_GPU_DISPLAY_PROBE_OUTPUT0_MODE1_REFRESH_HZ=$output0Mode1RefreshHz"
 
 $pass = (
     $magic -eq $displayMagic -and
@@ -538,6 +573,12 @@ $pass = (
     $output0PreferredWidth -gt 0 -and
     $output0PreferredHeight -gt 0 -and
     $output0CapabilityFlags -eq $capabilityFlags -and
+    $output0ModeCount -ge 2 -and
+    $output0Mode0Width -eq $preferredWidth -and
+    $output0Mode0Height -eq $preferredHeight -and
+    $output0Mode1Width -gt 0 -and
+    $output0Mode1Height -gt 0 -and
+    ($output0Mode1Width -ne $output0Mode0Width -or $output0Mode1Height -ne $output0Mode0Height) -and
     ($capabilityFlags -band $expectedCapabilityDigital) -ne 0 -and
     ($capabilityFlags -band $expectedCapabilityPreferredTiming) -ne 0 -and
     $edid0 -eq 0 -and

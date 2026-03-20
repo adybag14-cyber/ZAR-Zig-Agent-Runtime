@@ -4,11 +4,9 @@ const abi = @import("abi.zig");
 
 pub const max_edid_bytes: usize = 1024;
 pub const max_output_entries: usize = 16;
+pub const max_output_modes: usize = 16;
 pub const OutputEntry = abi.BaremetalDisplayOutputEntry;
-pub const OutputMode = struct {
-    width: u16,
-    height: u16,
-};
+pub const OutputMode = abi.BaremetalDisplayModeInfo;
 
 pub const BgaUpdate = struct {
     vendor_id: u16 = 0,
@@ -60,12 +58,16 @@ pub const VirtioGpuScanoutUpdate = struct {
     serial_number: u32,
     capability_flags: u16,
     edid_length: u16,
+    supported_mode_count: u8 = 0,
+    supported_modes: [max_output_modes]OutputMode = [_]OutputMode{zeroOutputMode()} ** max_output_modes,
 };
 
 var state: abi.BaremetalDisplayOutputState = undefined;
 var edid_bytes: [max_edid_bytes]u8 = [_]u8{0} ** max_edid_bytes;
 pub export var oc_display_output_entry_count_data: u16 = 0;
 pub export var oc_display_output_entries_data: [max_output_entries]OutputEntry = [_]OutputEntry{zeroOutputEntry()} ** max_output_entries;
+pub export var oc_display_output_mode_count_data: [max_output_entries]u16 = [_]u16{0} ** max_output_entries;
+pub export var oc_display_output_modes_data: [max_output_entries][max_output_modes]OutputMode = [_][max_output_modes]OutputMode{[_]OutputMode{zeroOutputMode()} ** max_output_modes} ** max_output_entries;
 
 fn zeroOutputEntry() OutputEntry {
     return .{
@@ -87,10 +89,29 @@ fn zeroOutputEntry() OutputEntry {
     };
 }
 
+fn zeroOutputMode() OutputMode {
+    return .{
+        .width = 0,
+        .height = 0,
+        .refresh_hz = 0,
+    };
+}
+
 fn clearOutputEntries() void {
     oc_display_output_entry_count_data = 0;
     for (&oc_display_output_entries_data) |*entry| {
         entry.* = zeroOutputEntry();
+    }
+}
+
+fn clearOutputModes() void {
+    for (&oc_display_output_mode_count_data) |*count| {
+        count.* = 0;
+    }
+    for (&oc_display_output_modes_data) |*row| {
+        for (row) |*mode| {
+            mode.* = zeroOutputMode();
+        }
     }
 }
 
@@ -125,6 +146,7 @@ fn initState() void {
         .capability_flags = 0,
     };
     clearOutputEntries();
+    clearOutputModes();
 }
 
 pub fn resetForTest() void {
@@ -144,6 +166,42 @@ pub fn outputEntry(index: u16) OutputEntry {
     const idx: usize = @intCast(index);
     if (idx >= oc_display_output_entry_count_data or idx >= oc_display_output_entries_data.len) return zeroOutputEntry();
     return oc_display_output_entries_data[idx];
+}
+
+pub fn outputModeCount(index: u16) u16 {
+    const idx: usize = @intCast(index);
+    if (idx >= oc_display_output_entry_count_data or idx >= oc_display_output_mode_count_data.len) return 0;
+    return oc_display_output_mode_count_data[idx];
+}
+
+pub fn outputMode(index: u16, mode_index: u16) ?OutputMode {
+    const idx: usize = @intCast(index);
+    const mode_idx: usize = @intCast(mode_index);
+    if (idx >= oc_display_output_entry_count_data or idx >= oc_display_output_modes_data.len) return null;
+    if (mode_idx >= oc_display_output_mode_count_data[idx] or mode_idx >= oc_display_output_modes_data[idx].len) return null;
+    return oc_display_output_modes_data[idx][mode_idx];
+}
+
+fn setOutputModes(index: usize, modes: []const OutputMode) void {
+    if (index >= oc_display_output_mode_count_data.len or index >= oc_display_output_modes_data.len) return;
+    oc_display_output_mode_count_data[index] = @intCast(@min(modes.len, oc_display_output_modes_data[index].len));
+    var mode_index: usize = 0;
+    while (mode_index < oc_display_output_modes_data[index].len) : (mode_index += 1) {
+        oc_display_output_modes_data[index][mode_index] = if (mode_index < oc_display_output_mode_count_data[index]) modes[mode_index] else zeroOutputMode();
+    }
+}
+
+fn setSingleOutputMode(index: usize, width: u16, height: u16) void {
+    if (width == 0 or height == 0) {
+        setOutputModes(index, &.{});
+        return;
+    }
+    const mode = [_]OutputMode{.{
+        .width = width,
+        .height = height,
+        .refresh_hz = 0,
+    }};
+    setOutputModes(index, &mode);
 }
 
 fn applyEntryToState(entry: OutputEntry) void {
@@ -169,12 +227,20 @@ fn applyModeToEntry(entry: *OutputEntry, width: u16, height: u16) void {
     entry.current_height = height;
 }
 
+fn makeOutputMode(width: u16, height: u16, refresh_hz: u16) OutputMode {
+    return .{
+        .width = width,
+        .height = height,
+        .refresh_hz = refresh_hz,
+    };
+}
+
 fn effectivePreferredMode(entry: OutputEntry) ?OutputMode {
     if (entry.connected == 0) return null;
     const width = if (entry.preferred_width != 0) entry.preferred_width else entry.current_width;
     const height = if (entry.preferred_height != 0) entry.preferred_height else entry.current_height;
     if (width == 0 or height == 0) return null;
-    return .{ .width = width, .height = height };
+    return makeOutputMode(width, height, 0);
 }
 
 pub fn selectOutputConnector(connector_type: u8) bool {
@@ -209,6 +275,11 @@ pub fn setOutputMode(index: u16, width: u16, height: u16) bool {
     applyModeToEntry(entry, width, height);
     applyEntryToState(entry.*);
     return true;
+}
+
+pub fn setOutputModeByIndex(index: u16, mode_index: u16) bool {
+    const mode = outputMode(index, mode_index) orelse return false;
+    return setOutputMode(index, mode.width, mode.height);
 }
 
 pub fn preferredMode(index: u16) ?OutputMode {
@@ -264,6 +335,7 @@ pub fn updateFromBga(update: BgaUpdate) void {
         .edid_length = 0,
         .serial_number = 0,
     };
+    setSingleOutputMode(0, update.width, update.height);
 }
 
 pub fn inferConnectorType(capability_flags: u16) u8 {
@@ -329,6 +401,7 @@ pub fn updateFromVirtioGpu(update: VirtioGpuUpdate) void {
             .edid_length = @intCast(edid_len),
             .serial_number = update.serial_number,
         };
+        setSingleOutputMode(0, update.current_width, update.current_height);
         return;
     }
 
@@ -351,6 +424,15 @@ pub fn updateFromVirtioGpu(update: VirtioGpuUpdate) void {
             .edid_length = scanout.edid_length,
             .serial_number = scanout.serial_number,
         };
+        if (scanout.supported_mode_count != 0) {
+            setOutputModes(index, scanout.supported_modes[0..scanout.supported_mode_count]);
+        } else if (scanout.current_width != 0 and scanout.current_height != 0) {
+            setSingleOutputMode(index, scanout.current_width, scanout.current_height);
+        } else if (scanout.preferred_width != 0 and scanout.preferred_height != 0) {
+            setSingleOutputMode(index, scanout.preferred_width, scanout.preferred_height);
+        } else {
+            setOutputModes(index, &.{});
+        }
     }
 }
 
@@ -380,6 +462,10 @@ test "display output state updates from bga metadata" {
     try std.testing.expectEqual(@as(u8, 1), entry.connected);
     try std.testing.expectEqual(@as(u8, abi.display_connector_virtual), entry.connector_type);
     try std.testing.expectEqual(@as(u16, 1280), entry.current_width);
+    try std.testing.expectEqual(@as(u16, 1), outputModeCount(0));
+    const mode = outputMode(0, 0) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u16, 1280), mode.width);
+    try std.testing.expectEqual(@as(u16, 720), mode.height);
 }
 
 test "display output state copies virtio gpu edid payload" {
@@ -436,6 +522,7 @@ test "display output state copies virtio gpu edid payload" {
     try std.testing.expectEqual(@as(u8, 0), entry.scanout_index);
     try std.testing.expectEqual(@as(u8, abi.display_connector_virtual), entry.connector_type);
     try std.testing.expectEqual(@as(u16, 1280), entry.current_width);
+    try std.testing.expectEqual(@as(u16, 1), outputModeCount(0));
 }
 
 test "display output infers connector type from edid capability flags" {
@@ -497,6 +584,11 @@ test "display output state stores multiple virtio scanout entries" {
                 .serial_number = 0x33334444,
                 .capability_flags = abi.display_capability_displayid_extension | abi.display_capability_preferred_timing,
                 .edid_length = 256,
+                .supported_mode_count = 2,
+                .supported_modes = [_]OutputMode{
+                    makeOutputMode(1920, 1080, 60),
+                    makeOutputMode(1024, 768, 60),
+                } ++ [_]OutputMode{zeroOutputMode()} ** (max_output_modes - 2),
             },
         },
     });
@@ -510,6 +602,10 @@ test "display output state stores multiple virtio scanout entries" {
     try std.testing.expectEqual(@as(u8, 1), connected.scanout_index);
     try std.testing.expectEqual(@as(u8, abi.display_connector_displayport), connected.connector_type);
     try std.testing.expectEqual(@as(u16, 1920), connected.current_width);
+    try std.testing.expectEqual(@as(u16, 2), outputModeCount(1));
+    const alternate = outputMode(1, 1) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u16, 1024), alternate.width);
+    try std.testing.expectEqual(@as(u16, 768), alternate.height);
 }
 
 test "display output can retarget active connector from stored entries" {

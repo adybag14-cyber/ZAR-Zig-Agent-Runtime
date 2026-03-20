@@ -4,6 +4,7 @@ const abi = @import("abi.zig");
 
 pub const block_len: usize = 128;
 pub const max_name_len: usize = 13;
+pub const max_timings: usize = 16;
 const cea_extension_tag: u8 = 0x02;
 const displayid_extension_tag: u8 = 0x70;
 const cea_tag_audio: u8 = 1;
@@ -34,6 +35,8 @@ pub const ParsedEdid = struct {
     extension_count: u8,
     capability_flags: u16,
     preferred_timing: ?Timing,
+    timing_count: u8,
+    timings: [max_timings]Timing,
     display_name_len: u8,
     display_name: [max_name_len]u8,
 };
@@ -45,6 +48,34 @@ pub const ParseError = error{
 };
 
 const edid_header = [_]u8{ 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00 };
+
+const EstablishedTiming = struct {
+    byte_index: usize,
+    bit_mask: u8,
+    width: u16,
+    height: u16,
+    refresh_hz: u16,
+};
+
+const established_timings = [_]EstablishedTiming{
+    .{ .byte_index = 35, .bit_mask = 0x80, .width = 720, .height = 400, .refresh_hz = 70 },
+    .{ .byte_index = 35, .bit_mask = 0x40, .width = 720, .height = 400, .refresh_hz = 88 },
+    .{ .byte_index = 35, .bit_mask = 0x20, .width = 640, .height = 480, .refresh_hz = 60 },
+    .{ .byte_index = 35, .bit_mask = 0x10, .width = 640, .height = 480, .refresh_hz = 67 },
+    .{ .byte_index = 35, .bit_mask = 0x08, .width = 640, .height = 480, .refresh_hz = 72 },
+    .{ .byte_index = 35, .bit_mask = 0x04, .width = 640, .height = 480, .refresh_hz = 75 },
+    .{ .byte_index = 35, .bit_mask = 0x02, .width = 800, .height = 600, .refresh_hz = 56 },
+    .{ .byte_index = 35, .bit_mask = 0x01, .width = 800, .height = 600, .refresh_hz = 60 },
+    .{ .byte_index = 36, .bit_mask = 0x80, .width = 800, .height = 600, .refresh_hz = 72 },
+    .{ .byte_index = 36, .bit_mask = 0x40, .width = 800, .height = 600, .refresh_hz = 75 },
+    .{ .byte_index = 36, .bit_mask = 0x20, .width = 832, .height = 624, .refresh_hz = 75 },
+    .{ .byte_index = 36, .bit_mask = 0x10, .width = 1024, .height = 768, .refresh_hz = 87 },
+    .{ .byte_index = 36, .bit_mask = 0x08, .width = 1024, .height = 768, .refresh_hz = 60 },
+    .{ .byte_index = 36, .bit_mask = 0x04, .width = 1024, .height = 768, .refresh_hz = 70 },
+    .{ .byte_index = 36, .bit_mask = 0x02, .width = 1024, .height = 768, .refresh_hz = 75 },
+    .{ .byte_index = 36, .bit_mask = 0x01, .width = 1280, .height = 1024, .refresh_hz = 75 },
+    .{ .byte_index = 37, .bit_mask = 0x80, .width = 1152, .height = 870, .refresh_hz = 75 },
+};
 
 fn decodeManufacturer(word: u16) [3]u8 {
     return .{
@@ -81,6 +112,76 @@ fn parseDetailedTiming(block: []const u8) ?Timing {
     };
 }
 
+fn appendTiming(parsed: *ParsedEdid, timing: Timing) void {
+    if (timing.h_active == 0 or timing.v_active == 0) return;
+
+    var index: usize = 0;
+    while (index < parsed.timing_count and index < parsed.timings.len) : (index += 1) {
+        const existing = parsed.timings[index];
+        if (existing.h_active == timing.h_active and existing.v_active == timing.v_active and existing.refresh_hz == timing.refresh_hz) {
+            return;
+        }
+    }
+    if (parsed.timing_count >= parsed.timings.len) return;
+    parsed.timings[parsed.timing_count] = timing;
+    parsed.timing_count += 1;
+}
+
+fn appendDetailedTiming(parsed: *ParsedEdid, block: []const u8) void {
+    const timing = parseDetailedTiming(block) orelse return;
+    if (parsed.preferred_timing == null) {
+        parsed.preferred_timing = timing;
+        parsed.capability_flags |= abi.display_capability_preferred_timing;
+    }
+    appendTiming(parsed, timing);
+}
+
+fn parseEstablishedTimings(raw: []const u8, parsed: *ParsedEdid) void {
+    for (established_timings) |timing| {
+        if ((raw[timing.byte_index] & timing.bit_mask) == 0) continue;
+        appendTiming(parsed, .{
+            .pixel_clock_khz = 0,
+            .h_active = timing.width,
+            .h_blank = 0,
+            .v_active = timing.height,
+            .v_blank = 0,
+            .refresh_hz = timing.refresh_hz,
+        });
+    }
+}
+
+fn decodeStandardTimingWidth(byte: u8) ?u16 {
+    if (byte == 0x00 or byte == 0x01) return null;
+    return (@as(u16, byte) + 31) * 8;
+}
+
+fn decodeStandardTimingHeight(width: u16, aspect_bits: u8, version: u8, revision: u8) u16 {
+    return switch (aspect_bits) {
+        0 => if (version > 1 or revision >= 3) @as(u16, @intCast(@divTrunc(@as(u32, width) * 10, 16))) else width,
+        1 => @as(u16, @intCast(@divTrunc(@as(u32, width) * 3, 4))),
+        2 => @as(u16, @intCast(@divTrunc(@as(u32, width) * 4, 5))),
+        else => @as(u16, @intCast(@divTrunc(@as(u32, width) * 9, 16))),
+    };
+}
+
+fn parseStandardTimings(raw: []const u8, parsed: *ParsedEdid) void {
+    var offset: usize = 38;
+    while (offset + 1 < 54) : (offset += 2) {
+        const width = decodeStandardTimingWidth(raw[offset]) orelse continue;
+        if (raw[offset] == 0x01 and raw[offset + 1] == 0x01) continue;
+        const aspect_bits = (raw[offset + 1] >> 6) & 0x03;
+        const refresh_hz: u16 = @as(u16, raw[offset + 1] & 0x3F) + 60;
+        appendTiming(parsed, .{
+            .pixel_clock_khz = 0,
+            .h_active = width,
+            .h_blank = 0,
+            .v_active = decodeStandardTimingHeight(width, aspect_bits, parsed.version, parsed.revision),
+            .v_blank = 0,
+            .refresh_hz = refresh_hz,
+        });
+    }
+}
+
 fn parseDisplayName(block: []const u8) ?struct { len: u8, value: [max_name_len]u8 } {
     if (block.len < 18) return null;
     if (block[0] != 0 or block[1] != 0 or block[2] != 0 or block[3] != 0xFC) return null;
@@ -105,10 +206,10 @@ fn parseDisplayName(block: []const u8) ?struct { len: u8, value: [max_name_len]u
     };
 }
 
-fn parseCeaExtension(block: []const u8, flags: *u16) void {
+fn parseCeaExtension(block: []const u8, parsed: *ParsedEdid) void {
     if (block.len < block_len) return;
-    flags.* |= abi.display_capability_cea_extension;
-    if ((block[3] & 0x40) != 0) flags.* |= abi.display_capability_basic_audio;
+    parsed.capability_flags |= abi.display_capability_cea_extension;
+    if ((block[3] & 0x40) != 0) parsed.capability_flags |= abi.display_capability_basic_audio;
 
     const dtd_offset = if (block[2] >= 4 and block[2] <= 127) @as(usize, block[2]) else block_len - 1;
     var offset: usize = 4;
@@ -120,11 +221,16 @@ fn parseCeaExtension(block: []const u8, flags: *u16) void {
         if (offset + length > dtd_offset or offset + length > block_len - 1) break;
         const payload = block[offset .. offset + length];
         if (tag == cea_tag_audio and payload.len > 0) {
-            flags.* |= abi.display_capability_basic_audio;
+            parsed.capability_flags |= abi.display_capability_basic_audio;
         } else if (tag == cea_tag_vendor and payload.len >= hdmi_vendor_oui.len and std.mem.eql(u8, payload[0..hdmi_vendor_oui.len], &hdmi_vendor_oui)) {
-            flags.* |= abi.display_capability_hdmi_vendor_data;
+            parsed.capability_flags |= abi.display_capability_hdmi_vendor_data;
         }
         offset += length;
+    }
+
+    offset = dtd_offset;
+    while (offset + 18 <= block_len) : (offset += 18) {
+        appendDetailedTiming(parsed, block[offset .. offset + 18]);
     }
 }
 
@@ -144,7 +250,7 @@ fn parseExtensionBlocks(raw: []const u8, parsed: *ParsedEdid) ParseError!void {
         if (checksum != 0) return error.InvalidChecksum;
 
         switch (block[0]) {
-            cea_extension_tag => parseCeaExtension(block, &parsed.capability_flags),
+            cea_extension_tag => parseCeaExtension(block, parsed),
             displayid_extension_tag => parsed.capability_flags |= abi.display_capability_displayid_extension,
             else => {},
         }
@@ -175,6 +281,8 @@ pub fn parse(raw: []const u8) ParseError!ParsedEdid {
         .extension_count = raw[126],
         .capability_flags = 0,
         .preferred_timing = null,
+        .timing_count = 0,
+        .timings = [_]Timing{std.mem.zeroes(Timing)} ** max_timings,
         .display_name_len = 0,
         .display_name = [_]u8{0} ** max_name_len,
     };
@@ -184,10 +292,7 @@ pub fn parse(raw: []const u8) ParseError!ParsedEdid {
     var descriptor_offset: usize = 54;
     while (descriptor_offset + 18 <= block_len) : (descriptor_offset += 18) {
         const descriptor = raw[descriptor_offset .. descriptor_offset + 18];
-        if (parsed.preferred_timing == null) {
-            parsed.preferred_timing = parseDetailedTiming(descriptor);
-            if (parsed.preferred_timing != null) parsed.capability_flags |= abi.display_capability_preferred_timing;
-        }
+        appendDetailedTiming(&parsed, descriptor);
         if (parsed.display_name_len == 0) {
             if (parseDisplayName(descriptor)) |name| {
                 parsed.display_name_len = name.len;
@@ -195,6 +300,9 @@ pub fn parse(raw: []const u8) ParseError!ParsedEdid {
             }
         }
     }
+
+    parseEstablishedTimings(raw, &parsed);
+    parseStandardTimings(raw, &parsed);
 
     try parseExtensionBlocks(raw, &parsed);
 
@@ -235,6 +343,13 @@ fn setDisplayName(block: []u8, name: []const u8) void {
     if (5 + idx < block.len) block[5 + idx] = 0x0A;
 }
 
+fn encodeStandardTiming(width: u16, refresh_hz: u16, aspect_bits: u8) [2]u8 {
+    return .{
+        @as(u8, @intCast(@divExact(width, 8) - 31)),
+        @as(u8, @intCast((aspect_bits << 6) | ((refresh_hz - 60) & 0x3F))),
+    };
+}
+
 fn finalizeChecksum(edid_bytes: []u8) void {
     var checksum: u8 = 0;
     for (edid_bytes[0 .. block_len - 1]) |byte| checksum +%= byte;
@@ -254,6 +369,13 @@ fn sampleEdid() [block_len]u8 {
     bytes[20] = 0x80;
     bytes[21] = 60;
     bytes[22] = 34;
+    const standard_1280x800 = encodeStandardTiming(1280, 60, 0);
+    bytes[38] = standard_1280x800[0];
+    bytes[39] = standard_1280x800[1];
+    const standard_1024x768 = encodeStandardTiming(1024, 60, 1);
+    bytes[40] = standard_1024x768[0];
+    bytes[41] = standard_1024x768[1];
+    bytes[35] = 0x01; // 800x600@60 established timing
     writeDetailedTiming(bytes[54..72], 7425, 1280, 370, 720, 30);
     setDisplayName(bytes[72..90], "QEMU-EDID");
     finalizeChecksum(&bytes);
@@ -296,6 +418,15 @@ fn sampleEdidWithDisplayIdExtension() [block_len * 2]u8 {
     return bytes;
 }
 
+fn expectTimingPresent(parsed: ParsedEdid, width: u16, height: u16) !void {
+    var index: usize = 0;
+    while (index < parsed.timing_count and index < parsed.timings.len) : (index += 1) {
+        const timing = parsed.timings[index];
+        if (timing.h_active == width and timing.v_active == height) return;
+    }
+    return error.TestUnexpectedResult;
+}
+
 test "edid parser decodes preferred timing and display name" {
     const parsed = try parse(&sampleEdid());
     try std.testing.expectEqual(encodeManufacturer('Q', 'E', 'M'), parsed.manufacturer_id);
@@ -312,6 +443,11 @@ test "edid parser decodes preferred timing and display name" {
     try std.testing.expect(preferred.refresh_hz >= 60);
     try std.testing.expectEqual(@as(u16, abi.display_capability_digital_input | abi.display_capability_preferred_timing), parsed.capability_flags);
     try std.testing.expectEqualStrings("QEMU-EDID", parsed.display_name[0..parsed.display_name_len]);
+    try std.testing.expectEqual(@as(u8, 4), parsed.timing_count);
+    try expectTimingPresent(parsed, 1280, 720);
+    try expectTimingPresent(parsed, 1280, 800);
+    try expectTimingPresent(parsed, 1024, 768);
+    try expectTimingPresent(parsed, 800, 600);
 }
 
 test "edid parser decodes cea capability flags" {

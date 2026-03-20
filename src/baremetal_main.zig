@@ -648,6 +648,7 @@ const VirtioGpuDisplayProbeError = error{
     ExplicitOutputActivateMismatch,
     MissingOutputMismatchFailure,
     ExplicitOutputModeSetMismatch,
+    OutputModeInventoryMismatch,
     MissingOutputModeFailure,
     ExplicitConnectorPreferredMismatch,
     ExplicitOutputPreferredMismatch,
@@ -990,6 +991,33 @@ pub export fn oc_display_output_activate(index: u16) i16 {
 
 pub export fn oc_display_output_set(index: u16, width: u16, height: u16) i16 {
     pal_framebuffer.setDisplayOutputMode(index, width, height) catch |err| switch (err) {
+        error.NotFound => return abi.result_not_found,
+        error.UnsupportedMode => return abi.result_not_supported,
+    };
+    return abi.result_ok;
+}
+
+pub export fn oc_display_output_mode_count(index: u16) u16 {
+    return pal_framebuffer.displayOutputModeCount(index);
+}
+
+pub export fn oc_display_output_mode_width(index: u16, mode_index: u16) u16 {
+    const mode = pal_framebuffer.displayOutputMode(index, mode_index) orelse return 0;
+    return mode.width;
+}
+
+pub export fn oc_display_output_mode_height(index: u16, mode_index: u16) u16 {
+    const mode = pal_framebuffer.displayOutputMode(index, mode_index) orelse return 0;
+    return mode.height;
+}
+
+pub export fn oc_display_output_mode_refresh_hz(index: u16, mode_index: u16) u16 {
+    const mode = pal_framebuffer.displayOutputMode(index, mode_index) orelse return 0;
+    return mode.refresh_hz;
+}
+
+pub export fn oc_display_output_activate_mode(index: u16, mode_index: u16) i16 {
+    pal_framebuffer.activateDisplayOutputMode(index, mode_index) catch |err| switch (err) {
         error.NotFound => return abi.result_not_found,
         error.UnsupportedMode => return abi.result_not_supported,
     };
@@ -5836,7 +5864,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
     var display_output_payload_buffer: [176]u8 = undefined;
     const display_output_payload_expected = std.fmt.bufPrint(
         &display_output_payload_buffer,
-        "index=0 scanout=0 connector=virtual connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x} edid_present=0\n",
+        "index=0 scanout=0 connector=virtual connected={d} current={d}x{d} preferred={d}x{d} capabilities=0x{x} edid_present=0 mode_count={d}\n",
         .{
             display_state.connected,
             display_state.current_width,
@@ -5844,6 +5872,7 @@ fn runRtl8139TcpProbe() Rtl8139TcpProbeError!void {
             display_state.preferred_width,
             display_state.preferred_height,
             display_state.capability_flags,
+            oc_display_output_mode_count(0),
         },
     ) catch return error.ToolServiceFailed;
     var display_modes_payload_buffer: [256]u8 = undefined;
@@ -10432,6 +10461,7 @@ fn virtioGpuDisplayProbeFailureCode(err: VirtioGpuDisplayProbeError) u8 {
         error.ExplicitOutputActivateMismatch => 0x57,
         error.MissingOutputMismatchFailure => 0x58,
         error.ExplicitOutputModeSetMismatch => 0x59,
+        error.OutputModeInventoryMismatch => 0x73,
         error.MissingOutputModeFailure => 0x5A,
         error.ExplicitConnectorPreferredMismatch => 0x71,
         error.ExplicitOutputPreferredMismatch => 0x72,
@@ -10728,6 +10758,39 @@ fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
     const edid_header = [_]u8{ 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00 };
     for (edid_header, 0..) |expected, index| {
         if (oc_display_output_edid_byte(@intCast(index)) != expected) return error.EdidHeaderMismatch;
+    }
+
+    const output_mode_count = oc_display_output_mode_count(result.active_scanout);
+    if (output_mode_count == 0) return error.OutputModeInventoryMismatch;
+    if (oc_display_output_mode_width(result.active_scanout, 0) != result.preferred_width or
+        oc_display_output_mode_height(result.active_scanout, 0) != result.preferred_height)
+    {
+        return error.OutputModeInventoryMismatch;
+    }
+
+    var alternate_mode_index: ?u16 = null;
+    var alternate_mode_width: u16 = 0;
+    var alternate_mode_height: u16 = 0;
+    var output_mode_index: u16 = 0;
+    while (output_mode_index < output_mode_count) : (output_mode_index += 1) {
+        const mode_width = oc_display_output_mode_width(result.active_scanout, output_mode_index);
+        const mode_height = oc_display_output_mode_height(result.active_scanout, output_mode_index);
+        if (mode_width == 0 or mode_height == 0) continue;
+        if (mode_width == result.preferred_width and mode_height == result.preferred_height) continue;
+        alternate_mode_index = output_mode_index;
+        alternate_mode_width = mode_width;
+        alternate_mode_height = mode_height;
+        break;
+    }
+    if (alternate_mode_index == null) return error.MissingOutputModeFailure;
+
+    if (oc_display_output_activate_mode(result.active_scanout, alternate_mode_index.?) != abi.result_ok or
+        oc_display_output_state_ptr().current_width != alternate_mode_width or
+        oc_display_output_state_ptr().current_height != alternate_mode_height or
+        oc_display_output_entry(result.active_scanout).current_width != alternate_mode_width or
+        oc_display_output_entry(result.active_scanout).current_height != alternate_mode_height)
+    {
+        return error.OutputModeInventoryMismatch;
     }
 
     const explicit = virtio_gpu.probeAndPresentPatternForConnector(expected_connector) catch |err| switch (err) {
@@ -19212,6 +19275,9 @@ test "baremetal display output export surface mirrors bounded bga framebuffer st
     try std.testing.expectEqual(@as(u16, 0), output.capability_flags);
     try std.testing.expectEqual(@as(u8, 0), oc_display_output_edid_byte(0));
     try std.testing.expectEqual(@as(u16, 1), oc_display_output_entry_count());
+    try std.testing.expectEqual(@as(u16, 1), oc_display_output_mode_count(0));
+    try std.testing.expectEqual(@as(u16, 640), oc_display_output_mode_width(0, 0));
+    try std.testing.expectEqual(@as(u16, 400), oc_display_output_mode_height(0, 0));
     const entry = oc_display_output_entry(0);
     try std.testing.expectEqual(@as(u8, 0), entry.connected);
     try std.testing.expectEqual(@as(u8, abi.display_connector_virtual), entry.connector_type);
@@ -19235,9 +19301,13 @@ test "baremetal display output export surface mirrors bounded bga framebuffer st
     const resized_entry = oc_display_output_entry(0);
     try std.testing.expectEqual(@as(u16, 800), resized_entry.current_width);
     try std.testing.expectEqual(@as(u16, 600), resized_entry.current_height);
+    try std.testing.expectEqual(abi.result_ok, oc_display_output_activate_mode(0, 0));
+    try std.testing.expectEqual(@as(u16, 800), output.current_width);
+    try std.testing.expectEqual(@as(u16, 600), output.current_height);
     try std.testing.expectEqual(abi.result_not_found, oc_display_output_activate(0));
     try std.testing.expectEqual(abi.result_not_found, oc_display_output_activate(1));
     try std.testing.expectEqual(abi.result_not_found, oc_display_output_set(1, 800, 600));
+    try std.testing.expectEqual(abi.result_not_supported, oc_display_output_activate_mode(0, 9));
     try std.testing.expectEqual(abi.result_not_supported, oc_display_output_set(0, 1920, 1080));
 }
 

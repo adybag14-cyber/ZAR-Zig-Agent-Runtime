@@ -597,6 +597,31 @@ pub fn scanoutPixel(x: u16, y: u16) u32 {
     return scanout_pixels[(@as(usize, y) * max_present_width) + @as(usize, x)];
 }
 
+fn buildSupportedModes(parsed: edid.ParsedEdid) struct {
+    modes: [display_output.max_output_modes]display_output.OutputMode,
+    count: u8,
+} {
+    var modes: [display_output.max_output_modes]display_output.OutputMode = [_]display_output.OutputMode{.{
+        .width = 0,
+        .height = 0,
+        .refresh_hz = 0,
+    }} ** display_output.max_output_modes;
+    const count: usize = @min(parsed.timing_count, modes.len);
+    var index: usize = 0;
+    while (index < count) : (index += 1) {
+        const timing = parsed.timings[index];
+        modes[index] = .{
+            .width = timing.h_active,
+            .height = timing.v_active,
+            .refresh_hz = timing.refresh_hz,
+        };
+    }
+    return .{
+        .modes = modes,
+        .count = @intCast(count),
+    };
+}
+
 fn enumerateScanouts(device: pci.VirtioGpuDevice, queue_notify_off: u16, display_info: RespDisplayInfo, scanout_limit: u32) ProbeError!struct {
     scanouts: [max_scanouts]display_output.VirtioGpuScanoutUpdate,
     scanout_count: u8,
@@ -631,6 +656,7 @@ fn enumerateScanouts(device: pci.VirtioGpuDevice, queue_notify_off: u16, display
         const edid_size = @min(edid_response.size, @as(u32, display_output.max_edid_bytes));
         if (edid_size < edid.block_len) return error.InvalidEdidResponse;
         const parsed = edid.parse(edid_response.edid[0..edid_size]) catch return error.InvalidEdid;
+        const supported_modes = buildSupportedModes(parsed);
         scanouts[idx] = .{
             .connected = true,
             .scanout_index = @intCast(idx),
@@ -645,6 +671,8 @@ fn enumerateScanouts(device: pci.VirtioGpuDevice, queue_notify_off: u16, display
             .serial_number = parsed.serial_number,
             .capability_flags = parsed.capability_flags,
             .edid_length = @intCast(edid_size),
+            .supported_mode_count = supported_modes.count,
+            .supported_modes = supported_modes.modes,
         };
     }
 
@@ -737,7 +765,18 @@ fn preferredModeForScanout(scanout: display_output.VirtioGpuScanoutUpdate) Probe
     const width = if (scanout.preferred_width != 0) scanout.preferred_width else scanout.current_width;
     const height = if (scanout.preferred_height != 0) scanout.preferred_height else scanout.current_height;
     try validatePresentDimensions(width, height);
-    return .{ .width = width, .height = height };
+    return .{
+        .width = width,
+        .height = height,
+        .refresh_hz = 0,
+    };
+}
+
+fn modeForScanout(scanout: display_output.VirtioGpuScanoutUpdate, mode_index: u8) ProbeError!display_output.OutputMode {
+    if (mode_index >= scanout.supported_mode_count or mode_index >= scanout.supported_modes.len) return error.UnsupportedMode;
+    const mode = scanout.supported_modes[mode_index];
+    try validatePresentDimensions(mode.width, mode.height);
+    return mode;
 }
 
 fn presentDetailedMode(
@@ -904,6 +943,43 @@ pub fn probeAndPresentPatternForOutputIndexPreferred(output_index: u8) ProbeErro
     return presentDetailedMode(detailed, result, updated_scanouts[0..detailed.scanout_count]);
 }
 
+pub fn probeAndPresentPatternForOutputIndexModeIndex(output_index: u8, mode_index: u8) ProbeError!ProbeResult {
+    if (!hardwareBacked()) return error.UnsupportedPlatform;
+    last_present_stats = .{};
+    @memset(&scanout_pixels, 0);
+
+    const detailed = try probeDisplayDetailedSelection(null, output_index);
+    const selected = detailed.result;
+    const requested_mode = try modeForScanout(detailed.scanouts[selected.active_scanout], mode_index);
+
+    var updated_scanouts = detailed.scanouts;
+    updated_scanouts[selected.active_scanout].current_width = requested_mode.width;
+    updated_scanouts[selected.active_scanout].current_height = requested_mode.height;
+
+    const result = ProbeResult{
+        .vendor_id = selected.vendor_id,
+        .device_id = selected.device_id,
+        .pci_bus = selected.pci_bus,
+        .pci_device = selected.pci_device,
+        .pci_function = selected.pci_function,
+        .scanout_count = selected.scanout_count,
+        .active_scanout = selected.active_scanout,
+        .current_width = requested_mode.width,
+        .current_height = requested_mode.height,
+        .preferred_width = selected.preferred_width,
+        .preferred_height = selected.preferred_height,
+        .physical_width_mm = selected.physical_width_mm,
+        .physical_height_mm = selected.physical_height_mm,
+        .manufacturer_id = selected.manufacturer_id,
+        .product_code = selected.product_code,
+        .serial_number = selected.serial_number,
+        .capability_flags = selected.capability_flags,
+        .edid_length = selected.edid_length,
+    };
+
+    return presentDetailedMode(detailed, result, updated_scanouts[0..detailed.scanout_count]);
+}
+
 pub fn probeAndPresentPatternForConnector(preferred_connector: ?u8) ProbeError!ProbeResult {
     if (!hardwareBacked()) return error.UnsupportedPlatform;
     last_present_stats = .{};
@@ -988,6 +1064,38 @@ test "virtio gpu scanout selector chooses first enabled output" {
     try std.testing.expectEqual(@as(u8, 1), selected.scanout_index);
     try std.testing.expectEqual(@as(u16, 1280), selected.current_width);
     try std.testing.expectEqual(@as(u16, 720), selected.current_height);
+}
+
+test "virtio gpu mode selector returns advertised scanout mode by index" {
+    const scanout = display_output.VirtioGpuScanoutUpdate{
+        .connected = true,
+        .scanout_index = 0,
+        .current_width = 1280,
+        .current_height = 800,
+        .preferred_width = 1280,
+        .preferred_height = 800,
+        .physical_width_mm = 300,
+        .physical_height_mm = 190,
+        .manufacturer_id = 0x1234,
+        .product_code = 0x5678,
+        .serial_number = 0xCAFEBABE,
+        .capability_flags = abi.display_capability_digital_input | abi.display_capability_preferred_timing,
+        .edid_length = 128,
+        .supported_mode_count = 2,
+        .supported_modes = [_]display_output.OutputMode{
+            .{ .width = 1280, .height = 800, .refresh_hz = 60 },
+            .{ .width = 1024, .height = 768, .refresh_hz = 60 },
+        } ++ [_]display_output.OutputMode{.{
+            .width = 0,
+            .height = 0,
+            .refresh_hz = 0,
+        }} ** (display_output.max_output_modes - 2),
+    };
+
+    const alternate = try modeForScanout(scanout, 1);
+    try std.testing.expectEqual(@as(u16, 1024), alternate.width);
+    try std.testing.expectEqual(@as(u16, 768), alternate.height);
+    try std.testing.expectError(error.UnsupportedMode, modeForScanout(scanout, 7));
 }
 
 test "virtio gpu scanout selector prefers requested connector when present" {
