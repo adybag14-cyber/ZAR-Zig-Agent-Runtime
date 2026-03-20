@@ -15,7 +15,7 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
   - Original OpenClaw baseline (`v2026.3.13-1`): `100/100` covered
   - Original OpenClaw beta baseline (`v2026.3.13-beta.1`): `100/100` covered
   - Union baseline: `141/141` covered (`MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> `427/427` passed
+- Latest local validation: `zig build test --summary all` -> `429/429` passed
 - Current edge release target tag: `v0.2.0-zig-edge.31`
 - License posture: repo-wide `GPL-2.0-only` with Linux-style SPDX headers on repo-owned source and script files
 - Toolchain policy: Codeberg `master` is canonical; `adybag14-cyber/zig` publishes rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
@@ -60,12 +60,15 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
     - tracked docs:
       - [`docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md`](docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md)
       - [`docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`](docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md)
-    - first delivered adoption slice is a clean-room `E1000` L2 path that reuses ZAR's existing network stack without importing ZigOS code
+    - first delivered adoption slice is a clean-room `E1000` path that reuses ZAR's existing network stack without importing ZigOS code
     - `src/baremetal/e1000.zig` now provides the first `82540EM`-class `E1000` path with PCI bind, MMIO + legacy I/O reset, EEPROM MAC readout, bounded TX/RX rings, and raw-frame send/receive telemetry
     - `src/baremetal/pci.zig` now discovers the `E1000` MMIO + I/O BAR pair and enables I/O, memory, and bus-master decode on the selected PCI function
     - host regressions in `src/baremetal/e1000.zig`, `src/baremetal/pci.zig`, and `src/baremetal_main.zig` now prove init, MAC readout, TX, RX, and export-surface stability on the clean-room `E1000` path
     - `scripts/baremetal-qemu-e1000-probe-check.ps1` plus `scripts/qemu-e1000-dgram-echo.ps1` now prove live QEMU `E1000` PCI bind, MAC readout, TX, RX, payload validation, and counter advance over the freestanding PVH artifact
-    - protocol/service reuse over `E1000` (`ARP` / `IPv4` / `UDP` / `TCP` / `HTTP` / `HTTPS`) remains future depth; current strict delivery is the raw-frame slice only
+    - `src/pal/net.zig` now routes the same raw-frame PAL seam through selectable `RTL8139` and `E1000` backends without regressing the existing RTL8139 path
+    - host regressions in `src/baremetal/e1000.zig`, `src/baremetal/pci.zig`, and `src/baremetal_main.zig` now also prove `ARP`, `IPv4`, and `UDP` reuse on the clean-room `E1000` path
+    - `scripts/baremetal-qemu-e1000-arp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-ipv4-probe-check.ps1`, and `scripts/baremetal-qemu-e1000-udp-probe-check.ps1` now prove live QEMU `E1000` ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, and TX/RX counter advance over the freestanding PVH artifact
+    - `TCP` / `HTTP` / `HTTPS` reuse over `E1000` remains future depth
   - keyboard/mouse is now strict-closed in [`docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md`](docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md)
   - `src/baremetal/ps2_input.zig` now contains a real x86 port-I/O backed PS/2 controller path
   - `scripts/baremetal-qemu-ps2-input-probe-check.ps1` proves IRQ-driven keyboard/mouse state updates against the freestanding PVH artifact

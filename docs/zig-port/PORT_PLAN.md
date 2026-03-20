@@ -14,12 +14,14 @@ Full-stack replacement execution reference:
   - `docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md`
   - `docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`
   - current hard boundary: no ZigOS source import until upstream licensing is explicit
-  - first delivered adoption slice is clean-room `E1000` raw-frame support, because it expands hardware breadth without forcing a VFS/ELF/syscall redesign
+  - first delivered adoption slice is clean-room `E1000` protocol reuse through `ARP` / `IPv4` / `UDP`, because it expands hardware breadth without forcing a VFS/ELF/syscall redesign
   - `src/baremetal/e1000.zig` now provides the first ZAR-owned `82540EM`-class `E1000` path with PCI bind, MMIO + legacy I/O reset, EEPROM MAC readout, bounded TX/RX rings, and raw-frame send/receive telemetry
   - `src/baremetal/pci.zig` now discovers the `E1000` MMIO + I/O BAR pair and enables I/O, memory, and bus-master decode on the selected PCI function
-  - host regressions now prove init, MAC readout, TX, RX, and export-surface stability on the clean-room `E1000` path
+  - host regressions now prove init, MAC readout, TX, RX, export-surface stability, and `ARP` / `IPv4` / `UDP` protocol reuse on the clean-room `E1000` path
   - `scripts/baremetal-qemu-e1000-probe-check.ps1` plus `scripts/qemu-e1000-dgram-echo.ps1` now prove live QEMU `E1000` PCI bind, MAC readout, TX, RX, payload validation, and counter advance over the freestanding PVH artifact
-  - protocol/service reuse over `E1000` remains the next depth step (`ARP` / `IPv4` / `UDP` / `TCP` / `HTTP` / `HTTPS`)
+  - `src/pal/net.zig` now routes the same raw-frame PAL seam through selectable `RTL8139` and `E1000` backends without regressing the existing RTL8139 path
+  - `scripts/baremetal-qemu-e1000-arp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-ipv4-probe-check.ps1`, and `scripts/baremetal-qemu-e1000-udp-probe-check.ps1` now prove live QEMU `E1000` ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, and TX/RX counter advance over the freestanding PVH artifact
+  - `TCP` / `HTTP` / `HTTPS` reuse over `E1000` remains the next depth step
 - `FS5.5` hardware-driver pivot update:
   - framebuffer/console strict closure is now reached locally.
   - real linear-framebuffer path shipped in `src/baremetal/framebuffer_console.zig`:
