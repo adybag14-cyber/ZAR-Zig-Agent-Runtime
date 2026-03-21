@@ -52,7 +52,7 @@ Delivered first adoption slice:
 Delivered second adoption slice:
 
 - hosted benchmark and stress lane informed by ZigOS benchmark coverage
-- `src/benchmark_suite.zig` now provides ZAR-native benchmark cases for DNS, DHCP, TCP, runtime-state queue churn, and tool-service codec parsing
+- `src/benchmark_suite.zig` now provides ZAR-native benchmark cases for DNS, DHCP, TCP, runtime-state queue churn, tool-service codec parsing, filesystem persistence churn, and virtual overlay read churn
 - `src/benchmark_main.zig` now exposes `zig build bench` with deterministic `BENCH:START` / `BENCH:CASE` / `BENCH:END` output
 - `scripts/benchmark-smoke-check.ps1` now provides the strict hosted smoke gate for the benchmark lane
 - CI and release preview now run the benchmark smoke lane without regressing the normal hosted/bare-metal matrix

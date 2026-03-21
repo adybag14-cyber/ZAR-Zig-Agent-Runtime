@@ -38,6 +38,8 @@ Delivered benchmark cases:
 - `protocol.tcp_handshake_payload`
 - `runtime.state_queue_cycle`
 - `tool_service.codec_parse`
+- `filesystem.persistence_cycle`
+- `filesystem.overlay_read_cycle`
 
 Delivered output contract:
 
@@ -73,7 +75,11 @@ Required for closure:
 Natural next benchmark expansions:
 
 - allocator pressure benchmark lane
-- filesystem persistence throughput lane
 - NIC-path transport throughput comparisons (`RTL8139` vs `E1000`)
 - display mode-switch/present timing lane
 - future SMP stress once that track is expanded
+
+Recently delivered follow-on depth:
+
+- filesystem persistence throughput lane through `filesystem.persistence_cycle`
+- virtual overlay read churn through `filesystem.overlay_read_cycle`

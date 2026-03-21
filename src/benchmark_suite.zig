@@ -3,6 +3,7 @@ const std = @import("std");
 const dhcp = @import("protocol/dhcp.zig");
 const dns = @import("protocol/dns.zig");
 const tcp = @import("protocol/tcp.zig");
+const filesystem = @import("baremetal/filesystem.zig");
 const runtime_state = @import("runtime/state.zig");
 const codec = @import("baremetal/tool_service/codec.zig");
 
@@ -55,6 +56,18 @@ pub const all_cases = [_]Case{
         .description = "Typed tool-service frame parsing and batch prefix consumption",
         .batch_iterations = 1024,
         .runFn = benchToolServiceCodecParse,
+    },
+    .{
+        .name = "filesystem.persistence_cycle",
+        .description = "Bare-metal filesystem create/write/read/stat/delete churn on the active backend",
+        .batch_iterations = 96,
+        .runFn = benchFilesystemPersistenceCycle,
+    },
+    .{
+        .name = "filesystem.overlay_read_cycle",
+        .description = "Virtual /proc,/sys,/dev overlay list/read churn through the filesystem surface",
+        .batch_iterations = 128,
+        .runFn = benchFilesystemOverlayReadCycle,
     },
 };
 
@@ -307,11 +320,77 @@ fn benchToolServiceCodecParse(iterations: usize) !u64 {
     return checksum;
 }
 
+fn benchFilesystemPersistenceCycle(iterations: usize) !u64 {
+    filesystem.resetForTest();
+    try filesystem.init();
+
+    var checksum: u64 = 0;
+    var dir_buffer: [64]u8 = undefined;
+    var file_buffer: [96]u8 = undefined;
+    var payload_buffer: [64]u8 = undefined;
+
+    for (0..iterations) |idx| {
+        const tick: u64 = @intCast(idx + 1);
+        const dir = try std.fmt.bufPrint(&dir_buffer, "/bench/{d}", .{idx % 16});
+        const file = try std.fmt.bufPrint(&file_buffer, "{s}/state.txt", .{dir});
+        const payload = try std.fmt.bufPrint(&payload_buffer, "bench-payload-{d}", .{idx});
+
+        try filesystem.createDirPath(dir);
+        try filesystem.writeFile(file, payload, tick);
+
+        const stat = try filesystem.statSummary(file);
+        const listing = try filesystem.listDirectoryAlloc(std.heap.page_allocator, dir, 256);
+        defer std.heap.page_allocator.free(listing);
+        const readback = try filesystem.readFileAlloc(std.heap.page_allocator, file, 256);
+        defer std.heap.page_allocator.free(readback);
+
+        checksum +%= stat.size;
+        checksum +%= listing.len;
+        checksum +%= readback.len;
+        checksum +%= stat.entry_id;
+        checksum +%= tick;
+
+        try filesystem.deleteFile(file, tick + 1);
+        try filesystem.deleteTree(dir, tick + 2);
+    }
+
+    return checksum;
+}
+
+fn benchFilesystemOverlayReadCycle(iterations: usize) !u64 {
+    filesystem.resetForTest();
+    try filesystem.init();
+
+    var checksum: u64 = 0;
+    for (0..iterations) |_| {
+        const root_listing = try filesystem.listDirectoryAlloc(std.heap.page_allocator, "/", 256);
+        defer std.heap.page_allocator.free(root_listing);
+        const dev_listing = try filesystem.listDirectoryAlloc(std.heap.page_allocator, "/dev", 256);
+        defer std.heap.page_allocator.free(dev_listing);
+        const dev_storage = try filesystem.readFileAlloc(std.heap.page_allocator, "/dev/storage/state", 512);
+        defer std.heap.page_allocator.free(dev_storage);
+        const proc_runtime = try filesystem.readFileAlloc(std.heap.page_allocator, "/proc/runtime/snapshot", 1024);
+        defer std.heap.page_allocator.free(proc_runtime);
+        const sys_storage = try filesystem.readFileAlloc(std.heap.page_allocator, "/sys/storage/state", 512);
+        defer std.heap.page_allocator.free(sys_storage);
+
+        checksum +%= root_listing.len;
+        checksum +%= dev_listing.len;
+        checksum +%= dev_storage.len;
+        checksum +%= proc_runtime.len;
+        checksum +%= sys_storage.len;
+    }
+
+    return checksum;
+}
+
 test "benchmark catalog includes expected protocol and runtime cases" {
     try std.testing.expect(findCase("protocol.dns_roundtrip") != null);
     try std.testing.expect(findCase("protocol.tcp_handshake_payload") != null);
     try std.testing.expect(findCase("runtime.state_queue_cycle") != null);
     try std.testing.expect(findCase("tool_service.codec_parse") != null);
+    try std.testing.expect(findCase("filesystem.persistence_cycle") != null);
+    try std.testing.expect(findCase("filesystem.overlay_read_cycle") != null);
 }
 
 test "benchmark suite writes markers for filtered run" {
