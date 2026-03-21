@@ -3,6 +3,7 @@ const std = @import("std");
 const abi = @import("abi.zig");
 const storage_backend = @import("storage_backend.zig");
 const tool_layout = @import("tool_layout.zig");
+const virtual_fs = @import("virtual_fs.zig");
 
 pub const max_entries: usize = 128;
 // Keep filesystem paths large enough for hosted absolute temp/workspace roots while
@@ -40,6 +41,7 @@ pub const Error = storage_backend.Error || std.mem.Allocator.Error || error{
     FileTooBig,
     NotDirectory,
     IsDirectory,
+    ReadOnlyPath,
     NoSpace,
     ResponseTooLarge,
     CorruptFilesystem,
@@ -119,6 +121,7 @@ pub fn entry(index: u32) abi.BaremetalFilesystemEntry {
 pub fn createDirPath(path: []const u8) Error!void {
     try init();
     const normalized = try normalizePath(path);
+    if (virtual_fs.isReadOnlyTree(normalized.slice())) return error.ReadOnlyPath;
     if (normalized.len == 1) return;
 
     const full = normalized.slice();
@@ -149,6 +152,7 @@ pub fn createDirPath(path: []const u8) Error!void {
 pub fn writeFile(path: []const u8, data: []const u8, tick: u64) Error!void {
     try init();
     const normalized = try normalizePath(path);
+    if (virtual_fs.isReadOnlyTree(normalized.slice())) return error.ReadOnlyPath;
     if (normalized.len == 1) return error.InvalidPath;
 
     const full = normalized.slice();
@@ -182,6 +186,7 @@ pub fn deleteFile(path: []const u8, tick: u64) Error!void {
     try init();
     const normalized = try normalizePath(path);
     const full = normalized.slice();
+    if (virtual_fs.isReadOnlyTree(full)) return error.ReadOnlyPath;
     if (full.len == 1) return error.InvalidPath;
 
     const entry_index = findEntryIndex(full) orelse return error.FileNotFound;
@@ -202,6 +207,7 @@ pub fn deleteTree(path: []const u8, tick: u64) Error!void {
     try init();
     const normalized = try normalizePath(path);
     const full = normalized.slice();
+    if (virtual_fs.isReadOnlyTree(full)) return error.ReadOnlyPath;
     if (full.len == 1) return error.InvalidPath;
 
     _ = findEntryIndex(full) orelse return error.FileNotFound;
@@ -232,6 +238,9 @@ pub fn readFileAlloc(allocator: std.mem.Allocator, path: []const u8, max_bytes: 
     try init();
     const normalized = try normalizePath(path);
     const full = normalized.slice();
+    if (virtual_fs.handles(full)) {
+        return virtual_fs.readFileAlloc(allocator, full, max_bytes);
+    }
     const entry_index = findEntryIndex(full) orelse return error.FileNotFound;
     const record = entries[entry_index];
     if (record.kind != abi.filesystem_kind_file) return error.IsDirectory;
@@ -271,6 +280,9 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     const full = normalized.slice();
 
     if (!std.mem.eql(u8, full, "/")) {
+        if (virtual_fs.handles(full) and findEntryIndex(full) == null) {
+            return virtual_fs.listDirectoryAlloc(allocator, full, max_bytes);
+        }
         const entry_index = findEntryIndex(full) orelse return error.FileNotFound;
         if (entries[entry_index].kind != abi.filesystem_kind_directory) return error.NotDirectory;
     }
@@ -320,6 +332,14 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
         defer allocator.free(line);
         if (out.items.len + line.len > max_bytes) return error.ResponseTooLarge;
         try out.appendSlice(allocator, line);
+    }
+
+    if (std.mem.eql(u8, full, "/")) {
+        const remaining = max_bytes -| out.items.len;
+        const virtual_listing = try virtual_fs.listDirectoryAlloc(allocator, full, remaining);
+        defer allocator.free(virtual_listing);
+        if (out.items.len + virtual_listing.len > max_bytes) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, virtual_listing);
     }
 
     return out.toOwnedSlice(allocator);
@@ -379,6 +399,17 @@ pub fn statSummary(path: []const u8) Error!SimpleStat {
             .kind = .directory,
             .modified_tick = 0,
             .entry_id = 0,
+        };
+    }
+
+    if (virtual_fs.handles(full)) {
+        const summary = try virtual_fs.statSummary(full);
+        return .{
+            .size = summary.size,
+            .checksum = summary.checksum,
+            .kind = summary.kind,
+            .modified_tick = summary.modified_tick,
+            .entry_id = summary.entry_id,
         };
     }
 
@@ -765,7 +796,7 @@ test "filesystem lists direct child entries only" {
 
     const root_listing = try listDirectoryAlloc(std.testing.allocator, "/", 64);
     defer std.testing.allocator.free(root_listing);
-    try std.testing.expectEqualStrings("dir packages\n", root_listing);
+    try std.testing.expectEqualStrings("dir packages\ndir proc\ndir sys\n", root_listing);
 
     const packages_listing = try listDirectoryAlloc(std.testing.allocator, "/packages", 64);
     defer std.testing.allocator.free(packages_listing);
@@ -778,6 +809,70 @@ test "filesystem lists direct child entries only" {
     const bin_listing = try listDirectoryAlloc(std.testing.allocator, "/packages/demo/bin", 64);
     defer std.testing.allocator.free(bin_listing);
     try std.testing.expectEqualStrings("file main.oc 4\n", bin_listing);
+}
+
+test "filesystem exposes virtual proc and sys overlays" {
+    storage_backend.resetForTest();
+    resetForTest();
+    try init();
+
+    var runtime = try @import("runtime_bridge.zig").initRuntime(std.testing.allocator);
+    defer runtime.deinit();
+
+    var exec_result = try runtime.execRunFromFrame(
+        std.testing.allocator,
+        "{\"id\":\"proc-exec\",\"method\":\"exec.run\",\"params\":{\"sessionId\":\"sess-proc\",\"command\":\"echo proc-ready\",\"timeoutMs\":1000}}",
+    );
+    defer exec_result.deinit(std.testing.allocator);
+    try std.testing.expect(exec_result.ok);
+
+    const proc_root_listing = try listDirectoryAlloc(std.testing.allocator, "/proc", 256);
+    defer std.testing.allocator.free(proc_root_listing);
+    try std.testing.expect(std.mem.indexOf(u8, proc_root_listing, "dir runtime\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, proc_root_listing, "file version ") != null);
+
+    const sessions_listing = try listDirectoryAlloc(std.testing.allocator, "/proc/runtime/sessions", 256);
+    defer std.testing.allocator.free(sessions_listing);
+    try std.testing.expect(std.mem.indexOf(u8, sessions_listing, "file sess-proc ") != null);
+
+    const snapshot = try readFileAlloc(std.testing.allocator, "/proc/runtime/snapshot", 512);
+    defer std.testing.allocator.free(snapshot);
+    try std.testing.expect(std.mem.indexOf(u8, snapshot, "state_path=/runtime/state/runtime-state.json") != null);
+    try std.testing.expect(std.mem.indexOf(u8, snapshot, "sessions=1") != null);
+
+    const session_info = try readFileAlloc(std.testing.allocator, "/proc/runtime/sessions/sess-proc", 512);
+    defer std.testing.allocator.free(session_info);
+    try std.testing.expect(std.mem.indexOf(u8, session_info, "id=sess-proc") != null);
+    try std.testing.expect(std.mem.indexOf(u8, session_info, "last_message=echo proc-ready") != null);
+
+    const storage_state = try readFileAlloc(std.testing.allocator, "/sys/storage/state", 512);
+    defer std.testing.allocator.free(storage_state);
+    try std.testing.expect(std.mem.indexOf(u8, storage_state, "backend=ram_disk") != null);
+
+    const sys_listing = try listDirectoryAlloc(std.testing.allocator, "/sys", 256);
+    defer std.testing.allocator.free(sys_listing);
+    try std.testing.expect(std.mem.indexOf(u8, sys_listing, "dir kernel\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sys_listing, "dir storage\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sys_listing, "dir display\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sys_listing, "dir net\n") != null);
+
+    const proc_stat = try statSummary("/proc/runtime/snapshot");
+    try std.testing.expectEqual(@as(std.Io.File.Kind, .file), proc_stat.kind);
+    try std.testing.expect(proc_stat.size != 0);
+
+    const sys_stat = try statSummary("/sys");
+    try std.testing.expectEqual(@as(std.Io.File.Kind, .directory), sys_stat.kind);
+}
+
+test "filesystem rejects writes under virtual proc and sys trees" {
+    storage_backend.resetForTest();
+    resetForTest();
+    try init();
+
+    try std.testing.expectError(error.ReadOnlyPath, createDirPath("/proc/runtime/new"));
+    try std.testing.expectError(error.ReadOnlyPath, writeFile("/sys/net/state", "nope", 0));
+    try std.testing.expectError(error.ReadOnlyPath, deleteFile("/proc/version", 0));
+    try std.testing.expectError(error.ReadOnlyPath, deleteTree("/sys/display", 0));
 }
 
 test "filesystem deletes files and persists the removal" {

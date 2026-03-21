@@ -147,6 +147,10 @@ jobs:
           zig build --summary all
           zig build test --summary all
 
+      - name: Benchmark smoke lane
+        shell: pwsh
+        run: ./scripts/benchmark-smoke-check.ps1 -SkipBuild
+
       - name: Setup Zig (0.16.0-dev.2736+3b515fbed) for bare-metal validate lane
         uses: mlugg/setup-zig@v2
         with:

@@ -18,24 +18,21 @@ This track exists to remove guesswork. It defines the real bare-metal subsystems
 
 ## ZigOS Reference Track
 
-Status: `Slice 1 delivered`
+Status: `Slices 1-3 delivered`
 
-This track uses `Cameron-Lyons/zigos` as a reference architecture only.
+This track uses `Cameron-Lyons/zigos` as a reference architecture and source candidate where it improves ZAR.
 
-Hard boundary:
+Current provenance boundary:
 
-- no source import
-- no mechanical translation
-- no direct code transplant
-
-Reason:
-
-- upstream licensing is not yet explicit in the checked source of truth
+- upstream license is now explicit: `MIT`
+- imported or adapted ZigOS code is legally possible
+- every delivered slice still has to satisfy ZAR-native proof and release gates
 
 Tracked docs:
 
 - `docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md`
 - `docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`
+- `docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md`
 
 Delivered first adoption slice:
 
@@ -51,6 +48,24 @@ Delivered first adoption slice:
 - `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves bounded framed tool-service reuse over the clean-room `E1000` path, including `echo`, `EXEC`, `help`, persisted script install, `run-script`, and filesystem readback over the live QEMU `TCP` probe lane
 - `scripts/baremetal-qemu-e1000-http-post-probe-check.ps1` now proves bounded freestanding `HTTP` POST request/response flow over the `E1000` probe lane, and `scripts/baremetal-qemu-e1000-https-post-probe-check.ps1` now proves live QEMU `E1000` `HTTPS` POST over `ARP` + `IPv4` + `TCP` + `TLS` with filesystem-backed trust-bundle selection
 - do not widen scope to VFS/ELF/syscalls/userspace in this slice
+
+Delivered second adoption slice:
+
+- hosted benchmark and stress lane informed by ZigOS benchmark coverage
+- `src/benchmark_suite.zig` now provides ZAR-native benchmark cases for DNS, DHCP, TCP, runtime-state queue churn, and tool-service codec parsing
+- `src/benchmark_main.zig` now exposes `zig build bench` with deterministic `BENCH:START` / `BENCH:CASE` / `BENCH:END` output
+- `scripts/benchmark-smoke-check.ps1` now provides the strict hosted smoke gate for the benchmark lane
+- CI and release preview now run the benchmark smoke lane without regressing the normal hosted/bare-metal matrix
+
+Delivered third adoption slice:
+
+- ZAR-native read-only introspection overlay inspired by ZigOS `procfs` / `sysfs`
+- `src/baremetal/virtual_fs.zig` now exposes synthetic `/proc` and `/sys` trees over existing ZAR runtime, storage, display, and network exports
+- `src/baremetal/filesystem.zig` now routes `readFileAlloc`, `listDirectoryAlloc`, and `statSummary` through that overlay and rejects writes under `/proc` / `/sys`
+- `src/baremetal/tool_exec.zig` and `src/baremetal/tool_service.zig` now expose the overlay through the existing builtin and typed `GET` / `LIST` / `STAT` surface instead of inventing a second management protocol
+- host regressions now prove `/proc/runtime/snapshot`, `/proc/runtime/sessions/<id>`, `/sys/storage/state`, root overlay listing, and read-only path rejection
+- `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves the same overlay live over the clean-room `E1000` tool-service path, including `/`, `/proc/runtime/snapshot`, `/sys/storage/state`, and virtual `STAT` readback
+- full ZigOS-style VFS, `tmpfs`, `devfs`, `ext2`, and `fat32` remain future redesign work; this slice closes the first bounded introspection layer only
 
 `FS5.5` is not complete until each subsystem has:
 
@@ -378,7 +393,7 @@ Current local source-of-truth evidence:
   - `src/baremetal/e1000.zig` now provides a ZAR-owned `82540EM`-class `E1000` path with PCI bind, MMIO + legacy I/O reset, EEPROM MAC readout, bounded TX/RX rings, and raw-frame send/receive telemetry
   - `src/baremetal/pci.zig` now also discovers the `E1000` MMIO + I/O BAR pair and enables I/O, memory, and bus-master decode on the selected PCI function
   - dedicated host regressions prove init, MAC readout, TX, RX, export-surface stability, and bounded `TCP` reuse on the clean-room `E1000` path
-  - `scripts/baremetal-qemu-e1000-probe-check.ps1`, `scripts/baremetal-qemu-e1000-arp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-e1000-udp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-dhcp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-dns-probe-check.ps1`, `scripts/baremetal-qemu-e1000-tcp-probe-check.ps1`, and `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now prove live QEMU `E1000` raw-frame, `ARP`, `IPv4`, `UDP`, `DHCP`, `DNS`, bounded `TCP`, and framed tool-service reuse behavior over the freestanding PVH artifact
+  - `scripts/baremetal-qemu-e1000-probe-check.ps1`, `scripts/baremetal-qemu-e1000-arp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-e1000-udp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-dhcp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-dns-probe-check.ps1`, `scripts/baremetal-qemu-e1000-tcp-probe-check.ps1`, and `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now prove live QEMU `E1000` raw-frame, `ARP`, `IPv4`, `UDP`, `DHCP`, `DNS`, bounded `TCP`, framed tool-service reuse, and the new `/proc` + `/sys` overlay behavior over the freestanding PVH artifact
   - bounded `HTTP` / `HTTPS` transport reuse is now closed over `E1000`; higher service reuse beyond transport closure remains future depth
 - the live freestanding/QEMU proof is now green:
   - `scripts/baremetal-qemu-rtl8139-probe-check.ps1`

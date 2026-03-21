@@ -48,13 +48,26 @@ pub fn build(b: *std.Build) void {
         // under Zig master for this codebase. Single-threaded build avoids TLS runtime linkage.
         root_module.single_threaded = true;
     }
+    const benchmark_module = b.createModule(.{
+        .root_source_file = b.path("src/benchmark_main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    if (target.result.os.tag == .windows) {
+        benchmark_module.strip = true;
+    }
 
     const exe = b.addExecutable(.{
         .name = "openclaw-zig",
         .root_module = root_module,
     });
+    const benchmark_exe = b.addExecutable(.{
+        .name = "openclaw-zig-bench",
+        .root_module = benchmark_module,
+    });
 
     b.installArtifact(exe);
+    b.installArtifact(benchmark_exe);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
@@ -63,6 +76,20 @@ pub fn build(b: *std.Build) void {
     }
     const run_step = b.step("run", "Run the OpenClaw Zig bootstrap binary");
     run_step.dependOn(&run_cmd.step);
+
+    const run_bench_cmd = b.addRunArtifact(benchmark_exe);
+    run_bench_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_bench_cmd.addArgs(args);
+    }
+    const bench_step = b.step("bench", "Run the hosted benchmark suite");
+    bench_step.dependOn(&run_bench_cmd.step);
+
+    const bench_smoke_cmd = b.addRunArtifact(benchmark_exe);
+    bench_smoke_cmd.step.dependOn(b.getInstallStep());
+    bench_smoke_cmd.addArgs(&.{ "--duration-ms", "25", "--warmup-ms", "5", "--filter", "protocol.dns_roundtrip" });
+    const bench_smoke_step = b.step("bench-smoke", "Run a narrow hosted benchmark smoke case");
+    bench_smoke_step.dependOn(&bench_smoke_cmd.step);
 
     const test_step = b.step("test", "Run unit tests");
     const baremetal_test_module = b.createModule(.{
@@ -94,6 +121,16 @@ pub fn build(b: *std.Build) void {
         break :blk run;
     } else b.addRunArtifact(baremetal_tests);
     test_step.dependOn(&run_baremetal_tests.step);
+    const benchmark_tests = b.addTest(.{
+        .root_module = benchmark_module,
+    });
+    const run_benchmark_tests = if (target.result.os.tag == .windows) blk: {
+        const run = b.addSystemCommand(&.{ "cmd.exe", "/c" });
+        run.setName("run benchmark tests");
+        run.addFileArg(benchmark_tests.getEmittedBin());
+        break :blk run;
+    } else b.addRunArtifact(benchmark_tests);
+    test_step.dependOn(&run_benchmark_tests.step);
 
     const baremetal_target = b.resolveTargetQuery(.{
         .cpu_arch = .x86_64,

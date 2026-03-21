@@ -6,9 +6,10 @@ This document tracks the strict, reference-only integration plan for ideas and f
 
 Current posture:
 
-- ZigOS is `reference only`.
-- No ZigOS source may be copied, translated, or mechanically ported into ZAR until upstream licensing is explicit.
-- All adoption work described here is clean-room work implemented against ZAR-native architecture, tests, probes, and release gates.
+- ZigOS upstream is now explicitly `MIT` licensed.
+- ZAR can legally study, adapt, or import ZigOS code when that is the right engineering choice.
+- Current delivered slices remain ZAR-owned implementations with ZAR-native tests, probes, and release gates.
+- Delivered ZigOS-inspired slices: `3`
 
 ## Source Baseline
 
@@ -29,23 +30,15 @@ This plan is based on:
   - `user/bin`
   - `user/lib`
 
-## Hard Gate: License And Provenance
+## License And Provenance
 
-ZigOS currently has no explicit repository license in the checked upstream source of truth.
+ZigOS now publishes an explicit upstream `MIT` license.
 
-That creates a hard legal boundary:
+That removes the previous legal blocker, but it does not remove ZAR's engineering requirements:
 
-1. no code copy
-2. no line-by-line port
-3. no translation of individual functions or files
-4. no transplant of tests or userland programs
-
-Allowed use until licensing is clarified:
-
-- architecture study
-- capability inventory
-- clean-room design notes
-- feature ordering and validation strategy
+1. imported or adapted code still needs ZAR-side ownership and review
+2. every adopted slice still needs ZAR-native validation
+3. issue/docs tracking must stay explicit about what was referenced, adapted, or reimplemented
 
 Any ZAR slice influenced by ZigOS must satisfy all of the following:
 
@@ -71,8 +64,8 @@ The table below is the current strict classification for every realistic ZigOS a
 | `VFS core` | `src/kernel/fs/vfs.zig` | High | Major redesign | ZAR-native VFS design doc first |
 | `tmpfs` | `src/kernel/fs/tmpfs.zig` | Medium-high | Adapt later | Rebuild concept over ZAR runtime/package/workspace state |
 | `devfs` | `src/kernel/fs/devfs.zig` | Medium-high | Adapt later | Rebuild concept over ZAR bare-metal devices |
-| `procfs` | `src/kernel/fs/procfs.zig` | Medium-high | Adapt later | Rebuild concept over ZAR runtime/process-equivalent surfaces |
-| `sysfs` | `src/kernel/fs/sysfs.zig` | Medium-high | Adapt later | Rebuild concept over ZAR driver/runtime/export state |
+| `procfs` | `src/kernel/fs/procfs.zig` | Medium-high | Adapt now | First bounded read-only `/proc` overlay delivered; broader VFS remains later |
+| `sysfs` | `src/kernel/fs/sysfs.zig` | Medium-high | Adapt now | First bounded read-only `/sys` overlay delivered; broader VFS remains later |
 | `ext2` | `src/kernel/fs/ext2.zig` | Medium | Major redesign | Only after ZAR VFS exists |
 | `fat32` | `src/kernel/fs/fat32.zig` | Medium | Major redesign | Only after ZAR VFS exists |
 | `TTY layer` | `src/kernel/fs/tty.zig` | Medium | Adapt later | Only if ZAR shell/interactive console expands |
@@ -99,8 +92,8 @@ The order below is strict. It favors bounded clean-room wins before any redesign
 Required before any ZigOS-inspired implementation work:
 
 - keep this document current
-- keep no-copy / no-translation discipline explicit
-- keep issue tracking explicit about `reference only`
+- keep provenance explicit
+- keep issue tracking explicit about whether a slice is `reference-inspired`, `adapted`, or `imported`
 
 ### Z1. E1000 Clean-Room NIC Slice
 
@@ -138,6 +131,17 @@ Required closure:
 - network stress probes
 - optional SMP stress once SMP breadth is expanded
 
+Current delivered scope:
+
+- `src/benchmark_suite.zig`
+- `src/benchmark_main.zig`
+- `scripts/benchmark-smoke-check.ps1`
+- hosted benchmark catalog for DNS, DHCP, TCP, runtime-state, and tool-service codec churn
+
+Tracking doc:
+
+- `docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md`
+
 ### Z3. ZAR-Native Introspection FS Layer
 
 Scope:
@@ -154,6 +158,21 @@ This is not a direct VFS transplant. It is a ZAR-native exported tree over:
 - trust store
 - display outputs
 - device/export state
+
+Current delivered scope:
+
+- `src/baremetal/virtual_fs.zig` now exposes a bounded read-only `/proc` + `/sys` overlay over existing ZAR state
+- `src/baremetal/filesystem.zig` now routes `readFileAlloc`, `listDirectoryAlloc`, and `statSummary` through that overlay and rejects writes under `/proc` / `/sys`
+- `src/baremetal/tool_exec.zig` and `src/baremetal/tool_service.zig` reuse the existing builtin and typed `GET` / `LIST` / `STAT` surface for the overlay
+- `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves the overlay live on the clean-room `E1000` tool-service path
+
+Still intentionally out of scope for this slice:
+
+- full VFS mount model
+- `tmpfs`
+- `devfs`
+- external on-disk filesystems such as `ext2` / `fat32`
+- userspace-facing path semantics beyond the current read-only introspection tree
 
 ### Z4. Shell And Interactive Control Layer
 
@@ -221,8 +240,6 @@ Reason:
 
 These are explicitly not part of the first ZigOS reference track:
 
-- copying ZigOS code
-- claiming ZigOS licensing is resolved
 - direct VFS import
 - direct ext2/FAT32 import
 - direct shell import
@@ -246,6 +263,7 @@ Any ZigOS-inspired ZAR slice must satisfy all of the following:
 
 ## Immediate Follow-Up
 
-The next concrete document is the clean-room E1000 plan:
+Concrete ZigOS-derived tracking docs now in-tree:
 
 - `docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`
+- `docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md`

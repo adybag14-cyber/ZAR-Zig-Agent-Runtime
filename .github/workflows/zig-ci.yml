@@ -84,6 +84,10 @@ jobs:
       - name: Test
         run: zig build test --summary all
 
+      - name: Benchmark smoke lane
+        shell: pwsh
+        run: ./scripts/benchmark-smoke-check.ps1 -SkipBuild
+
       - name: Method parity gate (Go latest release + original latest release + original latest beta)
         shell: pwsh
         run: ./scripts/check-go-method-parity.ps1 -GitHubToken "${{ github.token }}" -GoTag v2.14.0-go -OriginalRef v2026.3.13-1 -OriginalBetaRef v2026.3.13-beta.1 -OutputJsonPath parity-go-zig.json -OutputMarkdownPath parity-go-zig.md

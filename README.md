@@ -15,7 +15,7 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
   - Original OpenClaw baseline (`v2026.3.13-1`): `100/100` covered
   - Original OpenClaw beta baseline (`v2026.3.13-beta.1`): `100/100` covered
   - Union baseline: `141/141` covered (`MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> `429/429` passed
+- Latest local validation: `zig build test --summary all` -> `436/436` passed
 - Current edge release target tag: `v0.2.0-zig-edge.31`
 - License posture: repo-wide `GPL-2.0-only` with Linux-style SPDX headers on repo-owned source and script files
 - Toolchain policy: Codeberg `master` is canonical; `adybag14-cyber/zig` publishes rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
@@ -55,12 +55,12 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
   - `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1` now proves live MMIO banner pixels plus exported adapter metadata against the freestanding PVH artifact at `640x400`, `1024x768`, and `1280x720`
   - `scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1` now proves live `virtio-gpu-pci` EDID/controller capability export plus output-entry count/entry metadata, exported interface typing through `oc_display_output_interface_type`, exact output/interface capability-response payloads, per-output mode count and mode inventory readback, explicit mode-index activation, explicit output-index mode change, explicit interface-targeted activation, explicit interface-preferred restore, explicit connector/output preferred reactivation, persisted display-profile save/list/info/apply, and resource-create/attach/set-scanout/flush behavior with non-zero scanout pixel readback over QEMU with `edid=on`
   - real HDMI/DisplayPort connector-specific scanout paths are still future depth and are not claimed by this branch
-  - ZigOS reference integration is now tracked as a clean-room plan only:
-    - no ZigOS source may be copied until upstream licensing is explicit
+  - ZigOS integration is now tracked with explicit upstream MIT licensing and ZAR-side provenance:
     - tracked docs:
       - [`docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md`](docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md)
       - [`docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`](docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md)
-    - first delivered adoption slice is a clean-room `E1000` path that reuses ZAR's existing network stack without importing ZigOS code
+      - [`docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md`](docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md)
+    - first delivered adoption slice is a clean-room `E1000` path that reuses ZAR's existing network stack without forcing VFS/userspace redesign
     - `src/baremetal/e1000.zig` now provides the first `82540EM`-class `E1000` path with PCI bind, MMIO + legacy I/O reset, EEPROM MAC readout, bounded TX/RX rings, and raw-frame send/receive telemetry
     - `src/baremetal/pci.zig` now discovers the `E1000` MMIO + I/O BAR pair and enables I/O, memory, and bus-master decode on the selected PCI function
     - host regressions in `src/baremetal/e1000.zig`, `src/baremetal/pci.zig`, and `src/baremetal_main.zig` now prove init, MAC readout, TX, RX, and export-surface stability on the clean-room `E1000` path
@@ -72,6 +72,21 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
     - `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves bounded framed tool-service reuse over the clean-room `E1000` path, including `echo`, `EXEC`, `help`, persisted script install, `run-script`, and filesystem readback over the live QEMU `TCP` probe lane
     - `scripts/baremetal-qemu-e1000-http-post-probe-check.ps1` now proves bounded freestanding `HTTP` POST request/response flow over the `E1000` probe lane, and `scripts/baremetal-qemu-e1000-https-post-probe-check.ps1` now proves live QEMU `E1000` `HTTPS` POST over `ARP` + `IPv4` + `TCP` + `TLS` with filesystem-backed trust-bundle selection
     - higher service reuse over `E1000` beyond transport closure remains future depth
+    - second delivered adoption slice is the hosted benchmark lane:
+      - `src/benchmark_suite.zig`
+      - `src/benchmark_main.zig`
+      - `scripts/benchmark-smoke-check.ps1`
+    - the delivered benchmark catalog currently covers:
+      - `protocol.dns_roundtrip`
+      - `protocol.dhcp_discover`
+      - `protocol.tcp_handshake_payload`
+      - `runtime.state_queue_cycle`
+      - `tool_service.codec_parse`
+    - third delivered adoption slice is a ZAR-native read-only introspection overlay inspired by ZigOS `procfs` / `sysfs`:
+      - `src/baremetal/virtual_fs.zig` now exposes synthetic `/proc` and `/sys` trees over existing ZAR runtime, storage, display, and network state
+      - `src/baremetal/filesystem.zig` now routes `GET` / `LIST` / `STAT` requests through that overlay while rejecting writes under `/proc` and `/sys`
+      - `src/baremetal/tool_exec.zig` and `src/baremetal/tool_service.zig` now expose the overlay through the existing command and typed service surface without widening the opcode model
+      - `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves live `E1000` tool-service reuse for `/`, `/proc/runtime/snapshot`, `/proc/runtime/sessions/<id>`, `/sys/storage/state`, and virtual `STAT` readback on the freestanding PVH path
   - keyboard/mouse is now strict-closed in [`docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md`](docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md)
   - `src/baremetal/ps2_input.zig` now contains a real x86 port-I/O backed PS/2 controller path
   - `scripts/baremetal-qemu-ps2-input-probe-check.ps1` proves IRQ-driven keyboard/mouse state updates against the freestanding PVH artifact

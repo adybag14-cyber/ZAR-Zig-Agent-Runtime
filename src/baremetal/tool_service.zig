@@ -3693,6 +3693,47 @@ test "baremetal tool service handles framed filesystem requests" {
     try std.testing.expectEqualStrings("RESP 14 16\nfile tool.txt 4\n", list_response);
 }
 
+test "baremetal tool service exposes virtual proc and sys overlays" {
+    resetPersistentStateForTest();
+
+    var runtime = try runtime_bridge.initRuntime(std.heap.page_allocator);
+    defer runtime.deinit();
+
+    var exec_result = try runtime.execRunFromFrame(
+        std.heap.page_allocator,
+        "{\"id\":\"svc-proc\",\"method\":\"exec.run\",\"params\":{\"sessionId\":\"svc-proc\",\"command\":\"echo svc-proc\",\"timeoutMs\":1000}}",
+    );
+    defer exec_result.deinit(std.heap.page_allocator);
+    try std.testing.expect(exec_result.ok);
+
+    const list_root = try handleFramedRequest(std.testing.allocator, "REQ 15 LIST /", 256, 256, 256);
+    defer std.testing.allocator.free(list_root);
+    try std.testing.expect(std.mem.startsWith(u8, list_root, "RESP 15 "));
+    try std.testing.expect(std.mem.indexOf(u8, list_root, "dir proc\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, list_root, "dir sys\n") != null);
+
+    const get_snapshot = try handleFramedRequest(std.testing.allocator, "REQ 16 GET /proc/runtime/snapshot", 512, 256, 512);
+    defer std.testing.allocator.free(get_snapshot);
+    try std.testing.expect(std.mem.startsWith(u8, get_snapshot, "RESP 16 "));
+    try std.testing.expect(std.mem.indexOf(u8, get_snapshot, "state_path=/runtime/state/runtime-state.json") != null);
+    try std.testing.expect(std.mem.indexOf(u8, get_snapshot, "sessions=1") != null);
+
+    const get_session = try handleFramedRequest(std.testing.allocator, "REQ 17 GET /proc/runtime/sessions/svc-proc", 512, 256, 512);
+    defer std.testing.allocator.free(get_session);
+    try std.testing.expect(std.mem.startsWith(u8, get_session, "RESP 17 "));
+    try std.testing.expect(std.mem.indexOf(u8, get_session, "id=svc-proc") != null);
+
+    const get_storage = try handleFramedRequest(std.testing.allocator, "REQ 18 GET /sys/storage/state", 512, 256, 512);
+    defer std.testing.allocator.free(get_storage);
+    try std.testing.expect(std.mem.startsWith(u8, get_storage, "RESP 18 "));
+    try std.testing.expect(std.mem.indexOf(u8, get_storage, "backend=ram_disk") != null);
+
+    const stat_snapshot = try handleFramedRequest(std.testing.allocator, "REQ 19 STAT /proc/runtime/snapshot", 256, 256, 256);
+    defer std.testing.allocator.free(stat_snapshot);
+    try std.testing.expect(std.mem.startsWith(u8, stat_snapshot, "RESP 19 "));
+    try std.testing.expect(std.mem.indexOf(u8, stat_snapshot, "path=/proc/runtime/snapshot kind=file size=") != null);
+}
+
 test "baremetal tool service uploads and runs persisted scripts" {
     resetPersistentStateForTest();
 

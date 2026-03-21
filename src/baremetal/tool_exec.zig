@@ -5342,6 +5342,49 @@ test "baremetal tool exec reports persisted runtime snapshot and sessions" {
     try std.testing.expect(std.mem.indexOf(u8, session_result.stdout, "last_message=echo cli-runtime") != null);
 }
 
+test "baremetal tool exec exposes virtual proc and sys overlays" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    vga_text_console.resetForTest();
+
+    var runtime = try runtime_bridge.initRuntime(std.heap.page_allocator);
+    defer runtime.deinit();
+
+    var exec_result = try runtime.execRunFromFrame(
+        std.heap.page_allocator,
+        "{\"id\":\"rt-proc\",\"method\":\"exec.run\",\"params\":{\"sessionId\":\"cli-proc\",\"command\":\"echo proc-fs\",\"timeoutMs\":1000}}",
+    );
+    defer exec_result.deinit(std.heap.page_allocator);
+    try std.testing.expect(exec_result.ok);
+
+    var list_result = try runCapture(std.testing.allocator, "ls /", 256, 256);
+    defer list_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), list_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, list_result.stdout, "dir proc\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, list_result.stdout, "dir sys\n") != null);
+
+    var proc_result = try runCapture(std.testing.allocator, "cat /proc/runtime/snapshot", 512, 256);
+    defer proc_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), proc_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, proc_result.stdout, "state_path=/runtime/state/runtime-state.json") != null);
+    try std.testing.expect(std.mem.indexOf(u8, proc_result.stdout, "sessions=1") != null);
+
+    var session_result = try runCapture(std.testing.allocator, "cat /proc/runtime/sessions/cli-proc", 512, 256);
+    defer session_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), session_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, session_result.stdout, "id=cli-proc") != null);
+
+    var sys_result = try runCapture(std.testing.allocator, "cat /sys/storage/state", 512, 256);
+    defer sys_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), sys_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, sys_result.stdout, "backend=ram_disk") != null);
+
+    var stat_result = try runCapture(std.testing.allocator, "stat /proc/runtime/snapshot", 256, 256);
+    defer stat_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), stat_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, stat_result.stdout, "path=/proc/runtime/snapshot kind=file") != null);
+}
+
 test "baremetal tool exec configures app trust and connector and reports app info" {
     storage_backend.resetForTest();
     filesystem.resetForTest();
