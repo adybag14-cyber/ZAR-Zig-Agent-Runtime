@@ -83,6 +83,7 @@ Current delivered slice:
 - host regressions now prove init, MAC readout, TX, RX, export-surface stability, and `ARP` / `IPv4` / `UDP` / bounded `TCP` protocol reuse on the clean-room `E1000` path
 - `scripts/baremetal-qemu-e1000-probe-check.ps1` plus `scripts/qemu-e1000-dgram-echo.ps1` now prove live QEMU `E1000` PCI bind, MAC readout, TX, RX, payload validation, and counter advance over the freestanding PVH artifact
 - `scripts/baremetal-qemu-e1000-arp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-e1000-udp-probe-check.ps1`, and `scripts/baremetal-qemu-e1000-tcp-probe-check.ps1` now prove live QEMU `E1000` ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, bounded TCP handshake/payload/teardown, and TX/RX counter advance over the freestanding PVH artifact
+- `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves bounded framed tool-service reuse over the clean-room `E1000` path, including `echo`, `EXEC`, `help`, persisted script install, `run-script`, and filesystem readback over the live QEMU `TCP` probe lane
 - host regressions in `src/pal/net.zig` plus `src/baremetal_main.zig` now prove bounded freestanding `HTTP` / `HTTPS` transport reuse over the clean-room `E1000` path without regressing the existing `RTL8139` lane
 - `scripts/baremetal-qemu-e1000-http-post-probe-check.ps1` now proves bounded freestanding `HTTP` POST request/response flow over the `E1000` probe lane, and `scripts/baremetal-qemu-e1000-https-post-probe-check.ps1` now proves live QEMU `E1000` `HTTPS` POST over `ARP` + `IPv4` + `TCP` + `TLS` with filesystem-backed trust-bundle selection
 
@@ -156,9 +157,9 @@ Current delivered slice:
   - HTTP
   - HTTPS
 
-This phase is intentionally split:
-- `HTTP` / `HTTPS` transport closure is now done
-- tool TCP service reuse over `E1000` remains future depth
+This phase is now closed:
+- tool TCP service reuse over `E1000` is done
+- `HTTP` / `HTTPS` transport closure is done
 
 ## Explicit Non-Goals
 
@@ -186,8 +187,9 @@ The slice is complete only when all of the following are true:
 8. parity gate is green. Status: `Done`
 9. docs status gate is green. Status: `Done`
 10. bounded `HTTP` / `HTTPS` transport reuse is green over `E1000`. Status: `Done`
-11. `zig-ci` is green. Status: `Pending push verification`
-12. `docs-pages` is green. Status: `Pending push verification`
+11. bounded framed tool-service reuse is green over `E1000`. Status: `Done`
+12. `zig-ci` is green. Status: `Pending push verification`
+13. `docs-pages` is green. Status: `Pending push verification`
 
 ## Implementation Order
 
@@ -199,7 +201,7 @@ Strict order:
 4. protocol reuse over E1000 (`ARP` / `IPv4` / `UDP`). Status: `Done`
 5. bounded `TCP` reuse over `E1000`. Status: `Done`
 6. optional `HTTP` / `HTTPS` transport reuse proof. Status: `Done`
-7. optional tool TCP service reuse proof. Status: `Next`
+7. optional tool TCP service reuse proof. Status: `Done`
 8. docs/tracking signoff. Status: `In progress`
 
 ## Exit Criteria

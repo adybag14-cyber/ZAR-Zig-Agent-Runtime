@@ -21,7 +21,7 @@ Full-stack replacement execution reference:
   - `scripts/baremetal-qemu-e1000-probe-check.ps1` plus `scripts/qemu-e1000-dgram-echo.ps1` now prove live QEMU `E1000` PCI bind, MAC readout, TX, RX, payload validation, and counter advance over the freestanding PVH artifact
   - `src/pal/net.zig` now routes the same raw-frame PAL seam through selectable `RTL8139` and `E1000` backends without regressing the existing RTL8139 path
   - `scripts/baremetal-qemu-e1000-arp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-e1000-udp-probe-check.ps1`, and `scripts/baremetal-qemu-e1000-tcp-probe-check.ps1` now prove live QEMU `E1000` ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, bounded TCP handshake/payload/teardown, and TX/RX counter advance over the freestanding PVH artifact
-  - bounded `HTTP` / `HTTPS` transport reuse is now closed over `E1000` through host regressions plus `scripts/baremetal-qemu-e1000-http-post-probe-check.ps1` and `scripts/baremetal-qemu-e1000-https-post-probe-check.ps1`; higher service reuse beyond transport closure remains the next depth step
+  - bounded framed tool-service reuse is now closed over `E1000` through `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1`, and bounded `HTTP` / `HTTPS` transport reuse remains closed through host regressions plus `scripts/baremetal-qemu-e1000-http-post-probe-check.ps1` and `scripts/baremetal-qemu-e1000-https-post-probe-check.ps1`
 - `FS5.5` hardware-driver pivot update:
   - framebuffer/console strict closure is now reached locally.
   - real linear-framebuffer path shipped in `src/baremetal/framebuffer_console.zig`:

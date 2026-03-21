@@ -108,6 +108,7 @@ const qemu_e1000_udp_probe_ok_code: u8 = 0x48;
 const qemu_e1000_tcp_probe_ok_code: u8 = 0x49;
 const qemu_e1000_http_post_probe_ok_code: u8 = 0x4A;
 const qemu_e1000_https_post_probe_ok_code: u8 = 0x4B;
+const qemu_e1000_tool_service_probe_ok_code: u8 = 0x4C;
 const build_options = if (builtin.is_test)
     struct {
         pub const qemu_smoke: bool = false;
@@ -123,6 +124,7 @@ const build_options = if (builtin.is_test)
         pub const e1000_tcp_probe: bool = false;
         pub const e1000_http_post_probe: bool = false;
         pub const e1000_https_post_probe: bool = false;
+        pub const e1000_tool_service_probe: bool = false;
         pub const rtl8139_probe: bool = false;
         pub const rtl8139_arp_probe: bool = false;
         pub const rtl8139_ipv4_probe: bool = false;
@@ -154,6 +156,7 @@ const e1000_udp_probe_enabled: bool = if (@hasDecl(build_options, "e1000_udp_pro
 const e1000_tcp_probe_enabled: bool = if (@hasDecl(build_options, "e1000_tcp_probe")) build_options.e1000_tcp_probe else false;
 const e1000_http_post_probe_enabled: bool = if (@hasDecl(build_options, "e1000_http_post_probe")) build_options.e1000_http_post_probe else false;
 const e1000_https_post_probe_enabled: bool = if (@hasDecl(build_options, "e1000_https_post_probe")) build_options.e1000_https_post_probe else false;
+const e1000_tool_service_probe_enabled: bool = if (@hasDecl(build_options, "e1000_tool_service_probe")) build_options.e1000_tool_service_probe else false;
 const rtl8139_probe_enabled: bool = build_options.rtl8139_probe;
 const rtl8139_arp_probe_enabled: bool = build_options.rtl8139_arp_probe;
 const rtl8139_ipv4_probe_enabled: bool = build_options.rtl8139_ipv4_probe;
@@ -493,6 +496,11 @@ const E1000HttpsPostProbeError = E1000TcpProbeError || error{
     HttpsPostLastTxDestinationMismatch,
     HttpsPostLastTxPortsMismatch,
     HttpsPostLastTxFlagsMismatch,
+};
+
+const E1000ToolServiceProbeError = E1000TcpProbeError || error{
+    ToolServiceFailed,
+    ToolServiceResponseMismatch,
 };
 
 const e1000_probe_remote_mac = [6]u8{ 0x02, 0x5A, 0x52, 0x10, 0x00, 0xE1 };
@@ -2271,6 +2279,10 @@ fn baremetalStart() callconv(.c) noreturn {
         runE1000HttpsPostProbe() catch |err| qemuExit(e1000HttpsPostFailureCode(err));
         qemuExit(qemu_e1000_https_post_probe_ok_code);
     }
+    if (e1000_tool_service_probe_enabled) {
+        runE1000ToolServiceProbe() catch |err| qemuExit(e1000ToolServiceProbeFailureCode(err));
+        qemuExit(qemu_e1000_tool_service_probe_ok_code);
+    }
     if (rtl8139_probe_enabled) {
         runRtl8139Probe() catch |err| qemuExit(rtl8139ProbeFailureCode(err));
         qemuExit(qemu_rtl8139_probe_ok_code);
@@ -2897,6 +2909,78 @@ fn expectE1000TcpProbePacket(
     if (!std.mem.eql(u8, expected.payload, packet.payload[0..packet.payload_len])) return error.PayloadMismatch;
 }
 
+fn establishE1000TcpProbeSession(
+    eth: *const BaremetalEthernetState,
+    scratch: *Rtl8139TcpProbeScratch,
+    client: *tcp_protocol.Session,
+    server: *tcp_protocol.Session,
+    source_ip: [4]u8,
+    destination_ip: [4]u8,
+) E1000ToolServiceProbeError!void {
+    const syn = client.buildSyn() catch |err| return mapE1000TcpSessionProbeError(err);
+    _ = try sendE1000TcpProbeSegment(source_ip, destination_ip, client.local_port, client.remote_port, syn);
+    try pollE1000TcpProbePacket(eth, &scratch.packet_storage);
+    try expectE1000TcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, client.local_port, client.remote_port, syn);
+
+    const syn_ack = server.acceptSyn(tcpPacketView(&scratch.packet_storage)) catch |err| return mapE1000TcpSessionProbeError(err);
+    _ = try sendE1000TcpProbeSegment(destination_ip, source_ip, server.local_port, server.remote_port, syn_ack);
+    try pollE1000TcpProbePacket(eth, &scratch.packet_storage);
+    try expectE1000TcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, server.local_port, server.remote_port, syn_ack);
+
+    const ack = client.acceptSynAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapE1000TcpSessionProbeError(err);
+    _ = try sendE1000TcpProbeSegment(source_ip, destination_ip, client.local_port, client.remote_port, ack);
+    try pollE1000TcpProbePacket(eth, &scratch.packet_storage);
+    try expectE1000TcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, client.local_port, client.remote_port, ack);
+    server.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapE1000TcpSessionProbeError(err);
+}
+
+fn exchangeE1000TcpProbeServiceRequest(
+    eth: *const BaremetalEthernetState,
+    scratch: *Rtl8139TcpProbeScratch,
+    client: *tcp_protocol.Session,
+    server: *tcp_protocol.Session,
+    source_ip: [4]u8,
+    destination_ip: [4]u8,
+    request: []const u8,
+    query_limit: usize,
+    payload_limit: usize,
+    response_limit: usize,
+) E1000ToolServiceProbeError![]const u8 {
+    var service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+
+    const request_payload = client.buildPayload(request) catch |err| return mapE1000TcpSessionProbeError(err);
+    _ = try sendE1000TcpProbeSegment(source_ip, destination_ip, client.local_port, client.remote_port, request_payload);
+    try pollE1000TcpProbePacket(eth, &scratch.packet_storage);
+    try expectE1000TcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, client.local_port, client.remote_port, request_payload);
+    server.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapE1000TcpSessionProbeError(err);
+
+    const response = tool_service.handleFramedRequest(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        query_limit,
+        payload_limit,
+        response_limit,
+    ) catch return error.ToolServiceFailed;
+
+    var response_offset: usize = 0;
+    while (response_offset < response.len) {
+        const reply = server.buildPayloadChunk(response[response_offset..]) catch |err| return mapE1000TcpSessionProbeError(err);
+        _ = try sendE1000TcpProbeSegment(destination_ip, source_ip, server.local_port, server.remote_port, reply);
+        try pollE1000TcpProbePacket(eth, &scratch.packet_storage);
+        try expectE1000TcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, server.local_port, server.remote_port, reply);
+        client.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapE1000TcpSessionProbeError(err);
+        response_offset += reply.payload.len;
+
+        const ack = client.buildAck() catch |err| return mapE1000TcpSessionProbeError(err);
+        _ = try sendE1000TcpProbeSegment(source_ip, destination_ip, client.local_port, client.remote_port, ack);
+        try pollE1000TcpProbePacket(eth, &scratch.packet_storage);
+        try expectE1000TcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, client.local_port, client.remote_port, ack);
+        server.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapE1000TcpSessionProbeError(err);
+    }
+
+    return response;
+}
+
 fn e1000TcpProbeLoopbackHook(frame: []const u8) void {
     e1000.injectProbeReceive(frame);
 }
@@ -3343,6 +3427,14 @@ fn e1000TcpProbeFailureCode(err: E1000TcpProbeError) u8 {
         error.FrameLengthMismatch => 0xCA,
         error.CounterMismatch => 0xCB,
         error.SessionStateMismatch => 0xCC,
+    };
+}
+
+fn e1000ToolServiceProbeFailureCode(err: E1000ToolServiceProbeError) u8 {
+    return switch (err) {
+        error.ToolServiceFailed => 0x97,
+        error.ToolServiceResponseMismatch => 0x98,
+        else => e1000TcpProbeFailureCode(@errorCast(err)),
     };
 }
 
@@ -11116,6 +11208,9 @@ fn runE1000HttpsPostProbe() E1000HttpsPostProbeError!void {
     if (!builtin.is_test and eth.hardware_backed == 0) return error.HardwareBackedMismatch;
     if (eth.io_base == 0) return error.IoBaseMismatch;
 
+    e1000.installProbeSendHook(e1000TcpProbeLoopbackHook);
+    defer e1000.installProbeSendHook(null);
+
     warmE1000ProbeTransport(builtin.is_test or eth.hardware_backed == 0);
 
     pal_net.clearRouteState();
@@ -11269,6 +11364,186 @@ fn runE1000HttpsPostProbe() E1000HttpsPostProbeError!void {
     if (eth.tx_packets <= tx_packets_before_http or eth.rx_packets <= rx_packets_before_http) {
         return error.CounterMismatch;
     }
+}
+
+fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
+    qemuDebugWrite("ETS0\n");
+    setProbeInterruptsEnabled(false);
+    pal_net.selectBackend(.e1000);
+
+    e1000.initDetailed() catch |err| return switch (err) {
+        error.UnsupportedPlatform => error.UnsupportedPlatform,
+        error.DeviceNotFound => error.DeviceNotFound,
+        error.MissingMmioBar => error.MissingMmioBar,
+        error.MissingIoBar => error.MissingIoBar,
+        error.ResetTimeout => error.ResetTimeout,
+        error.AutoReadTimeout => error.AutoReadTimeout,
+        error.EepromReadFailed => error.EepromReadFailed,
+        error.EepromChecksumMismatch => error.EepromChecksumMismatch,
+        error.MacReadFailed => error.MacReadFailed,
+        error.RingProgramFailed => error.RingProgramFailed,
+    };
+
+    const eth = e1000.statePtr();
+    if (eth.magic != abi.ethernet_magic) return error.StateMagicMismatch;
+    if (eth.backend != abi.ethernet_backend_e1000) return error.BackendMismatch;
+    if (eth.initialized == 0) return error.InitFlagMismatch;
+    if (!builtin.is_test and eth.hardware_backed == 0) return error.HardwareBackedMismatch;
+    if (eth.io_base == 0) return error.IoBaseMismatch;
+
+    e1000.installProbeSendHook(e1000TcpProbeLoopbackHook);
+    defer e1000.installProbeSendHook(null);
+
+    qemuDebugWrite("ETS1\n");
+    warmE1000ProbeTransport(builtin.is_test or eth.hardware_backed == 0);
+    qemuDebugWrite("ETS2\n");
+
+    const source_ip = [4]u8{ 192, 168, 56, 10 };
+    const destination_ip = [4]u8{ 192, 168, 56, 1 };
+    const script = "write-file /tools/out/data.txt tcp-service-persisted";
+    const put_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 21 PUT /tools/scripts/net.oc {d}\n{s}", .{
+        script.len,
+        script,
+    }) catch return error.ToolServiceFailed;
+
+    var client = tcp_protocol.Session.initClient(4333, 445, 0x6162_6364, 4096);
+    var server = tcp_protocol.Session.initServer(445, 4333, 0xA1B2_C3D4, 4096);
+    const scratch = &rtl8139_tcp_probe_scratch;
+    const tx_packets_before = eth.tx_packets;
+    const rx_packets_before = eth.rx_packets;
+
+    try establishE1000TcpProbeSession(eth, scratch, &client, &server, source_ip, destination_ip);
+    qemuDebugWrite("ETS3\n");
+
+    const short_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 1 echo e1000-service-ok",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, short_response, "RESP 1 17\ne1000-service-ok\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS4\n");
+
+    const exec_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 2 EXEC echo e1000-service-ok",
+        256,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, exec_response, "RESP 2 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, exec_response, "exit=0 stdout_len=17 stderr_len=0\nstdout:\ne1000-service-ok\nstderr:\n") == null) {
+        return error.ToolServiceResponseMismatch;
+    }
+    qemuDebugWrite("ETS5\n");
+
+    const help_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 3 help",
+        4096,
+        256,
+        4096,
+    );
+    if (!std.mem.startsWith(u8, help_response, "RESP 3 ")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS6\n");
+    if (std.mem.indexOf(u8, help_response, "OpenClaw bare-metal builtins:") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, help_response, "workspace-suite-release-channel-activate") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, help_response, "display-interface-capabilities") == null) return error.ToolServiceResponseMismatch;
+
+    const put_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        put_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, put_response, "RESP 21 40\nWROTE 52 bytes to /tools/scripts/net.oc\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS7\n");
+
+    var service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const script_readback = filesystem.readFileAlloc(service_fba.allocator(), "/tools/scripts/net.oc", 128) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, script_readback, script)) return error.ToolServiceResponseMismatch;
+
+    const run_script_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 22 CMD run-script /tools/scripts/net.oc",
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, run_script_response, "RESP 22 38\nwrote 21 bytes to /tools/out/data.txt\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS8\n");
+
+    const get_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 23 GET /tools/out/data.txt",
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, get_response, "RESP 23 21\ntcp-service-persisted")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9\n");
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const output_readback = filesystem.readFileAlloc(service_fba.allocator(), "/tools/out/data.txt", 64) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, output_readback, "tcp-service-persisted")) return error.ToolServiceResponseMismatch;
+
+    const client_fin = client.buildFin() catch |err| return mapE1000TcpSessionProbeError(err);
+    _ = try sendE1000TcpProbeSegment(source_ip, destination_ip, client.local_port, client.remote_port, client_fin);
+    try pollE1000TcpProbePacket(eth, &scratch.packet_storage);
+    try expectE1000TcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, client.local_port, client.remote_port, client_fin);
+    const fin_ack = server.acceptFin(tcpPacketView(&scratch.packet_storage)) catch |err| return mapE1000TcpSessionProbeError(err);
+
+    _ = try sendE1000TcpProbeSegment(destination_ip, source_ip, server.local_port, server.remote_port, fin_ack);
+    try pollE1000TcpProbePacket(eth, &scratch.packet_storage);
+    try expectE1000TcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, server.local_port, server.remote_port, fin_ack);
+    client.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapE1000TcpSessionProbeError(err);
+
+    const server_fin = server.buildFin() catch |err| return mapE1000TcpSessionProbeError(err);
+    _ = try sendE1000TcpProbeSegment(destination_ip, source_ip, server.local_port, server.remote_port, server_fin);
+    try pollE1000TcpProbePacket(eth, &scratch.packet_storage);
+    try expectE1000TcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, server.local_port, server.remote_port, server_fin);
+    const final_ack = client.acceptFin(tcpPacketView(&scratch.packet_storage)) catch |err| return mapE1000TcpSessionProbeError(err);
+
+    _ = try sendE1000TcpProbeSegment(source_ip, destination_ip, client.local_port, client.remote_port, final_ack);
+    try pollE1000TcpProbePacket(eth, &scratch.packet_storage);
+    try expectE1000TcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, client.local_port, client.remote_port, final_ack);
+    server.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapE1000TcpSessionProbeError(err);
+    qemuDebugWrite("ETSA\n");
+
+    if (client.state != .closed or server.state != .closed) return error.SessionStateMismatch;
+    if (eth.tx_packets <= tx_packets_before or eth.rx_packets <= rx_packets_before) return error.CounterMismatch;
 }
 
 fn runRtl8139HttpsPostProbe() Rtl8139TcpProbeError!void {
@@ -21105,6 +21380,14 @@ test "baremetal e1000 http post probe succeeds through mock device" {
     defer e1000.testDisableMockDevice();
 
     try runE1000HttpPostProbe();
+}
+
+test "baremetal e1000 tool service probe succeeds through mock device" {
+    resetBaremetalRuntimeForTest();
+    e1000.testEnableMockDevice();
+    defer e1000.testDisableMockDevice();
+
+    try runE1000ToolServiceProbe();
 }
 
 test "baremetal ethernet arp request loops through mock rtl8139 and parses request" {
