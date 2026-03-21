@@ -106,6 +106,8 @@ const qemu_e1000_arp_probe_ok_code: u8 = 0x46;
 const qemu_e1000_ipv4_probe_ok_code: u8 = 0x47;
 const qemu_e1000_udp_probe_ok_code: u8 = 0x48;
 const qemu_e1000_tcp_probe_ok_code: u8 = 0x49;
+const qemu_e1000_http_post_probe_ok_code: u8 = 0x4A;
+const qemu_e1000_https_post_probe_ok_code: u8 = 0x4B;
 const build_options = if (builtin.is_test)
     struct {
         pub const qemu_smoke: bool = false;
@@ -119,6 +121,8 @@ const build_options = if (builtin.is_test)
         pub const e1000_ipv4_probe: bool = false;
         pub const e1000_udp_probe: bool = false;
         pub const e1000_tcp_probe: bool = false;
+        pub const e1000_http_post_probe: bool = false;
+        pub const e1000_https_post_probe: bool = false;
         pub const rtl8139_probe: bool = false;
         pub const rtl8139_arp_probe: bool = false;
         pub const rtl8139_ipv4_probe: bool = false;
@@ -148,6 +152,8 @@ const e1000_arp_probe_enabled: bool = if (@hasDecl(build_options, "e1000_arp_pro
 const e1000_ipv4_probe_enabled: bool = if (@hasDecl(build_options, "e1000_ipv4_probe")) build_options.e1000_ipv4_probe else false;
 const e1000_udp_probe_enabled: bool = if (@hasDecl(build_options, "e1000_udp_probe")) build_options.e1000_udp_probe else false;
 const e1000_tcp_probe_enabled: bool = if (@hasDecl(build_options, "e1000_tcp_probe")) build_options.e1000_tcp_probe else false;
+const e1000_http_post_probe_enabled: bool = if (@hasDecl(build_options, "e1000_http_post_probe")) build_options.e1000_http_post_probe else false;
+const e1000_https_post_probe_enabled: bool = if (@hasDecl(build_options, "e1000_https_post_probe")) build_options.e1000_https_post_probe else false;
 const rtl8139_probe_enabled: bool = build_options.rtl8139_probe;
 const rtl8139_arp_probe_enabled: bool = build_options.rtl8139_arp_probe;
 const rtl8139_ipv4_probe_enabled: bool = build_options.rtl8139_ipv4_probe;
@@ -424,6 +430,69 @@ const E1000TcpProbeError = error{
     FrameLengthMismatch,
     CounterMismatch,
     SessionStateMismatch,
+};
+
+const E1000HttpPostProbeError = E1000TcpProbeError || error{
+    HttpPostFailed,
+    HttpPostResponseMismatch,
+};
+
+const E1000HttpsPostProbeError = E1000TcpProbeError || error{
+    HttpsPostFailed,
+    HttpsPostResponseMismatch,
+    HttpsPostNoTxProgress,
+    HttpsPostNoRxProgress,
+    HttpsPostTimeoutAfterRx,
+    HttpsPostTlsAlert,
+    HttpsPostTlsProtocolFailed,
+    HttpsPostEntropyFailed,
+    HttpsPostReadFailed,
+    HttpsPostWriteFailed,
+    HttpsPostTcpUnexpectedFlags,
+    HttpsPostTcpSequenceMismatch,
+    HttpsPostTcpAckMismatch,
+    HttpsPostTcpWindowExceeded,
+    HttpsPostTlsMessageTooLong,
+    HttpsPostTlsTargetTooSmall,
+    HttpsPostTlsBufferTooSmall,
+    HttpsPostTlsNegativeIntoUnsigned,
+    HttpsPostTlsInvalidSignature,
+    HttpsPostTlsUnexpectedMessage,
+    HttpsPostTlsIllegalParameter,
+    HttpsPostTlsDecryptFailure,
+    HttpsPostTlsRecordOverflow,
+    HttpsPostTlsBadRecordMac,
+    HttpsPostTlsDecryptError,
+    HttpsPostTlsConnectionTruncated,
+    HttpsPostTlsDecodeError,
+    HttpsPostTlsAtServerHello,
+    HttpsPostTlsAtEncryptedExtensions,
+    HttpsPostTlsAtCertificate,
+    HttpsPostTlsCertificateHostMismatch,
+    HttpsPostTlsCertificateIssuerMismatch,
+    HttpsPostTlsCertificateSignatureInvalid,
+    HttpsPostTlsCertificateExpired,
+    HttpsPostTlsCertificateNotYetValid,
+    HttpsPostTlsCertificatePublicKeyInvalid,
+    HttpsPostTlsCertificateTimeInvalid,
+    HttpsPostTlsAtTrustChainEstablished,
+    HttpsPostTlsAtCertificateVerify,
+    HttpsPostTlsAtServerFinishedVerified,
+    HttpsPostTlsBeforeClientFinished,
+    HttpsPostTlsAfterClientFinished,
+    HttpsPostTlsAfterInit,
+    HttpsPostPreTlsNoSynEmit,
+    HttpsPostPreTlsNoSynAck,
+    HttpsPostTlsNoWriterFlush,
+    HttpsPostTlsNoPayloadEmit,
+    HttpsPostTlsWindowBlockedBeforeEmit,
+    HttpsPostLastTxNotIpv4,
+    HttpsPostLastTxIpv4DecodeFailed,
+    HttpsPostLastTxNotTcp,
+    HttpsPostLastTxTcpDecodeFailed,
+    HttpsPostLastTxDestinationMismatch,
+    HttpsPostLastTxPortsMismatch,
+    HttpsPostLastTxFlagsMismatch,
 };
 
 const e1000_probe_remote_mac = [6]u8{ 0x02, 0x5A, 0x52, 0x10, 0x00, 0xE1 };
@@ -1304,41 +1373,70 @@ pub export fn oc_mouse_inject_packet(buttons: u8, dx: i16, dy: i16) void {
 }
 
 pub export fn oc_ethernet_state_ptr() *const BaremetalEthernetState {
-    return rtl8139.statePtr();
+    return switch (pal_net.currentBackend()) {
+        .rtl8139 => rtl8139.statePtr(),
+        .e1000 => e1000.statePtr(),
+    };
 }
 
 pub export fn oc_ethernet_init() u8 {
-    return if (rtl8139.init()) 1 else 0;
+    return switch (pal_net.currentBackend()) {
+        .rtl8139 => if (rtl8139.init()) 1 else 0,
+        .e1000 => if (e1000.init()) 1 else 0,
+    };
 }
 
 pub export fn oc_ethernet_reset() u8 {
-    rtl8139.resetForTest();
-    return if (rtl8139.init()) 1 else 0;
+    return switch (pal_net.currentBackend()) {
+        .rtl8139 => blk: {
+            rtl8139.resetForTest();
+            break :blk if (rtl8139.init()) 1 else 0;
+        },
+        .e1000 => blk: {
+            e1000.resetForTest();
+            break :blk if (e1000.init()) 1 else 0;
+        },
+    };
 }
 
 pub export fn oc_ethernet_mac_byte(index: u32) u8 {
-    return rtl8139.macByte(index);
+    return switch (pal_net.currentBackend()) {
+        .rtl8139 => rtl8139.macByte(index),
+        .e1000 => e1000.macByte(index),
+    };
 }
 
 pub export fn oc_ethernet_send_pattern(byte_len: u32, seed: u8) i16 {
-    _ = rtl8139.sendPattern(byte_len, seed) catch return abi.result_not_supported;
+    switch (pal_net.currentBackend()) {
+        .rtl8139 => _ = rtl8139.sendPattern(byte_len, seed) catch return abi.result_not_supported,
+        .e1000 => _ = e1000.sendPattern(byte_len, seed) catch return abi.result_not_supported,
+    }
     return abi.result_ok;
 }
 
 pub export fn oc_ethernet_poll() u32 {
-    return rtl8139.pollReceive() catch 0;
+    return switch (pal_net.currentBackend()) {
+        .rtl8139 => rtl8139.pollReceive() catch 0,
+        .e1000 => e1000.pollReceive() catch 0,
+    };
 }
 
 pub export fn oc_ethernet_rx_byte(index: u32) u8 {
-    return rtl8139.rxByte(index);
+    return switch (pal_net.currentBackend()) {
+        .rtl8139 => rtl8139.rxByte(index),
+        .e1000 => e1000.rxByte(index),
+    };
 }
 
 pub export fn oc_ethernet_rx_len() u32 {
-    return rtl8139.statePtr().last_rx_len;
+    return oc_ethernet_state_ptr().last_rx_len;
 }
 
 pub export fn oc_ethernet_tx_byte(index: u32) u8 {
-    return rtl8139.txByte(index);
+    return switch (pal_net.currentBackend()) {
+        .rtl8139 => rtl8139.txByte(index),
+        .e1000 => e1000.txByte(index),
+    };
 }
 
 pub export fn oc_storage_state_ptr() *const BaremetalStorageState {
@@ -2165,6 +2263,14 @@ fn baremetalStart() callconv(.c) noreturn {
         runE1000TcpProbe() catch |err| qemuExit(e1000TcpProbeFailureCode(err));
         qemuExit(qemu_e1000_tcp_probe_ok_code);
     }
+    if (e1000_http_post_probe_enabled) {
+        runE1000HttpPostProbe() catch |err| qemuExit(e1000HttpPostFailureCode(err));
+        qemuExit(qemu_e1000_http_post_probe_ok_code);
+    }
+    if (e1000_https_post_probe_enabled) {
+        runE1000HttpsPostProbe() catch |err| qemuExit(e1000HttpsPostFailureCode(err));
+        qemuExit(qemu_e1000_https_post_probe_ok_code);
+    }
     if (rtl8139_probe_enabled) {
         runRtl8139Probe() catch |err| qemuExit(rtl8139ProbeFailureCode(err));
         qemuExit(qemu_rtl8139_probe_ok_code);
@@ -2674,6 +2780,26 @@ fn classifyE1000UdpProbeTimeout(eth: *const BaremetalEthernetState) E1000UdpProb
 }
 
 fn classifyE1000TcpProbeTimeout(eth: *const BaremetalEthernetState) E1000TcpProbeError {
+    if (eth.last_rx_len != 0) {
+        var frame: [pal_net.max_frame_len]u8 = undefined;
+        const copy_len = copyLastTransmittedEthernetFrame(frame[0..]);
+        if (copy_len < ethernet_protocol.header_len) return error.LastFrameTooShort;
+        const eth_header = ethernet_protocol.Header.decode(frame[0..copy_len]) catch return error.LastFrameTooShort;
+        if (eth_header.ether_type != ethernet_protocol.ethertype_ipv4) return error.LastFrameNotIpv4;
+        const ipv4_packet = ipv4_protocol.decode(frame[ethernet_protocol.header_len..copy_len]) catch return error.LastIpv4DecodeFailed;
+        if (ipv4_packet.header.protocol != ipv4_protocol.protocol_tcp) return error.LastPacketNotTcp;
+        _ = tcp_protocol.decode(ipv4_packet.payload, ipv4_packet.header.source_ip, ipv4_packet.header.destination_ip) catch return error.LastTcpDecodeFailed;
+    }
+
+    return switch (classifyE1000DataPathTimeout(eth)) {
+        .LinkDropped => error.LinkDropped,
+        .TxCompletedNoRxProgress => error.TxCompletedNoRxProgress,
+        .RxHeadAdvancedNoFrame => error.RxHeadAdvancedNoFrame,
+        .RxTimedOut => error.RxTimedOut,
+    };
+}
+
+fn classifyE1000HttpsProbeTimeout(eth: *const BaremetalEthernetState) E1000HttpsPostProbeError {
     if (eth.last_rx_len != 0) {
         var frame: [pal_net.max_frame_len]u8 = undefined;
         const copy_len = copyLastTransmittedEthernetFrame(frame[0..]);
@@ -3220,6 +3346,75 @@ fn e1000TcpProbeFailureCode(err: E1000TcpProbeError) u8 {
     };
 }
 
+fn e1000HttpPostFailureCode(err: E1000HttpPostProbeError) u8 {
+    return switch (err) {
+        error.HttpPostFailed => 0xCD,
+        error.HttpPostResponseMismatch => 0xCE,
+        else => e1000TcpProbeFailureCode(@errorCast(err)),
+    };
+}
+
+fn e1000HttpsPostFailureCode(err: E1000HttpsPostProbeError) u8 {
+    return switch (err) {
+        error.HttpsPostFailed => 0xCF,
+        error.HttpsPostResponseMismatch => 0xD0,
+        error.HttpsPostNoTxProgress => 0xD1,
+        error.HttpsPostNoRxProgress => 0xD2,
+        error.HttpsPostTimeoutAfterRx => 0xD3,
+        error.HttpsPostTlsAlert => 0xD4,
+        error.HttpsPostTlsProtocolFailed => 0xD5,
+        error.HttpsPostEntropyFailed => 0xD6,
+        error.HttpsPostReadFailed => 0xD7,
+        error.HttpsPostWriteFailed => 0xD8,
+        error.HttpsPostTcpUnexpectedFlags => 0xD9,
+        error.HttpsPostTcpSequenceMismatch => 0xDA,
+        error.HttpsPostTcpAckMismatch => 0xDB,
+        error.HttpsPostTcpWindowExceeded => 0xDC,
+        error.HttpsPostTlsMessageTooLong => 0xDD,
+        error.HttpsPostTlsTargetTooSmall => 0xDE,
+        error.HttpsPostTlsBufferTooSmall => 0xDF,
+        error.HttpsPostTlsNegativeIntoUnsigned => 0xE0,
+        error.HttpsPostTlsInvalidSignature => 0xE1,
+        error.HttpsPostTlsUnexpectedMessage => 0xE2,
+        error.HttpsPostTlsIllegalParameter => 0xE3,
+        error.HttpsPostTlsDecryptFailure => 0xE4,
+        error.HttpsPostTlsRecordOverflow => 0xE5,
+        error.HttpsPostTlsBadRecordMac => 0xE6,
+        error.HttpsPostTlsDecryptError => 0xE7,
+        error.HttpsPostTlsConnectionTruncated => 0xE8,
+        error.HttpsPostTlsDecodeError => 0xE9,
+        error.HttpsPostTlsAtServerHello => 0xEA,
+        error.HttpsPostTlsAtEncryptedExtensions => 0xEB,
+        error.HttpsPostTlsAtCertificate => 0xEC,
+        error.HttpsPostTlsCertificateHostMismatch => 0xED,
+        error.HttpsPostTlsCertificateIssuerMismatch => 0xEE,
+        error.HttpsPostTlsCertificateSignatureInvalid => 0xEF,
+        error.HttpsPostTlsCertificateExpired => 0xF0,
+        error.HttpsPostTlsCertificateNotYetValid => 0xF1,
+        error.HttpsPostTlsCertificatePublicKeyInvalid => 0xF2,
+        error.HttpsPostTlsCertificateTimeInvalid => 0xF3,
+        error.HttpsPostTlsAtTrustChainEstablished => 0xF4,
+        error.HttpsPostTlsAtCertificateVerify => 0xF5,
+        error.HttpsPostTlsAtServerFinishedVerified => 0xF6,
+        error.HttpsPostTlsBeforeClientFinished => 0xF7,
+        error.HttpsPostTlsAfterClientFinished => 0xF8,
+        error.HttpsPostTlsAfterInit => 0xF9,
+        error.HttpsPostPreTlsNoSynEmit => 0xFA,
+        error.HttpsPostPreTlsNoSynAck => 0xFB,
+        error.HttpsPostTlsNoWriterFlush => 0xFC,
+        error.HttpsPostTlsNoPayloadEmit => 0xFD,
+        error.HttpsPostTlsWindowBlockedBeforeEmit => 0xFE,
+        error.HttpsPostLastTxNotIpv4 => 0x90,
+        error.HttpsPostLastTxIpv4DecodeFailed => 0x91,
+        error.HttpsPostLastTxNotTcp => 0x92,
+        error.HttpsPostLastTxTcpDecodeFailed => 0x93,
+        error.HttpsPostLastTxDestinationMismatch => 0x94,
+        error.HttpsPostLastTxPortsMismatch => 0x95,
+        error.HttpsPostLastTxFlagsMismatch => 0x96,
+        else => e1000TcpProbeFailureCode(@errorCast(err)),
+    };
+}
+
 fn runRtl8139Probe() Rtl8139ProbeError!void {
     rtl8139.initDetailed() catch |err| return switch (err) {
         error.UnsupportedPlatform => error.UnsupportedPlatform,
@@ -3624,6 +3819,24 @@ fn copyLastTransmittedEthernetFrame(buffer: []u8) usize {
 }
 
 fn classifyLastTransmittedTcpProbeFrame(expected_destination_ip: [4]u8, expected_destination_port: u16) Rtl8139TcpProbeError {
+    const tx_len = @as(usize, @intCast(oc_ethernet_state_ptr().last_tx_len));
+    if (tx_len == 0) return error.HttpsPostNoTxProgress;
+
+    var frame: [pal_net.max_frame_len]u8 = undefined;
+    const copy_len = copyLastTransmittedEthernetFrame(frame[0..]);
+    if (copy_len < ethernet_protocol.header_len) return error.HttpsPostLastTxNotIpv4;
+    const eth_header = ethernet_protocol.Header.decode(frame[0..copy_len]) catch return error.HttpsPostLastTxNotIpv4;
+    if (eth_header.ether_type != ethernet_protocol.ethertype_ipv4) return error.HttpsPostLastTxNotIpv4;
+    const ipv4_packet = ipv4_protocol.decode(frame[ethernet_protocol.header_len..copy_len]) catch return error.HttpsPostLastTxIpv4DecodeFailed;
+    if (ipv4_packet.header.protocol != ipv4_protocol.protocol_tcp) return error.HttpsPostLastTxNotTcp;
+    const tcp_packet = tcp_protocol.decode(ipv4_packet.payload, ipv4_packet.header.source_ip, ipv4_packet.header.destination_ip) catch return error.HttpsPostLastTxTcpDecodeFailed;
+    if (!std.mem.eql(u8, ipv4_packet.header.destination_ip[0..], expected_destination_ip[0..])) return error.HttpsPostLastTxDestinationMismatch;
+    if (tcp_packet.destination_port != expected_destination_port) return error.HttpsPostLastTxPortsMismatch;
+    if (tcp_packet.flags != tcp_protocol.flag_syn) return error.HttpsPostLastTxFlagsMismatch;
+    return error.HttpsPostNoRxProgress;
+}
+
+fn classifyLastTransmittedE1000TcpProbeFrame(expected_destination_ip: [4]u8, expected_destination_port: u16) E1000HttpsPostProbeError {
     const tx_len = @as(usize, @intCast(oc_ethernet_state_ptr().last_tx_len));
     if (tx_len == 0) return error.HttpsPostNoTxProgress;
 
@@ -4144,7 +4357,13 @@ const Rtl8139TcpProbeScratch = struct {
 
 var rtl8139_tcp_probe_scratch: Rtl8139TcpProbeScratch = undefined;
 
-const Rtl8139HttpPostHarness = struct {
+const HttpProbeBackend = enum {
+    rtl8139,
+    e1000,
+};
+
+const NicHttpPostHarness = struct {
+    backend: HttpProbeBackend = .rtl8139,
     local_mac: [ethernet_protocol.mac_len]u8,
     server_mac: [ethernet_protocol.mac_len]u8 = .{ 0x02, 0x13, 0x37, 0x55, 0x80, 0x01 },
     dns_mac: [ethernet_protocol.mac_len]u8 = .{ 0x02, 0x13, 0x37, 0x55, 0x80, 0x53 },
@@ -4172,14 +4391,14 @@ const Rtl8139HttpPostHarness = struct {
     request_validated: bool = false,
     failure: ?Rtl8139TcpProbeError = null,
 
-    fn handleOutgoingFrame(self: *Rtl8139HttpPostHarness, frame: []const u8) void {
+    fn handleOutgoingFrame(self: *NicHttpPostHarness, frame: []const u8) void {
         self.handleOutgoingFrameImpl(frame) catch |err| {
             self.failure = err;
             if (!builtin.is_test) qemuExit(rtl8139TcpProbeFailureCode(err));
         };
     }
 
-    fn handleOutgoingFrameImpl(self: *Rtl8139HttpPostHarness, frame: []const u8) Rtl8139TcpProbeError!void {
+    fn handleOutgoingFrameImpl(self: *NicHttpPostHarness, frame: []const u8) Rtl8139TcpProbeError!void {
         if (self.failure != null) return;
         const eth = ethernet_protocol.Header.decode(frame) catch return;
         switch (eth.ether_type) {
@@ -4204,7 +4423,7 @@ const Rtl8139HttpPostHarness = struct {
         }
     }
 
-    fn handleUdp(self: *Rtl8139HttpPostHarness, ip_packet: ipv4_protocol.Packet) Rtl8139TcpProbeError!void {
+    fn handleUdp(self: *NicHttpPostHarness, ip_packet: ipv4_protocol.Packet) Rtl8139TcpProbeError!void {
         const packet = udp_protocol.decode(ip_packet.payload, ip_packet.header.source_ip, ip_packet.header.destination_ip) catch return;
         if (packet.destination_port != dns_protocol.default_port) return;
         if (!std.mem.eql(u8, ip_packet.header.destination_ip[0..], self.dns_ip[0..])) return;
@@ -4217,7 +4436,7 @@ const Rtl8139HttpPostHarness = struct {
         try self.injectUdp(self.dns_ip, self.client_ip, dns_protocol.default_port, packet.source_port, self.dns_payload_storage[0..response_len]);
     }
 
-    fn handleTcp(self: *Rtl8139HttpPostHarness, ip_packet: ipv4_protocol.Packet) Rtl8139TcpProbeError!void {
+    fn handleTcp(self: *NicHttpPostHarness, ip_packet: ipv4_protocol.Packet) Rtl8139TcpProbeError!void {
         const packet = tcp_protocol.decode(ip_packet.payload, ip_packet.header.source_ip, ip_packet.header.destination_ip) catch return;
         if (!std.mem.eql(u8, ip_packet.header.destination_ip[0..], self.server_ip[0..])) return;
         if (packet.destination_port != self.server_port) return;
@@ -4268,7 +4487,7 @@ const Rtl8139HttpPostHarness = struct {
         }
     }
 
-    fn requestComplete(self: *const Rtl8139HttpPostHarness) bool {
+    fn requestComplete(self: *const NicHttpPostHarness) bool {
         const request = self.request_storage[0..self.request_len];
         const header_end = std.mem.indexOf(u8, request, "\r\n\r\n") orelse return false;
         if (!std.mem.startsWith(u8, request, "POST ")) return false;
@@ -4281,7 +4500,7 @@ const Rtl8139HttpPostHarness = struct {
         return false;
     }
 
-    fn prepareResponse(self: *Rtl8139HttpPostHarness) Rtl8139TcpProbeError!void {
+    fn prepareResponse(self: *NicHttpPostHarness) Rtl8139TcpProbeError!void {
         if (self.response_len != 0) return;
         const request = self.request_storage[0..self.request_len];
         if (std.mem.indexOf(u8, request, self.path) == null) return error.HttpPostResponseMismatch;
@@ -4304,17 +4523,20 @@ const Rtl8139HttpPostHarness = struct {
         self.response_len = response.len;
     }
 
-    fn injectArpReply(self: *Rtl8139HttpPostHarness, sender_ip: [4]u8, target_ip: [4]u8) Rtl8139TcpProbeError!void {
+    fn injectArpReply(self: *NicHttpPostHarness, sender_ip: [4]u8, target_ip: [4]u8) Rtl8139TcpProbeError!void {
         var frame: [arp_protocol.frame_len]u8 = undefined;
         const sender_mac = self.peerMacForIp(sender_ip) orelse return error.HttpPostFailed;
         const frame_len = arp_protocol.encodeReplyFrame(frame[0..], sender_mac, sender_ip, self.local_mac, target_ip) catch {
             return error.HttpPostFailed;
         };
-        rtl8139.injectProbeReceive(frame[0..frame_len]);
+        switch (self.backend) {
+            .rtl8139 => rtl8139.injectProbeReceive(frame[0..frame_len]),
+            .e1000 => e1000.injectProbeReceive(frame[0..frame_len]),
+        }
     }
 
     fn injectUdp(
-        self: *Rtl8139HttpPostHarness,
+        self: *NicHttpPostHarness,
         source_ip: [4]u8,
         destination_ip: [4]u8,
         source_port: u16,
@@ -4328,7 +4550,7 @@ const Rtl8139HttpPostHarness = struct {
         try self.injectIpv4Frame(source_ip, destination_ip, ipv4_protocol.protocol_udp, self.segment_storage[0..segment_len]);
     }
 
-    fn injectTcp(self: *Rtl8139HttpPostHarness, source_ip: [4]u8, destination_ip: [4]u8, outbound: tcp_protocol.Outbound) Rtl8139TcpProbeError!void {
+    fn injectTcp(self: *NicHttpPostHarness, source_ip: [4]u8, destination_ip: [4]u8, outbound: tcp_protocol.Outbound) Rtl8139TcpProbeError!void {
         const segment_len = tcp_protocol.encodeOutboundSegment(self.server, outbound, self.segment_storage[0..], source_ip, destination_ip) catch {
             return error.HttpPostFailed;
         };
@@ -4336,7 +4558,7 @@ const Rtl8139HttpPostHarness = struct {
     }
 
     fn injectIpv4Frame(
-        self: *Rtl8139HttpPostHarness,
+        self: *NicHttpPostHarness,
         source_ip: [4]u8,
         destination_ip: [4]u8,
         protocol: u8,
@@ -4354,26 +4576,29 @@ const Rtl8139HttpPostHarness = struct {
             .destination_ip = destination_ip,
         }).encode(self.frame_storage[ethernet_protocol.header_len..], payload.len) catch return error.HttpPostFailed;
         std.mem.copyForwards(u8, self.frame_storage[ethernet_protocol.header_len + ipv4_header_len ..][0..payload.len], payload);
-        rtl8139.injectProbeReceive(self.frame_storage[0 .. ethernet_protocol.header_len + ipv4_header_len + payload.len]);
+        switch (self.backend) {
+            .rtl8139 => rtl8139.injectProbeReceive(self.frame_storage[0 .. ethernet_protocol.header_len + ipv4_header_len + payload.len]),
+            .e1000 => e1000.injectProbeReceive(self.frame_storage[0 .. ethernet_protocol.header_len + ipv4_header_len + payload.len]),
+        }
     }
 
-    fn peerMacForIp(self: *const Rtl8139HttpPostHarness, source_ip: [4]u8) ?[ethernet_protocol.mac_len]u8 {
+    fn peerMacForIp(self: *const NicHttpPostHarness, source_ip: [4]u8) ?[ethernet_protocol.mac_len]u8 {
         if (std.mem.eql(u8, source_ip[0..], self.server_ip[0..])) return self.server_mac;
         if (std.mem.eql(u8, source_ip[0..], self.dns_ip[0..])) return self.dns_mac;
         return null;
     }
 };
 
-var rtl8139_http_post_harness_scratch: Rtl8139HttpPostHarness = undefined;
-var rtl8139_http_post_harness: ?*Rtl8139HttpPostHarness = null;
+var nic_http_post_harness_scratch: NicHttpPostHarness = undefined;
+var nic_http_post_harness: ?*NicHttpPostHarness = null;
 
-fn rtl8139TcpHttpPostHook(frame: []const u8) void {
-    if (rtl8139_http_post_harness) |harness| {
+fn nicTcpHttpPostHook(frame: []const u8) void {
+    if (nic_http_post_harness) |harness| {
         harness.handleOutgoingFrame(frame);
     }
 }
 
-fn rtl8139DiscardMockSendHook(frame: []const u8) void {
+fn discardMockSendHook(frame: []const u8) void {
     _ = frame;
 }
 
@@ -10765,16 +10990,16 @@ fn runRtl8139HttpPostProbe() Rtl8139TcpProbeError!void {
     pal_net.clearRouteState();
     defer pal_net.clearRouteState();
     pal_net.configureIpv4Route(.{ 192, 168, 56, 10 }, .{ 255, 255, 255, 0 }, null);
-    rtl8139_http_post_harness_scratch = .{ .local_mac = eth.mac };
-    const http_harness = &rtl8139_http_post_harness_scratch;
+    nic_http_post_harness_scratch = .{ .backend = .rtl8139, .local_mac = eth.mac };
+    const http_harness = &nic_http_post_harness_scratch;
     pal_net.configureDnsServers(&.{http_harness.dns_ip});
-    rtl8139_http_post_harness = http_harness;
-    rtl8139.installProbeSendHook(rtl8139TcpHttpPostHook);
-    rtl8139.testInstallMockSendHook(rtl8139DiscardMockSendHook);
+    nic_http_post_harness = http_harness;
+    rtl8139.installProbeSendHook(nicTcpHttpPostHook);
+    rtl8139.testInstallMockSendHook(discardMockSendHook);
     defer {
         rtl8139.testInstallMockSendHook(null);
         rtl8139.installProbeSendHook(null);
-        rtl8139_http_post_harness = null;
+        nic_http_post_harness = null;
     }
 
     const tx_packets_before_http = eth.tx_packets;
@@ -10797,6 +11022,249 @@ fn runRtl8139HttpPostProbe() Rtl8139TcpProbeError!void {
         !std.mem.eql(u8, http_response.body, http_harness.response_body))
     {
         return error.HttpPostResponseMismatch;
+    }
+    if (eth.tx_packets <= tx_packets_before_http or eth.rx_packets <= rx_packets_before_http) {
+        return error.CounterMismatch;
+    }
+}
+
+fn runE1000HttpPostProbe() E1000HttpPostProbeError!void {
+    setProbeInterruptsEnabled(false);
+    pal_net.selectBackend(.e1000);
+
+    e1000.initDetailed() catch |err| return switch (err) {
+        error.UnsupportedPlatform => error.UnsupportedPlatform,
+        error.DeviceNotFound => error.DeviceNotFound,
+        error.MissingMmioBar => error.MissingMmioBar,
+        error.MissingIoBar => error.MissingIoBar,
+        error.ResetTimeout => error.ResetTimeout,
+        error.AutoReadTimeout => error.AutoReadTimeout,
+        error.EepromReadFailed => error.EepromReadFailed,
+        error.EepromChecksumMismatch => error.EepromChecksumMismatch,
+        error.MacReadFailed => error.MacReadFailed,
+        error.RingProgramFailed => error.RingProgramFailed,
+    };
+
+    const eth = e1000.statePtr();
+    if (eth.magic != abi.ethernet_magic) return error.StateMagicMismatch;
+    if (eth.backend != abi.ethernet_backend_e1000) return error.BackendMismatch;
+    if (eth.initialized == 0) return error.InitFlagMismatch;
+    if (!builtin.is_test and eth.hardware_backed == 0) return error.HardwareBackedMismatch;
+    if (eth.io_base == 0) return error.IoBaseMismatch;
+    pal_net.clearRouteState();
+    defer pal_net.clearRouteState();
+    pal_net.configureIpv4Route(.{ 192, 168, 56, 10 }, .{ 255, 255, 255, 0 }, null);
+    nic_http_post_harness_scratch = .{ .backend = .e1000, .local_mac = eth.mac };
+    const http_harness = &nic_http_post_harness_scratch;
+    pal_net.configureDnsServers(&.{http_harness.dns_ip});
+    nic_http_post_harness = http_harness;
+    e1000.installProbeSendHook(nicTcpHttpPostHook);
+    e1000.testInstallMockSendHook(discardMockSendHook);
+    defer {
+        e1000.testInstallMockSendHook(null);
+        e1000.installProbeSendHook(null);
+        nic_http_post_harness = null;
+    }
+
+    const tx_packets_before_http = eth.tx_packets;
+    const rx_packets_before_http = eth.rx_packets;
+    var http_fba = std.heap.FixedBufferAllocator.init(&rtl8139_tcp_probe_scratch.http_post_scratch);
+    const http_headers = [_]pal_net.FreestandingHeader{
+        .{ .name = "content-type", .value = "application/json" },
+    };
+    const http_response = pal_net.postFreestandingExplicit(
+        http_fba.allocator(),
+        http_harness.url,
+        http_harness.request_payload,
+        http_headers[0..],
+    ) catch return error.HttpPostFailed;
+    if (http_harness.failure != null) return error.HttpPostFailed;
+    if (!http_harness.request_validated or !http_harness.response_sent or !http_harness.fin_sent) {
+        return error.HttpPostResponseMismatch;
+    }
+    if (http_response.status_code != 200 or
+        !std.mem.eql(u8, http_response.body, http_harness.response_body))
+    {
+        return error.HttpPostResponseMismatch;
+    }
+    if (eth.tx_packets <= tx_packets_before_http or eth.rx_packets <= rx_packets_before_http) {
+        return error.CounterMismatch;
+    }
+}
+
+fn runE1000HttpsPostProbe() E1000HttpsPostProbeError!void {
+    setProbeInterruptsEnabled(false);
+    pal_net.selectBackend(.e1000);
+
+    e1000.initDetailed() catch |err| return switch (err) {
+        error.UnsupportedPlatform => error.UnsupportedPlatform,
+        error.DeviceNotFound => error.DeviceNotFound,
+        error.MissingMmioBar => error.MissingMmioBar,
+        error.MissingIoBar => error.MissingIoBar,
+        error.ResetTimeout => error.ResetTimeout,
+        error.AutoReadTimeout => error.AutoReadTimeout,
+        error.EepromReadFailed => error.EepromReadFailed,
+        error.EepromChecksumMismatch => error.EepromChecksumMismatch,
+        error.MacReadFailed => error.MacReadFailed,
+        error.RingProgramFailed => error.RingProgramFailed,
+    };
+
+    const eth = e1000.statePtr();
+    if (eth.magic != abi.ethernet_magic) return error.StateMagicMismatch;
+    if (eth.backend != abi.ethernet_backend_e1000) return error.BackendMismatch;
+    if (eth.initialized == 0) return error.InitFlagMismatch;
+    if (!builtin.is_test and eth.hardware_backed == 0) return error.HardwareBackedMismatch;
+    if (eth.io_base == 0) return error.IoBaseMismatch;
+
+    warmE1000ProbeTransport(builtin.is_test or eth.hardware_backed == 0);
+
+    pal_net.clearRouteState();
+    defer pal_net.clearRouteState();
+    pal_net.configureIpv4Route(.{ 10, 0, 2, 15 }, .{ 255, 255, 255, 0 }, null);
+    trust_store.installBundle("fs55-root", pal_net.httpsProbeTrustAnchorDer(), 0) catch return error.HttpsPostFailed;
+    trust_store.selectBundle("fs55-root", 0) catch return error.HttpsPostFailed;
+    var https_trust_fba = std.heap.FixedBufferAllocator.init(&rtl8139_tcp_probe_scratch.https_trust_store_scratch);
+    const active_trust_path = trust_store.activeBundlePathAlloc(https_trust_fba.allocator(), 128) catch return error.HttpsPostFailed;
+    pal_net.configureHttpsBundleTrustFromPath(
+        https_trust_fba.allocator(),
+        active_trust_path,
+        pal_net.httpsProbeTrustAnchorDer().len,
+        1_700_000_000,
+    ) catch return error.HttpsPostFailed;
+    defer pal_net.clearHttpsBundleTrust();
+
+    const tx_packets_before_http = eth.tx_packets;
+    const rx_packets_before_http = eth.rx_packets;
+    var https_fba = std.heap.FixedBufferAllocator.init(&rtl8139_tcp_probe_scratch.http_post_scratch);
+    const https_headers = [_]pal_net.FreestandingHeader{
+        .{ .name = "content-type", .value = "application/json" },
+    };
+    const https_payload = "{\"probe\":\"live-https\"}";
+    const https_response = pal_net.postFreestandingExplicit(
+        https_fba.allocator(),
+        "https://10.0.2.2:8443/fs55/live-https",
+        https_payload,
+        https_headers[0..],
+    ) catch |err| {
+        const any_err: anyerror = err;
+        const err_name = @errorName(any_err);
+        const tls_stage = pal_net.lastHttpsTlsInitStage();
+        const pre_tls_stage = pal_net.lastHttpsPreTlsStage();
+        const tls_certificate_error = pal_net.lastHttpsTlsCertificateError();
+        const tls_transport_debug = pal_net.lastHttpsTlsTransportDebug().*;
+        if (any_err == error.Timeout) {
+            switch (tls_stage) {
+                .server_hello_received => return error.HttpsPostTlsAtServerHello,
+                .encrypted_extensions_received => return error.HttpsPostTlsAtEncryptedExtensions,
+                .certificate_received => return error.HttpsPostTlsAtCertificate,
+                .trust_chain_established => return error.HttpsPostTlsAtTrustChainEstablished,
+                .certificate_verify_received => return error.HttpsPostTlsAtCertificateVerify,
+                .server_finished_verified => return error.HttpsPostTlsAtServerFinishedVerified,
+                .client_finished_flushed => return error.HttpsPostTlsAfterClientFinished,
+                .init_complete => return error.HttpsPostTlsAfterInit,
+                else => {},
+            }
+            if (tls_transport_debug.flush_calls == 0 and tls_transport_debug.drain_calls == 0 and tls_transport_debug.write_all_calls == 0) {
+                switch (pre_tls_stage) {
+                    .host_resolved,
+                    .next_hop_resolved,
+                    .syn_built,
+                    => {
+                        const tx_err = classifyLastTransmittedE1000TcpProbeFrame(.{ 10, 0, 2, 2 }, 8443);
+                        if (tx_err != error.HttpsPostNoTxProgress) return tx_err;
+                        return error.HttpsPostPreTlsNoSynEmit;
+                    },
+                    .syn_sent => return error.HttpsPostPreTlsNoSynAck,
+                    else => {},
+                }
+                return error.HttpsPostTlsNoWriterFlush;
+            }
+            if (tls_transport_debug.sent_segments == 0) {
+                const effective_window = @min(tls_transport_debug.last_remote_window, tls_transport_debug.last_congestion_window);
+                if (tls_transport_debug.wait_writable_calls != 0 and tls_transport_debug.last_bytes_in_flight >= effective_window) {
+                    return error.HttpsPostTlsWindowBlockedBeforeEmit;
+                }
+                return error.HttpsPostTlsNoPayloadEmit;
+            }
+            if (eth.tx_packets <= tx_packets_before_http) return error.HttpsPostNoTxProgress;
+            if (eth.rx_packets <= rx_packets_before_http) {
+                return classifyLastTransmittedE1000TcpProbeFrame(.{ 10, 0, 2, 2 }, 8443);
+            }
+            const timeout_err = classifyE1000HttpsProbeTimeout(eth);
+            switch (timeout_err) {
+                error.LastFrameNotIpv4,
+                error.LastPacketNotTcp,
+                error.LastIpv4DecodeFailed,
+                error.LastTcpDecodeFailed,
+                => {
+                    const tx_err = classifyLastTransmittedE1000TcpProbeFrame(.{ 10, 0, 2, 2 }, 8443);
+                    if (tx_err != error.HttpsPostNoRxProgress) return tx_err;
+                    return error.HttpsPostNoRxProgress;
+                },
+                else => return timeout_err,
+            }
+        }
+        if (any_err == error.TlsAlert) return error.HttpsPostTlsAlert;
+        if (any_err == error.InsufficientEntropy) return error.HttpsPostEntropyFailed;
+        if (any_err == error.ReadFailed) return error.HttpsPostReadFailed;
+        if (any_err == error.WriteFailed) return error.HttpsPostWriteFailed;
+        if (any_err == error.UnexpectedFlags) return error.HttpsPostTcpUnexpectedFlags;
+        if (any_err == error.SequenceMismatch) return error.HttpsPostTcpSequenceMismatch;
+        if (any_err == error.AcknowledgmentMismatch) return error.HttpsPostTcpAckMismatch;
+        if (any_err == error.WindowExceeded) return error.HttpsPostTcpWindowExceeded;
+        if (any_err == error.MessageTooLong) return error.HttpsPostTlsMessageTooLong;
+        if (any_err == error.TargetTooSmall) return error.HttpsPostTlsTargetTooSmall;
+        if (any_err == error.BufferTooSmall) return error.HttpsPostTlsBufferTooSmall;
+        if (any_err == error.NegativeIntoUnsigned) return error.HttpsPostTlsNegativeIntoUnsigned;
+        if (any_err == error.InvalidSignature) return error.HttpsPostTlsInvalidSignature;
+        if (any_err == error.TlsUnexpectedMessage) return error.HttpsPostTlsUnexpectedMessage;
+        if (any_err == error.TlsIllegalParameter) return error.HttpsPostTlsIllegalParameter;
+        if (any_err == error.TlsDecryptFailure) return error.HttpsPostTlsDecryptFailure;
+        if (any_err == error.TlsRecordOverflow) return error.HttpsPostTlsRecordOverflow;
+        if (any_err == error.TlsBadRecordMac) return error.HttpsPostTlsBadRecordMac;
+        if (any_err == error.TlsDecryptError) return error.HttpsPostTlsDecryptError;
+        if (any_err == error.TlsConnectionTruncated) return error.HttpsPostTlsConnectionTruncated;
+        if (any_err == error.TlsDecodeError) return error.HttpsPostTlsDecodeError;
+        if (tls_stage == .certificate_received) {
+            if (tls_certificate_error) |cert_err| {
+                switch (cert_err) {
+                    error.CertificateHostMismatch => return error.HttpsPostTlsCertificateHostMismatch,
+                    error.CertificateIssuerMismatch => return error.HttpsPostTlsCertificateIssuerMismatch,
+                    error.CertificateSignatureInvalid,
+                    error.CertificateSignatureInvalidLength,
+                    error.SignatureVerificationFailed,
+                    error.InvalidSignature,
+                    => return error.HttpsPostTlsCertificateSignatureInvalid,
+                    error.CertificateExpired => return error.HttpsPostTlsCertificateExpired,
+                    error.CertificateNotYetValid => return error.HttpsPostTlsCertificateNotYetValid,
+                    error.CertificatePublicKeyInvalid => return error.HttpsPostTlsCertificatePublicKeyInvalid,
+                    error.CertificateTimeInvalid => return error.HttpsPostTlsCertificateTimeInvalid,
+                    else => {},
+                }
+            }
+        }
+        switch (tls_stage) {
+            .server_hello_received => return error.HttpsPostTlsAtServerHello,
+            .encrypted_extensions_received => return error.HttpsPostTlsAtEncryptedExtensions,
+            .certificate_received => return error.HttpsPostTlsAtCertificate,
+            .trust_chain_established => return error.HttpsPostTlsAtTrustChainEstablished,
+            .certificate_verify_received => return error.HttpsPostTlsAtCertificateVerify,
+            .server_finished_verified => return error.HttpsPostTlsAtServerFinishedVerified,
+            .client_finished_flushed => return error.HttpsPostTlsAfterClientFinished,
+            .init_complete => return error.HttpsPostTlsAfterInit,
+            else => {},
+        }
+        if (std.mem.startsWith(u8, err_name, "Tls") or
+            std.mem.startsWith(u8, err_name, "Certificate"))
+        {
+            return error.HttpsPostTlsProtocolFailed;
+        }
+        return error.HttpsPostFailed;
+    };
+    if (https_response.status_code != 200 or
+        !std.mem.eql(u8, https_response.body, "{\"ok\":true,\"transport\":\"https\"}"))
+    {
+        return error.HttpsPostResponseMismatch;
     }
     if (eth.tx_packets <= tx_packets_before_http or eth.rx_packets <= rx_packets_before_http) {
         return error.CounterMismatch;
@@ -20629,6 +21097,14 @@ test "baremetal e1000 tcp probe succeeds through mock device" {
     defer e1000.testDisableMockDevice();
 
     try runE1000TcpProbe();
+}
+
+test "baremetal e1000 http post probe succeeds through mock device" {
+    resetBaremetalRuntimeForTest();
+    e1000.testEnableMockDevice();
+    defer e1000.testDisableMockDevice();
+
+    try runE1000HttpPostProbe();
 }
 
 test "baremetal ethernet arp request loops through mock rtl8139 and parses request" {

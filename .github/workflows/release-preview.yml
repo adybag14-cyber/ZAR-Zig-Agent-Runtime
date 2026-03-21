@@ -215,6 +215,14 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-e1000-tcp-probe-check.ps1
 
+      - name: Bare-metal QEMU E1000 HTTP POST probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-e1000-http-post-probe-check.ps1
+
+      - name: Bare-metal QEMU E1000 HTTPS POST probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-e1000-https-post-probe-check.ps1
+
       - name: Bare-metal QEMU RTL8139 ARP probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1
