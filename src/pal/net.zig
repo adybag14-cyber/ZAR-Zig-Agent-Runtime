@@ -485,6 +485,17 @@ const max_https_bundle_cert_der_len: usize = 4096;
 const https_bundle_allocator_bytes_len: usize = 16 * 1024;
 const https_probe_trust_anchor_der = @embedFile("testdata/rtl8139-https-probe-cert.der");
 pub const HttpsTlsInitStage = tls_client_light.DebugInitStage;
+pub const HttpsPreTlsStage = enum(u8) {
+    not_started,
+    host_resolved,
+    next_hop_resolved,
+    syn_built,
+    syn_sent,
+    handshake_established,
+    tls_init_started,
+    request_flushed,
+    response_draining,
+};
 
 const TlsTcpTransportScratch = struct {
     pending_payload: [tls_wire_buffer_len]u8 = undefined,
@@ -503,6 +514,7 @@ const HttpsTlsScratch = struct {
 
 var https_tls_scratch: HttpsTlsScratch = .{};
 var last_https_tls_init_stage: HttpsTlsInitStage = .not_started;
+var last_https_pre_tls_stage: HttpsPreTlsStage = .not_started;
 const HttpsPinnedTrust = struct {
     enabled: bool = false,
     cert_len: usize = 0,
@@ -537,8 +549,40 @@ pub const HttpsTlsTransportDebug = struct {
 
 var https_tls_transport_debug: HttpsTlsTransportDebug = .{};
 
+fn testEnableMockDeviceForCurrentBackend() void {
+    switch (active_backend) {
+        .rtl8139 => rtl8139.testEnableMockDevice(),
+        .e1000 => e1000.testEnableMockDevice(),
+    }
+}
+
+fn testDisableMockDeviceForCurrentBackend() void {
+    switch (active_backend) {
+        .rtl8139 => rtl8139.testDisableMockDevice(),
+        .e1000 => e1000.testDisableMockDevice(),
+    }
+}
+
+fn testInstallMockSendHookForCurrentBackend(hook: anytype) void {
+    switch (active_backend) {
+        .rtl8139 => rtl8139.testInstallMockSendHook(hook),
+        .e1000 => e1000.testInstallMockSendHook(hook),
+    }
+}
+
+fn injectProbeReceiveForCurrentBackend(frame: []const u8) void {
+    switch (active_backend) {
+        .rtl8139 => rtl8139.injectProbeReceive(frame),
+        .e1000 => e1000.injectProbeReceive(frame),
+    }
+}
+
 pub fn lastHttpsTlsInitStage() HttpsTlsInitStage {
     return last_https_tls_init_stage;
+}
+
+pub fn lastHttpsPreTlsStage() HttpsPreTlsStage {
+    return last_https_pre_tls_stage;
 }
 
 pub fn lastHttpsTlsCertificateError() ?tls_client_light.InitError {
@@ -631,6 +675,7 @@ pub fn httpsProbeTrustAnchorDer() []const u8 {
 
 fn resetHttpsTlsTransportDebug() void {
     https_tls_transport_debug = .{};
+    last_https_pre_tls_stage = .not_started;
 }
 
 const TlsTcpTransport = struct {
@@ -1118,7 +1163,9 @@ fn postFreestandingHttpsWithParsedHeaders(
     last_https_tls_init_stage = .not_started;
     resetHttpsTlsTransportDebug();
     const destination_ip = try resolveHostIpv4(parsed.host);
+    last_https_pre_tls_stage = .host_resolved;
     const destination_mac = try resolveNextHopMac(destination_ip);
+    last_https_pre_tls_stage = .next_hop_resolved;
     const local_port = allocateTcpLocalPort();
     const request_bytes = try buildHttpPostRequest(allocator, parsed, payload, headers);
     defer allocator.free(request_bytes);
@@ -1126,7 +1173,9 @@ fn postFreestandingHttpsWithParsedHeaders(
     var client = tcp.Session.initClient(local_port, parsed.port, 0x0C20_0000 +% @as(u32, local_port), 4096);
     const started_ms: i64 = if (builtin.os.tag == .freestanding) 0 else time_util.nowMs();
     const syn = try client.buildSynWithTimeout(0, post_retransmit_ticks);
+    last_https_pre_tls_stage = .syn_built;
     try sendTcpOutbound(destination_mac, route_state.local_ip, destination_ip, client, syn);
+    last_https_pre_tls_stage = .syn_sent;
 
     var poll_tick: u64 = 0;
     while (true) : (poll_tick += 1) {
@@ -1135,8 +1184,10 @@ fn postFreestandingHttpsWithParsedHeaders(
         if (try handlePostHandshakePacket(destination_mac, destination_ip, &client)) break;
         if (client.pollRetransmit(poll_tick)) |retry_syn| {
             try sendTcpOutbound(destination_mac, route_state.local_ip, destination_ip, client, retry_syn);
+            last_https_pre_tls_stage = .syn_sent;
         }
     }
+    last_https_pre_tls_stage = .handshake_established;
     if (client.congestion_window < max_tcp_segment_payload_len) {
         client.congestion_window = max_tcp_segment_payload_len;
     }
@@ -1146,6 +1197,7 @@ fn postFreestandingHttpsWithParsedHeaders(
 
     const scratch = &https_tls_scratch;
     try fillTlsEntropy(&scratch.entropy);
+    last_https_pre_tls_stage = .tls_init_started;
 
     var transport = TlsTcpTransport.init(
         &client,
@@ -1202,9 +1254,11 @@ fn postFreestandingHttpsWithParsedHeaders(
     transport.writer.flush() catch |err| switch (err) {
         error.WriteFailed => return transport.write_err orelse err,
     };
+    last_https_pre_tls_stage = .request_flushed;
 
     var response_body: std.Io.Writer.Allocating = .init(allocator);
     defer response_body.deinit();
+    last_https_pre_tls_stage = .response_draining;
     _ = tls_client.reader.streamRemaining(&response_body.writer) catch |err| switch (err) {
         error.ReadFailed => return transport.read_err orelse err,
         error.WriteFailed => return transport.write_err orelse err,
@@ -3828,21 +3882,21 @@ const PostHarness = struct {
         var frame: [arp.frame_len]u8 = undefined;
         const local_mac = macAddress();
         const frame_len = try arp.encodeReplyFrame(frame[0..], local_mac, sender_ip, local_mac, target_ip);
-        rtl8139.testInstallMockSendHook(null);
-        defer rtl8139.testInstallMockSendHook(postHarnessHook);
+        testInstallMockSendHookForCurrentBackend(null);
+        defer testInstallMockSendHookForCurrentBackend(postHarnessHook);
         try sendFrame(frame[0..frame_len]);
     }
 
     fn injectUdp(self: *PostHarness, source_ip: [4]u8, destination_ip: [4]u8, source_port: u16, destination_port: u16, payload: []const u8) !void {
         _ = self;
-        rtl8139.testInstallMockSendHook(null);
-        defer rtl8139.testInstallMockSendHook(postHarnessHook);
+        testInstallMockSendHookForCurrentBackend(null);
+        defer testInstallMockSendHookForCurrentBackend(postHarnessHook);
         _ = try sendUdpPacket(macAddress(), source_ip, destination_ip, source_port, destination_port, payload);
     }
 
     fn injectTcp(self: *PostHarness, source_ip: [4]u8, destination_ip: [4]u8, outbound: tcp.Outbound) !void {
-        rtl8139.testInstallMockSendHook(null);
-        defer rtl8139.testInstallMockSendHook(postHarnessHook);
+        testInstallMockSendHookForCurrentBackend(null);
+        defer testInstallMockSendHookForCurrentBackend(postHarnessHook);
         _ = try sendTcpPacket(
             macAddress(),
             source_ip,
@@ -3977,6 +4031,85 @@ test "baremetal net pal tls client init emits client hello through rtl8139 mock 
     try std.testing.expectEqual(@as(u8, 0x03), packet.payload[1]);
 }
 
+test "baremetal net pal tls client init emits client hello through e1000 mock device" {
+    resetDeviceForTest();
+    defer resetDeviceForTest();
+    selectBackend(.e1000);
+    testEnableMockDeviceForCurrentBackend();
+    defer testDisableMockDeviceForCurrentBackend();
+    testInstallMockSendHookForCurrentBackend(tlsTestCaptureHook);
+    defer testInstallMockSendHookForCurrentBackend(null);
+    tls_test_last_frame_len = 0;
+
+    try std.testing.expect(initDevice());
+
+    const client_ip = [4]u8{ 10, 0, 2, 15 };
+    const server_ip = [4]u8{ 10, 0, 2, 2 };
+    const destination_mac = macAddress();
+
+    var client = tcp.Session.initClient(49152, 8443, 0x0C21_5A00, 4096);
+    _ = try client.buildSyn();
+    _ = try client.acceptSynAck(.{
+        .source_port = 8443,
+        .destination_port = 49152,
+        .sequence_number = 1,
+        .acknowledgment_number = client.send_next,
+        .data_offset_bytes = tcp.header_len + 4,
+        .flags = tcp.flag_syn | tcp.flag_ack,
+        .window_size = 65535,
+        .checksum_value = 0,
+        .urgent_pointer = 0,
+        .payload = "",
+    });
+    client.congestion_window = max_tcp_segment_payload_len;
+
+    var transport_reader_buffer: [tls_wire_buffer_len]u8 = undefined;
+    var transport_writer_buffer: [tls_wire_buffer_len]u8 = undefined;
+    var tls_reader_buffer: [tls_wire_buffer_len]u8 = undefined;
+    var tls_writer_buffer: [tls_wire_buffer_len]u8 = undefined;
+    var entropy: [tls_client_light.Client.Options.entropy_len]u8 = undefined;
+    var transport_scratch: TlsTcpTransportScratch = .{};
+    for (&entropy, 0..) |*byte, idx| byte.* = @as(u8, @truncate(idx + 1));
+
+    var input = std.Io.Reader.fixed(&.{});
+    input.buffer = &transport_reader_buffer;
+    input.seek = 0;
+    input.end = 0;
+    var transport = TlsTcpTransport.init(
+        &client,
+        destination_mac,
+        client_ip,
+        server_ip,
+        &transport_scratch,
+        &transport_reader_buffer,
+        &transport_writer_buffer,
+    );
+
+    _ = tls_client_light.Client.init(
+        &input,
+        &transport.writer,
+        .{
+            .host = .no_verification,
+            .ca = .no_verification,
+            .read_buffer = &tls_reader_buffer,
+            .write_buffer = &tls_writer_buffer,
+            .entropy = &entropy,
+            .realtime_now_seconds = 0,
+            .allow_truncation_attacks = true,
+        },
+    ) catch {};
+
+    try std.testing.expect(tls_test_last_frame_len != 0);
+    injectProbeReceiveForCurrentBackend(tls_test_last_frame[0..tls_test_last_frame_len]);
+    const packet = (try pollTcpPacketStrict()).?;
+    try std.testing.expectEqual(@as(u16, client.local_port), packet.source_port);
+    try std.testing.expectEqual(@as(u16, client.remote_port), packet.destination_port);
+    try std.testing.expect((packet.flags & tcp.flag_ack) != 0);
+    try std.testing.expect(packet.payload_len >= 5);
+    try std.testing.expectEqual(@as(u8, 0x16), packet.payload[0]);
+    try std.testing.expectEqual(@as(u8, 0x03), packet.payload[1]);
+}
+
 test "baremetal net pal freestanding post resolves dns and exchanges plain http through rtl8139 mock device" {
     rtl8139.testEnableMockDevice();
     defer rtl8139.testDisableMockDevice();
@@ -3992,6 +4125,40 @@ test "baremetal net pal freestanding post resolves dns and exchanges plain http 
     rtl8139.testInstallMockSendHook(postHarnessHook);
     defer {
         rtl8139.testInstallMockSendHook(null);
+        post_harness_instance = null;
+    }
+
+    var response = try postFreestanding(
+        std.testing.allocator,
+        "http://post.openclaw.local:8080/botdemo/sendMessage",
+        harness.expected_payload,
+        &.{.{ .name = "content-type", .value = "application/json" }},
+    );
+    defer response.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u16, 200), response.status_code);
+    try std.testing.expectEqualStrings(harness.response_body, response.body);
+    try std.testing.expect(response.latency_ms >= 0);
+}
+
+test "baremetal net pal freestanding post resolves dns and exchanges plain http through e1000 mock device" {
+    resetDeviceForTest();
+    defer resetDeviceForTest();
+    selectBackend(.e1000);
+    testEnableMockDeviceForCurrentBackend();
+    defer testDisableMockDeviceForCurrentBackend();
+    clearRouteState();
+    defer clearRouteState();
+
+    try std.testing.expect(initDevice());
+    configureIpv4Route(.{ 192, 168, 56, 10 }, .{ 255, 255, 255, 0 }, null);
+    configureDnsServers(&.{.{ 192, 168, 56, 53 }});
+
+    var harness = PostHarness{};
+    post_harness_instance = &harness;
+    testInstallMockSendHookForCurrentBackend(postHarnessHook);
+    defer {
+        testInstallMockSendHookForCurrentBackend(null);
         post_harness_instance = null;
     }
 

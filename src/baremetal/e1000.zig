@@ -27,8 +27,8 @@ pub const InitError = error{
 
 const pci_vendor_id: u16 = 0x8086;
 const pci_device_id_82540em: u16 = 0x100E;
-const tx_descriptor_count: usize = 8;
-const rx_descriptor_count: usize = 8;
+const tx_descriptor_count: usize = 64;
+const rx_descriptor_count: usize = 64;
 const tx_buffer_capacity: usize = 2048;
 const rx_buffer_capacity: usize = 2048;
 const rx_snapshot_capacity: usize = 2048;
@@ -164,14 +164,15 @@ fn defaultState() abi.BaremetalEthernetState {
 }
 
 var state: abi.BaremetalEthernetState = defaultState();
-var tx_desc_ring: [tx_descriptor_count]TxDesc align(16) = undefined;
-var rx_desc_ring: [rx_descriptor_count]RxDesc align(16) = undefined;
+var tx_desc_ring: [tx_descriptor_count]TxDesc align(128) = undefined;
+var rx_desc_ring: [rx_descriptor_count]RxDesc align(128) = undefined;
 var tx_buffers: [tx_descriptor_count][tx_buffer_capacity]u8 align(16) = undefined;
 var rx_buffers: [rx_descriptor_count][rx_buffer_capacity]u8 align(16) = undefined;
 var tx_snapshot: [tx_buffer_capacity]u8 = [_]u8{0} ** tx_buffer_capacity;
 var rx_snapshot: [rx_snapshot_capacity]u8 = [_]u8{0} ** rx_snapshot_capacity;
 var active_mmio_base: usize = 0;
 var active_io_base: u16 = 0;
+var tx_next_to_clean: usize = 0;
 
 var mock_enabled: bool = false;
 var mock_pending_rx_len: u32 = 0;
@@ -306,6 +307,8 @@ pub fn sendFrame(frame: []const u8) Error!void {
     @memset(tx_buf, 0);
     std.mem.copyForwards(u8, tx_buf[0..frame.len], frame);
     std.mem.copyForwards(u8, tx_snapshot[0..send_len], tx_buf[0..send_len]);
+    state.last_tx_len = @as(u32, @intCast(send_len));
+    state.last_tx_status = 0;
 
     if (probe_send_hook) |hook| {
         hook(tx_buf[0..send_len]);
@@ -318,36 +321,32 @@ pub fn sendFrame(frame: []const u8) Error!void {
             queueMockReceive(tx_buf[0..send_len]);
         }
         state.tx_packets +%= 1;
-        state.last_tx_len = @as(u32, @intCast(send_len));
         state.last_tx_status = txd_stat_dd;
         state.tx_index = @as(u8, @intCast((tx_slot + 1) % tx_descriptor_count));
         return;
     }
 
-    if (!waitForTxDescriptor(tx_slot)) {
-        state.tx_errors +%= 1;
-        return error.Timeout;
-    }
-
-    tx_desc_ring[tx_slot].buffer_addr = ptr64(&tx_buffers[tx_slot]) orelse return error.HardwareFault;
-    tx_desc_ring[tx_slot].length = @as(u16, @intCast(send_len));
-    tx_desc_ring[tx_slot].cso = 0;
-    tx_desc_ring[tx_slot].cmd = txd_cmd_eop | txd_cmd_ifcs | txd_cmd_rs;
-    tx_desc_ring[tx_slot].status = 0;
-    tx_desc_ring[tx_slot].css = 0;
-    tx_desc_ring[tx_slot].special = 0;
-
     const next_slot: usize = (tx_slot + 1) % tx_descriptor_count;
-    writeMmio32(reg_tdt, @as(u32, @intCast(next_slot)));
-
-    if (!waitForTxDescriptor(tx_slot)) {
+    if (!waitForTxSpace(next_slot)) {
         state.tx_errors +%= 1;
         return error.Timeout;
     }
+
+    const tx_desc = txDescPtr(tx_slot);
+    tx_desc.buffer_addr = ptr64(&tx_buffers[tx_slot]) orelse return error.HardwareFault;
+    tx_desc.length = @as(u16, @intCast(send_len));
+    tx_desc.cso = 0;
+    tx_desc.cmd = txd_cmd_eop | txd_cmd_ifcs | txd_cmd_rs;
+    tx_desc.status = 0;
+    tx_desc.css = 0;
+    tx_desc.special = 0;
+
+    compilerFence();
+    writeMmio32(reg_tdt, @as(u32, @intCast(next_slot)));
+    flushMmio();
 
     state.tx_packets +%= 1;
-    state.last_tx_len = @as(u32, @intCast(send_len));
-    state.last_tx_status = tx_desc_ring[tx_slot].status;
+    state.last_tx_status = tx_desc.status;
     state.tx_index = @as(u8, @intCast(next_slot));
 }
 
@@ -374,7 +373,7 @@ pub fn pollReceive() Error!u32 {
     }
 
     const rx_slot: usize = @as(usize, @intCast(state.rx_consumer_offset % rx_descriptor_count));
-    const desc = &rx_desc_ring[rx_slot];
+    const desc = rxDescPtr(rx_slot);
     const status = desc.status;
     if ((status & rxd_stat_dd) == 0) return 0;
     if ((status & rxd_stat_eop) == 0) {
@@ -395,7 +394,9 @@ pub fn pollReceive() Error!u32 {
     desc.special = 0;
     desc.buffer_addr = ptr64(&rx_buffers[rx_slot]) orelse return error.HardwareFault;
 
+    compilerFence();
     writeMmio32(reg_rdt, @as(u32, @intCast(rx_slot)));
+    flushMmio();
     state.rx_consumer_offset = @as(u32, @intCast((rx_slot + 1) % rx_descriptor_count));
     return state.last_rx_len;
 }
@@ -446,6 +447,7 @@ fn resetState() void {
     state = defaultState();
     active_mmio_base = 0;
     active_io_base = 0;
+    tx_next_to_clean = 0;
 }
 
 fn resetBuffers() void {
@@ -468,6 +470,7 @@ fn initMock() void {
     state.io_base = 0xE100;
     state.irq_line = 11;
     state.mac = default_mock_mac;
+    tx_next_to_clean = 0;
 }
 
 fn mockAvailable() bool {
@@ -598,15 +601,34 @@ fn programRings() InitError!void {
     state.link_up = if ((readMmio32(reg_status) & status_lu) != 0) 1 else 0;
     state.tx_index = 0;
     state.rx_consumer_offset = 0;
+    tx_next_to_clean = 0;
 }
 
-fn waitForTxDescriptor(slot: usize) bool {
+fn reclaimTxCompletions() void {
+    while (tx_next_to_clean != @as(usize, state.tx_index)) {
+        const desc = txDescPtr(tx_next_to_clean);
+        if ((desc.status & txd_stat_dd) == 0) break;
+        tx_next_to_clean = (tx_next_to_clean + 1) % tx_descriptor_count;
+    }
+}
+
+fn waitForTxSpace(next_slot: usize) bool {
     var attempts: usize = 0;
     while (attempts < tx_poll_limit) : (attempts += 1) {
-        if ((tx_desc_ring[slot].status & txd_stat_dd) != 0) return true;
+        reclaimTxCompletions();
+        if (next_slot != tx_next_to_clean) return true;
         std.atomic.spinLoopHint();
     }
+    debugWriteTxState("e1000 waitForTxSpace timeout", next_slot);
     return false;
+}
+
+fn txDescPtr(slot: usize) *volatile TxDesc {
+    return @as(*volatile TxDesc, @ptrCast(&tx_desc_ring[slot]));
+}
+
+fn rxDescPtr(slot: usize) *volatile RxDesc {
+    return @as(*volatile RxDesc, @ptrCast(&rx_desc_ring[slot]));
 }
 
 fn readPhyRegister(register_index: u8) Error!u16 {
@@ -685,6 +707,61 @@ fn writeReg64(base_offset: u32, value: u64) void {
 
 fn flushMmio() void {
     _ = readMmio32(reg_status);
+}
+
+fn compilerFence() void {
+    asm volatile ("sfence" ::: .{ .memory = true });
+}
+
+fn debugWriteTxState(label: []const u8, next_slot: usize) void {
+    if (!hardwareBacked()) return;
+    debugWriteString(label);
+    debugWriteString(" idx=");
+    debugWriteHexU32(state.tx_index);
+    debugWriteString(" clean=");
+    debugWriteHexU32(@as(u32, @intCast(tx_next_to_clean)));
+    debugWriteString(" next=");
+    debugWriteHexU32(@as(u32, @intCast(next_slot)));
+    debugWriteString(" tdh=");
+    debugWriteHexU32(readMmio32(reg_tdh));
+    debugWriteString(" tdt=");
+    debugWriteHexU32(readMmio32(reg_tdt));
+    debugWriteString(" d0=");
+    debugWriteHexByte(txDescPtr(0).status);
+    debugWriteString(" d1=");
+    debugWriteHexByte(txDescPtr(1).status);
+    debugWriteString("\r\n");
+}
+
+fn debugWriteString(text: []const u8) void {
+    for (text) |byte| debugWriteByte(byte);
+}
+
+fn debugWriteHexNibble(nibble: u8) void {
+    const value = nibble & 0x0F;
+    debugWriteByte(if (value < 10) '0' + value else 'A' + (value - 10));
+}
+
+fn debugWriteHexByte(value: u8) void {
+    debugWriteHexNibble(value >> 4);
+    debugWriteHexNibble(value);
+}
+
+fn debugWriteHexU32(value: u32) void {
+    var shift: u5 = 28;
+    while (true) {
+        debugWriteHexNibble(@as(u8, @truncate(value >> shift)));
+        if (shift == 0) break;
+        shift -%= 4;
+    }
+}
+
+fn debugWriteByte(byte: u8) void {
+    asm volatile ("outb %[al], %[dx]"
+        :
+        : [dx] "{dx}" (@as(u16, 0xE9)),
+          [al] "{al}" (byte),
+        : .{ .memory = true });
 }
 
 fn mmioPtr(comptime T: type, offset: u32) *volatile T {
