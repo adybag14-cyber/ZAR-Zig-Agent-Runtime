@@ -18,24 +18,21 @@ This track exists to remove guesswork. It defines the real bare-metal subsystems
 
 ## ZigOS Reference Track
 
-Status: `Slice 1 delivered`
+Status: `Slices 1-2 delivered`
 
-This track uses `Cameron-Lyons/zigos` as a reference architecture only.
+This track uses `Cameron-Lyons/zigos` as a reference architecture and source candidate where it improves ZAR.
 
-Hard boundary:
+Current provenance boundary:
 
-- no source import
-- no mechanical translation
-- no direct code transplant
-
-Reason:
-
-- upstream licensing is not yet explicit in the checked source of truth
+- upstream license is now explicit: `MIT`
+- imported or adapted ZigOS code is legally possible
+- every delivered slice still has to satisfy ZAR-native proof and release gates
 
 Tracked docs:
 
 - `docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md`
 - `docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`
+- `docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md`
 
 Delivered first adoption slice:
 
@@ -51,6 +48,14 @@ Delivered first adoption slice:
 - `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves bounded framed tool-service reuse over the clean-room `E1000` path, including `echo`, `EXEC`, `help`, persisted script install, `run-script`, and filesystem readback over the live QEMU `TCP` probe lane
 - `scripts/baremetal-qemu-e1000-http-post-probe-check.ps1` now proves bounded freestanding `HTTP` POST request/response flow over the `E1000` probe lane, and `scripts/baremetal-qemu-e1000-https-post-probe-check.ps1` now proves live QEMU `E1000` `HTTPS` POST over `ARP` + `IPv4` + `TCP` + `TLS` with filesystem-backed trust-bundle selection
 - do not widen scope to VFS/ELF/syscalls/userspace in this slice
+
+Delivered second adoption slice:
+
+- hosted benchmark and stress lane informed by ZigOS benchmark coverage
+- `src/benchmark_suite.zig` now provides ZAR-native benchmark cases for DNS, DHCP, TCP, runtime-state queue churn, and tool-service codec parsing
+- `src/benchmark_main.zig` now exposes `zig build bench` with deterministic `BENCH:START` / `BENCH:CASE` / `BENCH:END` output
+- `scripts/benchmark-smoke-check.ps1` now provides the strict hosted smoke gate for the benchmark lane
+- CI and release preview now run the benchmark smoke lane without regressing the normal hosted/bare-metal matrix
 
 `FS5.5` is not complete until each subsystem has:
 

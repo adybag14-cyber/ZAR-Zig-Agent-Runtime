@@ -527,7 +527,7 @@ const HttpsBundleTrust = struct {
     enabled: bool = false,
     realtime_now_seconds: i64 = 0,
     allocator: std.heap.FixedBufferAllocator = std.heap.FixedBufferAllocator.init(&https_bundle_allocator_bytes),
-    bundle: Certificate.Bundle = .{},
+    bundle: Certificate.Bundle = .empty,
 };
 
 var https_bundle_allocator_bytes: [https_bundle_allocator_bytes_len]u8 = [_]u8{0} ** https_bundle_allocator_bytes_len;
@@ -614,7 +614,7 @@ pub fn configureHttpsBundleTrust(
     if (cert_der.len == 0 or cert_der.len > max_https_bundle_cert_der_len) return error.CertificateTooLarge;
 
     https_bundle_trust.allocator = std.heap.FixedBufferAllocator.init(&https_bundle_allocator_bytes);
-    https_bundle_trust.bundle = .{};
+    https_bundle_trust.bundle = .empty;
     const gpa = https_bundle_trust.allocator.allocator();
     https_bundle_trust.bundle.bytes.appendSlice(gpa, cert_der) catch return error.CertificateTooLarge;
     https_bundle_trust.bundle.parseCert(gpa, 0, realtime_now_seconds) catch {
@@ -663,7 +663,7 @@ pub fn clearHttpsBundleTrust() void {
     if (https_bundle_trust.bundle.bytes.items.len != 0 or https_bundle_trust.bundle.map.count() != 0) {
         https_bundle_trust.bundle.deinit(https_bundle_trust.allocator.allocator());
     }
-    https_bundle_trust.bundle = .{};
+    https_bundle_trust.bundle = .empty;
     https_bundle_trust.allocator = std.heap.FixedBufferAllocator.init(&https_bundle_allocator_bytes);
     https_bundle_trust.enabled = false;
     https_bundle_trust.realtime_now_seconds = 0;

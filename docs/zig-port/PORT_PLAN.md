@@ -10,10 +10,11 @@ Track and achieve OpenClaw Zig parity against upstream stable + beta baselines:
 while maintaining parity-first validation and release gating.
 
 Full-stack replacement execution reference:
-- ZigOS reference-only integration planning is now tracked in:
+- ZigOS integration planning is now tracked in:
   - `docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md`
   - `docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`
-  - current hard boundary: no ZigOS source import until upstream licensing is explicit
+  - `docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md`
+  - upstream ZigOS licensing is now explicit: `MIT`
   - first delivered adoption slice is clean-room `E1000` protocol reuse through `ARP` / `IPv4` / `UDP` / bounded `TCP`, because it expands hardware breadth without forcing a VFS/ELF/syscall redesign
   - `src/baremetal/e1000.zig` now provides the first ZAR-owned `82540EM`-class `E1000` path with PCI bind, MMIO + legacy I/O reset, EEPROM MAC readout, bounded TX/RX rings, and raw-frame send/receive telemetry
   - `src/baremetal/pci.zig` now discovers the `E1000` MMIO + I/O BAR pair and enables I/O, memory, and bus-master decode on the selected PCI function
@@ -22,6 +23,7 @@ Full-stack replacement execution reference:
   - `src/pal/net.zig` now routes the same raw-frame PAL seam through selectable `RTL8139` and `E1000` backends without regressing the existing RTL8139 path
   - `scripts/baremetal-qemu-e1000-arp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-e1000-udp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-dhcp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-dns-probe-check.ps1`, and `scripts/baremetal-qemu-e1000-tcp-probe-check.ps1` now prove live QEMU `E1000` ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, DHCP discover encode/decode, DNS query/response exchange, bounded TCP handshake/payload/teardown, and TX/RX counter advance over the freestanding PVH artifact
   - bounded framed tool-service reuse is now closed over `E1000` through `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1`, and bounded `HTTP` / `HTTPS` transport reuse remains closed through host regressions plus `scripts/baremetal-qemu-e1000-http-post-probe-check.ps1` and `scripts/baremetal-qemu-e1000-https-post-probe-check.ps1`
+  - second delivered adoption slice is the hosted benchmark lane through `src/benchmark_suite.zig`, `src/benchmark_main.zig`, and `scripts/benchmark-smoke-check.ps1`
 - `FS5.5` hardware-driver pivot update:
   - framebuffer/console strict closure is now reached locally.
   - real linear-framebuffer path shipped in `src/baremetal/framebuffer_console.zig`:

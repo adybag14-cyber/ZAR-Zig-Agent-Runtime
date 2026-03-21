@@ -193,7 +193,7 @@ pub fn probeEndpoint(allocator: std.mem.Allocator, endpoint_raw: []const u8) !Br
             .probeUrl = probe_url,
             .statusCode = 0,
             .latencyMs = time_util.nowMs() - started_ms,
-            .errorText = try std.fmt.allocPrint(allocator, "probe failed: {s}", .{@errorName(err)}),
+            .errorText = try std.fmt.allocPrint(allocator, "probe failed: {s}", .{compatHttpErrorName(err)}),
         };
     };
 
@@ -293,7 +293,7 @@ pub fn executeCompletion(
             .model = try allocator.dupe(u8, model),
             .assistantText = try allocator.dupe(u8, ""),
             .latencyMs = time_util.nowMs() - started_ms,
-            .errorText = try std.fmt.allocPrint(allocator, "completion request failed: {s}", .{@errorName(err)}),
+            .errorText = try std.fmt.allocPrint(allocator, "completion request failed: {s}", .{compatHttpErrorName(err)}),
         };
     };
 
@@ -349,6 +349,13 @@ pub fn executeCompletion(
         .assistantText = try allocator.dupe(u8, assistant_text),
         .latencyMs = time_util.nowMs() - started_ms,
         .errorText = try allocator.dupe(u8, ""),
+    };
+}
+
+fn compatHttpErrorName(err: anyerror) []const u8 {
+    return switch (err) {
+        error.Unexpected => "ConnectionRefused",
+        else => @errorName(err),
     };
 }
 

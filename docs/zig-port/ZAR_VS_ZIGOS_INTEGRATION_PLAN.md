@@ -6,9 +6,9 @@ This document tracks the strict, reference-only integration plan for ideas and f
 
 Current posture:
 
-- ZigOS is `reference only`.
-- No ZigOS source may be copied, translated, or mechanically ported into ZAR until upstream licensing is explicit.
-- All adoption work described here is clean-room work implemented against ZAR-native architecture, tests, probes, and release gates.
+- ZigOS upstream is now explicitly `MIT` licensed.
+- ZAR can legally study, adapt, or import ZigOS code when that is the right engineering choice.
+- Current delivered slices remain ZAR-owned implementations with ZAR-native tests, probes, and release gates.
 
 ## Source Baseline
 
@@ -29,23 +29,15 @@ This plan is based on:
   - `user/bin`
   - `user/lib`
 
-## Hard Gate: License And Provenance
+## License And Provenance
 
-ZigOS currently has no explicit repository license in the checked upstream source of truth.
+ZigOS now publishes an explicit upstream `MIT` license.
 
-That creates a hard legal boundary:
+That removes the previous legal blocker, but it does not remove ZAR's engineering requirements:
 
-1. no code copy
-2. no line-by-line port
-3. no translation of individual functions or files
-4. no transplant of tests or userland programs
-
-Allowed use until licensing is clarified:
-
-- architecture study
-- capability inventory
-- clean-room design notes
-- feature ordering and validation strategy
+1. imported or adapted code still needs ZAR-side ownership and review
+2. every adopted slice still needs ZAR-native validation
+3. issue/docs tracking must stay explicit about what was referenced, adapted, or reimplemented
 
 Any ZAR slice influenced by ZigOS must satisfy all of the following:
 
@@ -99,8 +91,8 @@ The order below is strict. It favors bounded clean-room wins before any redesign
 Required before any ZigOS-inspired implementation work:
 
 - keep this document current
-- keep no-copy / no-translation discipline explicit
-- keep issue tracking explicit about `reference only`
+- keep provenance explicit
+- keep issue tracking explicit about whether a slice is `reference-inspired`, `adapted`, or `imported`
 
 ### Z1. E1000 Clean-Room NIC Slice
 
@@ -137,6 +129,17 @@ Required closure:
 - allocator and syscall microbenchmarks
 - network stress probes
 - optional SMP stress once SMP breadth is expanded
+
+Current delivered scope:
+
+- `src/benchmark_suite.zig`
+- `src/benchmark_main.zig`
+- `scripts/benchmark-smoke-check.ps1`
+- hosted benchmark catalog for DNS, DHCP, TCP, runtime-state, and tool-service codec churn
+
+Tracking doc:
+
+- `docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md`
 
 ### Z3. ZAR-Native Introspection FS Layer
 
@@ -221,8 +224,6 @@ Reason:
 
 These are explicitly not part of the first ZigOS reference track:
 
-- copying ZigOS code
-- claiming ZigOS licensing is resolved
 - direct VFS import
 - direct ext2/FAT32 import
 - direct shell import
@@ -246,6 +247,7 @@ Any ZigOS-inspired ZAR slice must satisfy all of the following:
 
 ## Immediate Follow-Up
 
-The next concrete document is the clean-room E1000 plan:
+Concrete ZigOS-derived tracking docs now in-tree:
 
 - `docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`
+- `docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md`
