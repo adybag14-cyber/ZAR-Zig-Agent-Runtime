@@ -136,6 +136,23 @@ function Resolve-CompilerRtArchive {
     return $null
 }
 
+function Resolve-TemporaryRoot {
+    $candidates = @(
+        $env:TEMP,
+        $env:TMPDIR,
+        $env:TMP,
+        [System.IO.Path]::GetTempPath()
+    )
+
+    foreach ($candidate in $candidates) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+            return $candidate
+        }
+    }
+
+    throw 'Temporary directory is not available.'
+}
+
 function Test-CompilerRtArchiveElf {
     param(
         [string] $ArchivePath
@@ -150,7 +167,7 @@ function Test-CompilerRtArchiveElf {
         return $false
     }
 
-    $scratchRoot = Join-Path $env:TEMP 'zar-zig-probe-compiler-rt'
+    $scratchRoot = Join-Path (Resolve-TemporaryRoot) 'zar-zig-probe-compiler-rt'
     $scratchDir = Join-Path $scratchRoot ([System.Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force -Path $scratchDir | Out-Null
     try {
