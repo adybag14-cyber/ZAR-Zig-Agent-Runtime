@@ -82,6 +82,8 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
       - `protocol.tcp_handshake_payload`
       - `runtime.state_queue_cycle`
       - `tool_service.codec_parse`
+      - `filesystem.persistence_cycle`
+      - `filesystem.overlay_read_cycle`
     - third delivered adoption slice is a ZAR-native read-only introspection overlay inspired by ZigOS `procfs` / `sysfs`:
       - `src/baremetal/virtual_fs.zig` now exposes synthetic `/proc` and `/sys` trees over existing ZAR runtime, storage, display, and network state
       - `src/baremetal/filesystem.zig` now routes `GET` / `LIST` / `STAT` requests through that overlay while rejecting writes under `/proc` and `/sys`
