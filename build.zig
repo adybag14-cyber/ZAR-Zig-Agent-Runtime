@@ -15,6 +15,8 @@ pub fn build(b: *std.Build) void {
     const baremetal_e1000_ipv4_probe = b.option(bool, "baremetal-e1000-ipv4-probe", "Enable the E1000 IPv4 validation path in the freestanding image") orelse false;
     const baremetal_e1000_udp_probe = b.option(bool, "baremetal-e1000-udp-probe", "Enable the E1000 UDP validation path in the freestanding image") orelse false;
     const baremetal_e1000_tcp_probe = b.option(bool, "baremetal-e1000-tcp-probe", "Enable the E1000 TCP validation path in the freestanding image") orelse false;
+    const baremetal_e1000_dhcp_probe = b.option(bool, "baremetal-e1000-dhcp-probe", "Enable the E1000 DHCP validation path in the freestanding image") orelse false;
+    const baremetal_e1000_dns_probe = b.option(bool, "baremetal-e1000-dns-probe", "Enable the E1000 DNS validation path in the freestanding image") orelse false;
     const baremetal_e1000_http_post_probe = b.option(bool, "baremetal-e1000-http-post-probe", "Enable the E1000 HTTP POST validation path in the freestanding image") orelse false;
     const baremetal_e1000_https_post_probe = b.option(bool, "baremetal-e1000-https-post-probe", "Enable the E1000 HTTPS POST validation path in the freestanding image") orelse false;
     const baremetal_e1000_tool_service_probe = b.option(bool, "baremetal-e1000-tool-service-probe", "Enable the E1000 tool-service validation path in the freestanding image") orelse false;
@@ -115,6 +117,8 @@ pub fn build(b: *std.Build) void {
     baremetal_options.addOption(bool, "e1000_ipv4_probe", baremetal_e1000_ipv4_probe);
     baremetal_options.addOption(bool, "e1000_udp_probe", baremetal_e1000_udp_probe);
     baremetal_options.addOption(bool, "e1000_tcp_probe", baremetal_e1000_tcp_probe);
+    baremetal_options.addOption(bool, "e1000_dhcp_probe", baremetal_e1000_dhcp_probe);
+    baremetal_options.addOption(bool, "e1000_dns_probe", baremetal_e1000_dns_probe);
     baremetal_options.addOption(bool, "e1000_http_post_probe", baremetal_e1000_http_post_probe);
     baremetal_options.addOption(bool, "e1000_https_post_probe", baremetal_e1000_https_post_probe);
     baremetal_options.addOption(bool, "e1000_tool_service_probe", baremetal_e1000_tool_service_probe);

@@ -189,6 +189,14 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-e1000-tcp-probe-check.ps1
 
+      - name: Bare-metal QEMU E1000 DHCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-e1000-dhcp-probe-check.ps1
+
+      - name: Bare-metal QEMU E1000 DNS probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-e1000-dns-probe-check.ps1
+
       - name: Bare-metal QEMU E1000 tool-service probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1
