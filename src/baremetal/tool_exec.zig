@@ -5342,7 +5342,7 @@ test "baremetal tool exec reports persisted runtime snapshot and sessions" {
     try std.testing.expect(std.mem.indexOf(u8, session_result.stdout, "last_message=echo cli-runtime") != null);
 }
 
-test "baremetal tool exec exposes virtual proc and sys overlays" {
+test "baremetal tool exec exposes virtual proc sys and dev overlays" {
     storage_backend.resetForTest();
     filesystem.resetForTest();
     vga_text_console.resetForTest();
@@ -5360,6 +5360,7 @@ test "baremetal tool exec exposes virtual proc and sys overlays" {
     var list_result = try runCapture(std.testing.allocator, "ls /", 256, 256);
     defer list_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), list_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, list_result.stdout, "dir dev\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, list_result.stdout, "dir proc\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, list_result.stdout, "dir sys\n") != null);
 
@@ -5378,6 +5379,11 @@ test "baremetal tool exec exposes virtual proc and sys overlays" {
     defer sys_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), sys_result.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, sys_result.stdout, "backend=ram_disk") != null);
+
+    var dev_result = try runCapture(std.testing.allocator, "cat /dev/storage/state", 512, 256);
+    defer dev_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), dev_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, dev_result.stdout, "backend=ram_disk") != null);
 
     var stat_result = try runCapture(std.testing.allocator, "stat /proc/runtime/snapshot", 256, 256);
     defer stat_result.deinit(std.testing.allocator);

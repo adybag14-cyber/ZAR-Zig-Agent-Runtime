@@ -87,6 +87,11 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
       - `src/baremetal/filesystem.zig` now routes `GET` / `LIST` / `STAT` requests through that overlay while rejecting writes under `/proc` and `/sys`
       - `src/baremetal/tool_exec.zig` and `src/baremetal/tool_service.zig` now expose the overlay through the existing command and typed service surface without widening the opcode model
       - `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves live `E1000` tool-service reuse for `/`, `/proc/runtime/snapshot`, `/proc/runtime/sessions/<id>`, `/sys/storage/state`, and virtual `STAT` readback on the freestanding PVH path
+    - fourth delivered adoption slice is a ZAR-native read-only device overlay inspired by ZigOS `devfs`:
+      - `src/baremetal/virtual_fs.zig` now exposes synthetic `/dev` entries for storage, display, network, and a bounded `/dev/null` sink on top of existing ZAR state
+      - `src/baremetal/filesystem.zig` now routes `GET` / `LIST` / `STAT` requests through that `/dev` overlay while rejecting writes under `/dev`
+      - `src/baremetal/tool_exec.zig` and `src/baremetal/tool_service.zig` now expose `/dev` through the same command and typed service surface
+      - `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves live `E1000` tool-service reuse for `/dev`, `/dev/storage/state`, and the expanded root overlay on the freestanding PVH path
   - keyboard/mouse is now strict-closed in [`docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md`](docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md)
   - `src/baremetal/ps2_input.zig` now contains a real x86 port-I/O backed PS/2 controller path
   - `scripts/baremetal-qemu-ps2-input-probe-check.ps1` proves IRQ-driven keyboard/mouse state updates against the freestanding PVH artifact
