@@ -11967,6 +11967,82 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
     const output_readback = filesystem.readFileAlloc(service_fba.allocator(), "/tools/out/data.txt", 64) catch return error.ToolServiceFailed;
     if (!std.mem.eql(u8, output_readback, "tcp-service-persisted")) return error.ToolServiceResponseMismatch;
 
+    const virtual_root_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 24 LIST /",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.startsWith(u8, virtual_root_response, "RESP 24 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_root_response, "dir proc\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_root_response, "dir sys\n") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A\n");
+
+    const virtual_snapshot_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 25 GET /proc/runtime/snapshot",
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, virtual_snapshot_response, "RESP 25 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_snapshot_response, "state_path=/runtime/state/runtime-state.json") == null) {
+        return error.ToolServiceResponseMismatch;
+    }
+    qemuDebugWrite("ETS9B\n");
+
+    const virtual_storage_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 26 GET /sys/storage/state",
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, virtual_storage_response, "RESP 26 ")) return error.ToolServiceResponseMismatch;
+    const expected_storage_backend = switch (storage_backend.activeBackend()) {
+        abi.storage_backend_ram_disk => "backend=ram_disk",
+        abi.storage_backend_ata_pio => "backend=ata_pio",
+        else => return error.ToolServiceResponseMismatch,
+    };
+    if (std.mem.indexOf(u8, virtual_storage_response, expected_storage_backend) == null) {
+        return error.ToolServiceResponseMismatch;
+    }
+    qemuDebugWrite("ETS9C\n");
+
+    const virtual_stat_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 27 STAT /proc/runtime/snapshot",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.startsWith(u8, virtual_stat_response, "RESP 27 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_stat_response, "path=/proc/runtime/snapshot kind=file size=") == null) {
+        return error.ToolServiceResponseMismatch;
+    }
+    qemuDebugWrite("ETS9D\n");
+
     const client_fin = client.buildFin() catch |err| return mapE1000TcpSessionProbeError(err);
     _ = try sendE1000TcpProbeSegment(source_ip, destination_ip, client.local_port, client.remote_port, client_fin);
     try pollE1000TcpProbePacket(eth, &scratch.packet_storage);

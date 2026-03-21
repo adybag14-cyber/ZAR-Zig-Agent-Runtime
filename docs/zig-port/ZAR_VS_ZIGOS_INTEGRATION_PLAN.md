@@ -9,6 +9,7 @@ Current posture:
 - ZigOS upstream is now explicitly `MIT` licensed.
 - ZAR can legally study, adapt, or import ZigOS code when that is the right engineering choice.
 - Current delivered slices remain ZAR-owned implementations with ZAR-native tests, probes, and release gates.
+- Delivered ZigOS-inspired slices: `3`
 
 ## Source Baseline
 
@@ -63,8 +64,8 @@ The table below is the current strict classification for every realistic ZigOS a
 | `VFS core` | `src/kernel/fs/vfs.zig` | High | Major redesign | ZAR-native VFS design doc first |
 | `tmpfs` | `src/kernel/fs/tmpfs.zig` | Medium-high | Adapt later | Rebuild concept over ZAR runtime/package/workspace state |
 | `devfs` | `src/kernel/fs/devfs.zig` | Medium-high | Adapt later | Rebuild concept over ZAR bare-metal devices |
-| `procfs` | `src/kernel/fs/procfs.zig` | Medium-high | Adapt later | Rebuild concept over ZAR runtime/process-equivalent surfaces |
-| `sysfs` | `src/kernel/fs/sysfs.zig` | Medium-high | Adapt later | Rebuild concept over ZAR driver/runtime/export state |
+| `procfs` | `src/kernel/fs/procfs.zig` | Medium-high | Adapt now | First bounded read-only `/proc` overlay delivered; broader VFS remains later |
+| `sysfs` | `src/kernel/fs/sysfs.zig` | Medium-high | Adapt now | First bounded read-only `/sys` overlay delivered; broader VFS remains later |
 | `ext2` | `src/kernel/fs/ext2.zig` | Medium | Major redesign | Only after ZAR VFS exists |
 | `fat32` | `src/kernel/fs/fat32.zig` | Medium | Major redesign | Only after ZAR VFS exists |
 | `TTY layer` | `src/kernel/fs/tty.zig` | Medium | Adapt later | Only if ZAR shell/interactive console expands |
@@ -157,6 +158,21 @@ This is not a direct VFS transplant. It is a ZAR-native exported tree over:
 - trust store
 - display outputs
 - device/export state
+
+Current delivered scope:
+
+- `src/baremetal/virtual_fs.zig` now exposes a bounded read-only `/proc` + `/sys` overlay over existing ZAR state
+- `src/baremetal/filesystem.zig` now routes `readFileAlloc`, `listDirectoryAlloc`, and `statSummary` through that overlay and rejects writes under `/proc` / `/sys`
+- `src/baremetal/tool_exec.zig` and `src/baremetal/tool_service.zig` reuse the existing builtin and typed `GET` / `LIST` / `STAT` surface for the overlay
+- `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves the overlay live on the clean-room `E1000` tool-service path
+
+Still intentionally out of scope for this slice:
+
+- full VFS mount model
+- `tmpfs`
+- `devfs`
+- external on-disk filesystems such as `ext2` / `fat32`
+- userspace-facing path semantics beyond the current read-only introspection tree
 
 ### Z4. Shell And Interactive Control Layer
 

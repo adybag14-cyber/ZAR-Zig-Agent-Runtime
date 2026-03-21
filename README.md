@@ -15,7 +15,7 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
   - Original OpenClaw baseline (`v2026.3.13-1`): `100/100` covered
   - Original OpenClaw beta baseline (`v2026.3.13-beta.1`): `100/100` covered
   - Union baseline: `141/141` covered (`MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> `433/433` passed
+- Latest local validation: `zig build test --summary all` -> `436/436` passed
 - Current edge release target tag: `v0.2.0-zig-edge.31`
 - License posture: repo-wide `GPL-2.0-only` with Linux-style SPDX headers on repo-owned source and script files
 - Toolchain policy: Codeberg `master` is canonical; `adybag14-cyber/zig` publishes rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
@@ -82,6 +82,11 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
       - `protocol.tcp_handshake_payload`
       - `runtime.state_queue_cycle`
       - `tool_service.codec_parse`
+    - third delivered adoption slice is a ZAR-native read-only introspection overlay inspired by ZigOS `procfs` / `sysfs`:
+      - `src/baremetal/virtual_fs.zig` now exposes synthetic `/proc` and `/sys` trees over existing ZAR runtime, storage, display, and network state
+      - `src/baremetal/filesystem.zig` now routes `GET` / `LIST` / `STAT` requests through that overlay while rejecting writes under `/proc` and `/sys`
+      - `src/baremetal/tool_exec.zig` and `src/baremetal/tool_service.zig` now expose the overlay through the existing command and typed service surface without widening the opcode model
+      - `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves live `E1000` tool-service reuse for `/`, `/proc/runtime/snapshot`, `/proc/runtime/sessions/<id>`, `/sys/storage/state`, and virtual `STAT` readback on the freestanding PVH path
   - keyboard/mouse is now strict-closed in [`docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md`](docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md)
   - `src/baremetal/ps2_input.zig` now contains a real x86 port-I/O backed PS/2 controller path
   - `scripts/baremetal-qemu-ps2-input-probe-check.ps1` proves IRQ-driven keyboard/mouse state updates against the freestanding PVH artifact
