@@ -56,6 +56,12 @@ pub fn build(b: *std.Build) void {
     if (target.result.os.tag == .windows) {
         benchmark_module.strip = true;
     }
+    if (target.result.os.tag == .linux and target.result.abi.isAndroid() and target.result.cpu.arch == .arm) {
+        // Keep the benchmark binary on the same single-threaded Android ARM policy as
+        // the main runtime binary so ReleaseFast cross-target builds do not pull in
+        // TLS runtime linkage that currently fails under the pinned Zig lane.
+        benchmark_module.single_threaded = true;
+    }
 
     const exe = b.addExecutable(.{
         .name = "openclaw-zig",
