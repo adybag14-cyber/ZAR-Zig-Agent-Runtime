@@ -796,7 +796,7 @@ test "filesystem lists direct child entries only" {
 
     const root_listing = try listDirectoryAlloc(std.testing.allocator, "/", 64);
     defer std.testing.allocator.free(root_listing);
-    try std.testing.expectEqualStrings("dir packages\ndir proc\ndir sys\n", root_listing);
+    try std.testing.expectEqualStrings("dir packages\ndir dev\ndir proc\ndir sys\n", root_listing);
 
     const packages_listing = try listDirectoryAlloc(std.testing.allocator, "/packages", 64);
     defer std.testing.allocator.free(packages_listing);
@@ -811,7 +811,7 @@ test "filesystem lists direct child entries only" {
     try std.testing.expectEqualStrings("file main.oc 4\n", bin_listing);
 }
 
-test "filesystem exposes virtual proc and sys overlays" {
+test "filesystem exposes virtual proc sys and dev overlays" {
     storage_backend.resetForTest();
     resetForTest();
     try init();
@@ -849,6 +849,21 @@ test "filesystem exposes virtual proc and sys overlays" {
     defer std.testing.allocator.free(storage_state);
     try std.testing.expect(std.mem.indexOf(u8, storage_state, "backend=ram_disk") != null);
 
+    const dev_listing = try listDirectoryAlloc(std.testing.allocator, "/dev", 256);
+    defer std.testing.allocator.free(dev_listing);
+    try std.testing.expect(std.mem.indexOf(u8, dev_listing, "dir storage\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dev_listing, "dir display\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dev_listing, "dir net\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dev_listing, "file null 0\n") != null);
+
+    const dev_storage_state = try readFileAlloc(std.testing.allocator, "/dev/storage/state", 512);
+    defer std.testing.allocator.free(dev_storage_state);
+    try std.testing.expect(std.mem.indexOf(u8, dev_storage_state, "backend=ram_disk") != null);
+
+    const dev_display_state = try readFileAlloc(std.testing.allocator, "/dev/display/state", 512);
+    defer std.testing.allocator.free(dev_display_state);
+    try std.testing.expect(std.mem.indexOf(u8, dev_display_state, "outputs=") != null);
+
     const sys_listing = try listDirectoryAlloc(std.testing.allocator, "/sys", 256);
     defer std.testing.allocator.free(sys_listing);
     try std.testing.expect(std.mem.indexOf(u8, sys_listing, "dir kernel\n") != null);
@@ -869,9 +884,13 @@ test "filesystem rejects writes under virtual proc and sys trees" {
     resetForTest();
     try init();
 
+    try std.testing.expectError(error.ReadOnlyPath, createDirPath("/dev/net/new"));
     try std.testing.expectError(error.ReadOnlyPath, createDirPath("/proc/runtime/new"));
+    try std.testing.expectError(error.ReadOnlyPath, writeFile("/dev/storage/state", "nope", 0));
     try std.testing.expectError(error.ReadOnlyPath, writeFile("/sys/net/state", "nope", 0));
+    try std.testing.expectError(error.ReadOnlyPath, deleteFile("/dev/null", 0));
     try std.testing.expectError(error.ReadOnlyPath, deleteFile("/proc/version", 0));
+    try std.testing.expectError(error.ReadOnlyPath, deleteTree("/dev/display", 0));
     try std.testing.expectError(error.ReadOnlyPath, deleteTree("/sys/display", 0));
 }
 

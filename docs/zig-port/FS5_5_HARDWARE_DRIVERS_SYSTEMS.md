@@ -18,7 +18,7 @@ This track exists to remove guesswork. It defines the real bare-metal subsystems
 
 ## ZigOS Reference Track
 
-Status: `Slices 1-3 delivered`
+Status: `Slices 1-4 delivered`
 
 This track uses `Cameron-Lyons/zigos` as a reference architecture and source candidate where it improves ZAR.
 
@@ -65,7 +65,16 @@ Delivered third adoption slice:
 - `src/baremetal/tool_exec.zig` and `src/baremetal/tool_service.zig` now expose the overlay through the existing builtin and typed `GET` / `LIST` / `STAT` surface instead of inventing a second management protocol
 - host regressions now prove `/proc/runtime/snapshot`, `/proc/runtime/sessions/<id>`, `/sys/storage/state`, root overlay listing, and read-only path rejection
 - `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves the same overlay live over the clean-room `E1000` tool-service path, including `/`, `/proc/runtime/snapshot`, `/sys/storage/state`, and virtual `STAT` readback
-- full ZigOS-style VFS, `tmpfs`, `devfs`, `ext2`, and `fat32` remain future redesign work; this slice closes the first bounded introspection layer only
+
+Delivered fourth adoption slice:
+
+- ZAR-native read-only device overlay inspired by ZigOS `devfs`
+- `src/baremetal/virtual_fs.zig` now exposes synthetic `/dev` entries for storage, display, network, and a bounded `/dev/null` sink on top of existing ZAR state
+- `src/baremetal/filesystem.zig` now routes `readFileAlloc`, `listDirectoryAlloc`, and `statSummary` through that `/dev` overlay and rejects writes under `/dev`
+- `src/baremetal/tool_exec.zig` and `src/baremetal/tool_service.zig` now expose `/dev` through the same builtin and typed `GET` / `LIST` / `STAT` surface
+- host regressions now prove `/dev`, `/dev/storage/state`, `/dev/display/state`, root overlay listing, and read-only path rejection
+- `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves `/`, `/dev`, `/dev/storage/state`, and virtual `STAT` readback live over the `E1000` tool-service path
+- full ZigOS-style VFS, `tmpfs`, mount semantics, `ext2`, and `fat32` remain future redesign work; this slice closes the bounded `/dev` overlay only
 
 `FS5.5` is not complete until each subsystem has:
 

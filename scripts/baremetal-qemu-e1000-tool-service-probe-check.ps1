@@ -124,15 +124,73 @@ function Resolve-CompilerRtArchive {
         return $null
     }
 
-    $candidate = Get-ChildItem -Path $objRoot -Recurse -Filter 'libcompiler_rt.a' -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
+    $candidates = Get-ChildItem -Path $objRoot -Recurse -Filter 'libcompiler_rt.a' -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending
 
-    if ($null -ne $candidate) {
-        return $candidate.FullName
+    foreach ($candidate in $candidates) {
+        if (Test-CompilerRtArchiveElf -ArchivePath $candidate.FullName) {
+            return $candidate.FullName
+        }
     }
 
     return $null
+}
+
+function Resolve-TemporaryRoot {
+    $candidates = @(
+        $env:TEMP,
+        $env:TMPDIR,
+        $env:TMP,
+        [System.IO.Path]::GetTempPath()
+    )
+
+    foreach ($candidate in $candidates) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+            return $candidate
+        }
+    }
+
+    throw 'Temporary directory is not available.'
+}
+
+function Test-CompilerRtArchiveElf {
+    param(
+        [string] $ArchivePath
+    )
+
+    if (-not (Test-Path $ArchivePath)) {
+        return $false
+    }
+
+    $memberName = (& $zig ar t $ArchivePath 2>$null | Select-Object -First 1)
+    if ([string]::IsNullOrWhiteSpace($memberName)) {
+        return $false
+    }
+
+    $scratchRoot = Join-Path (Resolve-TemporaryRoot) 'zar-zig-probe-compiler-rt'
+    $scratchDir = Join-Path $scratchRoot ([System.Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $scratchDir | Out-Null
+    try {
+        Push-Location $scratchDir
+        try {
+            & $zig ar x $ArchivePath $memberName 2>$null | Out-Null
+        } finally {
+            Pop-Location
+        }
+        $memberPath = Join-Path $scratchDir $memberName
+        if (-not (Test-Path $memberPath)) {
+            return $false
+        }
+        $bytes = [System.IO.File]::ReadAllBytes($memberPath)
+        if ($bytes.Length -lt 4) {
+            return $false
+        }
+        return ($bytes[0] -eq 0x7F -and $bytes[1] -eq 0x45 -and $bytes[2] -eq 0x4C -and $bytes[3] -eq 0x46)
+    } finally {
+        if (Test-Path $scratchDir) {
+            Remove-Item -Force -Recurse $scratchDir
+        }
+    }
 }
 
 function New-RawDiskImage {

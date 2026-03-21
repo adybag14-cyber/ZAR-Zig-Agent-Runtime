@@ -25,6 +25,7 @@ Full-stack replacement execution reference:
   - bounded framed tool-service reuse is now closed over `E1000` through `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1`, and bounded `HTTP` / `HTTPS` transport reuse remains closed through host regressions plus `scripts/baremetal-qemu-e1000-http-post-probe-check.ps1` and `scripts/baremetal-qemu-e1000-https-post-probe-check.ps1`
   - second delivered adoption slice is the hosted benchmark lane through `src/benchmark_suite.zig`, `src/benchmark_main.zig`, and `scripts/benchmark-smoke-check.ps1`
   - third delivered adoption slice is a ZAR-native read-only introspection overlay through `src/baremetal/virtual_fs.zig` and `src/baremetal/filesystem.zig`, exposing `/proc` + `/sys` over the existing runtime/storage/display/network state, reusing the existing builtin and typed `GET` / `LIST` / `STAT` tool-service surface, and proving the same overlay live over `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1`
+  - fourth delivered adoption slice is a ZAR-native read-only device overlay through `src/baremetal/virtual_fs.zig` and `src/baremetal/filesystem.zig`, exposing `/dev` over the existing storage/display/network device state, reusing the existing builtin and typed `GET` / `LIST` / `STAT` tool-service surface, and proving the same overlay live over `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1`
 - `FS5.5` hardware-driver pivot update:
   - framebuffer/console strict closure is now reached locally.
   - real linear-framebuffer path shipped in `src/baremetal/framebuffer_console.zig`:

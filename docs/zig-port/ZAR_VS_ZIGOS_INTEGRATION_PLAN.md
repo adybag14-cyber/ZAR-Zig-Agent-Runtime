@@ -2,14 +2,14 @@
 
 ## Status
 
-This document tracks the strict, reference-only integration plan for ideas and feature targets observed in `Cameron-Lyons/zigos`.
+This document tracks the strict integration plan for ideas, adapted code, and feature targets observed in `Cameron-Lyons/zigos`.
 
 Current posture:
 
 - ZigOS upstream is now explicitly `MIT` licensed.
 - ZAR can legally study, adapt, or import ZigOS code when that is the right engineering choice.
 - Current delivered slices remain ZAR-owned implementations with ZAR-native tests, probes, and release gates.
-- Delivered ZigOS-inspired slices: `3`
+- Delivered ZigOS-inspired slices: `4`
 
 ## Source Baseline
 
@@ -42,11 +42,11 @@ That removes the previous legal blocker, but it does not remove ZAR's engineerin
 
 Any ZAR slice influenced by ZigOS must satisfy all of the following:
 
-1. ZAR-owned implementation only
-2. ZAR-owned tests only
-3. ZAR-owned live probe coverage only
-4. no imported upstream text beyond short factual references
-5. explicit tracking note that the slice is `reference-inspired`, not imported
+1. implementation is either ZAR-owned or explicitly tracked as adapted/imported ZigOS code
+2. tests remain ZAR-owned
+3. live probe coverage remains ZAR-owned
+4. provenance stays explicit in docs and issue tracking
+5. each slice is labeled as `reference-inspired`, `adapted`, or `imported`
 
 ## Capability Inventory
 
@@ -63,7 +63,7 @@ The table below is the current strict classification for every realistic ZigOS a
 | `VGA path` | `src/kernel/drivers/vga.zig` | Low | Already covered conceptually | Reference only |
 | `VFS core` | `src/kernel/fs/vfs.zig` | High | Major redesign | ZAR-native VFS design doc first |
 | `tmpfs` | `src/kernel/fs/tmpfs.zig` | Medium-high | Adapt later | Rebuild concept over ZAR runtime/package/workspace state |
-| `devfs` | `src/kernel/fs/devfs.zig` | Medium-high | Adapt later | Rebuild concept over ZAR bare-metal devices |
+| `devfs` | `src/kernel/fs/devfs.zig` | Medium-high | Adapt now | First bounded read-only `/dev` overlay delivered; broader device/VFS model remains later |
 | `procfs` | `src/kernel/fs/procfs.zig` | Medium-high | Adapt now | First bounded read-only `/proc` overlay delivered; broader VFS remains later |
 | `sysfs` | `src/kernel/fs/sysfs.zig` | Medium-high | Adapt now | First bounded read-only `/sys` overlay delivered; broader VFS remains later |
 | `ext2` | `src/kernel/fs/ext2.zig` | Medium | Major redesign | Only after ZAR VFS exists |
@@ -85,7 +85,7 @@ The table below is the current strict classification for every realistic ZigOS a
 
 ## Integration Order
 
-The order below is strict. It favors bounded clean-room wins before any redesign-heavy GP-OS work.
+The order below is strict. It favors bounded, low-risk wins before any redesign-heavy GP-OS work.
 
 ### Z0. Provenance Discipline
 
@@ -165,12 +165,15 @@ Current delivered scope:
 - `src/baremetal/filesystem.zig` now routes `readFileAlloc`, `listDirectoryAlloc`, and `statSummary` through that overlay and rejects writes under `/proc` / `/sys`
 - `src/baremetal/tool_exec.zig` and `src/baremetal/tool_service.zig` reuse the existing builtin and typed `GET` / `LIST` / `STAT` surface for the overlay
 - `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves the overlay live on the clean-room `E1000` tool-service path
+- `src/baremetal/virtual_fs.zig` now also exposes a bounded read-only `/dev` overlay over existing ZAR storage, display, and network device state
+- `src/baremetal/filesystem.zig` now routes `readFileAlloc`, `listDirectoryAlloc`, and `statSummary` through that `/dev` overlay and rejects writes under `/dev`
+- `src/baremetal/tool_exec.zig` and `src/baremetal/tool_service.zig` now reuse the same builtin and typed `GET` / `LIST` / `STAT` surface for `/dev`
+- `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves `/`, `/dev`, and `/dev/storage/state` live on the `E1000` tool-service path
 
 Still intentionally out of scope for this slice:
 
 - full VFS mount model
 - `tmpfs`
-- `devfs`
 - external on-disk filesystems such as `ext2` / `fat32`
 - userspace-facing path semantics beyond the current read-only introspection tree
 
@@ -251,7 +254,7 @@ These are explicitly not part of the first ZigOS reference track:
 
 Any ZigOS-inspired ZAR slice must satisfy all of the following:
 
-1. implementation is ZAR-owned and clean-room
+1. implementation has explicit provenance and review
 2. host regression coverage exists
 3. live bare-metal proof exists where hardware semantics matter
 4. `zig build test --summary all` is green

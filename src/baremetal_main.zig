@@ -11980,6 +11980,7 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
         256,
     );
     if (!std.mem.startsWith(u8, virtual_root_response, "RESP 24 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_root_response, "dir dev\n") == null) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, virtual_root_response, "dir proc\n") == null) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, virtual_root_response, "dir sys\n") == null) return error.ToolServiceResponseMismatch;
     qemuDebugWrite("ETS9A\n");
@@ -12024,6 +12025,43 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
         return error.ToolServiceResponseMismatch;
     }
     qemuDebugWrite("ETS9C\n");
+
+    const virtual_dev_listing = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 28 LIST /dev",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.startsWith(u8, virtual_dev_listing, "RESP 28 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_dev_listing, "dir storage\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_dev_listing, "dir display\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_dev_listing, "dir net\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_dev_listing, "file null 0\n") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9E\n");
+
+    const virtual_dev_storage_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 29 GET /dev/storage/state",
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, virtual_dev_storage_response, "RESP 29 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_dev_storage_response, expected_storage_backend) == null) {
+        return error.ToolServiceResponseMismatch;
+    }
+    qemuDebugWrite("ETS9F\n");
 
     const virtual_stat_response = try exchangeE1000TcpProbeServiceRequest(
         eth,

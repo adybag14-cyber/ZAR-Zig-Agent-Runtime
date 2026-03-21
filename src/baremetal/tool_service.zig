@@ -3693,7 +3693,7 @@ test "baremetal tool service handles framed filesystem requests" {
     try std.testing.expectEqualStrings("RESP 14 16\nfile tool.txt 4\n", list_response);
 }
 
-test "baremetal tool service exposes virtual proc and sys overlays" {
+test "baremetal tool service exposes virtual proc sys and dev overlays" {
     resetPersistentStateForTest();
 
     var runtime = try runtime_bridge.initRuntime(std.heap.page_allocator);
@@ -3709,6 +3709,7 @@ test "baremetal tool service exposes virtual proc and sys overlays" {
     const list_root = try handleFramedRequest(std.testing.allocator, "REQ 15 LIST /", 256, 256, 256);
     defer std.testing.allocator.free(list_root);
     try std.testing.expect(std.mem.startsWith(u8, list_root, "RESP 15 "));
+    try std.testing.expect(std.mem.indexOf(u8, list_root, "dir dev\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, list_root, "dir proc\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, list_root, "dir sys\n") != null);
 
@@ -3727,6 +3728,11 @@ test "baremetal tool service exposes virtual proc and sys overlays" {
     defer std.testing.allocator.free(get_storage);
     try std.testing.expect(std.mem.startsWith(u8, get_storage, "RESP 18 "));
     try std.testing.expect(std.mem.indexOf(u8, get_storage, "backend=ram_disk") != null);
+
+    const get_dev_storage = try handleFramedRequest(std.testing.allocator, "REQ 20 GET /dev/storage/state", 512, 256, 512);
+    defer std.testing.allocator.free(get_dev_storage);
+    try std.testing.expect(std.mem.startsWith(u8, get_dev_storage, "RESP 20 "));
+    try std.testing.expect(std.mem.indexOf(u8, get_dev_storage, "backend=ram_disk") != null);
 
     const stat_snapshot = try handleFramedRequest(std.testing.allocator, "REQ 19 STAT /proc/runtime/snapshot", 256, 256, 256);
     defer std.testing.allocator.free(stat_snapshot);

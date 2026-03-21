@@ -29,6 +29,15 @@ const proc_version_path = "/proc/version";
 const proc_runtime_path = "/proc/runtime";
 const proc_runtime_snapshot_path = "/proc/runtime/snapshot";
 const proc_runtime_sessions_path = "/proc/runtime/sessions";
+const dev_null_path = "/dev/null";
+const dev_storage_path = "/dev/storage";
+const dev_storage_state_path = "/dev/storage/state";
+const dev_display_path = "/dev/display";
+const dev_display_state_path = "/dev/display/state";
+const dev_display_outputs_path = "/dev/display/outputs";
+const dev_net_path = "/dev/net";
+const dev_net_state_path = "/dev/net/state";
+const dev_net_route_path = "/dev/net/route";
 const sys_kernel_version_path = "/sys/kernel/version";
 const sys_kernel_machine_path = "/sys/kernel/machine";
 const sys_storage_state_path = "/sys/storage/state";
@@ -40,6 +49,8 @@ const sys_net_route_path = "/sys/net/route";
 pub fn handles(path: []const u8) bool {
     return std.mem.eql(u8, path, "/proc") or
         std.mem.startsWith(u8, path, "/proc/") or
+        std.mem.eql(u8, path, "/dev") or
+        std.mem.startsWith(u8, path, "/dev/") or
         std.mem.eql(u8, path, "/sys") or
         std.mem.startsWith(u8, path, "/sys/");
 }
@@ -62,6 +73,7 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     defer out.deinit(allocator);
 
     if (std.mem.eql(u8, path, "/")) {
+        try appendDirectoryLine(allocator, &out, "dev", max_bytes);
         try appendDirectoryLine(allocator, &out, "proc", max_bytes);
         try appendDirectoryLine(allocator, &out, "sys", max_bytes);
         return out.toOwnedSlice(allocator);
@@ -78,6 +90,43 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     }
     if (std.mem.eql(u8, path, proc_runtime_sessions_path)) {
         try appendRuntimeSessionDirectory(allocator, &out, max_bytes);
+        return out.toOwnedSlice(allocator);
+    }
+    if (std.mem.eql(u8, path, "/dev")) {
+        try appendDirectoryLine(allocator, &out, "storage", max_bytes);
+        try appendDirectoryLine(allocator, &out, "display", max_bytes);
+        try appendDirectoryLine(allocator, &out, "net", max_bytes);
+        try appendFileLine(allocator, &out, "null", dev_null_path, max_bytes);
+        return out.toOwnedSlice(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_storage_path)) {
+        try appendFileLine(allocator, &out, "state", dev_storage_state_path, max_bytes);
+        return out.toOwnedSlice(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_display_path)) {
+        try appendFileLine(allocator, &out, "state", dev_display_state_path, max_bytes);
+        try appendDirectoryLine(allocator, &out, "outputs", max_bytes);
+        return out.toOwnedSlice(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_display_outputs_path)) {
+        var dev_index: u16 = 0;
+        while (dev_index < display_output.outputCount()) : (dev_index += 1) {
+            const name = try std.fmt.allocPrint(allocator, "{d}", .{dev_index});
+            defer allocator.free(name);
+            try appendDirectoryLine(allocator, &out, name, max_bytes);
+        }
+        return out.toOwnedSlice(allocator);
+    }
+    if (parseDevOutputDirectory(path)) |output_index| {
+        const entry = display_output.outputEntry(output_index);
+        if (entry.connected == 0) return error.FileNotFound;
+        try appendFileLineForPath(allocator, &out, "detail", try outputDetailPathForBase(allocator, dev_display_outputs_path, output_index), max_bytes);
+        try appendFileLineForPath(allocator, &out, "modes", try outputModesPathForBase(allocator, dev_display_outputs_path, output_index), max_bytes);
+        return out.toOwnedSlice(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_net_path)) {
+        try appendFileLine(allocator, &out, "state", dev_net_state_path, max_bytes);
+        try appendFileLine(allocator, &out, "route", dev_net_route_path, max_bytes);
         return out.toOwnedSlice(allocator);
     }
     if (std.mem.eql(u8, path, "/sys")) {
@@ -155,12 +204,18 @@ fn isDirectoryPath(path: []const u8) bool {
     if (std.mem.eql(u8, path, "/proc")) return true;
     if (std.mem.eql(u8, path, proc_runtime_path)) return true;
     if (std.mem.eql(u8, path, proc_runtime_sessions_path)) return true;
+    if (std.mem.eql(u8, path, "/dev")) return true;
+    if (std.mem.eql(u8, path, dev_storage_path)) return true;
+    if (std.mem.eql(u8, path, dev_display_path)) return true;
+    if (std.mem.eql(u8, path, dev_display_outputs_path)) return true;
+    if (std.mem.eql(u8, path, dev_net_path)) return true;
     if (std.mem.eql(u8, path, "/sys")) return true;
     if (std.mem.eql(u8, path, "/sys/kernel")) return true;
     if (std.mem.eql(u8, path, "/sys/storage")) return true;
     if (std.mem.eql(u8, path, "/sys/display")) return true;
     if (std.mem.eql(u8, path, sys_display_outputs_path)) return true;
     if (std.mem.eql(u8, path, "/sys/net")) return true;
+    if (parseDevOutputDirectory(path)) |_| return true;
     return parseOutputDirectory(path) != null;
 }
 
@@ -168,12 +223,18 @@ fn isFilePath(path: []const u8) bool {
     if (std.mem.eql(u8, path, proc_version_path)) return true;
     if (std.mem.eql(u8, path, proc_runtime_snapshot_path)) return true;
     if (parseRuntimeSessionPath(path) != null) return true;
+    if (std.mem.eql(u8, path, dev_null_path)) return true;
+    if (std.mem.eql(u8, path, dev_storage_state_path)) return true;
+    if (std.mem.eql(u8, path, dev_display_state_path)) return true;
+    if (std.mem.eql(u8, path, dev_net_state_path)) return true;
+    if (std.mem.eql(u8, path, dev_net_route_path)) return true;
     if (std.mem.eql(u8, path, sys_kernel_version_path)) return true;
     if (std.mem.eql(u8, path, sys_kernel_machine_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_state_path)) return true;
     if (std.mem.eql(u8, path, sys_display_state_path)) return true;
     if (std.mem.eql(u8, path, sys_net_state_path)) return true;
     if (std.mem.eql(u8, path, sys_net_route_path)) return true;
+    if (parseDevOutputFilePath(path) != null) return true;
     if (parseOutputFilePath(path) != null) return true;
     return false;
 }
@@ -194,6 +255,21 @@ fn renderFileAlloc(allocator: std.mem.Allocator, path: []const u8) Error![]u8 {
             error.SessionNotFound => error.FileNotFound,
             else => error.FileNotFound,
         };
+    }
+    if (std.mem.eql(u8, path, dev_null_path)) {
+        return allocator.dupe(u8, "");
+    }
+    if (std.mem.eql(u8, path, dev_storage_state_path)) {
+        return renderStorageStateAlloc(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_display_state_path)) {
+        return renderDisplayStateAlloc(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_net_state_path)) {
+        return renderNetStateAlloc(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_net_route_path)) {
+        return renderNetRouteAlloc(allocator);
     }
     if (std.mem.eql(u8, path, sys_kernel_version_path)) {
         return std.fmt.allocPrint(
@@ -222,6 +298,12 @@ fn renderFileAlloc(allocator: std.mem.Allocator, path: []const u8) Error![]u8 {
         return renderNetRouteAlloc(allocator);
     }
     if (parseOutputFilePath(path)) |request| {
+        return switch (request.kind) {
+            .detail => renderDisplayOutputDetailAlloc(allocator, request.index),
+            .modes => renderDisplayOutputModesAlloc(allocator, request.index),
+        };
+    }
+    if (parseDevOutputFilePath(path)) |request| {
         return switch (request.kind) {
             .detail => renderDisplayOutputDetailAlloc(allocator, request.index),
             .modes => renderDisplayOutputModesAlloc(allocator, request.index),
@@ -448,18 +530,34 @@ fn parseRuntimeSessionPath(path: []const u8) ?[]const u8 {
 }
 
 fn parseOutputDirectory(path: []const u8) ?u16 {
-    if (!std.mem.startsWith(u8, path, sys_display_outputs_path)) return null;
-    if (path.len <= sys_display_outputs_path.len or path[sys_display_outputs_path.len] != '/') return null;
-    const tail = path[sys_display_outputs_path.len + 1 ..];
+    return parseOutputDirectoryForBase(sys_display_outputs_path, path);
+}
+
+fn parseDevOutputDirectory(path: []const u8) ?u16 {
+    return parseOutputDirectoryForBase(dev_display_outputs_path, path);
+}
+
+fn parseOutputDirectoryForBase(base_path: []const u8, path: []const u8) ?u16 {
+    if (!std.mem.startsWith(u8, path, base_path)) return null;
+    if (path.len <= base_path.len or path[base_path.len] != '/') return null;
+    const tail = path[base_path.len + 1 ..];
     if (tail.len == 0) return null;
     if (std.mem.indexOfScalar(u8, tail, '/')) |_| return null;
     return std.fmt.parseUnsigned(u16, tail, 10) catch null;
 }
 
 fn parseOutputFilePath(path: []const u8) ?OutputFileRequest {
-    if (!std.mem.startsWith(u8, path, sys_display_outputs_path)) return null;
-    if (path.len <= sys_display_outputs_path.len or path[sys_display_outputs_path.len] != '/') return null;
-    const tail = path[sys_display_outputs_path.len + 1 ..];
+    return parseOutputFilePathForBase(sys_display_outputs_path, path);
+}
+
+fn parseDevOutputFilePath(path: []const u8) ?OutputFileRequest {
+    return parseOutputFilePathForBase(dev_display_outputs_path, path);
+}
+
+fn parseOutputFilePathForBase(base_path: []const u8, path: []const u8) ?OutputFileRequest {
+    if (!std.mem.startsWith(u8, path, base_path)) return null;
+    if (path.len <= base_path.len or path[base_path.len] != '/') return null;
+    const tail = path[base_path.len + 1 ..];
     const slash = std.mem.indexOfScalar(u8, tail, '/') orelse return null;
     const index_text = tail[0..slash];
     const file_name = tail[slash + 1 ..];
@@ -472,11 +570,19 @@ fn parseOutputFilePath(path: []const u8) ?OutputFileRequest {
 }
 
 fn outputDetailPath(allocator: std.mem.Allocator, index: u16) ![]u8 {
-    return std.fmt.allocPrint(allocator, "{s}/{d}/detail", .{ sys_display_outputs_path, index });
+    return outputDetailPathForBase(allocator, sys_display_outputs_path, index);
 }
 
 fn outputModesPath(allocator: std.mem.Allocator, index: u16) ![]u8 {
-    return std.fmt.allocPrint(allocator, "{s}/{d}/modes", .{ sys_display_outputs_path, index });
+    return outputModesPathForBase(allocator, sys_display_outputs_path, index);
+}
+
+fn outputDetailPathForBase(allocator: std.mem.Allocator, base_path: []const u8, index: u16) ![]u8 {
+    return std.fmt.allocPrint(allocator, "{s}/{d}/detail", .{ base_path, index });
+}
+
+fn outputModesPathForBase(allocator: std.mem.Allocator, base_path: []const u8, index: u16) ![]u8 {
+    return std.fmt.allocPrint(allocator, "{s}/{d}/modes", .{ base_path, index });
 }
 
 fn checksumBytes(bytes: []const u8) u32 {
