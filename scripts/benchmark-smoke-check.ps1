@@ -39,7 +39,7 @@ if (-not $SkipBuild) {
     }
 }
 
-$outputPath = Join-Path $repo "tmp_benchmark_smoke_output.txt"
+$outputPath = Join-Path $repo ("tmp_benchmark_smoke_output_" + [System.Guid]::NewGuid().ToString("N") + ".txt")
 Remove-Item $outputPath -ErrorAction SilentlyContinue
 
 Push-Location $repo
@@ -52,17 +52,21 @@ try {
     Pop-Location
 }
 
-$output = Get-Content -Path $outputPath -Raw
-if ($output -notmatch 'BENCH:START') {
-    throw "Benchmark smoke output is missing BENCH:START"
-}
-if ($output -notmatch ("BENCH:CASE name=" + [regex]::Escape($Filter))) {
-    throw "Benchmark smoke output is missing the requested BENCH:CASE for $Filter"
-}
-if ($output -notmatch 'BENCH:END cases=1') {
-    throw "Benchmark smoke output is missing BENCH:END cases=1"
-}
+try {
+    $output = Get-Content -Path $outputPath -Raw
+    if ($output -notmatch 'BENCH:START') {
+        throw "Benchmark smoke output is missing BENCH:START"
+    }
+    if ($output -notmatch ("BENCH:CASE name=" + [regex]::Escape($Filter))) {
+        throw "Benchmark smoke output is missing the requested BENCH:CASE for $Filter"
+    }
+    if ($output -notmatch 'BENCH:END cases=1') {
+        throw "Benchmark smoke output is missing BENCH:END cases=1"
+    }
 
-Write-Output "BENCH_SMOKE_FILTER=$Filter"
-Write-Output "BENCH_SMOKE_DURATION_MS=$DurationMs"
-Write-Output "BENCH_SMOKE_WARMUP_MS=$WarmupMs"
+    Write-Output "BENCH_SMOKE_FILTER=$Filter"
+    Write-Output "BENCH_SMOKE_DURATION_MS=$DurationMs"
+    Write-Output "BENCH_SMOKE_WARMUP_MS=$WarmupMs"
+} finally {
+    Remove-Item $outputPath -ErrorAction SilentlyContinue
+}

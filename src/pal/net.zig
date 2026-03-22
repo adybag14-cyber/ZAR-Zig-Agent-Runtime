@@ -298,6 +298,10 @@ pub fn clearRouteStateForTest() void {
     clearRouteState();
 }
 
+pub fn clearRouteStateForBenchmark() void {
+    clearRouteState();
+}
+
 pub fn routeStatePtr() *const RouteState {
     return &route_state;
 }
@@ -1536,6 +1540,30 @@ pub fn resetDeviceForTest() void {
     active_backend = .rtl8139;
     rtl8139.resetForTest();
     e1000.resetForTest();
+}
+
+pub fn resetDeviceForBenchmark() void {
+    active_backend = .rtl8139;
+    rtl8139.resetForTest();
+    e1000.resetForTest();
+}
+
+pub fn enableSyntheticBackendForBenchmark(backend: Backend) void {
+    resetDeviceForBenchmark();
+    clearRouteStateForBenchmark();
+    active_backend = backend;
+    switch (backend) {
+        .rtl8139 => rtl8139.enableSyntheticDeviceForBenchmark(),
+        .e1000 => e1000.enableSyntheticDeviceForBenchmark(),
+    }
+}
+
+pub fn disableSyntheticBackendForBenchmark() void {
+    switch (active_backend) {
+        .rtl8139 => rtl8139.disableSyntheticDeviceForBenchmark(),
+        .e1000 => e1000.disableSyntheticDeviceForBenchmark(),
+    }
+    resetDeviceForBenchmark();
 }
 
 pub fn deviceState() *const EthernetState {

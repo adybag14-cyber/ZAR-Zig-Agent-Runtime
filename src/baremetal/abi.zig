@@ -254,6 +254,7 @@ pub const ethernet_backend_rtl8139: u8 = 1;
 pub const ethernet_backend_e1000: u8 = 2;
 pub const storage_backend_ram_disk: u8 = 1;
 pub const storage_backend_ata_pio: u8 = 2;
+pub const storage_backend_virtio_block: u8 = 3;
 pub const input_modifier_shift: u8 = 1 << 0;
 pub const input_modifier_ctrl: u8 = 1 << 1;
 pub const input_modifier_alt: u8 = 1 << 2;

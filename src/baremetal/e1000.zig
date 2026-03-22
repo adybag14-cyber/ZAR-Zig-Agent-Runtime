@@ -201,8 +201,17 @@ pub fn testEnableMockDevice() void {
     mock_enabled = true;
 }
 
+pub fn enableSyntheticDeviceForBenchmark() void {
+    resetForTest();
+    mock_enabled = true;
+}
+
 pub fn testDisableMockDevice() void {
     if (!builtin.is_test) return;
+    resetForTest();
+}
+
+pub fn disableSyntheticDeviceForBenchmark() void {
     resetForTest();
 }
 
@@ -474,7 +483,7 @@ fn initMock() void {
 }
 
 fn mockAvailable() bool {
-    return builtin.is_test and mock_enabled;
+    return mock_enabled;
 }
 
 fn hardwareBacked() bool {
@@ -710,7 +719,10 @@ fn flushMmio() void {
 }
 
 fn compilerFence() void {
-    asm volatile ("sfence" ::: .{ .memory = true });
+    switch (builtin.cpu.arch) {
+        .x86, .x86_64 => asm volatile ("sfence" ::: .{ .memory = true }),
+        else => asm volatile ("" ::: .{ .memory = true }),
+    }
 }
 
 fn debugWriteTxState(label: []const u8, next_slot: usize) void {

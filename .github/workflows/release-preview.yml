@@ -151,6 +151,14 @@ jobs:
         shell: pwsh
         run: ./scripts/benchmark-smoke-check.ps1 -SkipBuild
 
+      - name: Benchmark smoke lane (RTL8139 NIC loopback)
+        shell: pwsh
+        run: ./scripts/benchmark-smoke-check.ps1 -SkipBuild -Filter network.rtl8139_udp_loopback
+
+      - name: Benchmark smoke lane (E1000 NIC loopback)
+        shell: pwsh
+        run: ./scripts/benchmark-smoke-check.ps1 -SkipBuild -Filter network.e1000_udp_loopback
+
       - name: Setup Zig (0.16.0-dev.2736+3b515fbed) for bare-metal validate lane
         uses: mlugg/setup-zig@v2
         with:
@@ -194,6 +202,10 @@ jobs:
       - name: Bare-metal QEMU ATA GPT installer probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-ata-gpt-installer-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-block probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-block-probe-check.ps1
 
       - name: Bare-metal QEMU RTL8139 probe (optional)
         shell: pwsh

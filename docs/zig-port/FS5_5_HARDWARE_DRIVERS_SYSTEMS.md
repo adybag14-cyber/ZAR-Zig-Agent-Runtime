@@ -18,7 +18,7 @@ This track exists to remove guesswork. It defines the real bare-metal subsystems
 
 ## ZigOS Reference Track
 
-Status: `Slices 1-4 delivered`
+Status: `Slices 1-6 delivered`
 
 This track uses `Cameron-Lyons/zigos` as a reference architecture and source candidate where it improves ZAR.
 
@@ -52,9 +52,9 @@ Delivered first adoption slice:
 Delivered second adoption slice:
 
 - hosted benchmark and stress lane informed by ZigOS benchmark coverage
-- `src/benchmark_suite.zig` now provides ZAR-native benchmark cases for DNS, DHCP, TCP, runtime-state queue churn, tool-service codec parsing, filesystem persistence churn, and virtual overlay read churn
+- `src/benchmark_suite.zig` now provides ZAR-native benchmark cases for DNS, DHCP, TCP, runtime-state queue churn, tool-service codec parsing, filesystem persistence churn, virtual overlay read churn, and synthetic `RTL8139` / `E1000` UDP loopback comparisons
 - `src/benchmark_main.zig` now exposes `zig build bench` with deterministic `BENCH:START` / `BENCH:CASE` / `BENCH:END` output
-- `scripts/benchmark-smoke-check.ps1` now provides the strict hosted smoke gate for the benchmark lane
+- `scripts/benchmark-smoke-check.ps1` now provides the strict hosted smoke gate for the benchmark lane and is safe to run repeatedly because each invocation uses a unique temp output file
 - CI and release preview now run the benchmark smoke lane without regressing the normal hosted/bare-metal matrix
 
 Delivered third adoption slice:
@@ -74,7 +74,22 @@ Delivered fourth adoption slice:
 - `src/baremetal/tool_exec.zig` and `src/baremetal/tool_service.zig` now expose `/dev` through the same builtin and typed `GET` / `LIST` / `STAT` surface
 - host regressions now prove `/dev`, `/dev/storage/state`, `/dev/display/state`, root overlay listing, and read-only path rejection
 - `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves `/`, `/dev`, `/dev/storage/state`, and virtual `STAT` readback live over the `E1000` tool-service path
-- full ZigOS-style VFS, `tmpfs`, mount semantics, `ext2`, and `fat32` remain future redesign work; this slice closes the bounded `/dev` overlay only
+- full ZigOS-style VFS, generalized mount semantics, `ext2`, and `fat32` remain future redesign work; this slice closes the bounded `/dev` overlay only
+
+Delivered fifth adoption slice:
+
+- bounded non-persistent `tmpfs` inspired by ZigOS `tmpfs`
+- `src/baremetal/tmpfs.zig` now provides a ZAR-owned `/tmp` surface with directory create, file write/read/stat, direct-child listing, single-file delete, subtree delete, and reset-on-reinit semantics
+- `src/baremetal/filesystem.zig` now routes `/tmp` through that bounded non-persistent store without changing the persistent storage-backed path for `/runtime`, `/tools`, or `/packages`
+- host regressions now prove `/tmp` lifecycle behavior plus reset-driven non-persistence
+
+Delivered sixth adoption slice:
+
+- bounded `virtio-block` storage breadth inspired by ZigOS VirtIO device patterns
+- `src/baremetal/virtio_block.zig` now provides a ZAR-owned modern `virtio-block` path with queue bring-up, bounded read/write/flush requests, and mock-backed host validation
+- `src/baremetal/pci.zig` now discovers modern `virtio-block` PCI capability regions
+- `src/baremetal/storage_backend.zig` now prefers `virtio-block` over RAM-disk when available, while still preferring ATA PIO if both hardware-backed backends are present
+- `scripts/baremetal-qemu-virtio-block-probe-check.ps1` now proves live raw mutation, tool-layout readback, and filesystem superblock readback on the `virtio-block` path
 
 `FS5.5` is not complete until each subsystem has:
 

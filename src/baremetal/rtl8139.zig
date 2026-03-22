@@ -142,8 +142,17 @@ pub fn testEnableMockDevice() void {
     mock_enabled = true;
 }
 
+pub fn enableSyntheticDeviceForBenchmark() void {
+    resetForTest();
+    mock_enabled = true;
+}
+
 pub fn testDisableMockDevice() void {
     if (!builtin.is_test) return;
+    resetForTest();
+}
+
+pub fn disableSyntheticDeviceForBenchmark() void {
     resetForTest();
 }
 
@@ -257,6 +266,13 @@ pub fn sendFrame(frame: []const u8) Error!void {
 
     if (probe_send_hook) |hook| {
         hook(tx_buf[0..send_len]);
+        if (!builtin.is_test and !mockAvailable()) {
+            state.tx_packets +%= 1;
+            state.last_tx_len = @as(u32, @intCast(send_len));
+            state.last_tx_status = tsd_tok;
+            state.tx_index = @as(u8, @intCast((tx_slot + 1) % tx_descriptor_count));
+            return;
+        }
     }
 
     if (mockAvailable()) {
@@ -404,7 +420,7 @@ fn initMock() void {
 }
 
 fn mockAvailable() bool {
-    return builtin.is_test and mock_enabled;
+    return mock_enabled;
 }
 
 fn hardwareBacked() bool {

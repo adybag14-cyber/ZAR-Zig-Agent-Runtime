@@ -88,6 +88,14 @@ jobs:
         shell: pwsh
         run: ./scripts/benchmark-smoke-check.ps1 -SkipBuild
 
+      - name: Benchmark smoke lane (RTL8139 NIC loopback)
+        shell: pwsh
+        run: ./scripts/benchmark-smoke-check.ps1 -SkipBuild -Filter network.rtl8139_udp_loopback
+
+      - name: Benchmark smoke lane (E1000 NIC loopback)
+        shell: pwsh
+        run: ./scripts/benchmark-smoke-check.ps1 -SkipBuild -Filter network.e1000_udp_loopback
+
       - name: Method parity gate (Go latest release + original latest release + original latest beta)
         shell: pwsh
         run: ./scripts/check-go-method-parity.ps1 -GitHubToken "${{ github.token }}" -GoTag v2.14.0-go -OriginalRef v2026.3.13-1 -OriginalBetaRef v2026.3.13-beta.1 -OutputJsonPath parity-go-zig.json -OutputMarkdownPath parity-go-zig.md
@@ -168,6 +176,10 @@ jobs:
       - name: Bare-metal QEMU ATA GPT installer probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-ata-gpt-installer-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-block probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-block-probe-check.ps1
 
       - name: Bare-metal QEMU RTL8139 probe (optional)
         shell: pwsh

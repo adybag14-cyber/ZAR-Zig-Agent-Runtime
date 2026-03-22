@@ -581,11 +581,13 @@ fn readPhysicalSector(lba: u32, out: []u8) Error!void {
 fn readSectorHardware(lba: u32, out: []u8) Error!void {
     if (out.len != block_size) return error.UnalignedLength;
     selectDrive(lba);
+    ioDelay400ns();
     writePort8(io_sector_count, 1);
     writePort8(io_lba_low, @as(u8, @intCast(lba & 0xFF)));
     writePort8(io_lba_mid, @as(u8, @intCast((lba >> 8) & 0xFF)));
     writePort8(io_lba_high, @as(u8, @intCast((lba >> 16) & 0xFF)));
     writePort8(io_status_command, command_read_sectors);
+    ioDelay400ns();
     const status_value = try waitForDrqOrError();
     if ((status_value & (status_err | status_df)) != 0) return error.DeviceFault;
     var index: usize = 0;
@@ -594,17 +596,20 @@ fn readSectorHardware(lba: u32, out: []u8) Error!void {
         out[index] = @as(u8, @intCast(word & 0xFF));
         out[index + 1] = @as(u8, @intCast((word >> 8) & 0xFF));
     }
+    ioDelay400ns();
     try waitForReady();
 }
 
 fn writeSectorHardware(lba: u32, input: []const u8) Error!void {
     if (input.len != block_size) return error.UnalignedLength;
     selectDrive(lba);
+    ioDelay400ns();
     writePort8(io_sector_count, 1);
     writePort8(io_lba_low, @as(u8, @intCast(lba & 0xFF)));
     writePort8(io_lba_mid, @as(u8, @intCast((lba >> 8) & 0xFF)));
     writePort8(io_lba_high, @as(u8, @intCast((lba >> 16) & 0xFF)));
     writePort8(io_status_command, command_write_sectors);
+    ioDelay400ns();
     const status_value = try waitForDrqOrError();
     if ((status_value & (status_err | status_df)) != 0) return error.DeviceFault;
     var index: usize = 0;
@@ -612,17 +617,28 @@ fn writeSectorHardware(lba: u32, input: []const u8) Error!void {
         const word = @as(u16, input[index]) | (@as(u16, input[index + 1]) << 8);
         writePort16(io_data, word);
     }
+    ioDelay400ns();
     try waitForReady();
 }
 
 fn flushHardware() Error!void {
     selectDrive(0);
+    ioDelay400ns();
     writePort8(io_status_command, command_cache_flush);
+    ioDelay400ns();
     try waitForReady();
 }
 
 fn selectDrive(lba: u32) void {
     writePort8(io_drive_head, drive_master_lba | @as(u8, @intCast((lba >> 24) & 0x0F)));
+}
+
+fn ioDelay400ns() void {
+    if (!hardwareBacked()) return;
+    _ = readPort8(io_alt_status_device_control);
+    _ = readPort8(io_alt_status_device_control);
+    _ = readPort8(io_alt_status_device_control);
+    _ = readPort8(io_alt_status_device_control);
 }
 
 fn waitWhileBusy() bool {

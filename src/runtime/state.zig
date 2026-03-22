@@ -370,7 +370,16 @@ fn resolveStatePath(allocator: std.mem.Allocator, state_root: []const u8) ![]u8 
     if (trimmed.len == 0) return allocator.dupe(u8, "memory://runtime-state");
     if (isMemoryScheme(trimmed)) return allocator.dupe(u8, trimmed);
     if (std.mem.endsWith(u8, trimmed, ".json")) return allocator.dupe(u8, trimmed);
-    if (std.mem.startsWith(u8, trimmed, "/")) {
+    if (builtin.os.tag == .freestanding and std.mem.startsWith(u8, trimmed, "/")) {
+        var logical_root = trimmed;
+        while (logical_root.len > 1 and logical_root[logical_root.len - 1] == '/') {
+            logical_root = logical_root[0 .. logical_root.len - 1];
+        }
+        return std.fmt.allocPrint(allocator, "{s}/runtime-state.json", .{
+            if (logical_root.len == 0) "/" else logical_root,
+        });
+    }
+    if (std.mem.startsWith(u8, trimmed, "/") and isBaremetalLogicalRoot(trimmed)) {
         var logical_root = trimmed;
         while (logical_root.len > 1 and logical_root[logical_root.len - 1] == '/') {
             logical_root = logical_root[0 .. logical_root.len - 1];
@@ -390,6 +399,23 @@ fn isMemoryScheme(path: []const u8) bool {
     const prefix = "memory://";
     if (path.len < prefix.len) return false;
     return std.ascii.eqlIgnoreCase(path[0..prefix.len], prefix);
+}
+
+fn isBaremetalLogicalRoot(path: []const u8) bool {
+    return matchesBaremetalRoot(path, "/runtime") or
+        matchesBaremetalRoot(path, "/packages") or
+        matchesBaremetalRoot(path, "/pkg") or
+        matchesBaremetalRoot(path, "/tools") or
+        matchesBaremetalRoot(path, "/proc") or
+        matchesBaremetalRoot(path, "/sys") or
+        matchesBaremetalRoot(path, "/dev") or
+        matchesBaremetalRoot(path, "/loader") or
+        matchesBaremetalRoot(path, "/boot");
+}
+
+fn matchesBaremetalRoot(path: []const u8, root: []const u8) bool {
+    if (!std.mem.startsWith(u8, path, root)) return false;
+    return path.len == root.len or path[root.len] == '/';
 }
 
 fn formatJobKind(kind: JobKind) []const u8 {
@@ -444,6 +470,20 @@ test "runtime state queue preserves order" {
     try std.testing.expectEqual(JobKind.file_read, second.kind);
 
     try std.testing.expect(state.dequeueJob() == null);
+}
+
+test "resolveStatePath keeps hosted absolute roots distinct from baremetal logical roots" {
+    const allocator = std.testing.allocator;
+
+    const hosted = try resolveStatePath(allocator, "/home/runner/work/tmp/runtime-state");
+    defer allocator.free(hosted);
+    const hosted_expected = try std.fs.path.join(allocator, &.{ "/home/runner/work/tmp/runtime-state", "runtime-state.json" });
+    defer allocator.free(hosted_expected);
+    try std.testing.expectEqualStrings(hosted_expected, hosted);
+
+    const baremetal = try resolveStatePath(allocator, "/runtime/state");
+    defer allocator.free(baremetal);
+    try std.testing.expectEqualStrings("/runtime/state/runtime-state.json", baremetal);
 }
 
 test "runtime state queue depth stays correct across compaction cycles" {
