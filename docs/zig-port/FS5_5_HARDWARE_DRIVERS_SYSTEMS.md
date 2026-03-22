@@ -34,6 +34,7 @@ Tracked docs:
 - `docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`
 - `docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md`
 - `docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_NET_SLICE_PLAN.md`
+- `docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_BLOCK_SLICE_PLAN.md`
 
 Delivered first adoption slice:
 
@@ -91,6 +92,8 @@ Delivered sixth adoption slice:
 - `src/baremetal/pci.zig` now discovers modern `virtio-block` PCI capability regions
 - `src/baremetal/storage_backend.zig` now prefers `virtio-block` over RAM-disk when available, while still preferring ATA PIO if both hardware-backed backends are present
 - `scripts/baremetal-qemu-virtio-block-probe-check.ps1` now proves live raw mutation, tool-layout readback, and filesystem superblock readback on the `virtio-block` path
+- `src/baremetal_main.zig` now also carries a bounded `virtio-block` installer/runtime proof through `src/baremetal/disk_installer.zig`, including canonical loader/kernel/manifest seeding plus bootstrap package execution on the same backend
+- `scripts/baremetal-qemu-virtio-block-installer-probe-check.ps1` now proves live QEMU installer/runtime persistence on `virtio-blk-pci`, including on-image loader marker persistence, bootstrap state persistence, tool-layout magic, and filesystem magic
 
 Delivered seventh adoption slice:
 

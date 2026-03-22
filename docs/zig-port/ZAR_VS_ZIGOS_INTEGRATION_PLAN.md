@@ -9,7 +9,7 @@ Current posture:
 - ZigOS upstream is now explicitly `MIT` licensed.
 - ZAR can legally study, adapt, or import ZigOS code when that is the right engineering choice.
 - Current delivered slices remain ZAR-owned implementations with ZAR-native tests, probes, and release gates.
-- Delivered ZigOS-inspired slices: `6`
+- Delivered ZigOS-inspired slices: `7`
 
 ## Source Baseline
 
@@ -191,6 +191,8 @@ Current delivered scope:
 - `src/baremetal/pci.zig` now discovers modern `virtio-block` PCI capability regions
 - `src/baremetal/storage_backend.zig` now prefers `virtio-block` ahead of RAM-disk when the device is available, without regressing ATA priority when both are present
 - `scripts/baremetal-qemu-virtio-block-probe-check.ps1` now proves live raw mutation, tool-layout readback, and filesystem superblock readback on the `virtio-block` path
+- `src/baremetal_main.zig` now also carries a bounded installer/runtime proof on the same `virtio-block` backend through `src/baremetal/disk_installer.zig`
+- `scripts/baremetal-qemu-virtio-block-installer-probe-check.ps1` now proves live canonical loader/kernel/manifest/bootstrap persistence on `virtio-blk-pci`
 
 ### Z4. Shell And Interactive Control Layer
 

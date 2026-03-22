@@ -61,6 +61,7 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
       - [`docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`](docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md)
       - [`docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md`](docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md)
       - [`docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_NET_SLICE_PLAN.md`](docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_NET_SLICE_PLAN.md)
+      - [`docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_BLOCK_SLICE_PLAN.md`](docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_BLOCK_SLICE_PLAN.md)
     - first delivered adoption slice is a clean-room `E1000` path that reuses ZAR's existing network stack without forcing VFS/userspace redesign
     - `src/baremetal/e1000.zig` now provides the first `82540EM`-class `E1000` path with PCI bind, MMIO + legacy I/O reset, EEPROM MAC readout, bounded TX/RX rings, and raw-frame send/receive telemetry
     - `src/baremetal/pci.zig` now discovers the `E1000` MMIO + I/O BAR pair and enables I/O, memory, and bus-master decode on the selected PCI function
@@ -104,6 +105,7 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
       - `src/baremetal/virtio_block.zig` now provides a ZAR-owned modern `virtio-block` path with bounded queue bring-up plus read/write/flush requests
       - `src/baremetal/storage_backend.zig` now prefers `virtio-block` over RAM-disk when available, while still preferring ATA PIO if both hardware-backed backends are present
       - `scripts/baremetal-qemu-virtio-block-probe-check.ps1` now proves live raw mutation, tool-layout readback, and filesystem superblock readback on the `virtio-block` path
+      - `scripts/baremetal-qemu-virtio-block-installer-probe-check.ps1` now proves canonical installer/runtime persistence on the same `virtio-block` path, including loader marker persistence and bootstrap package state persistence
     - seventh delivered adoption slice is bounded `virtio-net` NIC breadth:
       - `src/baremetal/virtio_net.zig` now provides a ZAR-owned modern `virtio-net` path with modern PCI capability discovery, version-1 feature negotiation, MAC readout, bounded RX/TX queue bring-up, and raw-frame send/receive telemetry
       - `src/baremetal/pci.zig` now discovers modern `virtio-net` PCI capability regions
