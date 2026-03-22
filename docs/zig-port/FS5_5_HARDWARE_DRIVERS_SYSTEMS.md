@@ -99,6 +99,9 @@ Delivered sixth adoption slice:
 - `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1` now proves that same mount-layer behavior live on `virtio-blk-pci`, including persisted registry path markers and reloaded alias payload readback
 - `src/baremetal/vfs.zig` now provides a bounded internal VFS router over the persistent filesystem, `tmpfs`, the read-only `virtual_fs` trees, and the `/mnt` root, while `src/baremetal/filesystem.zig` now delegates public path operations through that router instead of open-coded per-call branching
 - `src/baremetal_main.zig` now widens the same `virtio-block` mount proof to cover merged root listing, `/proc/version` readback, and `/mnt/cache -> /tmp/cache` volatility across reset without regressing the persisted mount-alias contract
+- `src/baremetal/storage_registry.zig` now adds a bounded storage-layer registry over the active persistent backend, `tmpfs`, `virtual_fs`, and persisted mount aliases, plus raw `zarfs` / `ext2` / `fat32` detection on the active backend without claiming mounted external-filesystem support
+- `src/baremetal/virtual_fs.zig` now exposes that registry through `/dev/storage/registry` and `/sys/storage/registry`, while `/sys/storage/state` now also reports `detected_filesystem` plus `supported_filesystem_probes=zarfs,ext2,fat32`
+- `src/baremetal_main.zig` now widens the same `virtio-block` mount proof to validate `/sys/storage/state`, `/sys/storage/registry`, persistent `zarfs` classification on `virtio-block`, and `tmpfs` classification for `/mnt/cache -> /tmp/cache`
 
 Delivered seventh adoption slice:
 
