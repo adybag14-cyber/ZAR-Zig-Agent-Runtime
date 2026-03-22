@@ -719,7 +719,10 @@ fn flushMmio() void {
 }
 
 fn compilerFence() void {
-    asm volatile ("sfence" ::: .{ .memory = true });
+    switch (builtin.cpu.arch) {
+        .x86, .x86_64 => asm volatile ("sfence" ::: .{ .memory = true }),
+        else => asm volatile ("" ::: .{ .memory = true }),
+    }
 }
 
 fn debugWriteTxState(label: []const u8, next_slot: usize) void {

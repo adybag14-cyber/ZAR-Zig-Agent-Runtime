@@ -69,5 +69,32 @@ fn statNoFollowBaremetal(_: std.Io, path: []const u8) !std.Io.Dir.Stat {
 pub const statNoFollow = if (builtin.os.tag == .freestanding) statNoFollowBaremetal else statNoFollowHosted;
 
 fn shouldUseBaremetalFilesystem(path: []const u8) bool {
-    return builtin.is_test and std.mem.startsWith(u8, path, "/");
+    if (!builtin.is_test) return false;
+    if (!std.mem.startsWith(u8, path, "/")) return false;
+    return isBaremetalHostedPath(path);
+}
+
+fn isBaremetalHostedPath(path: []const u8) bool {
+    return matchesBaremetalRoot(path, "/runtime") or
+        matchesBaremetalRoot(path, "/packages") or
+        matchesBaremetalRoot(path, "/pkg") or
+        matchesBaremetalRoot(path, "/tools") or
+        matchesBaremetalRoot(path, "/proc") or
+        matchesBaremetalRoot(path, "/sys") or
+        matchesBaremetalRoot(path, "/dev") or
+        matchesBaremetalRoot(path, "/loader") or
+        matchesBaremetalRoot(path, "/boot");
+}
+
+fn matchesBaremetalRoot(path: []const u8, root: []const u8) bool {
+    if (!std.mem.startsWith(u8, path, root)) return false;
+    return path.len == root.len or path[root.len] == '/';
+}
+
+test "hosted pal fs path classifier only routes baremetal virtual roots" {
+    try std.testing.expect(isBaremetalHostedPath("/runtime/state/runtime-state.json"));
+    try std.testing.expect(isBaremetalHostedPath("/packages/demo/bin/main.oc"));
+    try std.testing.expect(!isBaremetalHostedPath("/home/runner/work/ZAR-Zig-Agent-Runtime/runtime-state.json"));
+    try std.testing.expect(!isBaremetalHostedPath("/tmp/zig-test-cache/runtime-state.json"));
+    try std.testing.expect(!shouldUseBaremetalFilesystem("C:\\temp\\runtime-state.json"));
 }
