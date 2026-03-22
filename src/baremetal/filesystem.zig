@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
+const builtin = @import("builtin");
 const abi = @import("abi.zig");
 const storage_backend = @import("storage_backend.zig");
 const tool_layout = @import("tool_layout.zig");
+const tmpfs = @import("tmpfs.zig");
 const virtual_fs = @import("virtual_fs.zig");
 
 pub const max_entries: usize = 128;
@@ -47,7 +49,7 @@ pub const Error = storage_backend.Error || std.mem.Allocator.Error || error{
     CorruptFilesystem,
 };
 
-pub fn resetForTest() void {
+fn resetPersistentState() void {
     state = .{
         .magic = abi.filesystem_magic,
         .api_version = abi.api_version,
@@ -78,8 +80,14 @@ pub fn resetForTest() void {
     deferred_persist_depth = 0;
 }
 
+pub fn resetForTest() void {
+    resetPersistentState();
+    tmpfs.resetForTest();
+}
+
 pub fn invalidateForBackendChange() void {
-    resetForTest();
+    resetPersistentState();
+    tmpfs.resetForTest();
 }
 
 pub fn init() Error!void {
@@ -121,6 +129,14 @@ pub fn entry(index: u32) abi.BaremetalFilesystemEntry {
 pub fn createDirPath(path: []const u8) Error!void {
     try init();
     const normalized = try normalizePath(path);
+    if (tmpfs.handles(normalized.slice())) {
+        return tmpfs.createDirPath(normalized.slice()) catch |err| switch (err) {
+            error.InvalidPath => error.InvalidPath,
+            error.NotDirectory => error.NotDirectory,
+            error.NoSpace => error.NoSpace,
+            else => error.InvalidPath,
+        };
+    }
     if (virtual_fs.isReadOnlyTree(normalized.slice())) return error.ReadOnlyPath;
     if (normalized.len == 1) return;
 
@@ -152,6 +168,16 @@ pub fn createDirPath(path: []const u8) Error!void {
 pub fn writeFile(path: []const u8, data: []const u8, tick: u64) Error!void {
     try init();
     const normalized = try normalizePath(path);
+    if (tmpfs.handles(normalized.slice())) {
+        return tmpfs.writeFile(normalized.slice(), data, tick) catch |err| switch (err) {
+            error.InvalidPath => error.InvalidPath,
+            error.FileNotFound => error.FileNotFound,
+            error.NotDirectory => error.NotDirectory,
+            error.IsDirectory => error.IsDirectory,
+            error.NoSpace => error.NoSpace,
+            else => error.InvalidPath,
+        };
+    }
     if (virtual_fs.isReadOnlyTree(normalized.slice())) return error.ReadOnlyPath;
     if (normalized.len == 1) return error.InvalidPath;
 
@@ -186,6 +212,14 @@ pub fn deleteFile(path: []const u8, tick: u64) Error!void {
     try init();
     const normalized = try normalizePath(path);
     const full = normalized.slice();
+    if (tmpfs.handles(full)) {
+        return tmpfs.deleteFile(full) catch |err| switch (err) {
+            error.InvalidPath => error.InvalidPath,
+            error.FileNotFound => error.FileNotFound,
+            error.IsDirectory => error.IsDirectory,
+            else => error.InvalidPath,
+        };
+    }
     if (virtual_fs.isReadOnlyTree(full)) return error.ReadOnlyPath;
     if (full.len == 1) return error.InvalidPath;
 
@@ -207,6 +241,13 @@ pub fn deleteTree(path: []const u8, tick: u64) Error!void {
     try init();
     const normalized = try normalizePath(path);
     const full = normalized.slice();
+    if (tmpfs.handles(full)) {
+        return tmpfs.deleteTree(full) catch |err| switch (err) {
+            error.InvalidPath => error.InvalidPath,
+            error.FileNotFound => error.FileNotFound,
+            else => error.InvalidPath,
+        };
+    }
     if (virtual_fs.isReadOnlyTree(full)) return error.ReadOnlyPath;
     if (full.len == 1) return error.InvalidPath;
 
@@ -238,11 +279,20 @@ pub fn readFileAlloc(allocator: std.mem.Allocator, path: []const u8, max_bytes: 
     try init();
     const normalized = try normalizePath(path);
     const full = normalized.slice();
+    if (tmpfs.handles(full)) {
+        return tmpfs.readFileAlloc(allocator, full, max_bytes) catch |err| switch (err) {
+            error.InvalidPath => error.InvalidPath,
+            error.FileNotFound => error.FileNotFound,
+            error.FileTooBig => error.FileTooBig,
+            error.IsDirectory => error.IsDirectory,
+            else => error.InvalidPath,
+        };
+    }
     if (virtual_fs.handles(full)) {
         return virtual_fs.readFileAlloc(allocator, full, max_bytes);
     }
     const entry_index = findEntryIndex(full) orelse return error.FileNotFound;
-    const record = entries[entry_index];
+    const record = &entries[entry_index];
     if (record.kind != abi.filesystem_kind_file) return error.IsDirectory;
     if (record.byte_len > max_bytes) return error.FileTooBig;
 
@@ -267,6 +317,49 @@ pub fn readFileAlloc(allocator: std.mem.Allocator, path: []const u8, max_bytes: 
     return buffer;
 }
 
+pub fn readFile(path: []const u8, buffer: []u8) Error![]const u8 {
+    try init();
+    const normalized = try normalizePath(path);
+    const full = normalized.slice();
+    if (tmpfs.handles(full)) {
+        return tmpfs.readFile(full, buffer) catch |err| switch (err) {
+            error.InvalidPath => error.InvalidPath,
+            error.FileNotFound => error.FileNotFound,
+            error.FileTooBig => error.FileTooBig,
+            error.IsDirectory => error.IsDirectory,
+            else => error.InvalidPath,
+        };
+    }
+    if (virtual_fs.handles(full)) {
+        return virtual_fs.readFile(full, buffer);
+    }
+    const entry_index = findEntryIndex(full) orelse return error.FileNotFound;
+    const record = &entries[entry_index];
+    if (record.kind != abi.filesystem_kind_file) return error.IsDirectory;
+    if (record.byte_len > buffer.len) return error.FileTooBig;
+
+    const byte_len = @as(usize, record.byte_len);
+    if (byte_len == 0) {
+        state.read_count +%= 1;
+        return buffer[0..0];
+    }
+
+    var scratch = [_]u8{0} ** storage_backend.block_size;
+    var remaining = byte_len;
+    var out_offset: usize = 0;
+    var block_index: u32 = 0;
+    while (remaining > 0) : (block_index += 1) {
+        try storage_backend.readBlocks(record.start_lba + block_index, scratch[0..]);
+        const copy_len = @min(remaining, storage_backend.block_size);
+        @memcpy(buffer[out_offset .. out_offset + copy_len], scratch[0..copy_len]);
+        out_offset += copy_len;
+        remaining -= copy_len;
+    }
+
+    state.read_count +%= 1;
+    return buffer[0..byte_len];
+}
+
 const DirectoryChild = struct {
     name: [max_path_len]u8 = undefined,
     name_len: usize,
@@ -278,6 +371,15 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     try init();
     const normalized = try normalizePath(path);
     const full = normalized.slice();
+    if (tmpfs.handles(full)) {
+        return tmpfs.listDirectoryAlloc(allocator, full, max_bytes) catch |err| switch (err) {
+            error.InvalidPath => error.InvalidPath,
+            error.FileNotFound => error.FileNotFound,
+            error.NotDirectory => error.NotDirectory,
+            error.ResponseTooLarge => error.ResponseTooLarge,
+            else => error.InvalidPath,
+        };
+    }
 
     if (!std.mem.eql(u8, full, "/")) {
         if (virtual_fs.handles(full) and findEntryIndex(full) == null) {
@@ -289,11 +391,17 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
 
     var children: [max_entries]DirectoryChild = undefined;
     var child_count: usize = 0;
+    var saw_tmp = false;
 
-    for (entries) |record| {
+    for (&entries) |*record| {
         if (record.kind == 0) continue;
         const record_path = record.path[0..record.path_len];
         const child_name = directChildName(full, record_path) orelse continue;
+
+        if (std.mem.eql(u8, full, "/") and std.mem.eql(u8, child_name, "tmp")) {
+            saw_tmp = true;
+            continue;
+        }
 
         var existing_index: ?usize = null;
         for (children[0..child_count], 0..) |existing, index| {
@@ -335,6 +443,11 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     }
 
     if (std.mem.eql(u8, full, "/")) {
+        if (!saw_tmp) {
+            const line = "dir tmp\n";
+            if (out.items.len + line.len > max_bytes) return error.ResponseTooLarge;
+            try out.appendSlice(allocator, line);
+        }
         const remaining = max_bytes -| out.items.len;
         const virtual_listing = try virtual_fs.listDirectoryAlloc(allocator, full, remaining);
         defer allocator.free(virtual_listing);
@@ -413,8 +526,19 @@ pub fn statSummary(path: []const u8) Error!SimpleStat {
         };
     }
 
+    if (tmpfs.handles(full)) {
+        const summary = try tmpfs.statSummary(full);
+        return .{
+            .size = summary.size,
+            .checksum = summary.checksum,
+            .kind = summary.kind,
+            .modified_tick = summary.modified_tick,
+            .entry_id = summary.entry_id,
+        };
+    }
+
     const entry_index = findEntryIndex(full) orelse return error.FileNotFound;
-    const record = entries[entry_index];
+    const record = &entries[entry_index];
     return .{
         .size = record.byte_len,
         .checksum = record.checksum,
@@ -425,7 +549,7 @@ pub fn statSummary(path: []const u8) Error!SimpleStat {
 }
 
 fn updateFileEntry(entry_index: usize, data: []const u8, block_count_needed: usize, tick: u64) Error!void {
-    const record = entries[entry_index];
+    const record = &entries[entry_index];
     if (record.block_count > 0 and (block_count_needed == 0 or block_count_needed > record.block_count)) {
         try zeroExtent(record.start_lba, record.block_count);
     }
@@ -449,7 +573,7 @@ fn updateFileEntry(entry_index: usize, data: []const u8, block_count_needed: usi
 }
 
 fn format() Error!void {
-    resetForTest();
+    resetPersistentState();
     state.format_count +%= 1;
     state.formatted = 1;
     state.mounted = 1;
@@ -555,7 +679,7 @@ fn normalizePath(path: []const u8) Error!NormalizedPath {
 }
 
 fn findEntryIndex(path: []const u8) ?usize {
-    for (entries, 0..) |record, index| {
+    for (&entries, 0..) |*record, index| {
         if (record.kind == 0 or record.path_len != path.len) continue;
         if (std.mem.eql(u8, record.path[0..record.path_len], path)) return index;
     }
@@ -563,7 +687,7 @@ fn findEntryIndex(path: []const u8) ?usize {
 }
 
 fn findFreeEntryIndex() Error!usize {
-    for (entries, 0..) |record, index| {
+    for (&entries, 0..) |*record, index| {
         if (record.kind == 0) return index;
     }
     return error.NoSpace;
@@ -591,7 +715,7 @@ fn recountState() void {
     var file_entries: u16 = 0;
     var last_lba = data_lba;
 
-    for (entries) |record| {
+    for (&entries) |*record| {
         if (record.kind == 0) continue;
         used_entries += 1;
         if (record.kind == abi.filesystem_kind_directory) {
@@ -626,7 +750,7 @@ fn allocateExtent(blocks_needed: usize, skip_index: ?usize) Error!u32 {
     const final_start = total_blocks - needed_u32;
     while (candidate <= final_start) : (candidate += 1) {
         var overlaps = false;
-        for (entries, 0..) |record, index| {
+        for (&entries, 0..) |*record, index| {
             if (skip_index != null and index == skip_index.?) continue;
             if (record.kind != abi.filesystem_kind_file or record.block_count == 0) continue;
             const other_start = record.start_lba;
@@ -796,7 +920,7 @@ test "filesystem lists direct child entries only" {
 
     const root_listing = try listDirectoryAlloc(std.testing.allocator, "/", 64);
     defer std.testing.allocator.free(root_listing);
-    try std.testing.expectEqualStrings("dir packages\ndir dev\ndir proc\ndir sys\n", root_listing);
+    try std.testing.expectEqualStrings("dir packages\ndir tmp\ndir dev\ndir proc\ndir sys\n", root_listing);
 
     const packages_listing = try listDirectoryAlloc(std.testing.allocator, "/packages", 64);
     defer std.testing.allocator.free(packages_listing);
@@ -892,6 +1016,40 @@ test "filesystem rejects writes under virtual proc and sys trees" {
     try std.testing.expectError(error.ReadOnlyPath, deleteFile("/proc/version", 0));
     try std.testing.expectError(error.ReadOnlyPath, deleteTree("/dev/display", 0));
     try std.testing.expectError(error.ReadOnlyPath, deleteTree("/sys/display", 0));
+}
+
+test "filesystem routes /tmp through bounded non-persistent tmpfs" {
+    storage_backend.resetForTest();
+    resetForTest();
+    try init();
+
+    const root_listing = try listDirectoryAlloc(std.testing.allocator, "/", 128);
+    defer std.testing.allocator.free(root_listing);
+    try std.testing.expect(std.mem.indexOf(u8, root_listing, "dir tmp\n") != null);
+
+    try createDirPath("/tmp/cache");
+    try writeFile("/tmp/cache/demo.txt", "ephemeral", 11);
+
+    const content = try readFileAlloc(std.testing.allocator, "/tmp/cache/demo.txt", 64);
+    defer std.testing.allocator.free(content);
+    try std.testing.expectEqualStrings("ephemeral", content);
+
+    const listing = try listDirectoryAlloc(std.testing.allocator, "/tmp/cache", 64);
+    defer std.testing.allocator.free(listing);
+    try std.testing.expectEqualStrings("file demo.txt 9\n", listing);
+}
+
+test "filesystem tmpfs state does not survive reset and re-init" {
+    storage_backend.resetForTest();
+    resetForTest();
+    try init();
+
+    try createDirPath("/tmp/cache");
+    try writeFile("/tmp/cache/demo.txt", "volatile", 1);
+
+    resetForTest();
+    try init();
+    try std.testing.expectError(error.FileNotFound, statSummary("/tmp/cache/demo.txt"));
 }
 
 test "filesystem deletes files and persists the removal" {

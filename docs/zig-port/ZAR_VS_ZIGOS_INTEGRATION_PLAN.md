@@ -9,7 +9,7 @@ Current posture:
 - ZigOS upstream is now explicitly `MIT` licensed.
 - ZAR can legally study, adapt, or import ZigOS code when that is the right engineering choice.
 - Current delivered slices remain ZAR-owned implementations with ZAR-native tests, probes, and release gates.
-- Delivered ZigOS-inspired slices: `4`
+- Delivered ZigOS-inspired slices: `6`
 
 ## Source Baseline
 
@@ -62,7 +62,7 @@ The table below is the current strict classification for every realistic ZigOS a
 | `AC97 audio` | `src/kernel/drivers/ac97.zig` | Low-medium | Adapt later | Only after display/input/network/storage priorities |
 | `VGA path` | `src/kernel/drivers/vga.zig` | Low | Already covered conceptually | Reference only |
 | `VFS core` | `src/kernel/fs/vfs.zig` | High | Major redesign | ZAR-native VFS design doc first |
-| `tmpfs` | `src/kernel/fs/tmpfs.zig` | Medium-high | Adapt later | Rebuild concept over ZAR runtime/package/workspace state |
+| `tmpfs` | `src/kernel/fs/tmpfs.zig` | Medium-high | Adapt now | Delivered bounded `/tmp` slice; broader mount semantics later |
 | `devfs` | `src/kernel/fs/devfs.zig` | Medium-high | Adapt now | First bounded read-only `/dev` overlay delivered; broader device/VFS model remains later |
 | `procfs` | `src/kernel/fs/procfs.zig` | Medium-high | Adapt now | First bounded read-only `/proc` overlay delivered; broader VFS remains later |
 | `sysfs` | `src/kernel/fs/sysfs.zig` | Medium-high | Adapt now | First bounded read-only `/sys` overlay delivered; broader VFS remains later |
@@ -136,7 +136,7 @@ Current delivered scope:
 - `src/benchmark_suite.zig`
 - `src/benchmark_main.zig`
 - `scripts/benchmark-smoke-check.ps1`
-- hosted benchmark catalog for DNS, DHCP, TCP, runtime-state, and tool-service codec churn
+- hosted benchmark catalog for DNS, DHCP, TCP, runtime-state, tool-service codec churn, filesystem churn, and synthetic NIC loopback comparisons across `RTL8139` and `E1000`
 
 Tracking doc:
 
@@ -169,13 +169,28 @@ Current delivered scope:
 - `src/baremetal/filesystem.zig` now routes `readFileAlloc`, `listDirectoryAlloc`, and `statSummary` through that `/dev` overlay and rejects writes under `/dev`
 - `src/baremetal/tool_exec.zig` and `src/baremetal/tool_service.zig` now reuse the same builtin and typed `GET` / `LIST` / `STAT` surface for `/dev`
 - `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves `/`, `/dev`, and `/dev/storage/state` live on the `E1000` tool-service path
+- `src/baremetal/tmpfs.zig` now provides a bounded non-persistent `/tmp` surface wired through `src/baremetal/filesystem.zig`, with host regression coverage for create/write/read/list/stat/delete and reset semantics
 
 Still intentionally out of scope for this slice:
 
 - full VFS mount model
-- `tmpfs`
 - external on-disk filesystems such as `ext2` / `fat32`
 - userspace-facing path semantics beyond the current read-only introspection tree
+
+### Z3b. Virtio-Block Storage Breadth
+
+Scope:
+
+- bounded `virtio-block` transport for ZAR's existing storage facade
+- mock-backed host validation
+- live QEMU proof over the existing installer/filesystem stack
+
+Current delivered scope:
+
+- `src/baremetal/virtio_block.zig` now provides a ZAR-owned modern `virtio-block` path with common-config/device-config queue bring-up, bounded read/write/flush requests, and mock-backed host validation
+- `src/baremetal/pci.zig` now discovers modern `virtio-block` PCI capability regions
+- `src/baremetal/storage_backend.zig` now prefers `virtio-block` ahead of RAM-disk when the device is available, without regressing ATA priority when both are present
+- `scripts/baremetal-qemu-virtio-block-probe-check.ps1` now proves live raw mutation, tool-layout readback, and filesystem superblock readback on the `virtio-block` path
 
 ### Z4. Shell And Interactive Control Layer
 

@@ -84,6 +84,8 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
       - `tool_service.codec_parse`
       - `filesystem.persistence_cycle`
       - `filesystem.overlay_read_cycle`
+      - `network.rtl8139_udp_loopback`
+      - `network.e1000_udp_loopback`
     - third delivered adoption slice is a ZAR-native read-only introspection overlay inspired by ZigOS `procfs` / `sysfs`:
       - `src/baremetal/virtual_fs.zig` now exposes synthetic `/proc` and `/sys` trees over existing ZAR runtime, storage, display, and network state
       - `src/baremetal/filesystem.zig` now routes `GET` / `LIST` / `STAT` requests through that overlay while rejecting writes under `/proc` and `/sys`
@@ -94,6 +96,13 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
       - `src/baremetal/filesystem.zig` now routes `GET` / `LIST` / `STAT` requests through that `/dev` overlay while rejecting writes under `/dev`
       - `src/baremetal/tool_exec.zig` and `src/baremetal/tool_service.zig` now expose `/dev` through the same command and typed service surface
       - `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves live `E1000` tool-service reuse for `/dev`, `/dev/storage/state`, and the expanded root overlay on the freestanding PVH path
+    - fifth delivered adoption slice is a bounded non-persistent `/tmp` surface:
+      - `src/baremetal/tmpfs.zig` now provides a ZAR-owned `/tmp` path with directory create, file write/read/stat, direct-child listing, single-file delete, subtree delete, and reset-on-reinit behavior
+      - `src/baremetal/filesystem.zig` now routes `/tmp` through that bounded volatile store without changing the persistent backend path for `/runtime`, `/tools`, or `/packages`
+    - sixth delivered adoption slice is bounded `virtio-block` storage breadth:
+      - `src/baremetal/virtio_block.zig` now provides a ZAR-owned modern `virtio-block` path with bounded queue bring-up plus read/write/flush requests
+      - `src/baremetal/storage_backend.zig` now prefers `virtio-block` over RAM-disk when available, while still preferring ATA PIO if both hardware-backed backends are present
+      - `scripts/baremetal-qemu-virtio-block-probe-check.ps1` now proves live raw mutation, tool-layout readback, and filesystem superblock readback on the `virtio-block` path
   - keyboard/mouse is now strict-closed in [`docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md`](docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md)
   - `src/baremetal/ps2_input.zig` now contains a real x86 port-I/O backed PS/2 controller path
   - `scripts/baremetal-qemu-ps2-input-probe-check.ps1` proves IRQ-driven keyboard/mouse state updates against the freestanding PVH artifact

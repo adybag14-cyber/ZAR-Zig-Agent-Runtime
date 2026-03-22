@@ -201,8 +201,17 @@ pub fn testEnableMockDevice() void {
     mock_enabled = true;
 }
 
+pub fn enableSyntheticDeviceForBenchmark() void {
+    resetForTest();
+    mock_enabled = true;
+}
+
 pub fn testDisableMockDevice() void {
     if (!builtin.is_test) return;
+    resetForTest();
+}
+
+pub fn disableSyntheticDeviceForBenchmark() void {
     resetForTest();
 }
 
@@ -474,7 +483,7 @@ fn initMock() void {
 }
 
 fn mockAvailable() bool {
-    return builtin.is_test and mock_enabled;
+    return mock_enabled;
 }
 
 fn hardwareBacked() bool {

@@ -67,6 +67,14 @@ pub fn readFileAlloc(allocator: std.mem.Allocator, path: []const u8, max_bytes: 
     return rendered;
 }
 
+pub fn readFile(path: []const u8, buffer: []u8) Error![]const u8 {
+    if (isDirectoryPath(path)) return error.IsDirectory;
+    var fba = std.heap.FixedBufferAllocator.init(buffer);
+    const rendered = try renderFileAlloc(fba.allocator(), path);
+    if (rendered.len > buffer.len) return error.FileTooBig;
+    return rendered;
+}
+
 pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_bytes: usize) Error![]u8 {
     if (isFilePath(path)) return error.NotDirectory;
     var out = std.ArrayList(u8).empty;
@@ -595,6 +603,7 @@ fn storageBackendName(backend: u8) []const u8 {
     return switch (backend) {
         abi.storage_backend_ram_disk => "ram_disk",
         abi.storage_backend_ata_pio => "ata_pio",
+        abi.storage_backend_virtio_block => "virtio_block",
         else => "unknown",
     };
 }

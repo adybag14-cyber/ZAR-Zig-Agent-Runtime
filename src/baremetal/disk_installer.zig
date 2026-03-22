@@ -79,6 +79,7 @@ fn backendName(backend: u8) []const u8 {
     return switch (backend) {
         abi.storage_backend_ata_pio => "ata_pio",
         abi.storage_backend_ram_disk => "ram_disk",
+        abi.storage_backend_virtio_block => "virtio_block",
         else => "unknown",
     };
 }
@@ -86,6 +87,7 @@ fn backendName(backend: u8) []const u8 {
 fn currentLogicalBaseLba() u32 {
     return switch (storage_backend.activeBackend()) {
         abi.storage_backend_ata_pio => ata_pio_disk.logicalBaseLba(),
+        abi.storage_backend_virtio_block => 0,
         else => 0,
     };
 }

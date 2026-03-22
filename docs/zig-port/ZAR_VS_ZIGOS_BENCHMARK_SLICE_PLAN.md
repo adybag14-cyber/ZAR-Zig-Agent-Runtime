@@ -40,6 +40,8 @@ Delivered benchmark cases:
 - `tool_service.codec_parse`
 - `filesystem.persistence_cycle`
 - `filesystem.overlay_read_cycle`
+- `network.rtl8139_udp_loopback`
+- `network.e1000_udp_loopback`
 
 Delivered output contract:
 
@@ -75,7 +77,7 @@ Required for closure:
 Natural next benchmark expansions:
 
 - allocator pressure benchmark lane
-- NIC-path transport throughput comparisons (`RTL8139` vs `E1000`)
+- NIC-path transport throughput comparisons beyond the current UDP loopback parity lane
 - display mode-switch/present timing lane
 - future SMP stress once that track is expanded
 

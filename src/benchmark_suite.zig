@@ -3,7 +3,9 @@ const std = @import("std");
 const dhcp = @import("protocol/dhcp.zig");
 const dns = @import("protocol/dns.zig");
 const tcp = @import("protocol/tcp.zig");
+const udp = @import("protocol/udp.zig");
 const filesystem = @import("baremetal/filesystem.zig");
+const net = @import("pal/net.zig");
 const runtime_state = @import("runtime/state.zig");
 const codec = @import("baremetal/tool_service/codec.zig");
 
@@ -68,6 +70,18 @@ pub const all_cases = [_]Case{
         .description = "Virtual /proc,/sys,/dev overlay list/read churn through the filesystem surface",
         .batch_iterations = 128,
         .runFn = benchFilesystemOverlayReadCycle,
+    },
+    .{
+        .name = "network.rtl8139_udp_loopback",
+        .description = "Synthetic RTL8139 UDP send/poll loopback through the PAL transport surface",
+        .batch_iterations = 128,
+        .runFn = benchRtl8139UdpLoopback,
+    },
+    .{
+        .name = "network.e1000_udp_loopback",
+        .description = "Synthetic E1000 UDP send/poll loopback through the PAL transport surface",
+        .batch_iterations = 128,
+        .runFn = benchE1000UdpLoopback,
     },
 };
 
@@ -384,6 +398,44 @@ fn benchFilesystemOverlayReadCycle(iterations: usize) !u64 {
     return checksum;
 }
 
+fn benchRtl8139UdpLoopback(iterations: usize) !u64 {
+    return benchNicUdpLoopback(iterations, .rtl8139);
+}
+
+fn benchE1000UdpLoopback(iterations: usize) !u64 {
+    return benchNicUdpLoopback(iterations, .e1000);
+}
+
+fn benchNicUdpLoopback(iterations: usize, backend: net.Backend) !u64 {
+    net.enableSyntheticBackendForBenchmark(backend);
+    defer net.disableSyntheticBackendForBenchmark();
+
+    const destination_mac = [_]u8{ 0x02, 0x5A, 0x52, 0x10, 0x00, switch (backend) { .rtl8139 => 0x39, .e1000 => 0x49 } };
+    const source_ip = [_]u8{ 192, 168, 56, 10 };
+    const destination_ip = [_]u8{ 192, 168, 56, 1 };
+    const payload = "bench-udp";
+    var checksum: u64 = 0;
+
+    for (0..iterations) |idx| {
+        const source_port: u16 = @intCast(32000 + (idx % 1024));
+        const destination_port: u16 = @intCast(33000 + (idx % 1024));
+        _ = try net.sendUdpPacket(destination_mac, source_ip, destination_ip, source_port, destination_port, payload);
+
+        var packet: net.UdpPacket = undefined;
+        const received = try net.pollUdpPacketStrictInto(&packet);
+        if (!received) return error.BenchmarkLoopbackMissing;
+
+        checksum +%= packet.source_port;
+        checksum +%= packet.destination_port;
+        checksum +%= packet.payload_len;
+        checksum +%= packet.checksum_value;
+        checksum +%= packet.payload[0];
+        checksum +%= packet.ethernet_destination[5];
+    }
+
+    return checksum;
+}
+
 test "benchmark catalog includes expected protocol and runtime cases" {
     try std.testing.expect(findCase("protocol.dns_roundtrip") != null);
     try std.testing.expect(findCase("protocol.tcp_handshake_payload") != null);
@@ -391,6 +443,8 @@ test "benchmark catalog includes expected protocol and runtime cases" {
     try std.testing.expect(findCase("tool_service.codec_parse") != null);
     try std.testing.expect(findCase("filesystem.persistence_cycle") != null);
     try std.testing.expect(findCase("filesystem.overlay_read_cycle") != null);
+    try std.testing.expect(findCase("network.rtl8139_udp_loopback") != null);
+    try std.testing.expect(findCase("network.e1000_udp_loopback") != null);
 }
 
 test "benchmark suite writes markers for filtered run" {
