@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 const abi = @import("abi.zig");
 const storage_backend = @import("storage_backend.zig");
 const tool_layout = @import("tool_layout.zig");
+const mount_table = @import("mount_table.zig");
 const tmpfs = @import("tmpfs.zig");
 const virtual_fs = @import("virtual_fs.zig");
 
@@ -19,6 +20,8 @@ var entries: [max_entries]abi.BaremetalFilesystemEntry = std.mem.zeroes([max_ent
 var deferred_persist_depth: u32 = 0;
 
 const entry_table_bytes = @sizeOf(@TypeOf(entries));
+const mount_registry_root = "/runtime/mounts";
+const mount_registry_extension = ".txt";
 comptime {
     if (entry_table_bytes % storage_backend.block_size != 0) {
         @compileError("filesystem entry table must be block aligned");
@@ -33,6 +36,17 @@ const NormalizedPath = struct {
     len: usize = 0,
 
     fn slice(self: *const @This()) []const u8 {
+        return self.buf[0..self.len];
+    }
+};
+
+const ResolvedPath = struct {
+    buf: [max_path_len]u8 = undefined,
+    len: usize = 0,
+    is_mount_root: bool = false,
+
+    fn slice(self: *const @This()) []const u8 {
+        if (self.is_mount_root) return mount_table.mount_root;
         return self.buf[0..self.len];
     }
 };
@@ -78,15 +92,18 @@ fn resetPersistentState() void {
     };
     @memset(&entries, std.mem.zeroes(abi.BaremetalFilesystemEntry));
     deferred_persist_depth = 0;
+    mount_table.clear();
 }
 
 pub fn resetForTest() void {
     resetPersistentState();
+    mount_table.resetForTest();
     tmpfs.resetForTest();
 }
 
 pub fn invalidateForBackendChange() void {
     resetPersistentState();
+    mount_table.resetForTest();
     tmpfs.resetForTest();
 }
 
@@ -106,6 +123,44 @@ pub fn formatActiveBackend() Error!void {
 
 pub fn statePtr() *const abi.BaremetalFilesystemState {
     return &state;
+}
+
+pub fn mountCount() usize {
+    return mount_table.count();
+}
+
+pub fn mountEntry(index: usize) ?mount_table.Entry {
+    return mount_table.entry(index);
+}
+
+pub fn bindMount(name: []const u8, target: []const u8, tick: u64) Error!void {
+    try init();
+    mount_table.validateName(name) catch return error.InvalidPath;
+    mount_table.validateTarget(target) catch return error.InvalidPath;
+    try createDirPath(mount_registry_root);
+
+    var path_buf: [max_path_len]u8 = undefined;
+    const registry_path = try mountRegistryPath(name, path_buf[0..]);
+    try writeFile(registry_path, target, tick);
+}
+
+pub fn removeMount(name: []const u8, tick: u64) Error!void {
+    try init();
+    mount_table.validateName(name) catch return error.InvalidPath;
+
+    var path_buf: [max_path_len]u8 = undefined;
+    const registry_path = try mountRegistryPath(name, path_buf[0..]);
+    deleteFile(registry_path, tick) catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    };
+}
+
+pub fn mountTarget(name: []const u8, buffer: []u8) ?[]const u8 {
+    const target = mount_table.targetForName(name) orelse return null;
+    if (target.len > buffer.len) return null;
+    @memcpy(buffer[0..target.len], target);
+    return buffer[0..target.len];
 }
 
 pub fn beginDeferredPersist() Error!void {
@@ -129,18 +184,20 @@ pub fn entry(index: u32) abi.BaremetalFilesystemEntry {
 pub fn createDirPath(path: []const u8) Error!void {
     try init();
     const normalized = try normalizePath(path);
-    if (tmpfs.handles(normalized.slice())) {
-        return tmpfs.createDirPath(normalized.slice()) catch |err| switch (err) {
+    const resolved = try resolvePath(normalized.slice());
+    if (resolved.is_mount_root) return error.ReadOnlyPath;
+    const full = resolved.slice();
+    if (tmpfs.handles(full)) {
+        return tmpfs.createDirPath(full) catch |err| switch (err) {
             error.InvalidPath => error.InvalidPath,
             error.NotDirectory => error.NotDirectory,
             error.NoSpace => error.NoSpace,
             else => error.InvalidPath,
         };
     }
-    if (virtual_fs.isReadOnlyTree(normalized.slice())) return error.ReadOnlyPath;
-    if (normalized.len == 1) return;
+    if (virtual_fs.isReadOnlyTree(full)) return error.ReadOnlyPath;
+    if (full.len == 1) return;
 
-    const full = normalized.slice();
     var index: usize = 1;
     while (index <= full.len) : (index += 1) {
         const at_end = index == full.len;
@@ -162,14 +219,18 @@ pub fn createDirPath(path: []const u8) Error!void {
     }
 
     recountState();
+    if (isMountRegistryPath(full)) try reloadMountTable();
     try maybePersistAll();
 }
 
 pub fn writeFile(path: []const u8, data: []const u8, tick: u64) Error!void {
     try init();
     const normalized = try normalizePath(path);
-    if (tmpfs.handles(normalized.slice())) {
-        return tmpfs.writeFile(normalized.slice(), data, tick) catch |err| switch (err) {
+    const resolved = try resolvePath(normalized.slice());
+    if (resolved.is_mount_root) return error.ReadOnlyPath;
+    const full = resolved.slice();
+    if (tmpfs.handles(full)) {
+        return tmpfs.writeFile(full, data, tick) catch |err| switch (err) {
             error.InvalidPath => error.InvalidPath,
             error.FileNotFound => error.FileNotFound,
             error.NotDirectory => error.NotDirectory,
@@ -178,10 +239,9 @@ pub fn writeFile(path: []const u8, data: []const u8, tick: u64) Error!void {
             else => error.InvalidPath,
         };
     }
-    if (virtual_fs.isReadOnlyTree(normalized.slice())) return error.ReadOnlyPath;
-    if (normalized.len == 1) return error.InvalidPath;
+    if (virtual_fs.isReadOnlyTree(full)) return error.ReadOnlyPath;
+    if (full.len == 1) return error.InvalidPath;
 
-    const full = normalized.slice();
     const parent = parentSlice(full);
     if (parent.len > 1) {
         const parent_index = findEntryIndex(parent) orelse return error.FileNotFound;
@@ -205,13 +265,16 @@ pub fn writeFile(path: []const u8, data: []const u8, tick: u64) Error!void {
     state.last_modified_tick = tick;
     state.dirty = 1;
     recountState();
+    if (isMountRegistryPath(full)) try reloadMountTable();
     try maybePersistAll();
 }
 
 pub fn deleteFile(path: []const u8, tick: u64) Error!void {
     try init();
     const normalized = try normalizePath(path);
-    const full = normalized.slice();
+    const resolved = try resolvePath(normalized.slice());
+    if (resolved.is_mount_root) return error.ReadOnlyPath;
+    const full = resolved.slice();
     if (tmpfs.handles(full)) {
         return tmpfs.deleteFile(full) catch |err| switch (err) {
             error.InvalidPath => error.InvalidPath,
@@ -234,13 +297,16 @@ pub fn deleteFile(path: []const u8, tick: u64) Error!void {
     state.last_modified_tick = tick;
     state.dirty = 1;
     recountState();
+    if (isMountRegistryPath(full)) try reloadMountTable();
     try maybePersistAll();
 }
 
 pub fn deleteTree(path: []const u8, tick: u64) Error!void {
     try init();
     const normalized = try normalizePath(path);
-    const full = normalized.slice();
+    const resolved = try resolvePath(normalized.slice());
+    if (resolved.is_mount_root) return error.ReadOnlyPath;
+    const full = resolved.slice();
     if (tmpfs.handles(full)) {
         return tmpfs.deleteTree(full) catch |err| switch (err) {
             error.InvalidPath => error.InvalidPath,
@@ -272,13 +338,16 @@ pub fn deleteTree(path: []const u8, tick: u64) Error!void {
     state.last_modified_tick = tick;
     state.dirty = 1;
     recountState();
+    if (isMountRegistryPath(full)) try reloadMountTable();
     try maybePersistAll();
 }
 
 pub fn readFileAlloc(allocator: std.mem.Allocator, path: []const u8, max_bytes: usize) Error![]u8 {
     try init();
     const normalized = try normalizePath(path);
-    const full = normalized.slice();
+    const resolved = try resolvePath(normalized.slice());
+    if (resolved.is_mount_root) return error.IsDirectory;
+    const full = resolved.slice();
     if (tmpfs.handles(full)) {
         return tmpfs.readFileAlloc(allocator, full, max_bytes) catch |err| switch (err) {
             error.InvalidPath => error.InvalidPath,
@@ -320,7 +389,9 @@ pub fn readFileAlloc(allocator: std.mem.Allocator, path: []const u8, max_bytes: 
 pub fn readFile(path: []const u8, buffer: []u8) Error![]const u8 {
     try init();
     const normalized = try normalizePath(path);
-    const full = normalized.slice();
+    const resolved = try resolvePath(normalized.slice());
+    if (resolved.is_mount_root) return error.IsDirectory;
+    const full = resolved.slice();
     if (tmpfs.handles(full)) {
         return tmpfs.readFile(full, buffer) catch |err| switch (err) {
             error.InvalidPath => error.InvalidPath,
@@ -370,7 +441,11 @@ const DirectoryChild = struct {
 pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_bytes: usize) Error![]u8 {
     try init();
     const normalized = try normalizePath(path);
-    const full = normalized.slice();
+    const resolved = try resolvePath(normalized.slice());
+    if (resolved.is_mount_root) {
+        return listMountDirectoryAlloc(allocator, max_bytes);
+    }
+    const full = resolved.slice();
     if (tmpfs.handles(full)) {
         return tmpfs.listDirectoryAlloc(allocator, full, max_bytes) catch |err| switch (err) {
             error.InvalidPath => error.InvalidPath,
@@ -443,6 +518,11 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     }
 
     if (std.mem.eql(u8, full, "/")) {
+        if (mount_table.hasEntries()) {
+            const line = "dir mnt\n";
+            if (out.items.len + line.len > max_bytes) return error.ResponseTooLarge;
+            try out.appendSlice(allocator, line);
+        }
         if (!saw_tmp) {
             const line = "dir tmp\n";
             if (out.items.len + line.len > max_bytes) return error.ResponseTooLarge;
@@ -502,7 +582,18 @@ pub fn statNoFollow(path: []const u8) Error!std.Io.Dir.Stat {
 pub fn statSummary(path: []const u8) Error!SimpleStat {
     try init();
     const normalized = try normalizePath(path);
-    const full = normalized.slice();
+    const resolved = try resolvePath(normalized.slice());
+    if (resolved.is_mount_root) {
+        state.stat_count +%= 1;
+        return .{
+            .size = 0,
+            .checksum = 0,
+            .kind = .directory,
+            .modified_tick = 0,
+            .entry_id = 0,
+        };
+    }
+    const full = resolved.slice();
     state.stat_count +%= 1;
 
     if (full.len == 1) {
@@ -613,6 +704,7 @@ fn loadExisting() Error!bool {
     state.active_backend = storage_backend.activeBackend();
     state.dirty = 0;
     recountState();
+    try reloadMountTable();
     return true;
 }
 
@@ -644,6 +736,108 @@ fn persistEntries() Error!void {
         const offset = @as(usize, @intCast(block_index)) * storage_backend.block_size;
         try storage_backend.writeBlocks(entry_table_lba + block_index, bytes[offset .. offset + storage_backend.block_size]);
     }
+}
+
+fn resolvePath(path: []const u8) Error!ResolvedPath {
+    var resolved: ResolvedPath = .{};
+    if (std.mem.eql(u8, path, mount_table.mount_root)) {
+        resolved.is_mount_root = true;
+        return resolved;
+    }
+
+    if (mount_table.resolve(path, resolved.buf[0..])) |aliased| {
+        resolved.len = aliased.len;
+        return resolved;
+    }
+    if (isMountPath(path)) return error.FileNotFound;
+
+    resolved.len = path.len;
+    @memcpy(resolved.buf[0..path.len], path);
+    return resolved;
+}
+
+fn isMountPath(path: []const u8) bool {
+    if (!std.mem.startsWith(u8, path, mount_table.mount_root)) return false;
+    return path.len == mount_table.mount_root.len or
+        (path.len > mount_table.mount_root.len and path[mount_table.mount_root.len] == '/');
+}
+
+fn isMountRegistryPath(path: []const u8) bool {
+    if (!std.mem.startsWith(u8, path, mount_registry_root)) return false;
+    return path.len == mount_registry_root.len or
+        (path.len > mount_registry_root.len and path[mount_registry_root.len] == '/');
+}
+
+fn mountRegistryPath(name: []const u8, out: []u8) Error![]const u8 {
+    const needed = mount_registry_root.len + 1 + name.len + mount_registry_extension.len;
+    if (needed > out.len) return error.InvalidPath;
+    @memcpy(out[0..mount_registry_root.len], mount_registry_root);
+    out[mount_registry_root.len] = '/';
+    @memcpy(out[mount_registry_root.len + 1 .. mount_registry_root.len + 1 + name.len], name);
+    @memcpy(
+        out[mount_registry_root.len + 1 + name.len .. needed],
+        mount_registry_extension,
+    );
+    return out[0..needed];
+}
+
+fn mountAliasFromRegistryPath(path: []const u8) ?[]const u8 {
+    if (!std.mem.startsWith(u8, path, mount_registry_root)) return null;
+    if (path.len <= mount_registry_root.len or path[mount_registry_root.len] != '/') return null;
+    const child = path[mount_registry_root.len + 1 ..];
+    if (child.len == 0 or std.mem.indexOfScalar(u8, child, '/') != null) return null;
+    if (!std.mem.endsWith(u8, child, mount_registry_extension)) return null;
+    const alias = child[0 .. child.len - mount_registry_extension.len];
+    mount_table.validateName(alias) catch return null;
+    return alias;
+}
+
+fn reloadMountTable() Error!void {
+    mount_table.clear();
+    for (&entries) |*record| {
+        if (record.kind != abi.filesystem_kind_file) continue;
+        const alias = mountAliasFromRegistryPath(record.path[0..record.path_len]) orelse continue;
+        var target_buf: [mount_table.max_target_len]u8 = undefined;
+        const target = try readRecord(record, target_buf[0..]);
+        mount_table.set(alias, target, record.modified_tick) catch return error.CorruptFilesystem;
+    }
+}
+
+fn readRecord(record: *const abi.BaremetalFilesystemEntry, buffer: []u8) Error![]const u8 {
+    if (record.kind != abi.filesystem_kind_file) return error.IsDirectory;
+    if (record.byte_len > buffer.len) return error.FileTooBig;
+
+    const byte_len = @as(usize, record.byte_len);
+    if (byte_len == 0) return buffer[0..0];
+
+    var scratch = [_]u8{0} ** storage_backend.block_size;
+    var remaining = byte_len;
+    var out_offset: usize = 0;
+    var block_index: u32 = 0;
+    while (remaining > 0) : (block_index += 1) {
+        try storage_backend.readBlocks(record.start_lba + block_index, scratch[0..]);
+        const copy_len = @min(remaining, storage_backend.block_size);
+        @memcpy(buffer[out_offset .. out_offset + copy_len], scratch[0..copy_len]);
+        out_offset += copy_len;
+        remaining -= copy_len;
+    }
+    return buffer[0..byte_len];
+}
+
+fn listMountDirectoryAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    var index: usize = 0;
+    while (index < mount_table.max_mounts) : (index += 1) {
+        const record = mount_table.entry(index) orelse continue;
+        const line = try std.fmt.allocPrint(allocator, "dir {s}\n", .{record.name[0..record.name_len]});
+        defer allocator.free(line);
+        if (out.items.len + line.len > max_bytes) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, line);
+    }
+
+    return out.toOwnedSlice(allocator);
 }
 
 fn normalizePath(path: []const u8) Error!NormalizedPath {
@@ -1107,4 +1301,52 @@ test "filesystem accepts longer hosted-style absolute paths within budget" {
     const content = try readFileAlloc(std.testing.allocator, long_path, 64);
     defer std.testing.allocator.free(content);
     try std.testing.expectEqualStrings("phase3-data", content);
+}
+
+test "filesystem binds mounted aliases and exposes the /mnt root" {
+    storage_backend.resetForTest();
+    resetForTest();
+    try init();
+
+    try createDirPath("/boot");
+    try writeFile("/boot/loader.cfg", "loader=edge", 12);
+    try bindMount("boot", "/boot", 13);
+
+    const root_listing = try listDirectoryAlloc(std.testing.allocator, "/", 128);
+    defer std.testing.allocator.free(root_listing);
+    try std.testing.expect(std.mem.indexOf(u8, root_listing, "dir mnt\n") != null);
+
+    const mount_listing = try listDirectoryAlloc(std.testing.allocator, "/mnt", 128);
+    defer std.testing.allocator.free(mount_listing);
+    try std.testing.expectEqualStrings("dir boot\n", mount_listing);
+
+    const mounted = try readFileAlloc(std.testing.allocator, "/mnt/boot/loader.cfg", 64);
+    defer std.testing.allocator.free(mounted);
+    try std.testing.expectEqualStrings("loader=edge", mounted);
+
+    const mounted_stat = try statSummary("/mnt/boot");
+    try std.testing.expectEqual(@as(std.Io.File.Kind, .directory), mounted_stat.kind);
+}
+
+test "filesystem persists mount aliases across reset and re-init" {
+    storage_backend.resetForTest();
+    resetForTest();
+    @import("virtio_block.zig").testEnableMockDevice(8192);
+    defer @import("virtio_block.zig").testDisableMockDevice();
+    try init();
+
+    try createDirPath("/runtime/state");
+    try writeFile("/runtime/state/mounted.txt", "persisted", 20);
+    try bindMount("runtime", "/runtime", 21);
+
+    resetForTest();
+    try init();
+
+    var target_buf: [mount_table.max_target_len]u8 = undefined;
+    const target = mountTarget("runtime", target_buf[0..]).?;
+    try std.testing.expectEqualStrings("/runtime", target);
+
+    const mounted = try readFileAlloc(std.testing.allocator, "/mnt/runtime/state/mounted.txt", 64);
+    defer std.testing.allocator.free(mounted);
+    try std.testing.expectEqualStrings("persisted", mounted);
 }

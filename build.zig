@@ -12,6 +12,7 @@ pub fn build(b: *std.Build) void {
     const baremetal_virtio_gpu_display_probe = b.option(bool, "baremetal-virtio-gpu-display-probe", "Enable the virtio-gpu EDID/display capability validation path in the freestanding image") orelse false;
     const baremetal_virtio_block_probe = b.option(bool, "baremetal-virtio-block-probe", "Enable the virtio-block storage validation path in the freestanding image") orelse false;
     const baremetal_virtio_block_installer_probe = b.option(bool, "baremetal-virtio-block-installer-probe", "Enable the virtio-block installer validation path in the freestanding image") orelse false;
+    const baremetal_virtio_block_mount_probe = b.option(bool, "baremetal-virtio-block-mount-probe", "Enable the virtio-block mount-layer validation path in the freestanding image") orelse false;
     const baremetal_e1000_probe = b.option(bool, "baremetal-e1000-probe", "Enable the E1000 Ethernet validation path in the freestanding image") orelse false;
     const baremetal_e1000_arp_probe = b.option(bool, "baremetal-e1000-arp-probe", "Enable the E1000 ARP validation path in the freestanding image") orelse false;
     const baremetal_e1000_ipv4_probe = b.option(bool, "baremetal-e1000-ipv4-probe", "Enable the E1000 IPv4 validation path in the freestanding image") orelse false;
@@ -169,6 +170,7 @@ pub fn build(b: *std.Build) void {
     baremetal_options.addOption(bool, "virtio_gpu_display_probe", baremetal_virtio_gpu_display_probe);
     baremetal_options.addOption(bool, "virtio_block_probe", baremetal_virtio_block_probe);
     baremetal_options.addOption(bool, "virtio_block_installer_probe", baremetal_virtio_block_installer_probe);
+    baremetal_options.addOption(bool, "virtio_block_mount_probe", baremetal_virtio_block_mount_probe);
     baremetal_options.addOption(bool, "e1000_probe", baremetal_e1000_probe);
     baremetal_options.addOption(bool, "e1000_arp_probe", baremetal_e1000_arp_probe);
     baremetal_options.addOption(bool, "e1000_ipv4_probe", baremetal_e1000_ipv4_probe);

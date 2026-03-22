@@ -94,6 +94,9 @@ Delivered sixth adoption slice:
 - `scripts/baremetal-qemu-virtio-block-probe-check.ps1` now proves live raw mutation, tool-layout readback, and filesystem superblock readback on the `virtio-block` path
 - `src/baremetal_main.zig` now also carries a bounded `virtio-block` installer/runtime proof through `src/baremetal/disk_installer.zig`, including canonical loader/kernel/manifest seeding plus bootstrap package execution on the same backend
 - `scripts/baremetal-qemu-virtio-block-installer-probe-check.ps1` now proves live QEMU installer/runtime persistence on `virtio-blk-pci`, including on-image loader marker persistence, bootstrap state persistence, tool-layout magic, and filesystem magic
+- `src/baremetal/mount_table.zig` plus `src/baremetal/filesystem.zig` now add a bounded persistent mount layer that stores alias targets under `/runtime/mounts/<alias>.txt` and resolves `/mnt/<alias>/...` on top of the active backend without introducing a full VFS import
+- `src/baremetal_main.zig` now carries a bounded `virtio-block` mount proof that binds `boot` and `runtime`, reads `/mnt/boot/loader.cfg`, writes `/mnt/runtime/state/mounted-via-alias.txt`, reloads the filesystem, and proves the alias plus payload persist
+- `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1` now proves that same mount-layer behavior live on `virtio-blk-pci`, including persisted registry path markers and reloaded alias payload readback
 
 Delivered seventh adoption slice:
 

@@ -126,6 +126,7 @@ const qemu_virtio_net_https_post_probe_ok_code: u8 = 0x57;
 const qemu_virtio_net_tool_service_probe_ok_code: u8 = 0x58;
 const qemu_virtio_block_probe_ok_code: u8 = 0x4F;
 const qemu_virtio_block_installer_probe_ok_code: u8 = 0x59;
+const qemu_virtio_block_mount_probe_ok_code: u8 = 0x5A;
 const build_options = if (builtin.is_test)
     struct {
         pub const qemu_smoke: bool = false;
@@ -171,6 +172,7 @@ const build_options = if (builtin.is_test)
         pub const virtio_gpu_display_probe: bool = false;
         pub const virtio_block_probe: bool = false;
         pub const virtio_block_installer_probe: bool = false;
+        pub const virtio_block_mount_probe: bool = false;
     }
 else
     @import("build_options");
@@ -217,6 +219,7 @@ const ata_gpt_installer_probe_enabled: bool = if (@hasDecl(build_options, "ata_g
 const virtio_gpu_display_probe_enabled: bool = if (@hasDecl(build_options, "virtio_gpu_display_probe")) build_options.virtio_gpu_display_probe else false;
 const virtio_block_probe_enabled: bool = if (@hasDecl(build_options, "virtio_block_probe")) build_options.virtio_block_probe else false;
 const virtio_block_installer_probe_enabled: bool = if (@hasDecl(build_options, "virtio_block_installer_probe")) build_options.virtio_block_installer_probe else false;
+const virtio_block_mount_probe_enabled: bool = if (@hasDecl(build_options, "virtio_block_mount_probe")) build_options.virtio_block_mount_probe else false;
 
 const ata_probe_raw_lba: u32 = 300;
 const ata_probe_raw_block_count: u32 = 2;
@@ -323,6 +326,20 @@ const VirtioBlockInstallerProbeError = error{
     BootstrapOutputMismatch,
     BootstrapFilesystemReadbackFailed,
     ReloadFailed,
+    PciDiscoveryMismatch,
+};
+
+const VirtioBlockMountProbeError = error{
+    BackendUnavailable,
+    CapacityTooSmall,
+    InstallerFailed,
+    BootMountBindFailed,
+    RuntimeMountBindFailed,
+    BootAliasTargetMismatch,
+    RuntimeAliasTargetMismatch,
+    LoaderAliasReadbackFailed,
+    RuntimeAliasWriteFailed,
+    RuntimeAliasReloadFailed,
     PciDiscoveryMismatch,
 };
 
@@ -2706,6 +2723,10 @@ fn baremetalStart() callconv(.c) noreturn {
         runVirtioBlockInstallerProbe() catch |err| qemuExit(virtioBlockInstallerProbeFailureCode(err));
         qemuExit(qemu_virtio_block_installer_probe_ok_code);
     }
+    if (virtio_block_mount_probe_enabled) {
+        runVirtioBlockMountProbe() catch |err| qemuExit(virtioBlockMountProbeFailureCode(err));
+        qemuExit(qemu_virtio_block_mount_probe_ok_code);
+    }
     if (virtio_net_probe_enabled) {
         runVirtioNetProbe() catch |err| qemuExit(virtioNetProbeFailureCode(err));
         qemuExit(qemu_virtio_net_probe_ok_code);
@@ -3314,6 +3335,56 @@ fn runVirtioBlockInstallerProbe() VirtioBlockInstallerProbeError!void {
         !probeFilesystemContent(disk_installer.bootstrap_state_path, disk_installer.bootstrap_state_payload))
     {
         return error.BootstrapFilesystemReadbackFailed;
+    }
+
+    if (builtin.is_test) {
+        return;
+    }
+
+    const device = pci.discoverVirtioBlockDevice() orelse return error.PciDiscoveryMismatch;
+    if (device.vendor_id != 0x1AF4 or device.device_id != 0x1042) {
+        return error.PciDiscoveryMismatch;
+    }
+}
+
+fn runVirtioBlockMountProbe() VirtioBlockMountProbeError!void {
+    storage_backend.init();
+    const storage = storage_backend.statePtr();
+    if (storage.backend != abi.storage_backend_virtio_block or storage.mounted == 0) {
+        return error.BackendUnavailable;
+    }
+    if (storage.block_count < 256) {
+        return error.CapacityTooSmall;
+    }
+
+    disk_installer.installDefaultLayout(status.ticks) catch return error.InstallerFailed;
+    filesystem.bindMount("boot", "/boot", status.ticks + 1) catch return error.BootMountBindFailed;
+    filesystem.bindMount("runtime", "/runtime", status.ticks + 2) catch return error.RuntimeMountBindFailed;
+
+    var target_buf: [filesystem.max_path_len]u8 = undefined;
+    const boot_target = filesystem.mountTarget("boot", target_buf[0..]) orelse return error.BootAliasTargetMismatch;
+    if (!std.mem.eql(u8, boot_target, "/boot")) return error.BootAliasTargetMismatch;
+    const runtime_target = filesystem.mountTarget("runtime", target_buf[0..]) orelse return error.RuntimeAliasTargetMismatch;
+    if (!std.mem.eql(u8, runtime_target, "/runtime")) return error.RuntimeAliasTargetMismatch;
+
+    var loader_buf: [160]u8 = undefined;
+    const expected_loader = disk_installer.loaderConfigForCurrentBackend(loader_buf[0..]) catch return error.LoaderAliasReadbackFailed;
+    if (!probeFilesystemContent("/mnt/boot/loader.cfg", expected_loader)) {
+        return error.LoaderAliasReadbackFailed;
+    }
+
+    filesystem.createDirPath("/mnt/runtime/state") catch return error.RuntimeAliasWriteFailed;
+    filesystem.writeFile("/mnt/runtime/state/mounted-via-alias.txt", "mounted-via-alias", status.ticks + 3) catch return error.RuntimeAliasWriteFailed;
+
+    filesystem.resetForTest();
+    tool_layout.resetForTest();
+    filesystem.init() catch return error.RuntimeAliasReloadFailed;
+
+    const reloaded_target = filesystem.mountTarget("runtime", target_buf[0..]) orelse return error.RuntimeAliasReloadFailed;
+    if (!std.mem.eql(u8, reloaded_target, "/runtime") or
+        !probeFilesystemContent("/mnt/runtime/state/mounted-via-alias.txt", "mounted-via-alias"))
+    {
+        return error.RuntimeAliasReloadFailed;
     }
 
     if (builtin.is_test) {
@@ -15983,6 +16054,22 @@ fn virtioBlockInstallerProbeFailureCode(err: VirtioBlockInstallerProbeError) u8 
     };
 }
 
+fn virtioBlockMountProbeFailureCode(err: VirtioBlockMountProbeError) u8 {
+    return switch (err) {
+        error.BackendUnavailable => 0x7D,
+        error.CapacityTooSmall => 0x7E,
+        error.InstallerFailed => 0x7F,
+        error.BootMountBindFailed => 0x80,
+        error.RuntimeMountBindFailed => 0x81,
+        error.BootAliasTargetMismatch => 0x82,
+        error.RuntimeAliasTargetMismatch => 0x83,
+        error.LoaderAliasReadbackFailed => 0x84,
+        error.RuntimeAliasWriteFailed => 0x85,
+        error.RuntimeAliasReloadFailed => 0x86,
+        error.PciDiscoveryMismatch => 0x87,
+    };
+}
+
 comptime {
     if (!builtin.is_test) {
         @export(&baremetalStart, .{ .name = "_start" });
@@ -24645,6 +24732,22 @@ test "baremetal virtio block installer probe seeds layout and bootstrap package"
     const payload = try filesystem.readFileAlloc(std.testing.allocator, disk_installer.bootstrap_state_path, 64);
     defer std.testing.allocator.free(payload);
     try std.testing.expectEqualStrings(disk_installer.bootstrap_state_payload, payload);
+}
+
+test "baremetal virtio block mount probe persists mounted alias paths" {
+    resetBaremetalRuntimeForTest();
+    virtio_block.testEnableMockDevice(16384);
+    defer virtio_block.testDisableMockDevice();
+
+    try runVirtioBlockMountProbe();
+
+    const boot_loader = try filesystem.readFileAlloc(std.testing.allocator, "/mnt/boot/loader.cfg", 160);
+    defer std.testing.allocator.free(boot_loader);
+    try std.testing.expect(std.mem.indexOf(u8, boot_loader, "backend=virtio_block") != null);
+
+    const runtime_payload = try filesystem.readFileAlloc(std.testing.allocator, "/mnt/runtime/state/mounted-via-alias.txt", 64);
+    defer std.testing.allocator.free(runtime_payload);
+    try std.testing.expectEqualStrings("mounted-via-alias", runtime_payload);
 }
 
 test "baremetal tool layout persists patterned tool slot payloads on ram disk" {
