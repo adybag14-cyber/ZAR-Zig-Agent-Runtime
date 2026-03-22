@@ -211,6 +211,18 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-virtio-net-probe-check.ps1
 
+      - name: Bare-metal QEMU virtio-net ARP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-net-arp-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-net IPv4 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-net-ipv4-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-net UDP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-net-udp-probe-check.ps1
+
       - name: Bare-metal QEMU RTL8139 probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-rtl8139-probe-check.ps1

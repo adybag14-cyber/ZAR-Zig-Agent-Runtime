@@ -115,6 +115,9 @@ const qemu_e1000_tool_service_probe_ok_code: u8 = 0x4C;
 const qemu_e1000_dhcp_probe_ok_code: u8 = 0x4D;
 const qemu_e1000_dns_probe_ok_code: u8 = 0x4E;
 const qemu_virtio_net_probe_ok_code: u8 = 0x4F;
+const qemu_virtio_net_arp_probe_ok_code: u8 = 0x50;
+const qemu_virtio_net_ipv4_probe_ok_code: u8 = 0x51;
+const qemu_virtio_net_udp_probe_ok_code: u8 = 0x52;
 const qemu_virtio_block_probe_ok_code: u8 = 0x4F;
 const build_options = if (builtin.is_test)
     struct {
@@ -135,6 +138,9 @@ const build_options = if (builtin.is_test)
         pub const e1000_https_post_probe: bool = false;
         pub const e1000_tool_service_probe: bool = false;
         pub const virtio_net_probe: bool = false;
+        pub const virtio_net_arp_probe: bool = false;
+        pub const virtio_net_ipv4_probe: bool = false;
+        pub const virtio_net_udp_probe: bool = false;
         pub const rtl8139_probe: bool = false;
         pub const rtl8139_arp_probe: bool = false;
         pub const rtl8139_ipv4_probe: bool = false;
@@ -171,6 +177,9 @@ const e1000_http_post_probe_enabled: bool = if (@hasDecl(build_options, "e1000_h
 const e1000_https_post_probe_enabled: bool = if (@hasDecl(build_options, "e1000_https_post_probe")) build_options.e1000_https_post_probe else false;
 const e1000_tool_service_probe_enabled: bool = if (@hasDecl(build_options, "e1000_tool_service_probe")) build_options.e1000_tool_service_probe else false;
 const virtio_net_probe_enabled: bool = if (@hasDecl(build_options, "virtio_net_probe")) build_options.virtio_net_probe else false;
+const virtio_net_arp_probe_enabled: bool = if (@hasDecl(build_options, "virtio_net_arp_probe")) build_options.virtio_net_arp_probe else false;
+const virtio_net_ipv4_probe_enabled: bool = if (@hasDecl(build_options, "virtio_net_ipv4_probe")) build_options.virtio_net_ipv4_probe else false;
+const virtio_net_udp_probe_enabled: bool = if (@hasDecl(build_options, "virtio_net_udp_probe")) build_options.virtio_net_udp_probe else false;
 const rtl8139_probe_enabled: bool = build_options.rtl8139_probe;
 const rtl8139_arp_probe_enabled: bool = build_options.rtl8139_arp_probe;
 const rtl8139_ipv4_probe_enabled: bool = build_options.rtl8139_ipv4_probe;
@@ -665,6 +674,73 @@ const VirtioNetProbeError = error{
     RxTimedOut,
     RxLengthMismatch,
     RxPatternMismatch,
+    CounterMismatch,
+};
+
+const VirtioNetProtocolInitError = error{
+    UnsupportedPlatform,
+    DeviceNotFound,
+    MissingVersion1,
+    MissingMacFeature,
+    FeaturesRejected,
+    QueueUnavailable,
+    QueueTooSmall,
+    QueueInitFailed,
+    MacReadFailed,
+    StateMagicMismatch,
+    BackendMismatch,
+    InitFlagMismatch,
+    HardwareBackedMismatch,
+    IoBaseMismatch,
+};
+
+const VirtioNetArpProbeError = VirtioNetProtocolInitError || error{
+    TxFailed,
+    RxTimedOut,
+    PacketMissing,
+    PacketDestinationMismatch,
+    PacketSourceMismatch,
+    PacketOperationMismatch,
+    PacketSenderMismatch,
+    PacketTargetMismatch,
+    CounterMismatch,
+};
+
+const VirtioNetIpv4ProbeError = VirtioNetProtocolInitError || error{
+    TxFailed,
+    RxTimedOut,
+    LastFrameTooShort,
+    LastFrameNotIpv4,
+    LastIpv4DecodeFailed,
+    PacketMissing,
+    PacketDestinationMismatch,
+    PacketSourceMismatch,
+    PacketProtocolMismatch,
+    PacketSenderMismatch,
+    PacketTargetMismatch,
+    PayloadMismatch,
+    FrameLengthMismatch,
+    CounterMismatch,
+};
+
+const VirtioNetUdpProbeError = VirtioNetProtocolInitError || error{
+    TxFailed,
+    RxTimedOut,
+    LastFrameTooShort,
+    LastFrameNotIpv4,
+    LastIpv4DecodeFailed,
+    LastPacketNotUdp,
+    LastUdpDecodeFailed,
+    PacketMissing,
+    PacketDestinationMismatch,
+    PacketSourceMismatch,
+    PacketProtocolMismatch,
+    PacketSenderMismatch,
+    PacketTargetMismatch,
+    PacketPortsMismatch,
+    ChecksumMissing,
+    PayloadMismatch,
+    FrameLengthMismatch,
     CounterMismatch,
 };
 
@@ -2438,6 +2514,18 @@ fn baremetalStart() callconv(.c) noreturn {
         runVirtioNetProbe() catch |err| qemuExit(virtioNetProbeFailureCode(err));
         qemuExit(qemu_virtio_net_probe_ok_code);
     }
+    if (virtio_net_arp_probe_enabled) {
+        runVirtioNetArpProbe() catch |err| qemuExit(virtioNetArpProbeFailureCode(err));
+        qemuExit(qemu_virtio_net_arp_probe_ok_code);
+    }
+    if (virtio_net_ipv4_probe_enabled) {
+        runVirtioNetIpv4Probe() catch |err| qemuExit(virtioNetIpv4ProbeFailureCode(err));
+        qemuExit(qemu_virtio_net_ipv4_probe_ok_code);
+    }
+    if (virtio_net_udp_probe_enabled) {
+        runVirtioNetUdpProbe() catch |err| qemuExit(virtioNetUdpProbeFailureCode(err));
+        qemuExit(qemu_virtio_net_udp_probe_ok_code);
+    }
     if (e1000_probe_enabled) {
         runE1000Probe() catch |err| qemuExit(e1000ProbeFailureCode(err));
         qemuExit(qemu_e1000_probe_ok_code);
@@ -3099,6 +3187,164 @@ fn runVirtioNetProbe() VirtioNetProbeError!void {
     }
 
     if (eth.tx_packets == 0 or eth.rx_packets == 0 or eth.last_rx_len != expected_len) return error.CounterMismatch;
+}
+
+fn initVirtioNetProtocol() VirtioNetProtocolInitError!*const BaremetalEthernetState {
+    pal_net.selectBackend(.virtio_net);
+
+    virtio_net.initDetailed() catch |err| return switch (err) {
+        error.UnsupportedPlatform => error.UnsupportedPlatform,
+        error.DeviceNotFound => error.DeviceNotFound,
+        error.MissingVersion1 => error.MissingVersion1,
+        error.MissingMacFeature => error.MissingMacFeature,
+        error.FeaturesRejected => error.FeaturesRejected,
+        error.QueueUnavailable => error.QueueUnavailable,
+        error.QueueTooSmall => error.QueueTooSmall,
+        error.QueueInitFailed => error.QueueInitFailed,
+        error.MacReadFailed => error.MacReadFailed,
+    };
+
+    const eth = virtio_net.statePtr();
+    if (eth.magic != abi.ethernet_magic) return error.StateMagicMismatch;
+    if (eth.backend != abi.ethernet_backend_virtio_net) return error.BackendMismatch;
+    if (eth.initialized == 0) return error.InitFlagMismatch;
+    if (!builtin.is_test and eth.hardware_backed == 0) return error.HardwareBackedMismatch;
+    if (eth.io_base == 0) return error.IoBaseMismatch;
+    return eth;
+}
+
+fn warmVirtioNetProbeTransport(expect_mock_echo: bool) void {
+    if (expect_mock_echo) return;
+    var warmup: usize = 0;
+    while (warmup < virtio_net_probe_receive_warmup_loops) : (warmup += 1) {
+        spinPause(1);
+    }
+}
+
+fn runVirtioNetArpProbe() VirtioNetArpProbeError!void {
+    setProbeInterruptsEnabled(false);
+    const eth = try initVirtioNetProtocol();
+    const expect_mock_echo = builtin.is_test or eth.hardware_backed == 0;
+    warmVirtioNetProbeTransport(expect_mock_echo);
+
+    pal_net.clearRouteState();
+    defer pal_net.clearRouteState();
+    const sender_ip = [4]u8{ 10, 0, 2, 15 };
+    const target_ip = [4]u8{ 10, 0, 2, 2 };
+    pal_net.configureIpv4Route(sender_ip, .{ 255, 255, 255, 0 }, null);
+    if ((pal_net.sendArpRequest(sender_ip, target_ip) catch return error.TxFailed) != arp_protocol.frame_len) {
+        return error.TxFailed;
+    }
+
+    var attempts: usize = 0;
+    var packet_opt: ?pal_net.ArpPacket = null;
+    while (attempts < 200_000) : (attempts += 1) {
+        packet_opt = pal_net.pollArpPacket() catch return error.PacketMissing;
+        if (packet_opt != null) break;
+        spinPause(1);
+    }
+    const packet = packet_opt orelse return error.RxTimedOut;
+
+    const expected_destination = if (expect_mock_echo) ethernet_protocol.broadcast_mac else eth.mac;
+    const expected_source = if (expect_mock_echo) eth.mac else virtio_net_probe_remote_mac;
+    if (!std.mem.eql(u8, expected_destination[0..], packet.ethernet_destination[0..])) return error.PacketDestinationMismatch;
+    if (!std.mem.eql(u8, expected_source[0..], packet.ethernet_source[0..])) return error.PacketSourceMismatch;
+    if (packet.operation != arp_protocol.operation_request) return error.PacketOperationMismatch;
+    if (!std.mem.eql(u8, eth.mac[0..], packet.sender_mac[0..]) or !std.mem.eql(u8, sender_ip[0..], packet.sender_ip[0..])) {
+        return error.PacketSenderMismatch;
+    }
+    if (!std.mem.eql(u8, target_ip[0..], packet.target_ip[0..]) or !std.mem.eql(u8, &[_]u8{ 0, 0, 0, 0, 0, 0 }, packet.target_mac[0..])) {
+        return error.PacketTargetMismatch;
+    }
+    if (eth.tx_packets == 0 or eth.rx_packets == 0 or eth.last_rx_len < arp_protocol.frame_len) return error.CounterMismatch;
+}
+
+fn runVirtioNetIpv4Probe() VirtioNetIpv4ProbeError!void {
+    const eth = try initVirtioNetProtocol();
+    const expect_mock_echo = builtin.is_test or eth.hardware_backed == 0;
+    warmVirtioNetProbeTransport(expect_mock_echo);
+
+    const source_ip = [4]u8{ 192, 168, 56, 10 };
+    const destination_ip = [4]u8{ 192, 168, 56, 1 };
+    const payload = "PING";
+    const expected_wire_len: u32 = ethernet_protocol.header_len + ipv4_protocol.header_len + payload.len;
+    const expected_frame_len: u32 = @max(expected_wire_len, 60);
+    if ((pal_net.sendIpv4Frame(ethernet_protocol.broadcast_mac, source_ip, destination_ip, ipv4_protocol.protocol_udp, payload) catch return error.TxFailed) != expected_wire_len) {
+        return error.TxFailed;
+    }
+
+    var attempts: usize = 0;
+    var packet_opt: ?pal_net.Ipv4Packet = null;
+    while (attempts < 200_000) : (attempts += 1) {
+        packet_opt = pal_net.pollIpv4PacketStrict() catch |err| return switch (err) {
+            error.NotIpv4 => error.LastFrameNotIpv4,
+            error.FrameTooShort, error.PacketTooShort => error.LastFrameTooShort,
+            error.InvalidVersion, error.UnsupportedOptions, error.InvalidTotalLength, error.HeaderChecksumMismatch => error.LastIpv4DecodeFailed,
+            else => error.PacketMissing,
+        };
+        if (packet_opt != null) break;
+        spinPause(1);
+    }
+    const packet = packet_opt orelse return error.RxTimedOut;
+
+    const expected_destination = if (expect_mock_echo) ethernet_protocol.broadcast_mac else eth.mac;
+    const expected_source = if (expect_mock_echo) eth.mac else virtio_net_probe_remote_mac;
+    if (!std.mem.eql(u8, expected_destination[0..], packet.ethernet_destination[0..])) return error.PacketDestinationMismatch;
+    if (!std.mem.eql(u8, expected_source[0..], packet.ethernet_source[0..])) return error.PacketSourceMismatch;
+    if (packet.header.protocol != ipv4_protocol.protocol_udp) return error.PacketProtocolMismatch;
+    if (!std.mem.eql(u8, source_ip[0..], packet.header.source_ip[0..])) return error.PacketSenderMismatch;
+    if (!std.mem.eql(u8, destination_ip[0..], packet.header.destination_ip[0..])) return error.PacketTargetMismatch;
+    if (!std.mem.eql(u8, payload, packet.payload[0..packet.payload_len])) return error.PayloadMismatch;
+    if (eth.last_rx_len != expected_frame_len) return error.FrameLengthMismatch;
+    if (eth.tx_packets == 0 or eth.rx_packets == 0) return error.CounterMismatch;
+}
+
+fn runVirtioNetUdpProbe() VirtioNetUdpProbeError!void {
+    const eth = try initVirtioNetProtocol();
+    const expect_mock_echo = builtin.is_test or eth.hardware_backed == 0;
+    warmVirtioNetProbeTransport(expect_mock_echo);
+
+    const source_ip = [4]u8{ 192, 168, 56, 10 };
+    const destination_ip = [4]u8{ 192, 168, 56, 1 };
+    const source_port: u16 = 4321;
+    const destination_port: u16 = 9001;
+    const payload = "OPENCLAW-UDP";
+    const expected_wire_len: u32 = ethernet_protocol.header_len + ipv4_protocol.header_len + udp_protocol.header_len + payload.len;
+    const expected_frame_len: u32 = @max(expected_wire_len, 60);
+    if ((pal_net.sendUdpPacket(ethernet_protocol.broadcast_mac, source_ip, destination_ip, source_port, destination_port, payload) catch return error.TxFailed) != expected_wire_len) {
+        return error.TxFailed;
+    }
+
+    var attempts: usize = 0;
+    var packet_received = false;
+    var packet_storage: pal_net.UdpPacket = undefined;
+    while (attempts < 200_000) : (attempts += 1) {
+        packet_received = pal_net.pollUdpPacketStrictInto(&packet_storage) catch |err| return switch (err) {
+            error.NotIpv4 => error.LastFrameNotIpv4,
+            error.NotUdp => error.LastPacketNotUdp,
+            error.FrameTooShort, error.PacketTooShort => error.LastFrameTooShort,
+            error.InvalidVersion, error.UnsupportedOptions, error.InvalidTotalLength, error.HeaderChecksumMismatch => error.LastIpv4DecodeFailed,
+            error.InvalidLength, error.ChecksumMismatch => error.LastUdpDecodeFailed,
+            else => error.PacketMissing,
+        };
+        if (packet_received) break;
+        spinPause(1);
+    }
+    if (!packet_received) return error.RxTimedOut;
+
+    const packet = &packet_storage;
+    const expected_destination = if (expect_mock_echo) ethernet_protocol.broadcast_mac else eth.mac;
+    const expected_source = if (expect_mock_echo) eth.mac else virtio_net_probe_remote_mac;
+    if (!std.mem.eql(u8, expected_destination[0..], packet.ethernet_destination[0..])) return error.PacketDestinationMismatch;
+    if (!std.mem.eql(u8, expected_source[0..], packet.ethernet_source[0..])) return error.PacketSourceMismatch;
+    if (packet.ipv4_header.protocol != ipv4_protocol.protocol_udp) return error.PacketProtocolMismatch;
+    if (!std.mem.eql(u8, source_ip[0..], packet.ipv4_header.source_ip[0..])) return error.PacketSenderMismatch;
+    if (!std.mem.eql(u8, destination_ip[0..], packet.ipv4_header.destination_ip[0..])) return error.PacketTargetMismatch;
+    if (packet.source_port != source_port or packet.destination_port != destination_port) return error.PacketPortsMismatch;
+    if (packet.checksum_value == 0) return error.ChecksumMissing;
+    if (!std.mem.eql(u8, payload, packet.payload[0..packet.payload_len])) return error.PayloadMismatch;
+    if (eth.last_rx_len != expected_frame_len) return error.FrameLengthMismatch;
+    if (eth.tx_packets == 0 or eth.rx_packets == 0) return error.CounterMismatch;
 }
 
 fn buildVirtioNetProbeFrame(frame: []u8, destination_mac: [6]u8, source_mac: [6]u8, seed: u8) void {
@@ -4379,6 +4625,104 @@ fn virtioNetProbeFailureCode(err: VirtioNetProbeError) u8 {
         error.RxLengthMismatch => 0xC0,
         error.RxPatternMismatch => 0xC1,
         error.CounterMismatch => 0xC2,
+    };
+}
+
+fn virtioNetArpProbeFailureCode(err: VirtioNetArpProbeError) u8 {
+    return switch (err) {
+        error.UnsupportedPlatform => 0xC3,
+        error.DeviceNotFound => 0xC4,
+        error.MissingVersion1 => 0xC5,
+        error.MissingMacFeature => 0xC6,
+        error.FeaturesRejected => 0xC7,
+        error.QueueUnavailable => 0xC8,
+        error.QueueTooSmall => 0xC9,
+        error.QueueInitFailed => 0xCA,
+        error.MacReadFailed => 0xCB,
+        error.StateMagicMismatch => 0xCC,
+        error.BackendMismatch => 0xCD,
+        error.InitFlagMismatch => 0xCE,
+        error.HardwareBackedMismatch => 0xCF,
+        error.IoBaseMismatch => 0xD0,
+        error.TxFailed => 0xD1,
+        error.RxTimedOut => 0xD2,
+        error.PacketMissing => 0xD3,
+        error.PacketDestinationMismatch => 0xD4,
+        error.PacketSourceMismatch => 0xD5,
+        error.PacketOperationMismatch => 0xD6,
+        error.PacketSenderMismatch => 0xD7,
+        error.PacketTargetMismatch => 0xD8,
+        error.CounterMismatch => 0xD9,
+    };
+}
+
+fn virtioNetIpv4ProbeFailureCode(err: VirtioNetIpv4ProbeError) u8 {
+    return switch (err) {
+        error.UnsupportedPlatform => 0xDA,
+        error.DeviceNotFound => 0xDB,
+        error.MissingVersion1 => 0xDC,
+        error.MissingMacFeature => 0xDD,
+        error.FeaturesRejected => 0xDE,
+        error.QueueUnavailable => 0xDF,
+        error.QueueTooSmall => 0xE0,
+        error.QueueInitFailed => 0xE1,
+        error.MacReadFailed => 0xE2,
+        error.StateMagicMismatch => 0xE3,
+        error.BackendMismatch => 0xE4,
+        error.InitFlagMismatch => 0xE5,
+        error.HardwareBackedMismatch => 0xE6,
+        error.IoBaseMismatch => 0xE7,
+        error.TxFailed => 0xE8,
+        error.RxTimedOut => 0xE9,
+        error.LastFrameTooShort => 0xEA,
+        error.LastFrameNotIpv4 => 0xEB,
+        error.LastIpv4DecodeFailed => 0xEC,
+        error.PacketMissing => 0xED,
+        error.PacketDestinationMismatch => 0xEE,
+        error.PacketSourceMismatch => 0xEF,
+        error.PacketProtocolMismatch => 0xF0,
+        error.PacketSenderMismatch => 0xF1,
+        error.PacketTargetMismatch => 0xF2,
+        error.PayloadMismatch => 0xF3,
+        error.FrameLengthMismatch => 0xF4,
+        error.CounterMismatch => 0xF5,
+    };
+}
+
+fn virtioNetUdpProbeFailureCode(err: VirtioNetUdpProbeError) u8 {
+    return switch (err) {
+        error.UnsupportedPlatform => 0xF6,
+        error.DeviceNotFound => 0xF7,
+        error.MissingVersion1 => 0xF8,
+        error.MissingMacFeature => 0xF9,
+        error.FeaturesRejected => 0xFA,
+        error.QueueUnavailable => 0xFB,
+        error.QueueTooSmall => 0xFC,
+        error.QueueInitFailed => 0xFD,
+        error.MacReadFailed => 0xFE,
+        error.StateMagicMismatch => 0xFF,
+        error.BackendMismatch => 0x80,
+        error.InitFlagMismatch => 0x81,
+        error.HardwareBackedMismatch => 0x82,
+        error.IoBaseMismatch => 0x83,
+        error.TxFailed => 0x84,
+        error.RxTimedOut => 0x85,
+        error.LastFrameTooShort => 0x86,
+        error.LastFrameNotIpv4 => 0x87,
+        error.LastIpv4DecodeFailed => 0x88,
+        error.LastPacketNotUdp => 0x89,
+        error.LastUdpDecodeFailed => 0x8A,
+        error.PacketMissing => 0x8B,
+        error.PacketDestinationMismatch => 0x8C,
+        error.PacketSourceMismatch => 0x8D,
+        error.PacketProtocolMismatch => 0x8E,
+        error.PacketSenderMismatch => 0x8F,
+        error.PacketTargetMismatch => 0x90,
+        error.PacketPortsMismatch => 0x91,
+        error.ChecksumMissing => 0x92,
+        error.PayloadMismatch => 0x93,
+        error.FrameLengthMismatch => 0x94,
+        error.CounterMismatch => 0x95,
     };
 }
 
@@ -22284,6 +22628,7 @@ test "baremetal e1000 raw frame transport loops through mock e1000 and exports s
 }
 
 test "baremetal virtio net raw frame transport loops through mock virtio net and exports stable state" {
+    resetBaremetalRuntimeForTest();
     virtio_net.testEnableMockDevice();
     defer virtio_net.testDisableMockDevice();
 
@@ -22291,6 +22636,31 @@ test "baremetal virtio net raw frame transport loops through mock virtio net and
     const eth = virtio_net.statePtr();
     try std.testing.expectEqual(@as(u8, abi.ethernet_backend_virtio_net), eth.backend);
     try std.testing.expectEqual(@as(u32, 96), eth.last_rx_len);
+}
+
+test "baremetal virtio net arp request loops through mock virtio net and parses request" {
+    resetBaremetalRuntimeForTest();
+    virtio_net.testEnableMockDevice();
+    defer virtio_net.testDisableMockDevice();
+
+    try runVirtioNetArpProbe();
+    try std.testing.expectEqual(@as(u8, abi.ethernet_backend_virtio_net), virtio_net.statePtr().backend);
+}
+
+test "baremetal virtio net ipv4 probe succeeds through mock device" {
+    resetBaremetalRuntimeForTest();
+    virtio_net.testEnableMockDevice();
+    defer virtio_net.testDisableMockDevice();
+
+    try runVirtioNetIpv4Probe();
+}
+
+test "baremetal virtio net udp probe succeeds through mock device" {
+    resetBaremetalRuntimeForTest();
+    virtio_net.testEnableMockDevice();
+    defer virtio_net.testDisableMockDevice();
+
+    try runVirtioNetUdpProbe();
 }
 
 test "baremetal e1000 arp request loops through mock e1000 and parses request" {

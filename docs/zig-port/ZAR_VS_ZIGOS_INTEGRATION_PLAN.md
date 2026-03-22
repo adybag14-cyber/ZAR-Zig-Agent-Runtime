@@ -220,7 +220,7 @@ This phase comes after Z1 because E1000 yields broader network confidence faster
 Current status:
 
 - `virtio-block` is delivered as bounded storage breadth
-- `virtio-net` raw-frame closure is now delivered as bounded NIC breadth
+- `virtio-net` raw-frame plus `ARP` / `IPv4` / `UDP` closure is now delivered as bounded NIC breadth
 - `USB/UHCI` and `AC97` remain future candidates
 
 ### Z6. IPv6 / Socket Model
