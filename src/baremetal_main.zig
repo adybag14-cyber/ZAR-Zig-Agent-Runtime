@@ -335,11 +335,17 @@ const VirtioBlockMountProbeError = error{
     InstallerFailed,
     BootMountBindFailed,
     RuntimeMountBindFailed,
+    CacheMountBindFailed,
     BootAliasTargetMismatch,
     RuntimeAliasTargetMismatch,
+    CacheAliasTargetMismatch,
     LoaderAliasReadbackFailed,
     RuntimeAliasWriteFailed,
+    CacheAliasWriteFailed,
+    RootVfsListingMismatch,
+    ProcVersionReadbackFailed,
     RuntimeAliasReloadFailed,
+    TmpfsAliasVolatilityMismatch,
     PciDiscoveryMismatch,
 };
 
@@ -3348,6 +3354,9 @@ fn runVirtioBlockInstallerProbe() VirtioBlockInstallerProbeError!void {
 }
 
 fn runVirtioBlockMountProbe() VirtioBlockMountProbeError!void {
+    var probe_allocator_backing = [_]u8{0} ** 1024;
+    var probe_fba = std.heap.FixedBufferAllocator.init(&probe_allocator_backing);
+    const probe_allocator = if (builtin.is_test) std.testing.allocator else probe_fba.allocator();
     storage_backend.init();
     const storage = storage_backend.statePtr();
     if (storage.backend != abi.storage_backend_virtio_block or storage.mounted == 0) {
@@ -3360,12 +3369,26 @@ fn runVirtioBlockMountProbe() VirtioBlockMountProbeError!void {
     disk_installer.installDefaultLayout(status.ticks) catch return error.InstallerFailed;
     filesystem.bindMount("boot", "/boot", status.ticks + 1) catch return error.BootMountBindFailed;
     filesystem.bindMount("runtime", "/runtime", status.ticks + 2) catch return error.RuntimeMountBindFailed;
+    filesystem.bindMount("cache", "/tmp/cache", status.ticks + 3) catch return error.CacheMountBindFailed;
 
     var target_buf: [filesystem.max_path_len]u8 = undefined;
     const boot_target = filesystem.mountTarget("boot", target_buf[0..]) orelse return error.BootAliasTargetMismatch;
     if (!std.mem.eql(u8, boot_target, "/boot")) return error.BootAliasTargetMismatch;
     const runtime_target = filesystem.mountTarget("runtime", target_buf[0..]) orelse return error.RuntimeAliasTargetMismatch;
     if (!std.mem.eql(u8, runtime_target, "/runtime")) return error.RuntimeAliasTargetMismatch;
+    const cache_target = filesystem.mountTarget("cache", target_buf[0..]) orelse return error.CacheAliasTargetMismatch;
+    if (!std.mem.eql(u8, cache_target, "/tmp/cache")) return error.CacheAliasTargetMismatch;
+
+    const root_listing = filesystem.listDirectoryAlloc(probe_allocator, "/", 256) catch return error.RootVfsListingMismatch;
+    defer probe_allocator.free(root_listing);
+    if (std.mem.indexOf(u8, root_listing, "dir mnt\n") == null or
+        std.mem.indexOf(u8, root_listing, "dir tmp\n") == null or
+        std.mem.indexOf(u8, root_listing, "dir proc\n") == null or
+        std.mem.indexOf(u8, root_listing, "dir dev\n") == null or
+        std.mem.indexOf(u8, root_listing, "dir sys\n") == null)
+    {
+        return error.RootVfsListingMismatch;
+    }
 
     var loader_buf: [160]u8 = undefined;
     const expected_loader = disk_installer.loaderConfigForCurrentBackend(loader_buf[0..]) catch return error.LoaderAliasReadbackFailed;
@@ -3373,8 +3396,15 @@ fn runVirtioBlockMountProbe() VirtioBlockMountProbeError!void {
         return error.LoaderAliasReadbackFailed;
     }
 
+    const proc_version = filesystem.readFileAlloc(probe_allocator, "/proc/version", 256) catch return error.ProcVersionReadbackFailed;
+    defer probe_allocator.free(proc_version);
+    if (std.mem.indexOf(u8, proc_version, "project=ZAR-Zig-Agent-Runtime") == null) return error.ProcVersionReadbackFailed;
+
     filesystem.createDirPath("/mnt/runtime/state") catch return error.RuntimeAliasWriteFailed;
-    filesystem.writeFile("/mnt/runtime/state/mounted-via-alias.txt", "mounted-via-alias", status.ticks + 3) catch return error.RuntimeAliasWriteFailed;
+    filesystem.writeFile("/mnt/runtime/state/mounted-via-alias.txt", "mounted-via-alias", status.ticks + 4) catch return error.RuntimeAliasWriteFailed;
+    filesystem.createDirPath("/mnt/cache") catch return error.CacheAliasWriteFailed;
+    filesystem.writeFile("/mnt/cache/volatile.txt", "volatile-cache", status.ticks + 5) catch return error.CacheAliasWriteFailed;
+    if (!probeFilesystemContent("/mnt/cache/volatile.txt", "volatile-cache")) return error.CacheAliasWriteFailed;
 
     filesystem.resetForTest();
     tool_layout.resetForTest();
@@ -3386,6 +3416,12 @@ fn runVirtioBlockMountProbe() VirtioBlockMountProbeError!void {
     {
         return error.RuntimeAliasReloadFailed;
     }
+    const reloaded_cache_target = filesystem.mountTarget("cache", target_buf[0..]) orelse return error.TmpfsAliasVolatilityMismatch;
+    if (!std.mem.eql(u8, reloaded_cache_target, "/tmp/cache")) return error.TmpfsAliasVolatilityMismatch;
+    if (probeFilesystemContent("/mnt/cache/volatile.txt", "volatile-cache")) return error.TmpfsAliasVolatilityMismatch;
+    var cache_buf: [64]u8 = undefined;
+    const cache_read = filesystem.readFile("/mnt/cache/volatile.txt", cache_buf[0..]);
+    if (cache_read != error.FileNotFound) return error.TmpfsAliasVolatilityMismatch;
 
     if (builtin.is_test) {
         return;
@@ -16061,12 +16097,18 @@ fn virtioBlockMountProbeFailureCode(err: VirtioBlockMountProbeError) u8 {
         error.InstallerFailed => 0x7F,
         error.BootMountBindFailed => 0x80,
         error.RuntimeMountBindFailed => 0x81,
-        error.BootAliasTargetMismatch => 0x82,
-        error.RuntimeAliasTargetMismatch => 0x83,
-        error.LoaderAliasReadbackFailed => 0x84,
-        error.RuntimeAliasWriteFailed => 0x85,
-        error.RuntimeAliasReloadFailed => 0x86,
-        error.PciDiscoveryMismatch => 0x87,
+        error.CacheMountBindFailed => 0x82,
+        error.BootAliasTargetMismatch => 0x83,
+        error.RuntimeAliasTargetMismatch => 0x84,
+        error.CacheAliasTargetMismatch => 0x85,
+        error.LoaderAliasReadbackFailed => 0x86,
+        error.RuntimeAliasWriteFailed => 0x87,
+        error.CacheAliasWriteFailed => 0x88,
+        error.RootVfsListingMismatch => 0x89,
+        error.ProcVersionReadbackFailed => 0x8A,
+        error.RuntimeAliasReloadFailed => 0x8B,
+        error.TmpfsAliasVolatilityMismatch => 0x8C,
+        error.PciDiscoveryMismatch => 0x8D,
     };
 }
 
@@ -24748,6 +24790,18 @@ test "baremetal virtio block mount probe persists mounted alias paths" {
     const runtime_payload = try filesystem.readFileAlloc(std.testing.allocator, "/mnt/runtime/state/mounted-via-alias.txt", 64);
     defer std.testing.allocator.free(runtime_payload);
     try std.testing.expectEqualStrings("mounted-via-alias", runtime_payload);
+
+    const root_listing = try filesystem.listDirectoryAlloc(std.testing.allocator, "/", 256);
+    defer std.testing.allocator.free(root_listing);
+    try std.testing.expect(std.mem.indexOf(u8, root_listing, "dir mnt\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, root_listing, "dir tmp\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, root_listing, "dir proc\n") != null);
+
+    const proc_version = try filesystem.readFileAlloc(std.testing.allocator, "/proc/version", 256);
+    defer std.testing.allocator.free(proc_version);
+    try std.testing.expect(std.mem.indexOf(u8, proc_version, "project=ZAR-Zig-Agent-Runtime") != null);
+
+    try std.testing.expectEqual(error.FileNotFound, filesystem.readFileAlloc(std.testing.allocator, "/mnt/cache/volatile.txt", 64));
 }
 
 test "baremetal tool layout persists patterned tool slot payloads on ram disk" {
