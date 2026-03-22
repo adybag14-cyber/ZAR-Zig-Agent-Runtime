@@ -15,7 +15,7 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
   - Original OpenClaw baseline (`v2026.3.13-1`): `100/100` covered
   - Original OpenClaw beta baseline (`v2026.3.13-beta.1`): `100/100` covered
   - Union baseline: `141/141` covered (`MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> `436/436` passed
+- Latest local validation: `zig build test --summary all` -> `451/451` passed
 - Current edge release target tag: `v0.2.0-zig-edge.31`
 - License posture: repo-wide `GPL-2.0-only` with Linux-style SPDX headers on repo-owned source and script files
 - Toolchain policy: Codeberg `master` is canonical; `adybag14-cyber/zig` publishes rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
@@ -60,6 +60,7 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
       - [`docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md`](docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md)
       - [`docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`](docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md)
       - [`docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md`](docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md)
+      - [`docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_NET_SLICE_PLAN.md`](docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_NET_SLICE_PLAN.md)
     - first delivered adoption slice is a clean-room `E1000` path that reuses ZAR's existing network stack without forcing VFS/userspace redesign
     - `src/baremetal/e1000.zig` now provides the first `82540EM`-class `E1000` path with PCI bind, MMIO + legacy I/O reset, EEPROM MAC readout, bounded TX/RX rings, and raw-frame send/receive telemetry
     - `src/baremetal/pci.zig` now discovers the `E1000` MMIO + I/O BAR pair and enables I/O, memory, and bus-master decode on the selected PCI function
@@ -103,6 +104,11 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
       - `src/baremetal/virtio_block.zig` now provides a ZAR-owned modern `virtio-block` path with bounded queue bring-up plus read/write/flush requests
       - `src/baremetal/storage_backend.zig` now prefers `virtio-block` over RAM-disk when available, while still preferring ATA PIO if both hardware-backed backends are present
       - `scripts/baremetal-qemu-virtio-block-probe-check.ps1` now proves live raw mutation, tool-layout readback, and filesystem superblock readback on the `virtio-block` path
+    - seventh delivered adoption slice is bounded `virtio-net` NIC breadth:
+      - `src/baremetal/virtio_net.zig` now provides a ZAR-owned modern `virtio-net` path with modern PCI capability discovery, version-1 feature negotiation, MAC readout, bounded RX/TX queue bring-up, and raw-frame send/receive telemetry
+      - `src/baremetal/pci.zig` now discovers modern `virtio-net` PCI capability regions
+      - `src/pal/net.zig` now routes the same raw-frame PAL seam through selectable `RTL8139`, `E1000`, and `virtio-net` backends without regressing the existing lanes
+      - `scripts/baremetal-qemu-virtio-net-probe-check.ps1` plus `scripts/qemu-virtio-net-dgram-echo.ps1` now prove live QEMU `virtio-net-pci` PCI bind, MAC readout, TX, RX, payload validation, and counter advance over the freestanding PVH artifact
   - keyboard/mouse is now strict-closed in [`docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md`](docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md)
   - `src/baremetal/ps2_input.zig` now contains a real x86 port-I/O backed PS/2 controller path
   - `scripts/baremetal-qemu-ps2-input-probe-check.ps1` proves IRQ-driven keyboard/mouse state updates against the freestanding PVH artifact

@@ -612,6 +612,7 @@ fn networkBackendName(backend: pal_net.Backend) []const u8 {
     return switch (backend) {
         .rtl8139 => "rtl8139",
         .e1000 => "e1000",
+        .virtio_net => "virtio_net",
     };
 }
 

@@ -15,6 +15,7 @@ const pal_framebuffer = @import("pal/framebuffer.zig");
 const vga_text_console = @import("baremetal/vga_text_console.zig");
 const e1000 = @import("baremetal/e1000.zig");
 const rtl8139 = @import("baremetal/rtl8139.zig");
+const virtio_net = @import("baremetal/virtio_net.zig");
 const storage_backend = @import("baremetal/storage_backend.zig");
 const filesystem = @import("baremetal/filesystem.zig");
 const package_store = @import("baremetal/package_store.zig");
@@ -113,6 +114,7 @@ const qemu_e1000_https_post_probe_ok_code: u8 = 0x4B;
 const qemu_e1000_tool_service_probe_ok_code: u8 = 0x4C;
 const qemu_e1000_dhcp_probe_ok_code: u8 = 0x4D;
 const qemu_e1000_dns_probe_ok_code: u8 = 0x4E;
+const qemu_virtio_net_probe_ok_code: u8 = 0x4F;
 const qemu_virtio_block_probe_ok_code: u8 = 0x4F;
 const build_options = if (builtin.is_test)
     struct {
@@ -132,6 +134,7 @@ const build_options = if (builtin.is_test)
         pub const e1000_http_post_probe: bool = false;
         pub const e1000_https_post_probe: bool = false;
         pub const e1000_tool_service_probe: bool = false;
+        pub const virtio_net_probe: bool = false;
         pub const rtl8139_probe: bool = false;
         pub const rtl8139_arp_probe: bool = false;
         pub const rtl8139_ipv4_probe: bool = false;
@@ -167,6 +170,7 @@ const e1000_dns_probe_enabled: bool = if (@hasDecl(build_options, "e1000_dns_pro
 const e1000_http_post_probe_enabled: bool = if (@hasDecl(build_options, "e1000_http_post_probe")) build_options.e1000_http_post_probe else false;
 const e1000_https_post_probe_enabled: bool = if (@hasDecl(build_options, "e1000_https_post_probe")) build_options.e1000_https_post_probe else false;
 const e1000_tool_service_probe_enabled: bool = if (@hasDecl(build_options, "e1000_tool_service_probe")) build_options.e1000_tool_service_probe else false;
+const virtio_net_probe_enabled: bool = if (@hasDecl(build_options, "virtio_net_probe")) build_options.virtio_net_probe else false;
 const rtl8139_probe_enabled: bool = build_options.rtl8139_probe;
 const rtl8139_arp_probe_enabled: bool = build_options.rtl8139_arp_probe;
 const rtl8139_ipv4_probe_enabled: bool = build_options.rtl8139_ipv4_probe;
@@ -642,6 +646,31 @@ const E1000ToolServiceProbeError = E1000TcpProbeError || error{
     ToolServiceResponseMismatch,
 };
 
+const VirtioNetProbeError = error{
+    UnsupportedPlatform,
+    DeviceNotFound,
+    MissingVersion1,
+    MissingMacFeature,
+    FeaturesRejected,
+    QueueUnavailable,
+    QueueTooSmall,
+    QueueInitFailed,
+    MacReadFailed,
+    StateMagicMismatch,
+    BackendMismatch,
+    InitFlagMismatch,
+    HardwareBackedMismatch,
+    IoBaseMismatch,
+    TxFailed,
+    RxTimedOut,
+    RxLengthMismatch,
+    RxPatternMismatch,
+    CounterMismatch,
+};
+
+const virtio_net_probe_remote_mac = [6]u8{ 0x02, 0x5A, 0x52, 0x10, 0x00, 0xF1 };
+const virtio_net_probe_ethertype = [2]u8{ 0x88, 0xB7 };
+const virtio_net_probe_receive_warmup_loops: usize = 8_000_000;
 const e1000_probe_remote_mac = [6]u8{ 0x02, 0x5A, 0x52, 0x10, 0x00, 0xE1 };
 const e1000_probe_ethertype = [2]u8{ 0x88, 0xB5 };
 const e1000_probe_receive_warmup_loops: usize = 8_000_000;
@@ -1523,6 +1552,7 @@ pub export fn oc_ethernet_state_ptr() *const BaremetalEthernetState {
     return switch (pal_net.currentBackend()) {
         .rtl8139 => rtl8139.statePtr(),
         .e1000 => e1000.statePtr(),
+        .virtio_net => virtio_net.statePtr(),
     };
 }
 
@@ -1530,6 +1560,7 @@ pub export fn oc_ethernet_init() u8 {
     return switch (pal_net.currentBackend()) {
         .rtl8139 => if (rtl8139.init()) 1 else 0,
         .e1000 => if (e1000.init()) 1 else 0,
+        .virtio_net => if (virtio_net.init()) 1 else 0,
     };
 }
 
@@ -1543,6 +1574,10 @@ pub export fn oc_ethernet_reset() u8 {
             e1000.resetForTest();
             break :blk if (e1000.init()) 1 else 0;
         },
+        .virtio_net => blk: {
+            virtio_net.resetForTest();
+            break :blk if (virtio_net.init()) 1 else 0;
+        },
     };
 }
 
@@ -1550,6 +1585,7 @@ pub export fn oc_ethernet_mac_byte(index: u32) u8 {
     return switch (pal_net.currentBackend()) {
         .rtl8139 => rtl8139.macByte(index),
         .e1000 => e1000.macByte(index),
+        .virtio_net => virtio_net.macByte(index),
     };
 }
 
@@ -1557,6 +1593,7 @@ pub export fn oc_ethernet_send_pattern(byte_len: u32, seed: u8) i16 {
     switch (pal_net.currentBackend()) {
         .rtl8139 => _ = rtl8139.sendPattern(byte_len, seed) catch return abi.result_not_supported,
         .e1000 => _ = e1000.sendPattern(byte_len, seed) catch return abi.result_not_supported,
+        .virtio_net => _ = virtio_net.sendPattern(byte_len, seed) catch return abi.result_not_supported,
     }
     return abi.result_ok;
 }
@@ -1565,6 +1602,7 @@ pub export fn oc_ethernet_poll() u32 {
     return switch (pal_net.currentBackend()) {
         .rtl8139 => rtl8139.pollReceive() catch 0,
         .e1000 => e1000.pollReceive() catch 0,
+        .virtio_net => virtio_net.pollReceive() catch 0,
     };
 }
 
@@ -1572,6 +1610,7 @@ pub export fn oc_ethernet_rx_byte(index: u32) u8 {
     return switch (pal_net.currentBackend()) {
         .rtl8139 => rtl8139.rxByte(index),
         .e1000 => e1000.rxByte(index),
+        .virtio_net => virtio_net.rxByte(index),
     };
 }
 
@@ -1583,6 +1622,7 @@ pub export fn oc_ethernet_tx_byte(index: u32) u8 {
     return switch (pal_net.currentBackend()) {
         .rtl8139 => rtl8139.txByte(index),
         .e1000 => e1000.txByte(index),
+        .virtio_net => virtio_net.txByte(index),
     };
 }
 
@@ -2394,6 +2434,10 @@ fn baremetalStart() callconv(.c) noreturn {
         runVirtioBlockProbe() catch |err| qemuExit(virtioBlockProbeFailureCode(err));
         qemuExit(qemu_virtio_block_probe_ok_code);
     }
+    if (virtio_net_probe_enabled) {
+        runVirtioNetProbe() catch |err| qemuExit(virtioNetProbeFailureCode(err));
+        qemuExit(qemu_virtio_net_probe_ok_code);
+    }
     if (e1000_probe_enabled) {
         runE1000Probe() catch |err| qemuExit(e1000ProbeFailureCode(err));
         qemuExit(qemu_e1000_probe_ok_code);
@@ -2984,6 +3028,88 @@ fn runE1000Probe() E1000ProbeError!void {
     }
 
     if (eth.tx_packets == 0 or eth.rx_packets == 0 or eth.last_rx_len != expected_len) return error.CounterMismatch;
+}
+
+fn runVirtioNetProbe() VirtioNetProbeError!void {
+    virtio_net.initDetailed() catch |err| return switch (err) {
+        error.UnsupportedPlatform => error.UnsupportedPlatform,
+        error.DeviceNotFound => error.DeviceNotFound,
+        error.MissingVersion1 => error.MissingVersion1,
+        error.MissingMacFeature => error.MissingMacFeature,
+        error.FeaturesRejected => error.FeaturesRejected,
+        error.QueueUnavailable => error.QueueUnavailable,
+        error.QueueTooSmall => error.QueueTooSmall,
+        error.QueueInitFailed => error.QueueInitFailed,
+        error.MacReadFailed => error.MacReadFailed,
+    };
+    const eth = virtio_net.statePtr();
+    if (eth.magic != abi.ethernet_magic) return error.StateMagicMismatch;
+    if (eth.backend != abi.ethernet_backend_virtio_net) return error.BackendMismatch;
+    if (eth.initialized == 0) return error.InitFlagMismatch;
+    if (!builtin.is_test and eth.hardware_backed == 0) return error.HardwareBackedMismatch;
+    if (eth.io_base == 0) return error.IoBaseMismatch;
+    if (macBytesAreZeroForDriver(virtio_net.macByte)) return error.MacReadFailed;
+
+    const expect_mock_echo = builtin.is_test or eth.hardware_backed == 0;
+    const expected_len: u32 = 96;
+    if (expect_mock_echo) {
+        _ = virtio_net.sendPattern(expected_len, 0x41) catch return error.TxFailed;
+    } else {
+        var warmup: usize = 0;
+        while (warmup < virtio_net_probe_receive_warmup_loops) : (warmup += 1) {
+            spinPause(1);
+        }
+        var guest_mac = [6]u8{ 0, 0, 0, 0, 0, 0 };
+        var mac_index: usize = 0;
+        while (mac_index < guest_mac.len) : (mac_index += 1) {
+            guest_mac[mac_index] = virtio_net.macByte(@as(u32, @intCast(mac_index)));
+        }
+        var probe_frame = [_]u8{0} ** expected_len;
+        buildVirtioNetProbeFrame(probe_frame[0..], virtio_net_probe_remote_mac, guest_mac, 0x41);
+        virtio_net.sendFrame(probe_frame[0..]) catch return error.TxFailed;
+    }
+
+    var attempts: usize = 0;
+    var observed_len: u32 = 0;
+    while (attempts < 200_000) : (attempts += 1) {
+        observed_len = virtio_net.pollReceive() catch return error.RxTimedOut;
+        if (observed_len != 0) break;
+        spinPause(1);
+    }
+    if (observed_len == 0) return error.RxTimedOut;
+    if (observed_len != expected_len) return error.RxLengthMismatch;
+
+    var rx_index: u32 = 0;
+    while (rx_index < 6) : (rx_index += 1) {
+        if (virtio_net.rxByte(rx_index) != virtio_net.macByte(rx_index)) return error.RxPatternMismatch;
+        const expected_source = if (expect_mock_echo)
+            virtio_net.macByte(rx_index)
+        else
+            virtio_net_probe_remote_mac[@as(usize, @intCast(rx_index))];
+        if (virtio_net.rxByte(6 + rx_index) != expected_source) return error.RxPatternMismatch;
+    }
+    if (virtio_net.rxByte(12) != virtio_net_probe_ethertype[0] or virtio_net.rxByte(13) != virtio_net_probe_ethertype[1]) {
+        return error.RxPatternMismatch;
+    }
+
+    rx_index = 14;
+    while (rx_index < expected_len) : (rx_index += 1) {
+        const expected = 0x41 +% @as(u8, @truncate(rx_index - 14));
+        if (virtio_net.rxByte(rx_index) != expected) return error.RxPatternMismatch;
+    }
+
+    if (eth.tx_packets == 0 or eth.rx_packets == 0 or eth.last_rx_len != expected_len) return error.CounterMismatch;
+}
+
+fn buildVirtioNetProbeFrame(frame: []u8, destination_mac: [6]u8, source_mac: [6]u8, seed: u8) void {
+    std.mem.copyForwards(u8, frame[0..6], destination_mac[0..]);
+    std.mem.copyForwards(u8, frame[6..12], source_mac[0..]);
+    frame[12] = virtio_net_probe_ethertype[0];
+    frame[13] = virtio_net_probe_ethertype[1];
+    var index: usize = 14;
+    while (index < frame.len) : (index += 1) {
+        frame[index] = seed +% @as(u8, @truncate(index - 14));
+    }
 }
 
 fn buildE1000ProbeFrame(frame: []u8, destination_mac: [6]u8, source_mac: [6]u8, seed: u8) void {
@@ -4229,6 +4355,30 @@ fn e1000ProbeFailureCode(err: E1000ProbeError) u8 {
         error.RxLengthMismatch => 0xA6,
         error.RxPatternMismatch => 0xA7,
         error.CounterMismatch => 0xA8,
+    };
+}
+
+fn virtioNetProbeFailureCode(err: VirtioNetProbeError) u8 {
+    return switch (err) {
+        error.UnsupportedPlatform => 0xB0,
+        error.DeviceNotFound => 0xB1,
+        error.MissingVersion1 => 0xB2,
+        error.MissingMacFeature => 0xB3,
+        error.FeaturesRejected => 0xB4,
+        error.QueueUnavailable => 0xB5,
+        error.QueueTooSmall => 0xB6,
+        error.QueueInitFailed => 0xB7,
+        error.MacReadFailed => 0xB8,
+        error.StateMagicMismatch => 0xB9,
+        error.BackendMismatch => 0xBA,
+        error.InitFlagMismatch => 0xBB,
+        error.HardwareBackedMismatch => 0xBC,
+        error.IoBaseMismatch => 0xBD,
+        error.TxFailed => 0xBE,
+        error.RxTimedOut => 0xBF,
+        error.RxLengthMismatch => 0xC0,
+        error.RxPatternMismatch => 0xC1,
+        error.CounterMismatch => 0xC2,
     };
 }
 
@@ -15346,6 +15496,7 @@ fn resetBaremetalRuntimeForTest() void {
     framebuffer_console.resetForTest();
     vga_text_console.resetForTest();
     e1000.resetForTest();
+    virtio_net.resetForTest();
     rtl8139.resetForTest();
     storage_backend.resetForTest();
     ps2_input.resetForTest();
@@ -22130,6 +22281,16 @@ test "baremetal e1000 raw frame transport loops through mock e1000 and exports s
     try std.testing.expectEqual(@as(u8, 1), eth.loopback_enabled);
     try std.testing.expectEqual(@as(u32, 1), eth.tx_packets);
     try std.testing.expectEqual(@as(u32, 1), eth.rx_packets);
+}
+
+test "baremetal virtio net raw frame transport loops through mock virtio net and exports stable state" {
+    virtio_net.testEnableMockDevice();
+    defer virtio_net.testDisableMockDevice();
+
+    try runVirtioNetProbe();
+    const eth = virtio_net.statePtr();
+    try std.testing.expectEqual(@as(u8, abi.ethernet_backend_virtio_net), eth.backend);
+    try std.testing.expectEqual(@as(u32, 96), eth.last_rx_len);
 }
 
 test "baremetal e1000 arp request loops through mock e1000 and parses request" {

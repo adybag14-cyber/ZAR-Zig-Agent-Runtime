@@ -14,6 +14,7 @@ Full-stack replacement execution reference:
   - `docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md`
   - `docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`
   - `docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md`
+  - `docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_NET_SLICE_PLAN.md`
   - upstream ZigOS licensing is now explicit: `MIT`
   - first delivered adoption slice is clean-room `E1000` protocol reuse through `ARP` / `IPv4` / `UDP` / bounded `TCP`, because it expands hardware breadth without forcing a VFS/ELF/syscall redesign
   - `src/baremetal/e1000.zig` now provides the first ZAR-owned `82540EM`-class `E1000` path with PCI bind, MMIO + legacy I/O reset, EEPROM MAC readout, bounded TX/RX rings, and raw-frame send/receive telemetry
@@ -28,6 +29,7 @@ Full-stack replacement execution reference:
   - fourth delivered adoption slice is a ZAR-native read-only device overlay through `src/baremetal/virtual_fs.zig` and `src/baremetal/filesystem.zig`, exposing `/dev` over the existing storage/display/network device state, reusing the existing builtin and typed `GET` / `LIST` / `STAT` tool-service surface, and proving the same overlay live over `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1`
   - fifth delivered adoption slice is a bounded non-persistent `/tmp` surface through `src/baremetal/tmpfs.zig` and `src/baremetal/filesystem.zig`, with host regressions proving lifecycle behavior plus reset-driven non-persistence
   - sixth delivered adoption slice is bounded `virtio-block` storage breadth through `src/baremetal/virtio_block.zig`, `src/baremetal/storage_backend.zig`, and `scripts/baremetal-qemu-virtio-block-probe-check.ps1`, with host regressions for mock-backed read/write/flush plus live QEMU block mutation/readback
+  - seventh delivered adoption slice is bounded `virtio-net` NIC breadth through `src/baremetal/virtio_net.zig`, `src/baremetal/pci.zig`, `src/pal/net.zig`, `scripts/baremetal-qemu-virtio-net-probe-check.ps1`, and `scripts/qemu-virtio-net-dgram-echo.ps1`, with host regressions for mock-backed init/MAC/TX/RX/export state plus live QEMU raw-frame TX/RX proof on `virtio-net-pci`
 - `FS5.5` hardware-driver pivot update:
   - framebuffer/console strict closure is now reached locally.
   - real linear-framebuffer path shipped in `src/baremetal/framebuffer_console.zig`:

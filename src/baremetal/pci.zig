@@ -9,6 +9,7 @@ const max_device_count: usize = 32;
 const max_function_count: usize = 8;
 const pci_capability_id_vendor_specific: u8 = 0x09;
 const virtio_vendor_id: u16 = 0x1AF4;
+const virtio_net_device_id: u16 = 0x1041;
 const virtio_block_device_id: u16 = 0x1042;
 const virtio_gpu_device_id: u16 = 0x1050;
 const virtio_pci_cap_common_cfg: u8 = 1;
@@ -56,6 +57,18 @@ pub const VirtioGpuDevice = struct {
     location: DeviceLocation,
     vendor_id: u16,
     device_id: u16,
+    common_cfg: MmioRegion,
+    notify_cfg: MmioRegion,
+    notify_off_multiplier: u32,
+    isr_cfg: MmioRegion,
+    device_cfg: MmioRegion,
+};
+
+pub const VirtioNetDevice = struct {
+    location: DeviceLocation,
+    vendor_id: u16,
+    device_id: u16,
+    irq_line: u8,
     common_cfg: MmioRegion,
     notify_cfg: MmioRegion,
     notify_off_multiplier: u32,
@@ -429,6 +442,80 @@ pub fn discoverVirtioGpuDevice() ?VirtioGpuDevice {
     return null;
 }
 
+pub fn discoverVirtioNetDevice() ?VirtioNetDevice {
+    if (!hardwareBacked() and !(builtin.is_test and mock_enabled)) return null;
+
+    var bus: usize = 0;
+    while (bus < max_bus_count) : (bus += 1) {
+        var device: usize = 0;
+        while (device < max_device_count) : (device += 1) {
+            const bus_id: u8 = @intCast(bus);
+            const device_id0: u8 = @intCast(device);
+            const first_vendor = vendorId(bus_id, device_id0, 0);
+            if (first_vendor == 0xFFFF) continue;
+
+            const function_limit: usize = if ((headerType(bus_id, device_id0, 0) & 0x80) != 0) max_function_count else 1;
+            var function: usize = 0;
+            while (function < function_limit) : (function += 1) {
+                const function_id: u8 = @intCast(function);
+                const vendor = vendorId(bus_id, device_id0, function_id);
+                if (vendor != virtio_vendor_id or deviceId(bus_id, device_id0, function_id) != virtio_net_device_id) continue;
+
+                const location: DeviceLocation = .{
+                    .bus = bus_id,
+                    .device = device_id0,
+                    .function = function_id,
+                };
+                enableMemoryAndIoDecode(location);
+
+                var common_cfg: ?MmioRegion = null;
+                var notify_cfg: ?MmioRegion = null;
+                var notify_off_multiplier: u32 = 0;
+                var isr_cfg: ?MmioRegion = null;
+                var device_cfg: ?MmioRegion = null;
+
+                var capability_ptr = readConfig8(bus_id, device_id0, function_id, 0x34);
+                var visited: usize = 0;
+                while (capability_ptr >= 0x40 and capability_ptr != 0 and visited < 64) : (visited += 1) {
+                    const cap_id = readConfig8(bus_id, device_id0, function_id, capability_ptr);
+                    const next_ptr = readConfig8(bus_id, device_id0, function_id, capability_ptr + 1);
+                    if (cap_id == pci_capability_id_vendor_specific) {
+                        const cfg_type = readConfig8(bus_id, device_id0, function_id, capability_ptr + 3);
+                        const region = capabilityRegion(location, capability_ptr);
+                        switch (cfg_type) {
+                            virtio_pci_cap_common_cfg => common_cfg = region,
+                            virtio_pci_cap_notify_cfg => {
+                                notify_cfg = region;
+                                notify_off_multiplier = readConfig32(bus_id, device_id0, function_id, capability_ptr + 16);
+                            },
+                            virtio_pci_cap_isr_cfg => isr_cfg = region,
+                            virtio_pci_cap_device_cfg => device_cfg = region,
+                            else => {},
+                        }
+                    }
+                    capability_ptr = next_ptr;
+                }
+
+                if (common_cfg != null and notify_cfg != null and isr_cfg != null and device_cfg != null) {
+                    return .{
+                        .location = location,
+                        .vendor_id = vendor,
+                        .device_id = virtio_net_device_id,
+                        .irq_line = readConfig8(bus_id, device_id0, function_id, 0x3C),
+                        .common_cfg = common_cfg.?,
+                        .notify_cfg = notify_cfg.?,
+                        .notify_off_multiplier = notify_off_multiplier,
+                        .isr_cfg = isr_cfg.?,
+                        .device_cfg = device_cfg.?,
+                    };
+                }
+            }
+        }
+    }
+
+    return null;
+}
+
 pub fn discoverVirtioBlockDevice() ?VirtioBlockDevice {
     if (!hardwareBacked() and !(builtin.is_test and mock_enabled)) return null;
 
@@ -600,6 +687,14 @@ pub fn enableVirtioBlockMemoryAndBusMaster(location: DeviceLocation) void {
     }
 }
 
+pub fn enableVirtioNetMemoryAndBusMaster(location: DeviceLocation) void {
+    const command = readConfig16(location.bus, location.device, location.function, 0x04);
+    const wanted = command | 0x7;
+    if (wanted != command) {
+        writeConfig16(location.bus, location.device, location.function, 0x04, wanted);
+    }
+}
+
 pub fn testResetForTest() void {
     if (!builtin.is_test) return;
     mock_enabled = false;
@@ -759,4 +854,50 @@ test "pci virtio block scan finds modern capability regions" {
     try std.testing.expectEqual(@as(u64, 0xFE10_4000), block.device_cfg.address);
     enableVirtioBlockMemoryAndBusMaster(block.location);
     try std.testing.expectEqual(@as(u16, 0x7), readConfig16(0, 5, 0, 0x04) & 0x7);
+}
+
+test "pci virtio net scan finds modern capability regions" {
+    testResetForTest();
+    defer testResetForTest();
+
+    testSetConfig32(0, 6, 0, 0x00, 0x1041_1AF4);
+    testSetConfig32(0, 6, 0, 0x04, 0x0000_0010);
+    testSetConfig32(0, 6, 0, 0x0C, 0x0000_0000);
+    testSetConfig32(0, 6, 0, 0x20, 0xFE20_0000);
+    testSetConfig32(0, 6, 0, 0x34, 0x0000_0040);
+    testSetConfig32(0, 6, 0, 0x3C, 0x0000_000C);
+
+    testSetConfig32(0, 6, 0, 0x40, 0x0110_5009);
+    testSetConfig32(0, 6, 0, 0x44, 0x0000_0004);
+    testSetConfig32(0, 6, 0, 0x48, 0x0000_1000);
+    testSetConfig32(0, 6, 0, 0x4C, 0x0000_0100);
+
+    testSetConfig32(0, 6, 0, 0x50, 0x0210_7009);
+    testSetConfig32(0, 6, 0, 0x54, 0x0000_0004);
+    testSetConfig32(0, 6, 0, 0x58, 0x0000_2000);
+    testSetConfig32(0, 6, 0, 0x5C, 0x0000_0100);
+    testSetConfig32(0, 6, 0, 0x60, 0x0000_0004);
+
+    testSetConfig32(0, 6, 0, 0x70, 0x0310_8009);
+    testSetConfig32(0, 6, 0, 0x74, 0x0000_0004);
+    testSetConfig32(0, 6, 0, 0x78, 0x0000_3000);
+    testSetConfig32(0, 6, 0, 0x7C, 0x0000_0020);
+
+    testSetConfig32(0, 6, 0, 0x80, 0x0410_0009);
+    testSetConfig32(0, 6, 0, 0x84, 0x0000_0004);
+    testSetConfig32(0, 6, 0, 0x88, 0x0000_4000);
+    testSetConfig32(0, 6, 0, 0x8C, 0x0000_0100);
+
+    const nic = discoverVirtioNetDevice() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u16, 0x1AF4), nic.vendor_id);
+    try std.testing.expectEqual(@as(u16, 0x1041), nic.device_id);
+    try std.testing.expectEqual(@as(u8, 0x0C), nic.irq_line);
+    try std.testing.expectEqual(@as(u64, 0xFE20_1000), nic.common_cfg.address);
+    try std.testing.expectEqual(@as(u64, 0xFE20_2000), nic.notify_cfg.address);
+    try std.testing.expectEqual(@as(u32, 4), nic.notify_off_multiplier);
+    try std.testing.expectEqual(@as(u64, 0xFE20_3000), nic.isr_cfg.address);
+    try std.testing.expectEqual(@as(u64, 0xFE20_4000), nic.device_cfg.address);
+
+    enableVirtioNetMemoryAndBusMaster(nic.location);
+    try std.testing.expectEqual(@as(u16, 0x7), readConfig16(0, 6, 0, 0x04) & 0x7);
 }
