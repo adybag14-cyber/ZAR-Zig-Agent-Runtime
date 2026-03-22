@@ -121,6 +121,9 @@ const qemu_virtio_net_udp_probe_ok_code: u8 = 0x52;
 const qemu_virtio_net_tcp_probe_ok_code: u8 = 0x53;
 const qemu_virtio_net_dhcp_probe_ok_code: u8 = 0x54;
 const qemu_virtio_net_dns_probe_ok_code: u8 = 0x55;
+const qemu_virtio_net_http_post_probe_ok_code: u8 = 0x56;
+const qemu_virtio_net_https_post_probe_ok_code: u8 = 0x57;
+const qemu_virtio_net_tool_service_probe_ok_code: u8 = 0x58;
 const qemu_virtio_block_probe_ok_code: u8 = 0x4F;
 const build_options = if (builtin.is_test)
     struct {
@@ -147,6 +150,9 @@ const build_options = if (builtin.is_test)
         pub const virtio_net_tcp_probe: bool = false;
         pub const virtio_net_dhcp_probe: bool = false;
         pub const virtio_net_dns_probe: bool = false;
+        pub const virtio_net_http_post_probe: bool = false;
+        pub const virtio_net_https_post_probe: bool = false;
+        pub const virtio_net_tool_service_probe: bool = false;
         pub const rtl8139_probe: bool = false;
         pub const rtl8139_arp_probe: bool = false;
         pub const rtl8139_ipv4_probe: bool = false;
@@ -189,6 +195,9 @@ const virtio_net_udp_probe_enabled: bool = if (@hasDecl(build_options, "virtio_n
 const virtio_net_tcp_probe_enabled: bool = if (@hasDecl(build_options, "virtio_net_tcp_probe")) build_options.virtio_net_tcp_probe else false;
 const virtio_net_dhcp_probe_enabled: bool = if (@hasDecl(build_options, "virtio_net_dhcp_probe")) build_options.virtio_net_dhcp_probe else false;
 const virtio_net_dns_probe_enabled: bool = if (@hasDecl(build_options, "virtio_net_dns_probe")) build_options.virtio_net_dns_probe else false;
+const virtio_net_http_post_probe_enabled: bool = if (@hasDecl(build_options, "virtio_net_http_post_probe")) build_options.virtio_net_http_post_probe else false;
+const virtio_net_https_post_probe_enabled: bool = if (@hasDecl(build_options, "virtio_net_https_post_probe")) build_options.virtio_net_https_post_probe else false;
+const virtio_net_tool_service_probe_enabled: bool = if (@hasDecl(build_options, "virtio_net_tool_service_probe")) build_options.virtio_net_tool_service_probe else false;
 const rtl8139_probe_enabled: bool = build_options.rtl8139_probe;
 const rtl8139_arp_probe_enabled: bool = build_options.rtl8139_arp_probe;
 const rtl8139_ipv4_probe_enabled: bool = build_options.rtl8139_ipv4_probe;
@@ -839,6 +848,74 @@ const VirtioNetTcpProbeError = VirtioNetProtocolInitError || error{
     FrameLengthMismatch,
     CounterMismatch,
     SessionStateMismatch,
+};
+
+const VirtioNetHttpPostProbeError = VirtioNetTcpProbeError || error{
+    HttpPostFailed,
+    HttpPostResponseMismatch,
+};
+
+const VirtioNetHttpsPostProbeError = VirtioNetTcpProbeError || error{
+    HttpsPostFailed,
+    HttpsPostResponseMismatch,
+    HttpsPostNoTxProgress,
+    HttpsPostNoRxProgress,
+    HttpsPostTimeoutAfterRx,
+    HttpsPostTlsAlert,
+    HttpsPostTlsProtocolFailed,
+    HttpsPostEntropyFailed,
+    HttpsPostReadFailed,
+    HttpsPostWriteFailed,
+    HttpsPostTcpUnexpectedFlags,
+    HttpsPostTcpSequenceMismatch,
+    HttpsPostTcpAckMismatch,
+    HttpsPostTcpWindowExceeded,
+    HttpsPostTlsMessageTooLong,
+    HttpsPostTlsTargetTooSmall,
+    HttpsPostTlsBufferTooSmall,
+    HttpsPostTlsNegativeIntoUnsigned,
+    HttpsPostTlsInvalidSignature,
+    HttpsPostTlsUnexpectedMessage,
+    HttpsPostTlsIllegalParameter,
+    HttpsPostTlsDecryptFailure,
+    HttpsPostTlsRecordOverflow,
+    HttpsPostTlsBadRecordMac,
+    HttpsPostTlsDecryptError,
+    HttpsPostTlsConnectionTruncated,
+    HttpsPostTlsDecodeError,
+    HttpsPostTlsAtServerHello,
+    HttpsPostTlsAtEncryptedExtensions,
+    HttpsPostTlsAtCertificate,
+    HttpsPostTlsCertificateHostMismatch,
+    HttpsPostTlsCertificateIssuerMismatch,
+    HttpsPostTlsCertificateSignatureInvalid,
+    HttpsPostTlsCertificateExpired,
+    HttpsPostTlsCertificateNotYetValid,
+    HttpsPostTlsCertificatePublicKeyInvalid,
+    HttpsPostTlsCertificateTimeInvalid,
+    HttpsPostTlsAtTrustChainEstablished,
+    HttpsPostTlsAtCertificateVerify,
+    HttpsPostTlsAtServerFinishedVerified,
+    HttpsPostTlsBeforeClientFinished,
+    HttpsPostTlsAfterClientFinished,
+    HttpsPostTlsAfterInit,
+    HttpsPostPreTlsNoSynEmit,
+    HttpsPostPreTlsNoSynAck,
+    HttpsPostTlsNoWriterFlush,
+    HttpsPostTlsNoPayloadEmit,
+    HttpsPostTlsWindowBlockedBeforeEmit,
+    HttpsPostLastTxNotIpv4,
+    HttpsPostLastTxIpv4DecodeFailed,
+    HttpsPostLastTxNotTcp,
+    HttpsPostLastTxTcpDecodeFailed,
+    HttpsPostLastTxDestinationMismatch,
+    HttpsPostLastTxPortsMismatch,
+    HttpsPostLastTxFlagsMismatch,
+};
+
+const VirtioNetToolServiceProbeError = VirtioNetTcpProbeError || error{
+    ToolServiceFailed,
+    ToolServiceResponseMismatch,
 };
 
 const virtio_net_probe_remote_mac = [6]u8{ 0x02, 0x5A, 0x52, 0x10, 0x00, 0xF1 };
@@ -2635,6 +2712,18 @@ fn baremetalStart() callconv(.c) noreturn {
         runVirtioNetDnsProbe() catch |err| qemuExit(virtioNetDnsProbeFailureCode(err));
         qemuExit(qemu_virtio_net_dns_probe_ok_code);
     }
+    if (virtio_net_http_post_probe_enabled) {
+        runVirtioNetHttpPostProbe() catch |err| qemuExit(virtioNetHttpPostFailureCode(err));
+        qemuExit(qemu_virtio_net_http_post_probe_ok_code);
+    }
+    if (virtio_net_https_post_probe_enabled) {
+        runVirtioNetHttpsPostProbe() catch |err| qemuExit(virtioNetHttpsPostFailureCode(err));
+        qemuExit(qemu_virtio_net_https_post_probe_ok_code);
+    }
+    if (virtio_net_tool_service_probe_enabled) {
+        runVirtioNetToolServiceProbe() catch |err| qemuExit(virtioNetToolServiceProbeFailureCode(err));
+        qemuExit(qemu_virtio_net_tool_service_probe_ok_code);
+    }
     if (e1000_probe_enabled) {
         runE1000Probe() catch |err| qemuExit(e1000ProbeFailureCode(err));
         qemuExit(qemu_e1000_probe_ok_code);
@@ -3876,6 +3965,119 @@ fn runVirtioNetTcpProbe() VirtioNetTcpProbeError!void {
     if (server.recv_next != 0x0102_0306 + payload.len) return error.PacketAcknowledgmentMismatch;
     if (client.recv_next != 0xA0B0_C0D2 or server.send_next != 0xA0B0_C0D2) return error.PacketAcknowledgmentMismatch;
     if (eth.tx_packets < 7 or eth.rx_packets < 7) return error.CounterMismatch;
+}
+
+fn classifyVirtioNetHttpsProbeTimeout(eth: *const BaremetalEthernetState) VirtioNetHttpsPostProbeError {
+    if (eth.last_rx_len != 0) {
+        var frame: [pal_net.max_frame_len]u8 = undefined;
+        const copy_len = copyLastTransmittedEthernetFrame(frame[0..]);
+        if (copy_len < ethernet_protocol.header_len) return error.LastFrameTooShort;
+        const eth_header = ethernet_protocol.Header.decode(frame[0..copy_len]) catch return error.LastFrameTooShort;
+        if (eth_header.ether_type != ethernet_protocol.ethertype_ipv4) return error.LastFrameNotIpv4;
+        const ipv4_packet = ipv4_protocol.decode(frame[ethernet_protocol.header_len..copy_len]) catch return error.LastIpv4DecodeFailed;
+        if (ipv4_packet.header.protocol != ipv4_protocol.protocol_tcp) return error.LastPacketNotTcp;
+        _ = tcp_protocol.decode(ipv4_packet.payload, ipv4_packet.header.source_ip, ipv4_packet.header.destination_ip) catch return error.LastTcpDecodeFailed;
+    }
+
+    return switch (classifyVirtioNetTcpProbeTimeout(eth)) {
+        error.RxTimedOut => error.RxTimedOut,
+        error.LastFrameTooShort => error.LastFrameTooShort,
+        error.LastFrameNotIpv4 => error.LastFrameNotIpv4,
+        error.LastIpv4DecodeFailed => error.LastIpv4DecodeFailed,
+        error.LastPacketNotTcp => error.LastPacketNotTcp,
+        error.LastTcpDecodeFailed => error.LastTcpDecodeFailed,
+        else => error.RxTimedOut,
+    };
+}
+
+fn establishVirtioNetTcpProbeSession(
+    eth: *const BaremetalEthernetState,
+    scratch: *Rtl8139TcpProbeScratch,
+    client: *tcp_protocol.Session,
+    server: *tcp_protocol.Session,
+    source_ip: [4]u8,
+    destination_ip: [4]u8,
+) VirtioNetToolServiceProbeError!void {
+    const syn = client.buildSyn() catch |err| return mapVirtioNetTcpSessionProbeError(err);
+    _ = try sendVirtioNetTcpProbeSegment(source_ip, destination_ip, client.local_port, client.remote_port, syn);
+    try pollVirtioNetTcpProbePacket(eth, &scratch.packet_storage);
+    try expectVirtioNetTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, client.local_port, client.remote_port, syn);
+
+    const syn_ack = server.acceptSyn(tcpPacketView(&scratch.packet_storage)) catch |err| return mapVirtioNetTcpSessionProbeError(err);
+    _ = try sendVirtioNetTcpProbeSegment(destination_ip, source_ip, server.local_port, server.remote_port, syn_ack);
+    try pollVirtioNetTcpProbePacket(eth, &scratch.packet_storage);
+    try expectVirtioNetTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, server.local_port, server.remote_port, syn_ack);
+
+    const ack = client.acceptSynAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapVirtioNetTcpSessionProbeError(err);
+    _ = try sendVirtioNetTcpProbeSegment(source_ip, destination_ip, client.local_port, client.remote_port, ack);
+    try pollVirtioNetTcpProbePacket(eth, &scratch.packet_storage);
+    try expectVirtioNetTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, client.local_port, client.remote_port, ack);
+    server.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapVirtioNetTcpSessionProbeError(err);
+}
+
+fn exchangeVirtioNetTcpProbeServiceRequest(
+    eth: *const BaremetalEthernetState,
+    scratch: *Rtl8139TcpProbeScratch,
+    client: *tcp_protocol.Session,
+    server: *tcp_protocol.Session,
+    source_ip: [4]u8,
+    destination_ip: [4]u8,
+    request: []const u8,
+    query_limit: usize,
+    payload_limit: usize,
+    response_limit: usize,
+) VirtioNetToolServiceProbeError![]const u8 {
+    var service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+
+    const request_payload = client.buildPayload(request) catch |err| return mapVirtioNetTcpSessionProbeError(err);
+    _ = try sendVirtioNetTcpProbeSegment(source_ip, destination_ip, client.local_port, client.remote_port, request_payload);
+    try pollVirtioNetTcpProbePacket(eth, &scratch.packet_storage);
+    try expectVirtioNetTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, client.local_port, client.remote_port, request_payload);
+    server.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapVirtioNetTcpSessionProbeError(err);
+
+    const response = tool_service.handleFramedRequest(
+        service_fba.allocator(),
+        scratch.packet_storage.payload[0..scratch.packet_storage.payload_len],
+        query_limit,
+        payload_limit,
+        response_limit,
+    ) catch return error.ToolServiceFailed;
+
+    var response_offset: usize = 0;
+    while (response_offset < response.len) {
+        const reply = server.buildPayloadChunk(response[response_offset..]) catch |err| return mapVirtioNetTcpSessionProbeError(err);
+        _ = try sendVirtioNetTcpProbeSegment(destination_ip, source_ip, server.local_port, server.remote_port, reply);
+        try pollVirtioNetTcpProbePacket(eth, &scratch.packet_storage);
+        try expectVirtioNetTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, server.local_port, server.remote_port, reply);
+        client.acceptPayload(tcpPacketView(&scratch.packet_storage)) catch |err| return mapVirtioNetTcpSessionProbeError(err);
+        response_offset += reply.payload.len;
+
+        const ack = client.buildAck() catch |err| return mapVirtioNetTcpSessionProbeError(err);
+        _ = try sendVirtioNetTcpProbeSegment(source_ip, destination_ip, client.local_port, client.remote_port, ack);
+        try pollVirtioNetTcpProbePacket(eth, &scratch.packet_storage);
+        try expectVirtioNetTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, client.local_port, client.remote_port, ack);
+        server.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapVirtioNetTcpSessionProbeError(err);
+    }
+
+    return response;
+}
+
+fn classifyLastTransmittedVirtioNetTcpProbeFrame(expected_destination_ip: [4]u8, expected_destination_port: u16) VirtioNetHttpsPostProbeError {
+    const tx_len = @as(usize, @intCast(oc_ethernet_state_ptr().last_tx_len));
+    if (tx_len == 0) return error.HttpsPostNoTxProgress;
+
+    var frame: [pal_net.max_frame_len]u8 = undefined;
+    const copy_len = copyLastTransmittedEthernetFrame(frame[0..]);
+    if (copy_len < ethernet_protocol.header_len) return error.HttpsPostLastTxNotIpv4;
+    const eth_header = ethernet_protocol.Header.decode(frame[0..copy_len]) catch return error.HttpsPostLastTxNotIpv4;
+    if (eth_header.ether_type != ethernet_protocol.ethertype_ipv4) return error.HttpsPostLastTxNotIpv4;
+    const ipv4_packet = ipv4_protocol.decode(frame[ethernet_protocol.header_len..copy_len]) catch return error.HttpsPostLastTxIpv4DecodeFailed;
+    if (ipv4_packet.header.protocol != ipv4_protocol.protocol_tcp) return error.HttpsPostLastTxNotTcp;
+    const tcp_packet = tcp_protocol.decode(ipv4_packet.payload, ipv4_packet.header.source_ip, ipv4_packet.header.destination_ip) catch return error.HttpsPostLastTxTcpDecodeFailed;
+    if (!std.mem.eql(u8, ipv4_packet.header.destination_ip[0..], expected_destination_ip[0..])) return error.HttpsPostLastTxDestinationMismatch;
+    if (tcp_packet.destination_port != expected_destination_port) return error.HttpsPostLastTxPortsMismatch;
+    if (tcp_packet.flags != tcp_protocol.flag_syn) return error.HttpsPostLastTxFlagsMismatch;
+    return error.HttpsPostNoRxProgress;
 }
 
 fn buildVirtioNetProbeFrame(frame: []u8, destination_mac: [6]u8, source_mac: [6]u8, seed: u8) void {
@@ -5393,6 +5595,83 @@ fn virtioNetTcpProbeFailureCode(err: VirtioNetTcpProbeError) u8 {
     };
 }
 
+fn virtioNetToolServiceProbeFailureCode(err: VirtioNetToolServiceProbeError) u8 {
+    return switch (err) {
+        error.ToolServiceFailed => 0x8F,
+        error.ToolServiceResponseMismatch => 0x90,
+        else => virtioNetTcpProbeFailureCode(@errorCast(err)),
+    };
+}
+
+fn virtioNetHttpPostFailureCode(err: VirtioNetHttpPostProbeError) u8 {
+    return switch (err) {
+        error.HttpPostFailed => 0x91,
+        error.HttpPostResponseMismatch => 0x92,
+        else => virtioNetTcpProbeFailureCode(@errorCast(err)),
+    };
+}
+
+fn virtioNetHttpsPostFailureCode(err: VirtioNetHttpsPostProbeError) u8 {
+    return switch (err) {
+        error.HttpsPostFailed => 0x93,
+        error.HttpsPostResponseMismatch => 0x94,
+        error.HttpsPostNoTxProgress => 0x95,
+        error.HttpsPostNoRxProgress => 0x96,
+        error.HttpsPostTimeoutAfterRx => 0x97,
+        error.HttpsPostTlsAlert => 0x98,
+        error.HttpsPostTlsProtocolFailed => 0x99,
+        error.HttpsPostEntropyFailed => 0x9A,
+        error.HttpsPostReadFailed => 0x9B,
+        error.HttpsPostWriteFailed => 0x9C,
+        error.HttpsPostTcpUnexpectedFlags => 0x9D,
+        error.HttpsPostTcpSequenceMismatch => 0x9E,
+        error.HttpsPostTcpAckMismatch => 0x9F,
+        error.HttpsPostTcpWindowExceeded => 0xA0,
+        error.HttpsPostTlsMessageTooLong => 0xA1,
+        error.HttpsPostTlsTargetTooSmall => 0xA2,
+        error.HttpsPostTlsBufferTooSmall => 0xA3,
+        error.HttpsPostTlsNegativeIntoUnsigned => 0xA4,
+        error.HttpsPostTlsInvalidSignature => 0xA5,
+        error.HttpsPostTlsUnexpectedMessage => 0xA6,
+        error.HttpsPostTlsIllegalParameter => 0xA7,
+        error.HttpsPostTlsDecryptFailure => 0xA8,
+        error.HttpsPostTlsRecordOverflow => 0xA9,
+        error.HttpsPostTlsBadRecordMac => 0xAA,
+        error.HttpsPostTlsDecryptError => 0xAB,
+        error.HttpsPostTlsConnectionTruncated => 0xAC,
+        error.HttpsPostTlsDecodeError => 0xAD,
+        error.HttpsPostTlsAtServerHello => 0xAE,
+        error.HttpsPostTlsAtEncryptedExtensions => 0xAF,
+        error.HttpsPostTlsAtCertificate => 0xB0,
+        error.HttpsPostTlsCertificateHostMismatch => 0xB1,
+        error.HttpsPostTlsCertificateIssuerMismatch => 0xB2,
+        error.HttpsPostTlsCertificateSignatureInvalid => 0xB3,
+        error.HttpsPostTlsCertificateExpired => 0xB4,
+        error.HttpsPostTlsCertificateNotYetValid => 0xB5,
+        error.HttpsPostTlsCertificatePublicKeyInvalid => 0xB6,
+        error.HttpsPostTlsCertificateTimeInvalid => 0xB7,
+        error.HttpsPostTlsAtTrustChainEstablished => 0xB8,
+        error.HttpsPostTlsAtCertificateVerify => 0xB9,
+        error.HttpsPostTlsAtServerFinishedVerified => 0xBA,
+        error.HttpsPostTlsBeforeClientFinished => 0xBB,
+        error.HttpsPostTlsAfterClientFinished => 0xBC,
+        error.HttpsPostTlsAfterInit => 0xBD,
+        error.HttpsPostPreTlsNoSynEmit => 0xBE,
+        error.HttpsPostPreTlsNoSynAck => 0xBF,
+        error.HttpsPostTlsNoWriterFlush => 0xC0,
+        error.HttpsPostTlsNoPayloadEmit => 0xC1,
+        error.HttpsPostTlsWindowBlockedBeforeEmit => 0xC2,
+        error.HttpsPostLastTxNotIpv4 => 0xC3,
+        error.HttpsPostLastTxIpv4DecodeFailed => 0xC4,
+        error.HttpsPostLastTxNotTcp => 0xC5,
+        error.HttpsPostLastTxTcpDecodeFailed => 0xC6,
+        error.HttpsPostLastTxDestinationMismatch => 0xC7,
+        error.HttpsPostLastTxPortsMismatch => 0xC8,
+        error.HttpsPostLastTxFlagsMismatch => 0xC9,
+        else => virtioNetTcpProbeFailureCode(@errorCast(err)),
+    };
+}
+
 fn runRtl8139ArpProbe() Rtl8139ArpProbeError!void {
     setProbeInterruptsEnabled(false);
 
@@ -6277,6 +6556,7 @@ var rtl8139_tcp_probe_scratch: Rtl8139TcpProbeScratch = undefined;
 const HttpProbeBackend = enum {
     rtl8139,
     e1000,
+    virtio_net,
 };
 
 const NicHttpPostHarness = struct {
@@ -6449,6 +6729,7 @@ const NicHttpPostHarness = struct {
         switch (self.backend) {
             .rtl8139 => rtl8139.injectProbeReceive(frame[0..frame_len]),
             .e1000 => e1000.injectProbeReceive(frame[0..frame_len]),
+            .virtio_net => virtio_net.injectProbeReceive(frame[0..frame_len]),
         }
     }
 
@@ -6496,6 +6777,7 @@ const NicHttpPostHarness = struct {
         switch (self.backend) {
             .rtl8139 => rtl8139.injectProbeReceive(self.frame_storage[0 .. ethernet_protocol.header_len + ipv4_header_len + payload.len]),
             .e1000 => e1000.injectProbeReceive(self.frame_storage[0 .. ethernet_protocol.header_len + ipv4_header_len + payload.len]),
+            .virtio_net => virtio_net.injectProbeReceive(self.frame_storage[0 .. ethernet_protocol.header_len + ipv4_header_len + payload.len]),
         }
     }
 
@@ -6517,6 +6799,539 @@ fn nicTcpHttpPostHook(frame: []const u8) void {
 
 fn discardMockSendHook(frame: []const u8) void {
     _ = frame;
+}
+
+fn runVirtioNetHttpPostProbe() VirtioNetHttpPostProbeError!void {
+    setProbeInterruptsEnabled(false);
+    const eth = try initVirtioNetProtocol();
+
+    pal_net.clearRouteState();
+    defer pal_net.clearRouteState();
+    pal_net.configureIpv4Route(.{ 192, 168, 56, 10 }, .{ 255, 255, 255, 0 }, null);
+    nic_http_post_harness_scratch = .{ .backend = .virtio_net, .local_mac = eth.mac };
+    const http_harness = &nic_http_post_harness_scratch;
+    pal_net.configureDnsServers(&.{http_harness.dns_ip});
+    nic_http_post_harness = http_harness;
+    virtio_net.installProbeSendHook(nicTcpHttpPostHook);
+    virtio_net.testInstallMockSendHook(discardMockSendHook);
+    defer {
+        virtio_net.testInstallMockSendHook(null);
+        virtio_net.installProbeSendHook(null);
+        nic_http_post_harness = null;
+    }
+
+    const tx_packets_before_http = eth.tx_packets;
+    const rx_packets_before_http = eth.rx_packets;
+    var http_fba = std.heap.FixedBufferAllocator.init(&rtl8139_tcp_probe_scratch.http_post_scratch);
+    const http_headers = [_]pal_net.FreestandingHeader{
+        .{ .name = "content-type", .value = "application/json" },
+    };
+    const http_response = pal_net.postFreestandingExplicit(
+        http_fba.allocator(),
+        http_harness.url,
+        http_harness.request_payload,
+        http_headers[0..],
+    ) catch return error.HttpPostFailed;
+    if (http_harness.failure != null) return error.HttpPostFailed;
+    if (!http_harness.request_validated or !http_harness.response_sent or !http_harness.fin_sent) {
+        return error.HttpPostResponseMismatch;
+    }
+    if (http_response.status_code != 200 or
+        !std.mem.eql(u8, http_response.body, http_harness.response_body))
+    {
+        return error.HttpPostResponseMismatch;
+    }
+    if (eth.tx_packets <= tx_packets_before_http or eth.rx_packets <= rx_packets_before_http) {
+        return error.CounterMismatch;
+    }
+}
+
+fn runVirtioNetHttpsPostProbe() VirtioNetHttpsPostProbeError!void {
+    setProbeInterruptsEnabled(false);
+    const eth = try initVirtioNetProtocol();
+
+    virtio_net.installProbeSendHook(virtioNetTcpProbeLoopbackHook);
+    defer virtio_net.installProbeSendHook(null);
+
+    warmVirtioNetProbeTransport(builtin.is_test or eth.hardware_backed == 0);
+
+    pal_net.clearRouteState();
+    defer pal_net.clearRouteState();
+    pal_net.configureIpv4Route(.{ 10, 0, 2, 15 }, .{ 255, 255, 255, 0 }, null);
+    trust_store.installBundle("fs55-root", pal_net.httpsProbeTrustAnchorDer(), 0) catch return error.HttpsPostFailed;
+    trust_store.selectBundle("fs55-root", 0) catch return error.HttpsPostFailed;
+    var https_trust_fba = std.heap.FixedBufferAllocator.init(&rtl8139_tcp_probe_scratch.https_trust_store_scratch);
+    const active_trust_path = trust_store.activeBundlePathAlloc(https_trust_fba.allocator(), 128) catch return error.HttpsPostFailed;
+    pal_net.configureHttpsBundleTrustFromPath(
+        https_trust_fba.allocator(),
+        active_trust_path,
+        pal_net.httpsProbeTrustAnchorDer().len,
+        1_700_000_000,
+    ) catch return error.HttpsPostFailed;
+    defer pal_net.clearHttpsBundleTrust();
+
+    const tx_packets_before_http = eth.tx_packets;
+    const rx_packets_before_http = eth.rx_packets;
+    var https_fba = std.heap.FixedBufferAllocator.init(&rtl8139_tcp_probe_scratch.http_post_scratch);
+    const https_headers = [_]pal_net.FreestandingHeader{
+        .{ .name = "content-type", .value = "application/json" },
+    };
+    const https_payload = "{\"probe\":\"live-https\"}";
+    const https_response = pal_net.postFreestandingExplicit(
+        https_fba.allocator(),
+        "https://10.0.2.2:8443/fs55/live-https",
+        https_payload,
+        https_headers[0..],
+    ) catch |err| {
+        const any_err: anyerror = err;
+        const err_name = @errorName(any_err);
+        const tls_stage = pal_net.lastHttpsTlsInitStage();
+        const pre_tls_stage = pal_net.lastHttpsPreTlsStage();
+        const tls_certificate_error = pal_net.lastHttpsTlsCertificateError();
+        const tls_transport_debug = pal_net.lastHttpsTlsTransportDebug().*;
+        if (any_err == error.Timeout) {
+            switch (tls_stage) {
+                .server_hello_received => return error.HttpsPostTlsAtServerHello,
+                .encrypted_extensions_received => return error.HttpsPostTlsAtEncryptedExtensions,
+                .certificate_received => return error.HttpsPostTlsAtCertificate,
+                .trust_chain_established => return error.HttpsPostTlsAtTrustChainEstablished,
+                .certificate_verify_received => return error.HttpsPostTlsAtCertificateVerify,
+                .server_finished_verified => return error.HttpsPostTlsAtServerFinishedVerified,
+                .client_finished_flushed => return error.HttpsPostTlsAfterClientFinished,
+                .init_complete => return error.HttpsPostTlsAfterInit,
+                else => {},
+            }
+            if (tls_transport_debug.flush_calls == 0 and tls_transport_debug.drain_calls == 0 and tls_transport_debug.write_all_calls == 0) {
+                switch (pre_tls_stage) {
+                    .host_resolved,
+                    .next_hop_resolved,
+                    .syn_built,
+                    => {
+                        const tx_err = classifyLastTransmittedVirtioNetTcpProbeFrame(.{ 10, 0, 2, 2 }, 8443);
+                        if (tx_err != error.HttpsPostNoTxProgress) return tx_err;
+                        return error.HttpsPostPreTlsNoSynEmit;
+                    },
+                    .syn_sent => return error.HttpsPostPreTlsNoSynAck,
+                    else => {},
+                }
+                return error.HttpsPostTlsNoWriterFlush;
+            }
+            if (tls_transport_debug.sent_segments == 0) {
+                const effective_window = @min(tls_transport_debug.last_remote_window, tls_transport_debug.last_congestion_window);
+                if (tls_transport_debug.wait_writable_calls != 0 and tls_transport_debug.last_bytes_in_flight >= effective_window) {
+                    return error.HttpsPostTlsWindowBlockedBeforeEmit;
+                }
+                return error.HttpsPostTlsNoPayloadEmit;
+            }
+            if (eth.tx_packets <= tx_packets_before_http) return error.HttpsPostNoTxProgress;
+            if (eth.rx_packets <= rx_packets_before_http) {
+                return classifyLastTransmittedVirtioNetTcpProbeFrame(.{ 10, 0, 2, 2 }, 8443);
+            }
+            const timeout_err = classifyVirtioNetHttpsProbeTimeout(eth);
+            switch (timeout_err) {
+                error.LastFrameNotIpv4,
+                error.LastPacketNotTcp,
+                error.LastIpv4DecodeFailed,
+                error.LastTcpDecodeFailed,
+                => {
+                    const tx_err = classifyLastTransmittedVirtioNetTcpProbeFrame(.{ 10, 0, 2, 2 }, 8443);
+                    if (tx_err != error.HttpsPostNoRxProgress) return tx_err;
+                    return error.HttpsPostNoRxProgress;
+                },
+                else => return timeout_err,
+            }
+        }
+        if (any_err == error.TlsAlert) return error.HttpsPostTlsAlert;
+        if (any_err == error.InsufficientEntropy) return error.HttpsPostEntropyFailed;
+        if (any_err == error.ReadFailed) return error.HttpsPostReadFailed;
+        if (any_err == error.WriteFailed) return error.HttpsPostWriteFailed;
+        if (any_err == error.UnexpectedFlags) return error.HttpsPostTcpUnexpectedFlags;
+        if (any_err == error.SequenceMismatch) return error.HttpsPostTcpSequenceMismatch;
+        if (any_err == error.AcknowledgmentMismatch) return error.HttpsPostTcpAckMismatch;
+        if (any_err == error.WindowExceeded) return error.HttpsPostTcpWindowExceeded;
+        if (any_err == error.MessageTooLong) return error.HttpsPostTlsMessageTooLong;
+        if (any_err == error.TargetTooSmall) return error.HttpsPostTlsTargetTooSmall;
+        if (any_err == error.BufferTooSmall) return error.HttpsPostTlsBufferTooSmall;
+        if (any_err == error.NegativeIntoUnsigned) return error.HttpsPostTlsNegativeIntoUnsigned;
+        if (any_err == error.InvalidSignature) return error.HttpsPostTlsInvalidSignature;
+        if (any_err == error.TlsUnexpectedMessage) return error.HttpsPostTlsUnexpectedMessage;
+        if (any_err == error.TlsIllegalParameter) return error.HttpsPostTlsIllegalParameter;
+        if (any_err == error.TlsDecryptFailure) return error.HttpsPostTlsDecryptFailure;
+        if (any_err == error.TlsRecordOverflow) return error.HttpsPostTlsRecordOverflow;
+        if (any_err == error.TlsBadRecordMac) return error.HttpsPostTlsBadRecordMac;
+        if (any_err == error.TlsDecryptError) return error.HttpsPostTlsDecryptError;
+        if (any_err == error.TlsConnectionTruncated) return error.HttpsPostTlsConnectionTruncated;
+        if (any_err == error.TlsDecodeError) return error.HttpsPostTlsDecodeError;
+        if (tls_stage == .certificate_received) {
+            if (tls_certificate_error) |cert_err| {
+                switch (cert_err) {
+                    error.CertificateHostMismatch => return error.HttpsPostTlsCertificateHostMismatch,
+                    error.CertificateIssuerMismatch => return error.HttpsPostTlsCertificateIssuerMismatch,
+                    error.CertificateSignatureInvalid,
+                    error.CertificateSignatureInvalidLength,
+                    error.SignatureVerificationFailed,
+                    error.InvalidSignature,
+                    => return error.HttpsPostTlsCertificateSignatureInvalid,
+                    error.CertificateExpired => return error.HttpsPostTlsCertificateExpired,
+                    error.CertificateNotYetValid => return error.HttpsPostTlsCertificateNotYetValid,
+                    error.CertificatePublicKeyInvalid => return error.HttpsPostTlsCertificatePublicKeyInvalid,
+                    error.CertificateTimeInvalid => return error.HttpsPostTlsCertificateTimeInvalid,
+                    else => {},
+                }
+            }
+        }
+        switch (tls_stage) {
+            .server_hello_received => return error.HttpsPostTlsAtServerHello,
+            .encrypted_extensions_received => return error.HttpsPostTlsAtEncryptedExtensions,
+            .certificate_received => return error.HttpsPostTlsAtCertificate,
+            .trust_chain_established => return error.HttpsPostTlsAtTrustChainEstablished,
+            .certificate_verify_received => return error.HttpsPostTlsAtCertificateVerify,
+            .server_finished_verified => return error.HttpsPostTlsAtServerFinishedVerified,
+            .client_finished_flushed => return error.HttpsPostTlsAfterClientFinished,
+            .init_complete => return error.HttpsPostTlsAfterInit,
+            else => {},
+        }
+        if (std.mem.startsWith(u8, err_name, "Tls") or
+            std.mem.startsWith(u8, err_name, "Certificate"))
+        {
+            return error.HttpsPostTlsProtocolFailed;
+        }
+        return error.HttpsPostFailed;
+    };
+    if (https_response.status_code != 200 or
+        !std.mem.eql(u8, https_response.body, "{\"ok\":true,\"transport\":\"https\"}"))
+    {
+        return error.HttpsPostResponseMismatch;
+    }
+    if (eth.tx_packets <= tx_packets_before_http or eth.rx_packets <= rx_packets_before_http) {
+        return error.CounterMismatch;
+    }
+}
+
+fn runVirtioNetToolServiceProbe() VirtioNetToolServiceProbeError!void {
+    qemuDebugWrite("VTS0\n");
+    setProbeInterruptsEnabled(false);
+    const eth = try initVirtioNetProtocol();
+
+    virtio_net.installProbeSendHook(virtioNetTcpProbeLoopbackHook);
+    defer virtio_net.installProbeSendHook(null);
+
+    warmVirtioNetProbeTransport(builtin.is_test or eth.hardware_backed == 0);
+
+    const source_ip = [4]u8{ 192, 168, 56, 10 };
+    const destination_ip = [4]u8{ 192, 168, 56, 1 };
+    const script = "write-file /tools/out/data.txt tcp-service-persisted";
+    const put_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 21 PUT /tools/scripts/net.oc {d}\n{s}", .{
+        script.len,
+        script,
+    }) catch return error.ToolServiceFailed;
+
+    var client = tcp_protocol.Session.initClient(4333, 445, 0x7172_7374, 4096);
+    var server = tcp_protocol.Session.initServer(445, 4333, 0xC1D2_E3F4, 4096);
+    const scratch = &rtl8139_tcp_probe_scratch;
+    const tx_packets_before = eth.tx_packets;
+    const rx_packets_before = eth.rx_packets;
+
+    try establishVirtioNetTcpProbeSession(eth, scratch, &client, &server, source_ip, destination_ip);
+
+    const short_response = try exchangeVirtioNetTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 1 echo virtio-net-service-ok",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, short_response, "RESP 1 22\nvirtio-net-service-ok\n")) return error.ToolServiceResponseMismatch;
+
+    const exec_response = try exchangeVirtioNetTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 2 EXEC echo virtio-net-service-ok",
+        256,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, exec_response, "RESP 2 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, exec_response, "exit=0 stdout_len=22 stderr_len=0\nstdout:\nvirtio-net-service-ok\nstderr:\n") == null) {
+        return error.ToolServiceResponseMismatch;
+    }
+
+    const help_response = try exchangeVirtioNetTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 3 help",
+        4096,
+        256,
+        4096,
+    );
+    if (!std.mem.startsWith(u8, help_response, "RESP 3 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, help_response, "OpenClaw bare-metal builtins:") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, help_response, "workspace-suite-release-channel-activate") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, help_response, "display-interface-capabilities") == null) return error.ToolServiceResponseMismatch;
+
+    const put_response = try exchangeVirtioNetTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        put_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, put_response, "RESP 21 40\nWROTE 52 bytes to /tools/scripts/net.oc\n")) return error.ToolServiceResponseMismatch;
+
+    var service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const script_readback = filesystem.readFileAlloc(service_fba.allocator(), "/tools/scripts/net.oc", 128) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, script_readback, script)) return error.ToolServiceResponseMismatch;
+
+    const run_script_response = try exchangeVirtioNetTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 22 CMD run-script /tools/scripts/net.oc",
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, run_script_response, "RESP 22 38\nwrote 21 bytes to /tools/out/data.txt\n")) return error.ToolServiceResponseMismatch;
+
+    const get_response = try exchangeVirtioNetTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 23 GET /tools/out/data.txt",
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, get_response, "RESP 23 21\ntcp-service-persisted")) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const output_readback = filesystem.readFileAlloc(service_fba.allocator(), "/tools/out/data.txt", 64) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, output_readback, "tcp-service-persisted")) return error.ToolServiceResponseMismatch;
+
+    const virtual_root_response = try exchangeVirtioNetTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 24 LIST /",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.startsWith(u8, virtual_root_response, "RESP 24 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_root_response, "dir tmp\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_root_response, "dir dev\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_root_response, "dir proc\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_root_response, "dir sys\n") == null) return error.ToolServiceResponseMismatch;
+
+    const tmp_put_response = try exchangeVirtioNetTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 30 PUT /tmp/cache/tool.txt 4\nedge",
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, tmp_put_response, "RESP 30 37\nWROTE 4 bytes to /tmp/cache/tool.txt\n")) return error.ToolServiceResponseMismatch;
+
+    const tmp_get_response = try exchangeVirtioNetTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 31 GET /tmp/cache/tool.txt",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tmp_get_response, "RESP 31 4\nedge")) return error.ToolServiceResponseMismatch;
+
+    const tmp_stat_response = try exchangeVirtioNetTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 32 STAT /tmp/cache/tool.txt",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tmp_stat_response, "RESP 32 42\npath=/tmp/cache/tool.txt kind=file size=4\n")) {
+        return error.ToolServiceResponseMismatch;
+    }
+
+    const tmp_list_response = try exchangeVirtioNetTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 33 LIST /tmp/cache",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tmp_list_response, "RESP 33 16\nfile tool.txt 4\n")) return error.ToolServiceResponseMismatch;
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const tmp_readback = filesystem.readFileAlloc(service_fba.allocator(), "/tmp/cache/tool.txt", 64) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, tmp_readback, "edge")) return error.ToolServiceResponseMismatch;
+
+    const virtual_snapshot_response = try exchangeVirtioNetTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 25 GET /proc/runtime/snapshot",
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, virtual_snapshot_response, "RESP 25 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_snapshot_response, "state_path=/runtime/state/runtime-state.json") == null) {
+        return error.ToolServiceResponseMismatch;
+    }
+
+    const virtual_storage_response = try exchangeVirtioNetTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 26 GET /sys/storage/state",
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, virtual_storage_response, "RESP 26 ")) return error.ToolServiceResponseMismatch;
+    const expected_storage_backend = switch (storage_backend.activeBackend()) {
+        abi.storage_backend_ram_disk => "backend=ram_disk",
+        abi.storage_backend_ata_pio => "backend=ata_pio",
+        abi.storage_backend_virtio_block => "backend=virtio_block",
+        else => return error.ToolServiceResponseMismatch,
+    };
+    if (std.mem.indexOf(u8, virtual_storage_response, expected_storage_backend) == null) {
+        return error.ToolServiceResponseMismatch;
+    }
+
+    const virtual_dev_listing = try exchangeVirtioNetTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 28 LIST /dev",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.startsWith(u8, virtual_dev_listing, "RESP 28 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_dev_listing, "dir storage\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_dev_listing, "dir display\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_dev_listing, "dir net\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_dev_listing, "file null 0\n") == null) return error.ToolServiceResponseMismatch;
+
+    const virtual_dev_storage_response = try exchangeVirtioNetTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 29 GET /dev/storage/state",
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, virtual_dev_storage_response, "RESP 29 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_dev_storage_response, expected_storage_backend) == null) {
+        return error.ToolServiceResponseMismatch;
+    }
+
+    const virtual_stat_response = try exchangeVirtioNetTcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 27 STAT /proc/runtime/snapshot",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.startsWith(u8, virtual_stat_response, "RESP 27 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_stat_response, "path=/proc/runtime/snapshot kind=file size=") == null) {
+        return error.ToolServiceResponseMismatch;
+    }
+
+    const client_fin = client.buildFin() catch |err| return mapVirtioNetTcpSessionProbeError(err);
+    const client_fin_frame_len = try sendVirtioNetTcpProbeSegment(source_ip, destination_ip, client.local_port, client.remote_port, client_fin);
+    try pollVirtioNetTcpProbePacket(eth, &scratch.packet_storage);
+    try expectVirtioNetTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, client.local_port, client.remote_port, client_fin);
+    if (eth.last_rx_len != client_fin_frame_len) return error.FrameLengthMismatch;
+    const fin_ack = server.acceptFin(tcpPacketView(&scratch.packet_storage)) catch |err| return mapVirtioNetTcpSessionProbeError(err);
+
+    const fin_ack_frame_len = try sendVirtioNetTcpProbeSegment(destination_ip, source_ip, server.local_port, server.remote_port, fin_ack);
+    try pollVirtioNetTcpProbePacket(eth, &scratch.packet_storage);
+    try expectVirtioNetTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, server.local_port, server.remote_port, fin_ack);
+    if (eth.last_rx_len != fin_ack_frame_len) return error.FrameLengthMismatch;
+    client.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapVirtioNetTcpSessionProbeError(err);
+
+    const server_fin = server.buildFin() catch |err| return mapVirtioNetTcpSessionProbeError(err);
+    const server_fin_frame_len = try sendVirtioNetTcpProbeSegment(destination_ip, source_ip, server.local_port, server.remote_port, server_fin);
+    try pollVirtioNetTcpProbePacket(eth, &scratch.packet_storage);
+    try expectVirtioNetTcpProbePacket(&scratch.packet_storage, eth.mac, destination_ip, source_ip, server.local_port, server.remote_port, server_fin);
+    if (eth.last_rx_len != server_fin_frame_len) return error.FrameLengthMismatch;
+    const final_ack = client.acceptFin(tcpPacketView(&scratch.packet_storage)) catch |err| return mapVirtioNetTcpSessionProbeError(err);
+
+    const final_ack_frame_len = try sendVirtioNetTcpProbeSegment(source_ip, destination_ip, client.local_port, client.remote_port, final_ack);
+    try pollVirtioNetTcpProbePacket(eth, &scratch.packet_storage);
+    try expectVirtioNetTcpProbePacket(&scratch.packet_storage, eth.mac, source_ip, destination_ip, client.local_port, client.remote_port, final_ack);
+    if (eth.last_rx_len != final_ack_frame_len) return error.FrameLengthMismatch;
+    server.acceptAck(tcpPacketView(&scratch.packet_storage)) catch |err| return mapVirtioNetTcpSessionProbeError(err);
+
+    if (client.state != .closed or server.state != .closed) return error.SessionStateMismatch;
+    if (eth.tx_packets <= tx_packets_before or eth.rx_packets <= rx_packets_before) return error.CounterMismatch;
 }
 
 fn rtl8139TcpProbeLoopbackHook(frame: []const u8) void {
@@ -23352,6 +24167,22 @@ test "baremetal virtio net tcp probe succeeds through mock device" {
     defer virtio_net.testDisableMockDevice();
 
     try runVirtioNetTcpProbe();
+}
+
+test "baremetal virtio net http post probe succeeds through mock device" {
+    resetBaremetalRuntimeForTest();
+    virtio_net.testEnableMockDevice();
+    defer virtio_net.testDisableMockDevice();
+
+    try runVirtioNetHttpPostProbe();
+}
+
+test "baremetal virtio net tool service probe succeeds through mock device" {
+    resetBaremetalRuntimeForTest();
+    virtio_net.testEnableMockDevice();
+    defer virtio_net.testDisableMockDevice();
+
+    try runVirtioNetToolServiceProbe();
 }
 
 test "baremetal e1000 arp request loops through mock e1000 and parses request" {

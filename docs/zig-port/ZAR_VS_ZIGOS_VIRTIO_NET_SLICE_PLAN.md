@@ -61,6 +61,8 @@ Delivered so far:
 - host regressions for init, MAC readout, TX, RX, and export-surface stability
 - host regressions for `ARP`, `IPv4`, `UDP`, `DHCP`, `DNS`, and bounded `TCP` protocol reuse on the clean-room `virtio-net` path
 - live QEMU raw-frame plus `ARP` / `IPv4` / `UDP` / `DHCP` / `DNS` / bounded `TCP` proof through `scripts/baremetal-qemu-virtio-net-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-arp-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-udp-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-dhcp-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-dns-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-tcp-probe-check.ps1`, and `scripts/qemu-virtio-net-dgram-echo.ps1`
+- host regressions for framed tool-service reuse plus bounded `HTTP` / `HTTPS` transport reuse on the clean-room `virtio-net` path
+- live QEMU tool-service plus `HTTP` / `HTTPS` proof through `scripts/baremetal-qemu-virtio-net-tool-service-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-http-post-probe-check.ps1`, and `scripts/baremetal-qemu-virtio-net-https-post-probe-check.ps1`
 
 ## Deliverables
 
@@ -147,11 +149,13 @@ Not in this slice:
 3. PAL backend selection includes `virtio-net` without regressing `RTL8139` or `E1000`. Status: `Done`
 4. live QEMU `virtio-net-pci` raw-frame proof is green. Status: `Done`
 5. `ARP` / `IPv4` / `UDP` / `DHCP` / `DNS` / bounded `TCP` protocol reuse is delivered on the `virtio-net` path. Status: `Done`
-6. `zig build test --summary all` is green. Status: `Done`
-7. parity gate is green. Status: `Done`
-8. docs status gate is green. Status: `Done`
-9. `zig-ci` is green. Status: `Done after push`
-10. `docs-pages` is green. Status: `Done after push`
+6. framed tool-service reuse is delivered on the `virtio-net` path. Status: `Done`
+7. bounded `HTTP` / `HTTPS` transport reuse is delivered on the `virtio-net` path. Status: `Done`
+8. `zig build test --summary all` is green. Status: `Done`
+9. parity gate is green. Status: `Done`
+10. docs status gate is green. Status: `Done`
+11. `zig-ci` is green. Status: `Done after push`
+12. `docs-pages` is green. Status: `Done after push`
 
 ## Exit Criteria
 
@@ -159,5 +163,5 @@ Once this slice is green, ZAR has:
 
 - a third real NIC/backend path
 - broader hardware breadth from the ZigOS-inspired track
-- a clean platform for later `virtio-net` tool-service / `HTTP` / `HTTPS` reuse
+- a clean platform for later gateway/runtime reuse on the `virtio-net` path
 

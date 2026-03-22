@@ -101,6 +101,8 @@ Delivered seventh adoption slice:
 - host regressions now prove init, MAC readout, TX, RX, and export-surface stability on the clean-room `virtio-net` path
 - host regressions now also prove `ARP`, `IPv4`, `UDP`, `DHCP`, `DNS`, and bounded `TCP` protocol reuse on the clean-room `virtio-net` path
 - `scripts/baremetal-qemu-virtio-net-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-arp-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-udp-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-dhcp-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-dns-probe-check.ps1`, and `scripts/baremetal-qemu-virtio-net-tcp-probe-check.ps1` plus `scripts/qemu-virtio-net-dgram-echo.ps1` now prove live QEMU `virtio-net-pci` PCI bind, MAC readout, TX, RX, ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, DHCP discover encode/decode, DNS query/A-response exchange, bounded TCP handshake/payload/teardown, payload validation, and counter advance over the freestanding PVH artifact
+- host regressions in `src/pal/net.zig` plus `src/baremetal_main.zig` now prove bounded framed tool-service reuse and bounded freestanding `HTTP` / `HTTPS` transport reuse over the clean-room `virtio-net` path
+- `scripts/baremetal-qemu-virtio-net-tool-service-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-http-post-probe-check.ps1`, and `scripts/baremetal-qemu-virtio-net-https-post-probe-check.ps1` now prove live QEMU tool-service reuse, `HTTP` POST, and `HTTPS` POST over the same `virtio-net-pci` freestanding path
 
 `FS5.5` is not complete until each subsystem has:
 
