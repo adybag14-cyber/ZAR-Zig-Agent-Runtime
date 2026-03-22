@@ -9,7 +9,7 @@ Current posture:
 - ZigOS upstream is now explicitly `MIT` licensed.
 - ZAR can legally study, adapt, or import ZigOS code when that is the right engineering choice.
 - Current delivered slices remain ZAR-owned implementations with ZAR-native tests, probes, and release gates.
-- Delivered ZigOS-inspired slices: `7`
+- Delivered ZigOS-inspired slices now cover NIC breadth, benchmark/stress, introspection overlays, storage breadth, mount layering, and a bounded internal VFS router.
 
 ## Source Baseline
 
@@ -61,7 +61,7 @@ The table below is the current strict classification for every realistic ZigOS a
 | `USB/UHCI` | `src/kernel/drivers/usb.zig`, `uhci.zig` | Medium | Adapt later | Separate FS5.5 hardware expansion after E1000 |
 | `AC97 audio` | `src/kernel/drivers/ac97.zig` | Low-medium | Adapt later | Only after display/input/network/storage priorities |
 | `VGA path` | `src/kernel/drivers/vga.zig` | Low | Already covered conceptually | Reference only |
-| `VFS core` | `src/kernel/fs/vfs.zig` | High | Major redesign | ZAR-native VFS design doc first |
+| `VFS core` | `src/kernel/fs/vfs.zig` | High | Adapt now, bounded | Bounded internal VFS router delivered; broader mount/filesystem model remains redesign |
 | `tmpfs` | `src/kernel/fs/tmpfs.zig` | Medium-high | Adapt now | Delivered bounded `/tmp` slice; broader mount semantics later |
 | `devfs` | `src/kernel/fs/devfs.zig` | Medium-high | Adapt now | First bounded read-only `/dev` overlay delivered; broader device/VFS model remains later |
 | `procfs` | `src/kernel/fs/procfs.zig` | Medium-high | Adapt now | First bounded read-only `/proc` overlay delivered; broader VFS remains later |
@@ -170,6 +170,8 @@ Current delivered scope:
 - `src/baremetal/tool_exec.zig` and `src/baremetal/tool_service.zig` now reuse the same builtin and typed `GET` / `LIST` / `STAT` surface for `/dev`
 - `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves `/`, `/dev`, and `/dev/storage/state` live on the `E1000` tool-service path
 - `src/baremetal/tmpfs.zig` now provides a bounded non-persistent `/tmp` surface wired through `src/baremetal/filesystem.zig`, with host regression coverage for create/write/read/list/stat/delete and reset semantics
+- `src/baremetal/vfs.zig` plus `src/baremetal/filesystem.zig` now add a bounded internal VFS router that owns normalization, alias resolution, and dispatch across persistent storage, `/tmp`, `/proc`, `/dev`, `/sys`, and `/mnt`
+- `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1` now proves that same VFS seam live on `virtio-blk-pci`, including root listing, `/proc/version`, persisted aliases, and `/tmp` alias volatility after reset
 
 Still intentionally out of scope for this slice:
 
@@ -195,6 +197,7 @@ Current delivered scope:
 - `scripts/baremetal-qemu-virtio-block-installer-probe-check.ps1` now proves live canonical loader/kernel/manifest/bootstrap persistence on `virtio-blk-pci`
 - `src/baremetal/mount_table.zig` plus `src/baremetal/filesystem.zig` now add a ZAR-native persistent mount layer backed by `/runtime/mounts/<alias>.txt` instead of importing a full ZigOS VFS
 - `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1` now proves live alias bind/reload behavior through `/mnt/boot` and `/mnt/runtime` on the same `virtio-block` backend
+- `src/baremetal/vfs.zig` now extends that storage direction into a bounded internal VFS router instead of a direct full ZigOS VFS transplant
 
 ### Z4. Shell And Interactive Control Layer
 

@@ -97,6 +97,8 @@ Delivered sixth adoption slice:
 - `src/baremetal/mount_table.zig` plus `src/baremetal/filesystem.zig` now add a bounded persistent mount layer that stores alias targets under `/runtime/mounts/<alias>.txt` and resolves `/mnt/<alias>/...` on top of the active backend without introducing a full VFS import
 - `src/baremetal_main.zig` now carries a bounded `virtio-block` mount proof that binds `boot` and `runtime`, reads `/mnt/boot/loader.cfg`, writes `/mnt/runtime/state/mounted-via-alias.txt`, reloads the filesystem, and proves the alias plus payload persist
 - `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1` now proves that same mount-layer behavior live on `virtio-blk-pci`, including persisted registry path markers and reloaded alias payload readback
+- `src/baremetal/vfs.zig` now provides a bounded internal VFS router over the persistent filesystem, `tmpfs`, the read-only `virtual_fs` trees, and the `/mnt` root, while `src/baremetal/filesystem.zig` now delegates public path operations through that router instead of open-coded per-call branching
+- `src/baremetal_main.zig` now widens the same `virtio-block` mount proof to cover merged root listing, `/proc/version` readback, and `/mnt/cache -> /tmp/cache` volatility across reset without regressing the persisted mount-alias contract
 
 Delivered seventh adoption slice:
 
