@@ -127,6 +127,12 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
       - `/sys/storage/state` now reports `detected_filesystem` plus `supported_filesystem_probes=zarfs,ext2,fat32`
       - host regressions now prove `zarfs`, `ext2`, and `fat32` detection plus registry rendering across persistent, tmpfs, virtual, and mounted-alias layers
       - `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1` now also proves the same registry/state seam live on `virtio-blk-pci`, including `detected_filesystem=zarfs` and registry entries for persistent plus tmpfs-backed aliases
+    - tenth delivered adoption slice is a bounded storage backend registry plus external-filesystem capability seam:
+      - `src/baremetal/storage_backend_registry.zig` now exports bounded backend entries for `ram_disk`, `ata_pio`, and `virtio_block`
+      - `src/baremetal/virtual_fs.zig` now exposes `/dev/storage/backends`, `/dev/storage/filesystems`, `/sys/storage/backends`, and `/sys/storage/filesystems`
+      - the backend registry now reports availability, active-selection state, preferred-order, logical-base-LBA, partition metadata, and detected filesystem kind per backend
+      - the filesystem capability matrix now makes the mounted-filesystem posture explicit at runtime: `zarfs` mounted+writable, `ext2` detect-only planned read-only, and `fat32` detect-only planned read-only
+      - `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1` now also proves the live backend registry and mounted-filesystem capability seam on `virtio-blk-pci`
   - keyboard/mouse is now strict-closed in [`docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md`](docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md)
   - `src/baremetal/ps2_input.zig` now contains a real x86 port-I/O backed PS/2 controller path
   - `scripts/baremetal-qemu-ps2-input-probe-check.ps1` proves IRQ-driven keyboard/mouse state updates against the freestanding PVH artifact

@@ -102,6 +102,9 @@ Delivered sixth adoption slice:
 - `src/baremetal/storage_registry.zig` now adds a bounded storage-layer registry over the active persistent backend, `tmpfs`, `virtual_fs`, and persisted mount aliases, plus raw `zarfs` / `ext2` / `fat32` detection on the active backend without claiming mounted external-filesystem support
 - `src/baremetal/virtual_fs.zig` now exposes that registry through `/dev/storage/registry` and `/sys/storage/registry`, while `/sys/storage/state` now also reports `detected_filesystem` plus `supported_filesystem_probes=zarfs,ext2,fat32`
 - `src/baremetal_main.zig` now widens the same `virtio-block` mount proof to validate `/sys/storage/state`, `/sys/storage/registry`, persistent `zarfs` classification on `virtio-block`, and `tmpfs` classification for `/mnt/cache -> /tmp/cache`
+- `src/baremetal/storage_backend_registry.zig` now exports a bounded backend registry over `ram_disk`, `ata_pio`, and `virtio_block`, including availability, active-selection state, preferred-order, logical-base-LBA, partition metadata, and detected filesystem kind per backend
+- `src/baremetal/virtual_fs.zig` now also exposes `/dev/storage/backends`, `/dev/storage/filesystems`, `/sys/storage/backends`, and `/sys/storage/filesystems`, making the mounted-filesystem posture explicit at runtime: `zarfs` mounted+writable, `ext2` detect-only planned read-only, and `fat32` detect-only planned read-only
+- `src/baremetal_main.zig` now widens the same `virtio-block` mount proof to validate `/sys/storage/backends` plus `/sys/storage/filesystems` on the live `virtio-blk-pci` path
 
 Delivered seventh adoption slice:
 

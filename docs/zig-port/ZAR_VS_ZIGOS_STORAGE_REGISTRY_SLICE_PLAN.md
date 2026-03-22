@@ -29,9 +29,27 @@ This is a ZAR-native layering step inspired by ZigOS filesystem breadth. It is n
     - `zarfs`
     - `ext2`
     - `fat32`
+- `src/baremetal/storage_backend_registry.zig`
+  - bounded backend registry over:
+    - `ram_disk`
+    - `ata_pio`
+    - `virtio_block`
+  - per-backend export of:
+    - availability
+    - selection state
+    - mounted flag
+    - preferred selection order
+    - detected filesystem kind
+    - block size / block count
+    - logical base LBA
+    - partition count / selected partition
 - `src/baremetal/virtual_fs.zig`
   - new read-only files:
+    - `/dev/storage/backends`
+    - `/dev/storage/filesystems`
     - `/dev/storage/registry`
+    - `/sys/storage/backends`
+    - `/sys/storage/filesystems`
     - `/sys/storage/registry`
   - `/sys/storage/state` now also exports:
     - `detected_filesystem`
@@ -46,6 +64,7 @@ This is a ZAR-native layering step inspired by ZigOS filesystem breadth. It is n
 ## Why this slice exists
 
 - It gives ZAR a real storage-layer registry above RAM-disk, ATA, and `virtio-block`.
+- It gives ZAR a real backend-registry seam above RAM-disk, ATA, and `virtio-block`.
 - It adds the first honest ext2/FAT integration seam without pretending those filesystems are mounted.
 - It creates the decision point for future external-filesystem work using real on-disk classification instead of guesses.
 
@@ -70,6 +89,14 @@ Live `virtio-blk-pci` validation now proves:
 
 - `/sys/storage/state` reports `backend=virtio_block`
 - `/sys/storage/state` reports `detected_filesystem=zarfs`
+- `/sys/storage/backends` reports:
+  - `ram_disk` available but not selected
+  - `ata_pio` unavailable on the current live lane
+  - `virtio_block` available and selected with `zarfs`
+- `/sys/storage/filesystems` reports:
+  - `zarfs` mounted+writable
+  - `ext2` detect-only and not mounted
+  - `fat32` detect-only and not mounted
 - `/sys/storage/registry` includes:
   - persistent root on `virtio_block`
   - persisted `/mnt/boot` and `/mnt/runtime`
@@ -77,6 +104,6 @@ Live `virtio-blk-pci` validation now proves:
 
 ## Follow-on options
 
-1. add a bounded storage-driver registry for multiple persistent devices instead of only the active backend
-2. add read-only ext2/FAT directory inspection on top of the new raw probes
+1. add read-only ext2/FAT directory inspection on top of the new raw probes
+2. extend mount registry records with mounted external-filesystem metadata
 3. defer writable external-filesystem support until a deliberate mount/VFS design slice is chosen

@@ -1117,6 +1117,7 @@ test "filesystem exposes virtual proc sys and dev overlays" {
     const storage_state = try readFileAlloc(std.testing.allocator, "/sys/storage/state", 512);
     defer std.testing.allocator.free(storage_state);
     try std.testing.expect(std.mem.indexOf(u8, storage_state, "backend=ram_disk") != null);
+    try std.testing.expect(std.mem.indexOf(u8, storage_state, "detected_filesystem=zarfs") != null);
 
     const dev_listing = try listDirectoryAlloc(std.testing.allocator, "/dev", 256);
     defer std.testing.allocator.free(dev_listing);
@@ -1129,6 +1130,21 @@ test "filesystem exposes virtual proc sys and dev overlays" {
     defer std.testing.allocator.free(dev_storage_state);
     try std.testing.expect(std.mem.indexOf(u8, dev_storage_state, "backend=ram_disk") != null);
 
+    const dev_storage_listing = try listDirectoryAlloc(std.testing.allocator, "/dev/storage", 256);
+    defer std.testing.allocator.free(dev_storage_listing);
+    try std.testing.expect(std.mem.indexOf(u8, dev_storage_listing, "file backends ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dev_storage_listing, "file filesystems ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dev_storage_listing, "file registry ") != null);
+
+    const dev_storage_backends = try readFileAlloc(std.testing.allocator, "/dev/storage/backends", 1024);
+    defer std.testing.allocator.free(dev_storage_backends);
+    try std.testing.expect(std.mem.indexOf(u8, dev_storage_backends, "backend[0]=name=ram_disk backend=ram_disk available=1 selected=1 mounted=1") != null);
+
+    const dev_storage_filesystems = try readFileAlloc(std.testing.allocator, "/dev/storage/filesystems", 512);
+    defer std.testing.allocator.free(dev_storage_filesystems);
+    try std.testing.expect(std.mem.indexOf(u8, dev_storage_filesystems, "filesystem=ext2 detect=1 mount=0 write=0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dev_storage_filesystems, "filesystem=fat32 detect=1 mount=0 write=0") != null);
+
     const dev_display_state = try readFileAlloc(std.testing.allocator, "/dev/display/state", 512);
     defer std.testing.allocator.free(dev_display_state);
     try std.testing.expect(std.mem.indexOf(u8, dev_display_state, "outputs=") != null);
@@ -1139,6 +1155,20 @@ test "filesystem exposes virtual proc sys and dev overlays" {
     try std.testing.expect(std.mem.indexOf(u8, sys_listing, "dir storage\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, sys_listing, "dir display\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, sys_listing, "dir net\n") != null);
+
+    const sys_storage_listing = try listDirectoryAlloc(std.testing.allocator, "/sys/storage", 256);
+    defer std.testing.allocator.free(sys_storage_listing);
+    try std.testing.expect(std.mem.indexOf(u8, sys_storage_listing, "file backends ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sys_storage_listing, "file filesystems ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sys_storage_listing, "file registry ") != null);
+
+    const sys_storage_backends = try readFileAlloc(std.testing.allocator, "/sys/storage/backends", 1024);
+    defer std.testing.allocator.free(sys_storage_backends);
+    try std.testing.expect(std.mem.indexOf(u8, sys_storage_backends, "filesystem=zarfs") != null);
+
+    const sys_storage_filesystems = try readFileAlloc(std.testing.allocator, "/sys/storage/filesystems", 512);
+    defer std.testing.allocator.free(sys_storage_filesystems);
+    try std.testing.expect(std.mem.indexOf(u8, sys_storage_filesystems, "filesystem=zarfs detect=1 mount=1 write=1") != null);
 
     const proc_stat = try statSummary("/proc/runtime/snapshot");
     try std.testing.expectEqual(@as(std.Io.File.Kind, .file), proc_stat.kind);
