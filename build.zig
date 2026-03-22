@@ -25,6 +25,9 @@ pub fn build(b: *std.Build) void {
     const baremetal_virtio_net_arp_probe = b.option(bool, "baremetal-virtio-net-arp-probe", "Enable the virtio-net ARP validation path in the freestanding image") orelse false;
     const baremetal_virtio_net_ipv4_probe = b.option(bool, "baremetal-virtio-net-ipv4-probe", "Enable the virtio-net IPv4 validation path in the freestanding image") orelse false;
     const baremetal_virtio_net_udp_probe = b.option(bool, "baremetal-virtio-net-udp-probe", "Enable the virtio-net UDP validation path in the freestanding image") orelse false;
+    const baremetal_virtio_net_tcp_probe = b.option(bool, "baremetal-virtio-net-tcp-probe", "Enable the virtio-net TCP validation path in the freestanding image") orelse false;
+    const baremetal_virtio_net_dhcp_probe = b.option(bool, "baremetal-virtio-net-dhcp-probe", "Enable the virtio-net DHCP validation path in the freestanding image") orelse false;
+    const baremetal_virtio_net_dns_probe = b.option(bool, "baremetal-virtio-net-dns-probe", "Enable the virtio-net DNS validation path in the freestanding image") orelse false;
     const baremetal_rtl8139_probe = b.option(bool, "baremetal-rtl8139-probe", "Enable the RTL8139 Ethernet validation path in the freestanding image") orelse false;
     const baremetal_rtl8139_arp_probe = b.option(bool, "baremetal-rtl8139-arp-probe", "Enable the RTL8139 ARP validation path in the freestanding image") orelse false;
     const baremetal_rtl8139_ipv4_probe = b.option(bool, "baremetal-rtl8139-ipv4-probe", "Enable the RTL8139 IPv4 validation path in the freestanding image") orelse false;
@@ -175,6 +178,9 @@ pub fn build(b: *std.Build) void {
     baremetal_options.addOption(bool, "virtio_net_arp_probe", baremetal_virtio_net_arp_probe);
     baremetal_options.addOption(bool, "virtio_net_ipv4_probe", baremetal_virtio_net_ipv4_probe);
     baremetal_options.addOption(bool, "virtio_net_udp_probe", baremetal_virtio_net_udp_probe);
+    baremetal_options.addOption(bool, "virtio_net_tcp_probe", baremetal_virtio_net_tcp_probe);
+    baremetal_options.addOption(bool, "virtio_net_dhcp_probe", baremetal_virtio_net_dhcp_probe);
+    baremetal_options.addOption(bool, "virtio_net_dns_probe", baremetal_virtio_net_dns_probe);
     baremetal_options.addOption(bool, "rtl8139_probe", baremetal_rtl8139_probe);
     baremetal_options.addOption(bool, "rtl8139_arp_probe", baremetal_rtl8139_arp_probe);
     baremetal_options.addOption(bool, "rtl8139_ipv4_probe", baremetal_rtl8139_ipv4_probe);

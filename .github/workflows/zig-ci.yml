@@ -197,6 +197,18 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-virtio-net-udp-probe-check.ps1
 
+      - name: Bare-metal QEMU virtio-net DHCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-net-dhcp-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-net DNS probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-net-dns-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-net TCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-net-tcp-probe-check.ps1
+
       - name: Bare-metal QEMU RTL8139 probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-rtl8139-probe-check.ps1
