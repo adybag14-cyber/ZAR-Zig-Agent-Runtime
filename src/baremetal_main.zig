@@ -347,6 +347,8 @@ const VirtioBlockMountProbeError = error{
     StorageStateReadFailed,
     StorageStateBackendMismatch,
     StorageStateFilesystemMismatch,
+    StorageBackendRegistryReadbackFailed,
+    StorageFilesystemMatrixReadbackFailed,
     StorageRegistryReadbackFailed,
     RuntimeAliasReloadFailed,
     TmpfsAliasVolatilityMismatch,
@@ -3358,7 +3360,7 @@ fn runVirtioBlockInstallerProbe() VirtioBlockInstallerProbeError!void {
 }
 
 fn runVirtioBlockMountProbe() VirtioBlockMountProbeError!void {
-    var probe_allocator_backing = [_]u8{0} ** 4096;
+    var probe_allocator_backing = [_]u8{0} ** 8192;
     var probe_fba = std.heap.FixedBufferAllocator.init(&probe_allocator_backing);
     const probe_allocator = if (builtin.is_test) std.testing.allocator else probe_fba.allocator();
     storage_backend.init();
@@ -3408,6 +3410,24 @@ fn runVirtioBlockMountProbe() VirtioBlockMountProbeError!void {
     defer probe_allocator.free(storage_state);
     if (std.mem.indexOf(u8, storage_state, "backend=virtio_block") == null) return error.StorageStateBackendMismatch;
     if (std.mem.indexOf(u8, storage_state, "detected_filesystem=zarfs") == null) return error.StorageStateFilesystemMismatch;
+
+    const storage_backends = filesystem.readFileAlloc(probe_allocator, "/sys/storage/backends", 1024) catch return error.StorageBackendRegistryReadbackFailed;
+    defer probe_allocator.free(storage_backends);
+    if (std.mem.indexOf(u8, storage_backends, "backend[0]=name=ram_disk backend=ram_disk available=1 selected=0 mounted=1") == null or
+        std.mem.indexOf(u8, storage_backends, "backend[1]=name=ata_pio backend=ata_pio available=0 selected=0 mounted=0") == null or
+        std.mem.indexOf(u8, storage_backends, "backend[2]=name=virtio_block backend=virtio_block available=1 selected=1 mounted=1 preferred_order=2 filesystem=zarfs") == null)
+    {
+        return error.StorageBackendRegistryReadbackFailed;
+    }
+
+    const storage_filesystems = filesystem.readFileAlloc(probe_allocator, "/sys/storage/filesystems", 512) catch return error.StorageFilesystemMatrixReadbackFailed;
+    defer probe_allocator.free(storage_filesystems);
+    if (std.mem.indexOf(u8, storage_filesystems, "filesystem=zarfs detect=1 mount=1 write=1 source=zar_native") == null or
+        std.mem.indexOf(u8, storage_filesystems, "filesystem=ext2 detect=1 mount=0 write=0 source=planned_bounded_read_only") == null or
+        std.mem.indexOf(u8, storage_filesystems, "filesystem=fat32 detect=1 mount=0 write=0 source=planned_bounded_read_only") == null)
+    {
+        return error.StorageFilesystemMatrixReadbackFailed;
+    }
 
     const storage_registry = filesystem.readFileAlloc(probe_allocator, "/sys/storage/registry", 2048) catch return error.StorageRegistryReadbackFailed;
     defer probe_allocator.free(storage_registry);
@@ -16128,10 +16148,12 @@ fn virtioBlockMountProbeFailureCode(err: VirtioBlockMountProbeError) u8 {
         error.StorageStateReadFailed => 0x8B,
         error.StorageStateBackendMismatch => 0x8C,
         error.StorageStateFilesystemMismatch => 0x8D,
-        error.StorageRegistryReadbackFailed => 0x8E,
-        error.RuntimeAliasReloadFailed => 0x8F,
-        error.TmpfsAliasVolatilityMismatch => 0x90,
-        error.PciDiscoveryMismatch => 0x91,
+        error.StorageBackendRegistryReadbackFailed => 0x8E,
+        error.StorageFilesystemMatrixReadbackFailed => 0x8F,
+        error.StorageRegistryReadbackFailed => 0x90,
+        error.RuntimeAliasReloadFailed => 0x91,
+        error.TmpfsAliasVolatilityMismatch => 0x92,
+        error.PciDiscoveryMismatch => 0x93,
     };
 }
 
@@ -24828,6 +24850,16 @@ test "baremetal virtio block mount probe persists mounted alias paths" {
     defer std.testing.allocator.free(storage_state);
     try std.testing.expect(std.mem.indexOf(u8, storage_state, "backend=virtio_block") != null);
     try std.testing.expect(std.mem.indexOf(u8, storage_state, "detected_filesystem=zarfs") != null);
+
+    const storage_backends = try filesystem.readFileAlloc(std.testing.allocator, "/sys/storage/backends", 1024);
+    defer std.testing.allocator.free(storage_backends);
+    try std.testing.expect(std.mem.indexOf(u8, storage_backends, "backend[0]=name=ram_disk backend=ram_disk available=1 selected=0 mounted=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, storage_backends, "backend[2]=name=virtio_block backend=virtio_block available=1 selected=1 mounted=1 preferred_order=2 filesystem=zarfs") != null);
+
+    const storage_filesystems = try filesystem.readFileAlloc(std.testing.allocator, "/sys/storage/filesystems", 512);
+    defer std.testing.allocator.free(storage_filesystems);
+    try std.testing.expect(std.mem.indexOf(u8, storage_filesystems, "filesystem=ext2 detect=1 mount=0 write=0 source=planned_bounded_read_only") != null);
+    try std.testing.expect(std.mem.indexOf(u8, storage_filesystems, "filesystem=fat32 detect=1 mount=0 write=0 source=planned_bounded_read_only") != null);
 
     const storage_registry = try filesystem.readFileAlloc(std.testing.allocator, "/sys/storage/registry", 2048);
     defer std.testing.allocator.free(storage_registry);

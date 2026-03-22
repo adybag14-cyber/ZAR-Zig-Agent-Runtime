@@ -9,7 +9,7 @@ Current posture:
 - ZigOS upstream is now explicitly `MIT` licensed.
 - ZAR can legally study, adapt, or import ZigOS code when that is the right engineering choice.
 - Current delivered slices remain ZAR-owned implementations with ZAR-native tests, probes, and release gates.
-- Delivered ZigOS-inspired slices now cover NIC breadth, benchmark/stress, introspection overlays, storage breadth, mount layering, a bounded internal VFS router, and a bounded storage registry plus ext2/FAT probe seam.
+- Delivered ZigOS-inspired slices now cover NIC breadth, benchmark/stress, introspection overlays, storage breadth, mount layering, a bounded internal VFS router, a bounded storage registry plus ext2/FAT probe seam, and a bounded backend-registry plus mounted-filesystem capability seam.
 
 ## Source Baseline
 
@@ -66,8 +66,8 @@ The table below is the current strict classification for every realistic ZigOS a
 | `devfs` | `src/kernel/fs/devfs.zig` | Medium-high | Adapt now | First bounded read-only `/dev` overlay delivered; broader device/VFS model remains later |
 | `procfs` | `src/kernel/fs/procfs.zig` | Medium-high | Adapt now | First bounded read-only `/proc` overlay delivered; broader VFS remains later |
 | `sysfs` | `src/kernel/fs/sysfs.zig` | Medium-high | Adapt now | First bounded read-only `/sys` overlay delivered; broader VFS remains later |
-| `ext2` | `src/kernel/fs/ext2.zig` | Medium | Adapt now, bounded | Raw on-disk detection now; mount/read model later |
-| `fat32` | `src/kernel/fs/fat32.zig` | Medium | Adapt now, bounded | Raw on-disk detection now; mount/read model later |
+| `ext2` | `src/kernel/fs/ext2.zig` | Medium | Adapt now, bounded | Raw on-disk detection now; bounded read-only mount plan is defined |
+| `fat32` | `src/kernel/fs/fat32.zig` | Medium | Adapt now, bounded | Raw on-disk detection now; bounded read-only mount plan is defined |
 | `TTY layer` | `src/kernel/fs/tty.zig` | Medium | Adapt later | Only if ZAR shell/interactive console expands |
 | `Ethernet/ARP/IPv4/UDP/TCP/DHCP/DNS/HTTP` | `src/kernel/net/*` | High | Mostly already covered | Use as cross-check, not as adoption target |
 | `IPv6/ICMPv6` | `src/kernel/net/ipv6.zig`, `icmpv6.zig` | Medium | Adapt later | New ZAR networking slice after E1000 |
@@ -173,8 +173,11 @@ Current delivered scope:
 - `src/baremetal/vfs.zig` plus `src/baremetal/filesystem.zig` now add a bounded internal VFS router that owns normalization, alias resolution, and dispatch across persistent storage, `/tmp`, `/proc`, `/dev`, `/sys`, and `/mnt`
 - `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1` now proves that same VFS seam live on `virtio-blk-pci`, including root listing, `/proc/version`, persisted aliases, and `/tmp` alias volatility after reset
 - `src/baremetal/storage_registry.zig` now adds a bounded storage-layer registry over persistent, tmpfs, virtual, and mounted-alias routes, plus raw `zarfs` / `ext2` / `fat32` detection on the active backend
+- `src/baremetal/storage_backend_registry.zig` now adds a bounded backend registry over `ram_disk`, `ata_pio`, and `virtio_block`, exposing availability, active-selection state, preferred-order, partition metadata, and detected filesystem kind per backend
 - `src/baremetal/virtual_fs.zig` now exposes that storage registry through `/dev/storage/registry` and `/sys/storage/registry`, while `/sys/storage/state` now also reports the detected filesystem kind and supported probe set
+- `src/baremetal/virtual_fs.zig` now also exposes `/dev/storage/backends`, `/dev/storage/filesystems`, `/sys/storage/backends`, and `/sys/storage/filesystems`, making the current mounted-filesystem capability posture explicit at runtime
 - `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1` now also proves the storage registry and detected-filesystem seam live on `virtio-blk-pci`
+- `docs/zig-port/ZAR_VS_ZIGOS_EXT_FILESYSTEM_MOUNT_SLICE_PLAN.md` now defines the next bounded mounted ext2/FAT phase as read-only external mounts, not a GP-OS VFS/syscall transplant
 
 Still intentionally out of scope for this slice:
 
@@ -202,6 +205,8 @@ Current delivered scope:
 - `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1` now proves live alias bind/reload behavior through `/mnt/boot` and `/mnt/runtime` on the same `virtio-block` backend
 - `src/baremetal/vfs.zig` now extends that storage direction into a bounded internal VFS router instead of a direct full ZigOS VFS transplant
 - `src/baremetal/storage_registry.zig` now extends that same storage direction into a bounded registry over RAM-disk / ATA / `virtio-block` with raw `zarfs` / `ext2` / `fat32` detection, without claiming mounted external-filesystem support
+- `src/baremetal/storage_backend_registry.zig` now adds the bounded backend-registry layer so the mount direction can reason about `ram_disk`, `ata_pio`, and `virtio_block` explicitly instead of only the active backend
+- `docs/zig-port/ZAR_VS_ZIGOS_EXT_FILESYSTEM_MOUNT_SLICE_PLAN.md` now defines the next mounted `ext2` / `fat32` phase as bounded read-only external mounts on top of the current registry + VFS seam
 
 ### Z4. Shell And Interactive Control Layer
 

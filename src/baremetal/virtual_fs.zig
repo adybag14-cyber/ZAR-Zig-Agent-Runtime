@@ -5,6 +5,7 @@ const abi = @import("abi.zig");
 const display_output = @import("display_output.zig");
 const runtime_bridge = @import("runtime_bridge.zig");
 const storage_backend = @import("storage_backend.zig");
+const storage_backend_registry = @import("storage_backend_registry.zig");
 const storage_registry = @import("storage_registry.zig");
 const pal_net = @import("../pal/net.zig");
 
@@ -33,6 +34,8 @@ const proc_runtime_sessions_path = "/proc/runtime/sessions";
 const dev_null_path = "/dev/null";
 const dev_storage_path = "/dev/storage";
 const dev_storage_state_path = "/dev/storage/state";
+const dev_storage_backends_path = "/dev/storage/backends";
+const dev_storage_filesystems_path = "/dev/storage/filesystems";
 const dev_storage_registry_path = "/dev/storage/registry";
 const dev_display_path = "/dev/display";
 const dev_display_state_path = "/dev/display/state";
@@ -43,6 +46,8 @@ const dev_net_route_path = "/dev/net/route";
 const sys_kernel_version_path = "/sys/kernel/version";
 const sys_kernel_machine_path = "/sys/kernel/machine";
 const sys_storage_state_path = "/sys/storage/state";
+const sys_storage_backends_path = "/sys/storage/backends";
+const sys_storage_filesystems_path = "/sys/storage/filesystems";
 const sys_storage_registry_path = "/sys/storage/registry";
 const sys_display_state_path = "/sys/display/state";
 const sys_display_outputs_path = "/sys/display/outputs";
@@ -112,6 +117,8 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     }
     if (std.mem.eql(u8, path, dev_storage_path)) {
         try appendFileLine(allocator, &out, "state", dev_storage_state_path, max_bytes);
+        try appendFileLine(allocator, &out, "backends", dev_storage_backends_path, max_bytes);
+        try appendFileLine(allocator, &out, "filesystems", dev_storage_filesystems_path, max_bytes);
         try appendFileLine(allocator, &out, "registry", dev_storage_registry_path, max_bytes);
         return out.toOwnedSlice(allocator);
     }
@@ -155,6 +162,8 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     }
     if (std.mem.eql(u8, path, "/sys/storage")) {
         try appendFileLine(allocator, &out, "state", sys_storage_state_path, max_bytes);
+        try appendFileLine(allocator, &out, "backends", sys_storage_backends_path, max_bytes);
+        try appendFileLine(allocator, &out, "filesystems", sys_storage_filesystems_path, max_bytes);
         try appendFileLine(allocator, &out, "registry", sys_storage_registry_path, max_bytes);
         return out.toOwnedSlice(allocator);
     }
@@ -238,6 +247,8 @@ fn isFilePath(path: []const u8) bool {
     if (parseRuntimeSessionPath(path) != null) return true;
     if (std.mem.eql(u8, path, dev_null_path)) return true;
     if (std.mem.eql(u8, path, dev_storage_state_path)) return true;
+    if (std.mem.eql(u8, path, dev_storage_backends_path)) return true;
+    if (std.mem.eql(u8, path, dev_storage_filesystems_path)) return true;
     if (std.mem.eql(u8, path, dev_storage_registry_path)) return true;
     if (std.mem.eql(u8, path, dev_display_state_path)) return true;
     if (std.mem.eql(u8, path, dev_net_state_path)) return true;
@@ -245,6 +256,8 @@ fn isFilePath(path: []const u8) bool {
     if (std.mem.eql(u8, path, sys_kernel_version_path)) return true;
     if (std.mem.eql(u8, path, sys_kernel_machine_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_state_path)) return true;
+    if (std.mem.eql(u8, path, sys_storage_backends_path)) return true;
+    if (std.mem.eql(u8, path, sys_storage_filesystems_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_registry_path)) return true;
     if (std.mem.eql(u8, path, sys_display_state_path)) return true;
     if (std.mem.eql(u8, path, sys_net_state_path)) return true;
@@ -277,6 +290,12 @@ fn renderFileAlloc(allocator: std.mem.Allocator, path: []const u8) Error![]u8 {
     if (std.mem.eql(u8, path, dev_storage_state_path)) {
         return renderStorageStateAlloc(allocator);
     }
+    if (std.mem.eql(u8, path, dev_storage_backends_path)) {
+        return storage_backend_registry.renderAlloc(allocator, max_stat_render_bytes);
+    }
+    if (std.mem.eql(u8, path, dev_storage_filesystems_path)) {
+        return storage_backend_registry.renderFilesystemSupportAlloc(allocator, max_stat_render_bytes);
+    }
     if (std.mem.eql(u8, path, dev_storage_registry_path)) {
         return storage_registry.renderAlloc(allocator, max_stat_render_bytes);
     }
@@ -305,6 +324,12 @@ fn renderFileAlloc(allocator: std.mem.Allocator, path: []const u8) Error![]u8 {
     }
     if (std.mem.eql(u8, path, sys_storage_state_path)) {
         return renderStorageStateAlloc(allocator);
+    }
+    if (std.mem.eql(u8, path, sys_storage_backends_path)) {
+        return storage_backend_registry.renderAlloc(allocator, max_stat_render_bytes);
+    }
+    if (std.mem.eql(u8, path, sys_storage_filesystems_path)) {
+        return storage_backend_registry.renderFilesystemSupportAlloc(allocator, max_stat_render_bytes);
     }
     if (std.mem.eql(u8, path, sys_storage_registry_path)) {
         return storage_registry.renderAlloc(allocator, max_stat_render_bytes);
