@@ -106,6 +106,8 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
       - `src/baremetal/storage_backend.zig` now prefers `virtio-block` over RAM-disk when available, while still preferring ATA PIO if both hardware-backed backends are present
       - `scripts/baremetal-qemu-virtio-block-probe-check.ps1` now proves live raw mutation, tool-layout readback, and filesystem superblock readback on the `virtio-block` path
       - `scripts/baremetal-qemu-virtio-block-installer-probe-check.ps1` now proves canonical installer/runtime persistence on the same `virtio-block` path, including loader marker persistence and bootstrap package state persistence
+      - `src/baremetal/mount_table.zig` plus `src/baremetal/filesystem.zig` now add a bounded persistent mount layer backed by `/runtime/mounts/*.txt`, with `/mnt/<alias>` resolution over the existing filesystem on the same backend
+      - `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1` now proves live alias persistence and `/mnt` read/write reload behavior on `virtio-blk-pci`
     - seventh delivered adoption slice is bounded `virtio-net` NIC breadth:
       - `src/baremetal/virtio_net.zig` now provides a ZAR-owned modern `virtio-net` path with modern PCI capability discovery, version-1 feature negotiation, MAC readout, bounded RX/TX queue bring-up, and raw-frame send/receive telemetry
       - `src/baremetal/pci.zig` now discovers modern `virtio-net` PCI capability regions

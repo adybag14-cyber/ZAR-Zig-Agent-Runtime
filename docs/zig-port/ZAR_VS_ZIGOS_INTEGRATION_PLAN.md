@@ -193,6 +193,8 @@ Current delivered scope:
 - `scripts/baremetal-qemu-virtio-block-probe-check.ps1` now proves live raw mutation, tool-layout readback, and filesystem superblock readback on the `virtio-block` path
 - `src/baremetal_main.zig` now also carries a bounded installer/runtime proof on the same `virtio-block` backend through `src/baremetal/disk_installer.zig`
 - `scripts/baremetal-qemu-virtio-block-installer-probe-check.ps1` now proves live canonical loader/kernel/manifest/bootstrap persistence on `virtio-blk-pci`
+- `src/baremetal/mount_table.zig` plus `src/baremetal/filesystem.zig` now add a ZAR-native persistent mount layer backed by `/runtime/mounts/<alias>.txt` instead of importing a full ZigOS VFS
+- `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1` now proves live alias bind/reload behavior through `/mnt/boot` and `/mnt/runtime` on the same `virtio-block` backend
 
 ### Z4. Shell And Interactive Control Layer
 
