@@ -344,6 +344,10 @@ const VirtioBlockMountProbeError = error{
     CacheAliasWriteFailed,
     RootVfsListingMismatch,
     ProcVersionReadbackFailed,
+    StorageStateReadFailed,
+    StorageStateBackendMismatch,
+    StorageStateFilesystemMismatch,
+    StorageRegistryReadbackFailed,
     RuntimeAliasReloadFailed,
     TmpfsAliasVolatilityMismatch,
     PciDiscoveryMismatch,
@@ -3354,7 +3358,7 @@ fn runVirtioBlockInstallerProbe() VirtioBlockInstallerProbeError!void {
 }
 
 fn runVirtioBlockMountProbe() VirtioBlockMountProbeError!void {
-    var probe_allocator_backing = [_]u8{0} ** 1024;
+    var probe_allocator_backing = [_]u8{0} ** 4096;
     var probe_fba = std.heap.FixedBufferAllocator.init(&probe_allocator_backing);
     const probe_allocator = if (builtin.is_test) std.testing.allocator else probe_fba.allocator();
     storage_backend.init();
@@ -3399,6 +3403,21 @@ fn runVirtioBlockMountProbe() VirtioBlockMountProbeError!void {
     const proc_version = filesystem.readFileAlloc(probe_allocator, "/proc/version", 256) catch return error.ProcVersionReadbackFailed;
     defer probe_allocator.free(proc_version);
     if (std.mem.indexOf(u8, proc_version, "project=ZAR-Zig-Agent-Runtime") == null) return error.ProcVersionReadbackFailed;
+
+    const storage_state = filesystem.readFileAlloc(probe_allocator, "/sys/storage/state", 256) catch return error.StorageStateReadFailed;
+    defer probe_allocator.free(storage_state);
+    if (std.mem.indexOf(u8, storage_state, "backend=virtio_block") == null) return error.StorageStateBackendMismatch;
+    if (std.mem.indexOf(u8, storage_state, "detected_filesystem=zarfs") == null) return error.StorageStateFilesystemMismatch;
+
+    const storage_registry = filesystem.readFileAlloc(probe_allocator, "/sys/storage/registry", 2048) catch return error.StorageRegistryReadbackFailed;
+    defer probe_allocator.free(storage_registry);
+    if (std.mem.indexOf(u8, storage_registry, "name=root path=/ target=/ layer=persistent backend=virtio_block filesystem=zarfs") == null or
+        std.mem.indexOf(u8, storage_registry, "name=boot path=/mnt/boot target=/boot layer=persistent backend=virtio_block filesystem=zarfs") == null or
+        std.mem.indexOf(u8, storage_registry, "name=runtime path=/mnt/runtime target=/runtime layer=persistent backend=virtio_block filesystem=zarfs") == null or
+        std.mem.indexOf(u8, storage_registry, "name=cache path=/mnt/cache target=/tmp/cache layer=tmpfs backend=none filesystem=tmpfs") == null)
+    {
+        return error.StorageRegistryReadbackFailed;
+    }
 
     filesystem.createDirPath("/mnt/runtime/state") catch return error.RuntimeAliasWriteFailed;
     filesystem.writeFile("/mnt/runtime/state/mounted-via-alias.txt", "mounted-via-alias", status.ticks + 4) catch return error.RuntimeAliasWriteFailed;
@@ -16106,9 +16125,13 @@ fn virtioBlockMountProbeFailureCode(err: VirtioBlockMountProbeError) u8 {
         error.CacheAliasWriteFailed => 0x88,
         error.RootVfsListingMismatch => 0x89,
         error.ProcVersionReadbackFailed => 0x8A,
-        error.RuntimeAliasReloadFailed => 0x8B,
-        error.TmpfsAliasVolatilityMismatch => 0x8C,
-        error.PciDiscoveryMismatch => 0x8D,
+        error.StorageStateReadFailed => 0x8B,
+        error.StorageStateBackendMismatch => 0x8C,
+        error.StorageStateFilesystemMismatch => 0x8D,
+        error.StorageRegistryReadbackFailed => 0x8E,
+        error.RuntimeAliasReloadFailed => 0x8F,
+        error.TmpfsAliasVolatilityMismatch => 0x90,
+        error.PciDiscoveryMismatch => 0x91,
     };
 }
 
@@ -24800,6 +24823,16 @@ test "baremetal virtio block mount probe persists mounted alias paths" {
     const proc_version = try filesystem.readFileAlloc(std.testing.allocator, "/proc/version", 256);
     defer std.testing.allocator.free(proc_version);
     try std.testing.expect(std.mem.indexOf(u8, proc_version, "project=ZAR-Zig-Agent-Runtime") != null);
+
+    const storage_state = try filesystem.readFileAlloc(std.testing.allocator, "/sys/storage/state", 256);
+    defer std.testing.allocator.free(storage_state);
+    try std.testing.expect(std.mem.indexOf(u8, storage_state, "backend=virtio_block") != null);
+    try std.testing.expect(std.mem.indexOf(u8, storage_state, "detected_filesystem=zarfs") != null);
+
+    const storage_registry = try filesystem.readFileAlloc(std.testing.allocator, "/sys/storage/registry", 2048);
+    defer std.testing.allocator.free(storage_registry);
+    try std.testing.expect(std.mem.indexOf(u8, storage_registry, "name=root path=/ target=/ layer=persistent backend=virtio_block filesystem=zarfs") != null);
+    try std.testing.expect(std.mem.indexOf(u8, storage_registry, "name=cache path=/mnt/cache target=/tmp/cache layer=tmpfs backend=none filesystem=tmpfs") != null);
 
     try std.testing.expectEqual(error.FileNotFound, filesystem.readFileAlloc(std.testing.allocator, "/mnt/cache/volatile.txt", 64));
 }

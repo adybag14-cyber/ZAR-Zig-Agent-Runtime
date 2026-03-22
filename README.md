@@ -121,6 +121,12 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
       - `src/baremetal/filesystem.zig` now delegates public `create/write/delete/read/list/stat` calls through that router while keeping the proven persistent entry/block logic intact
       - host regressions now prove merged root listing plus cross-layer routing over `/`, `/tmp`, `/mnt`, `/proc`, `/dev`, and `/sys`
       - `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1` now also proves the same VFS seam live on `virtio-blk-pci`, including root listing, `/proc/version` readback, and non-persistent `/tmp` alias volatility across reset
+    - ninth delivered adoption slice is a bounded storage registry plus raw ext2/FAT probe seam:
+      - `src/baremetal/storage_registry.zig` now builds a registry over the persistent root, `tmpfs`, virtual trees, and persisted `/mnt/<alias>` entries
+      - `src/baremetal/virtual_fs.zig` now exposes `/dev/storage/registry` and `/sys/storage/registry`
+      - `/sys/storage/state` now reports `detected_filesystem` plus `supported_filesystem_probes=zarfs,ext2,fat32`
+      - host regressions now prove `zarfs`, `ext2`, and `fat32` detection plus registry rendering across persistent, tmpfs, virtual, and mounted-alias layers
+      - `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1` now also proves the same registry/state seam live on `virtio-blk-pci`, including `detected_filesystem=zarfs` and registry entries for persistent plus tmpfs-backed aliases
   - keyboard/mouse is now strict-closed in [`docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md`](docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md)
   - `src/baremetal/ps2_input.zig` now contains a real x86 port-I/O backed PS/2 controller path
   - `scripts/baremetal-qemu-ps2-input-probe-check.ps1` proves IRQ-driven keyboard/mouse state updates against the freestanding PVH artifact
