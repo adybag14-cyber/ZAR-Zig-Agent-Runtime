@@ -125,6 +125,7 @@ const qemu_virtio_net_http_post_probe_ok_code: u8 = 0x56;
 const qemu_virtio_net_https_post_probe_ok_code: u8 = 0x57;
 const qemu_virtio_net_tool_service_probe_ok_code: u8 = 0x58;
 const qemu_virtio_block_probe_ok_code: u8 = 0x4F;
+const qemu_virtio_block_installer_probe_ok_code: u8 = 0x59;
 const build_options = if (builtin.is_test)
     struct {
         pub const qemu_smoke: bool = false;
@@ -169,6 +170,7 @@ const build_options = if (builtin.is_test)
         pub const ata_gpt_installer_probe: bool = false;
         pub const virtio_gpu_display_probe: bool = false;
         pub const virtio_block_probe: bool = false;
+        pub const virtio_block_installer_probe: bool = false;
     }
 else
     @import("build_options");
@@ -214,6 +216,7 @@ const rtl8139_gateway_probe_enabled: bool = build_options.rtl8139_gateway_probe;
 const ata_gpt_installer_probe_enabled: bool = if (@hasDecl(build_options, "ata_gpt_installer_probe")) build_options.ata_gpt_installer_probe else false;
 const virtio_gpu_display_probe_enabled: bool = if (@hasDecl(build_options, "virtio_gpu_display_probe")) build_options.virtio_gpu_display_probe else false;
 const virtio_block_probe_enabled: bool = if (@hasDecl(build_options, "virtio_block_probe")) build_options.virtio_block_probe else false;
+const virtio_block_installer_probe_enabled: bool = if (@hasDecl(build_options, "virtio_block_installer_probe")) build_options.virtio_block_installer_probe else false;
 
 const ata_probe_raw_lba: u32 = 300;
 const ata_probe_raw_block_count: u32 = 2;
@@ -305,6 +308,21 @@ const VirtioBlockProbeError = error{
     FilesystemWriteFailed,
     FilesystemReadbackFailed,
     FilesystemReloadFailed,
+    PciDiscoveryMismatch,
+};
+
+const VirtioBlockInstallerProbeError = error{
+    BackendUnavailable,
+    CapacityTooSmall,
+    InstallerFailed,
+    LoaderCfgReadbackFailed,
+    KernelInfoReadbackFailed,
+    ManifestReadbackFailed,
+    PackageListFailed,
+    BootstrapRunFailed,
+    BootstrapOutputMismatch,
+    BootstrapFilesystemReadbackFailed,
+    ReloadFailed,
     PciDiscoveryMismatch,
 };
 
@@ -2684,6 +2702,10 @@ fn baremetalStart() callconv(.c) noreturn {
         runVirtioBlockProbe() catch |err| qemuExit(virtioBlockProbeFailureCode(err));
         qemuExit(qemu_virtio_block_probe_ok_code);
     }
+    if (virtio_block_installer_probe_enabled) {
+        runVirtioBlockInstallerProbe() catch |err| qemuExit(virtioBlockInstallerProbeFailureCode(err));
+        qemuExit(qemu_virtio_block_installer_probe_ok_code);
+    }
     if (virtio_net_probe_enabled) {
         runVirtioNetProbe() catch |err| qemuExit(virtioNetProbeFailureCode(err));
         qemuExit(qemu_virtio_net_probe_ok_code);
@@ -3220,6 +3242,81 @@ fn runVirtioBlockProbe() VirtioBlockProbeError!void {
         {
             return error.RawMirrorMismatch;
         }
+        return;
+    }
+
+    const device = pci.discoverVirtioBlockDevice() orelse return error.PciDiscoveryMismatch;
+    if (device.vendor_id != 0x1AF4 or device.device_id != 0x1042) {
+        return error.PciDiscoveryMismatch;
+    }
+}
+
+fn runVirtioBlockInstallerProbe() VirtioBlockInstallerProbeError!void {
+    storage_backend.init();
+    const storage = storage_backend.statePtr();
+    if (storage.backend != abi.storage_backend_virtio_block or storage.mounted == 0) {
+        return error.BackendUnavailable;
+    }
+    if (storage.block_count < 256) {
+        return error.CapacityTooSmall;
+    }
+
+    disk_installer.installDefaultLayout(status.ticks) catch return error.InstallerFailed;
+
+    var loader_buf: [160]u8 = undefined;
+    const expected_loader = disk_installer.loaderConfigForCurrentBackend(loader_buf[0..]) catch return error.LoaderCfgReadbackFailed;
+    if (!probeFilesystemContent(disk_installer.loader_cfg_path, expected_loader)) {
+        return error.LoaderCfgReadbackFailed;
+    }
+
+    var kernel_buf: [128]u8 = undefined;
+    const expected_kernel = disk_installer.kernelConfigForCurrentBackend(kernel_buf[0..]) catch return error.KernelInfoReadbackFailed;
+    if (!probeFilesystemContent(disk_installer.kernel_info_path, expected_kernel)) {
+        return error.KernelInfoReadbackFailed;
+    }
+
+    var manifest_buf: [192]u8 = undefined;
+    const expected_manifest = disk_installer.installManifestForCurrentBackend(manifest_buf[0..]) catch return error.ManifestReadbackFailed;
+    if (!probeFilesystemContent(disk_installer.install_manifest_path, expected_manifest)) {
+        return error.ManifestReadbackFailed;
+    }
+
+    var package_scratch: [256]u8 = undefined;
+    var package_fba = std.heap.FixedBufferAllocator.init(&package_scratch);
+    const package_listing = package_store.listPackagesAlloc(package_fba.allocator(), package_scratch.len) catch return error.PackageListFailed;
+    if (!std.mem.eql(u8, package_listing, "bootstrap\n")) {
+        return error.PackageListFailed;
+    }
+
+    vga_text_console.clear();
+    var exec_scratch: [4096]u8 = undefined;
+    var exec_fba = std.heap.FixedBufferAllocator.init(&exec_scratch);
+    const allocator = exec_fba.allocator();
+    const io: std.Io = undefined;
+    var result = pal_proc.runCaptureFreestanding(allocator, io, &.{ "run-package", disk_installer.bootstrap_package_name }, 1000, 512, 256) catch |err| switch (err) {
+        error.OutOfMemory => return error.BootstrapRunFailed,
+        else => return error.BootstrapRunFailed,
+    };
+    defer result.deinit(allocator);
+    if (pal_proc.termExitCode(result.term) != 0) return error.BootstrapRunFailed;
+    if (!std.mem.eql(
+        u8,
+        result.stdout,
+        "created /runtime/state\nwrote 10 bytes to /runtime/state/bootstrap.txt\nbootstrap-ok\n",
+    ) or result.stderr.len != 0) {
+        return error.BootstrapOutputMismatch;
+    }
+
+    filesystem.resetForTest();
+    tool_layout.resetForTest();
+    filesystem.init() catch return error.ReloadFailed;
+    if (filesystem.statePtr().active_backend != abi.storage_backend_virtio_block or
+        !probeFilesystemContent(disk_installer.bootstrap_state_path, disk_installer.bootstrap_state_payload))
+    {
+        return error.BootstrapFilesystemReadbackFailed;
+    }
+
+    if (builtin.is_test) {
         return;
     }
 
@@ -15869,6 +15966,23 @@ fn virtioBlockProbeFailureCode(err: VirtioBlockProbeError) u8 {
     };
 }
 
+fn virtioBlockInstallerProbeFailureCode(err: VirtioBlockInstallerProbeError) u8 {
+    return switch (err) {
+        error.BackendUnavailable => 0x71,
+        error.CapacityTooSmall => 0x72,
+        error.InstallerFailed => 0x73,
+        error.LoaderCfgReadbackFailed => 0x74,
+        error.KernelInfoReadbackFailed => 0x75,
+        error.ManifestReadbackFailed => 0x76,
+        error.PackageListFailed => 0x77,
+        error.BootstrapRunFailed => 0x78,
+        error.BootstrapOutputMismatch => 0x79,
+        error.BootstrapFilesystemReadbackFailed => 0x7A,
+        error.ReloadFailed => 0x7B,
+        error.PciDiscoveryMismatch => 0x7C,
+    };
+}
+
 comptime {
     if (!builtin.is_test) {
         @export(&baremetalStart, .{ .name = "_start" });
@@ -24506,6 +24620,31 @@ test "baremetal virtio block probe validates raw, tool layout, and filesystem pe
     try std.testing.expectEqual(@as(u8, virtio_block_probe_tool_slot_seed), oc_storage_read_byte(slot.start_lba, 0));
     try std.testing.expectEqual(@as(u8, abi.storage_backend_virtio_block), oc_filesystem_state_ptr().active_backend);
     try std.testing.expect(probeFilesystemContent(virtio_block_probe_filesystem_path, virtio_block_probe_filesystem_payload));
+}
+
+test "baremetal virtio block installer probe seeds layout and bootstrap package" {
+    resetBaremetalRuntimeForTest();
+    virtio_block.testEnableMockDevice(16384);
+    defer virtio_block.testDisableMockDevice();
+
+    try runVirtioBlockInstallerProbe();
+
+    const storage = oc_storage_state_ptr();
+    try std.testing.expectEqual(@as(u8, abi.storage_backend_virtio_block), storage.backend);
+    try std.testing.expectEqual(@as(u8, 1), storage.mounted);
+    try std.testing.expectEqual(@as(u8, abi.storage_backend_virtio_block), oc_filesystem_state_ptr().active_backend);
+
+    const loader = try filesystem.readFileAlloc(std.testing.allocator, disk_installer.loader_cfg_path, 160);
+    defer std.testing.allocator.free(loader);
+    try std.testing.expect(std.mem.indexOf(u8, loader, "backend=virtio_block") != null);
+
+    const manifest = try filesystem.readFileAlloc(std.testing.allocator, disk_installer.install_manifest_path, 192);
+    defer std.testing.allocator.free(manifest);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "backend=virtio_block") != null);
+
+    const payload = try filesystem.readFileAlloc(std.testing.allocator, disk_installer.bootstrap_state_path, 64);
+    defer std.testing.allocator.free(payload);
+    try std.testing.expectEqualStrings(disk_installer.bootstrap_state_payload, payload);
 }
 
 test "baremetal tool layout persists patterned tool slot payloads on ram disk" {

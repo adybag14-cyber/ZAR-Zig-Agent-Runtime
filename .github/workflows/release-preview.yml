@@ -207,6 +207,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-virtio-block-probe-check.ps1
 
+      - name: Bare-metal QEMU virtio-block installer probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-block-installer-probe-check.ps1
+
       - name: Bare-metal QEMU virtio-net probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-virtio-net-probe-check.ps1
