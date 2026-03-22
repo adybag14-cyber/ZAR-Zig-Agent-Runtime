@@ -18,7 +18,7 @@ This track exists to remove guesswork. It defines the real bare-metal subsystems
 
 ## ZigOS Reference Track
 
-Status: `Slices 1-6 delivered`
+Status: `Slices 1-7 delivered`
 
 This track uses `Cameron-Lyons/zigos` as a reference architecture and source candidate where it improves ZAR.
 
@@ -33,6 +33,7 @@ Tracked docs:
 - `docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md`
 - `docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`
 - `docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md`
+- `docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_NET_SLICE_PLAN.md`
 
 Delivered first adoption slice:
 
@@ -90,6 +91,15 @@ Delivered sixth adoption slice:
 - `src/baremetal/pci.zig` now discovers modern `virtio-block` PCI capability regions
 - `src/baremetal/storage_backend.zig` now prefers `virtio-block` over RAM-disk when available, while still preferring ATA PIO if both hardware-backed backends are present
 - `scripts/baremetal-qemu-virtio-block-probe-check.ps1` now proves live raw mutation, tool-layout readback, and filesystem superblock readback on the `virtio-block` path
+
+Delivered seventh adoption slice:
+
+- bounded `virtio-net` NIC breadth inspired by ZigOS VirtIO device patterns
+- `src/baremetal/virtio_net.zig` now provides a ZAR-owned modern `virtio-net` path with modern PCI capability discovery, version-1 feature negotiation, MAC readout, bounded RX/TX queue bring-up, and raw-frame send/receive telemetry
+- `src/baremetal/pci.zig` now discovers modern `virtio-net` PCI capability regions
+- `src/pal/net.zig` now routes the raw-frame PAL seam through selectable `RTL8139`, `E1000`, and `virtio-net` backends without regressing the existing lanes
+- host regressions now prove init, MAC readout, TX, RX, and export-surface stability on the clean-room `virtio-net` path
+- `scripts/baremetal-qemu-virtio-net-probe-check.ps1` plus `scripts/qemu-virtio-net-dgram-echo.ps1` now prove live QEMU `virtio-net-pci` PCI bind, MAC readout, TX, RX, payload validation, and counter advance over the freestanding PVH artifact
 
 `FS5.5` is not complete until each subsystem has:
 

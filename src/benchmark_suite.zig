@@ -410,7 +410,11 @@ fn benchNicUdpLoopback(iterations: usize, backend: net.Backend) !u64 {
     net.enableSyntheticBackendForBenchmark(backend);
     defer net.disableSyntheticBackendForBenchmark();
 
-    const destination_mac = [_]u8{ 0x02, 0x5A, 0x52, 0x10, 0x00, switch (backend) { .rtl8139 => 0x39, .e1000 => 0x49 } };
+    const destination_mac = [_]u8{ 0x02, 0x5A, 0x52, 0x10, 0x00, switch (backend) {
+        .rtl8139 => 0x39,
+        .e1000 => 0x49,
+        .virtio_net => 0x59,
+    } };
     const source_ip = [_]u8{ 192, 168, 56, 10 };
     const destination_ip = [_]u8{ 192, 168, 56, 1 };
     const payload = "bench-udp";

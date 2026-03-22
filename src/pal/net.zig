@@ -5,6 +5,7 @@ const time_util = @import("../util/time.zig");
 const abi = @import("../baremetal/abi.zig");
 const e1000 = @import("../baremetal/e1000.zig");
 const rtl8139 = @import("../baremetal/rtl8139.zig");
+const virtio_net = @import("../baremetal/virtio_net.zig");
 const ethernet = @import("../protocol/ethernet.zig");
 const arp = @import("../protocol/arp.zig");
 const dhcp = @import("../protocol/dhcp.zig");
@@ -35,10 +36,11 @@ pub const FreestandingHeader = struct {
 pub const Backend = enum(u8) {
     rtl8139 = abi.ethernet_backend_rtl8139,
     e1000 = abi.ethernet_backend_e1000,
+    virtio_net = abi.ethernet_backend_virtio_net,
 };
 
 pub const EthernetState = abi.BaremetalEthernetState;
-pub const Error = rtl8139.Error || e1000.Error;
+pub const Error = rtl8139.Error || e1000.Error || virtio_net.Error;
 pub const ArpPacket = arp.Packet;
 pub const ArpError = Error || arp.Error;
 pub const DhcpError = Error || ethernet.Error || ipv4.Error || udp.Error || dhcp.Error;
@@ -565,6 +567,7 @@ fn testEnableMockDeviceForCurrentBackend() void {
     switch (active_backend) {
         .rtl8139 => rtl8139.testEnableMockDevice(),
         .e1000 => e1000.testEnableMockDevice(),
+        .virtio_net => virtio_net.testEnableMockDevice(),
     }
 }
 
@@ -572,6 +575,7 @@ fn testDisableMockDeviceForCurrentBackend() void {
     switch (active_backend) {
         .rtl8139 => rtl8139.testDisableMockDevice(),
         .e1000 => e1000.testDisableMockDevice(),
+        .virtio_net => virtio_net.testDisableMockDevice(),
     }
 }
 
@@ -579,6 +583,7 @@ fn testInstallMockSendHookForCurrentBackend(hook: anytype) void {
     switch (active_backend) {
         .rtl8139 => rtl8139.testInstallMockSendHook(hook),
         .e1000 => e1000.testInstallMockSendHook(hook),
+        .virtio_net => virtio_net.testInstallMockSendHook(hook),
     }
 }
 
@@ -586,6 +591,7 @@ fn injectProbeReceiveForCurrentBackend(frame: []const u8) void {
     switch (active_backend) {
         .rtl8139 => rtl8139.injectProbeReceive(frame),
         .e1000 => e1000.injectProbeReceive(frame),
+        .virtio_net => virtio_net.injectProbeReceive(frame),
     }
 }
 
@@ -1532,6 +1538,7 @@ pub fn initDevice() bool {
     return switch (active_backend) {
         .rtl8139 => rtl8139.init(),
         .e1000 => e1000.init(),
+        .virtio_net => virtio_net.init(),
     };
 }
 
@@ -1540,12 +1547,14 @@ pub fn resetDeviceForTest() void {
     active_backend = .rtl8139;
     rtl8139.resetForTest();
     e1000.resetForTest();
+    virtio_net.resetForTest();
 }
 
 pub fn resetDeviceForBenchmark() void {
     active_backend = .rtl8139;
     rtl8139.resetForTest();
     e1000.resetForTest();
+    virtio_net.resetForTest();
 }
 
 pub fn enableSyntheticBackendForBenchmark(backend: Backend) void {
@@ -1555,6 +1564,7 @@ pub fn enableSyntheticBackendForBenchmark(backend: Backend) void {
     switch (backend) {
         .rtl8139 => rtl8139.enableSyntheticDeviceForBenchmark(),
         .e1000 => e1000.enableSyntheticDeviceForBenchmark(),
+        .virtio_net => virtio_net.enableSyntheticDeviceForBenchmark(),
     }
 }
 
@@ -1562,6 +1572,7 @@ pub fn disableSyntheticBackendForBenchmark() void {
     switch (active_backend) {
         .rtl8139 => rtl8139.disableSyntheticDeviceForBenchmark(),
         .e1000 => e1000.disableSyntheticDeviceForBenchmark(),
+        .virtio_net => virtio_net.disableSyntheticDeviceForBenchmark(),
     }
     resetDeviceForBenchmark();
 }
@@ -1570,6 +1581,7 @@ pub fn deviceState() *const EthernetState {
     return switch (active_backend) {
         .rtl8139 => rtl8139.statePtr(),
         .e1000 => e1000.statePtr(),
+        .virtio_net => virtio_net.statePtr(),
     };
 }
 
@@ -1581,6 +1593,7 @@ pub fn sendFrame(frame: []const u8) Error!void {
     switch (active_backend) {
         .rtl8139 => try rtl8139.sendFrame(frame),
         .e1000 => try e1000.sendFrame(frame),
+        .virtio_net => try virtio_net.sendFrame(frame),
     }
 }
 
@@ -1588,6 +1601,7 @@ pub fn pollReceive() Error!u32 {
     return switch (active_backend) {
         .rtl8139 => try rtl8139.pollReceive(),
         .e1000 => try e1000.pollReceive(),
+        .virtio_net => try virtio_net.pollReceive(),
     };
 }
 
@@ -1595,6 +1609,7 @@ pub fn rxByte(index: u32) u8 {
     return switch (active_backend) {
         .rtl8139 => rtl8139.rxByte(index),
         .e1000 => e1000.rxByte(index),
+        .virtio_net => virtio_net.rxByte(index),
     };
 }
 

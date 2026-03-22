@@ -252,6 +252,7 @@ pub const display_capability_ycbcr422: u16 = 1 << 8;
 pub const ethernet_backend_none: u8 = 0;
 pub const ethernet_backend_rtl8139: u8 = 1;
 pub const ethernet_backend_e1000: u8 = 2;
+pub const ethernet_backend_virtio_net: u8 = 3;
 pub const storage_backend_ram_disk: u8 = 1;
 pub const storage_backend_ata_pio: u8 = 2;
 pub const storage_backend_virtio_block: u8 = 3;
