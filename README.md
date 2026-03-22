@@ -108,8 +108,8 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
       - `src/baremetal/virtio_net.zig` now provides a ZAR-owned modern `virtio-net` path with modern PCI capability discovery, version-1 feature negotiation, MAC readout, bounded RX/TX queue bring-up, and raw-frame send/receive telemetry
       - `src/baremetal/pci.zig` now discovers modern `virtio-net` PCI capability regions
       - `src/pal/net.zig` now routes the same raw-frame PAL seam through selectable `RTL8139`, `E1000`, and `virtio-net` backends without regressing the existing lanes
-      - host regressions in `src/baremetal_main.zig` now also prove `ARP`, `IPv4`, and `UDP` protocol reuse on the clean-room `virtio-net` path
-      - `scripts/baremetal-qemu-virtio-net-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-arp-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-ipv4-probe-check.ps1`, and `scripts/baremetal-qemu-virtio-net-udp-probe-check.ps1` plus `scripts/qemu-virtio-net-dgram-echo.ps1` now prove live QEMU `virtio-net-pci` PCI bind, MAC readout, TX, RX, ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, payload validation, and counter advance over the freestanding PVH artifact
+      - host regressions in `src/baremetal_main.zig` now also prove `ARP`, `IPv4`, `UDP`, `DHCP`, `DNS`, and bounded `TCP` protocol reuse on the clean-room `virtio-net` path
+      - `scripts/baremetal-qemu-virtio-net-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-arp-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-udp-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-dhcp-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-dns-probe-check.ps1`, and `scripts/baremetal-qemu-virtio-net-tcp-probe-check.ps1` plus `scripts/qemu-virtio-net-dgram-echo.ps1` now prove live QEMU `virtio-net-pci` PCI bind, MAC readout, TX, RX, ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, DHCP discover encode/decode, DNS query/A-response exchange, bounded TCP handshake/payload/teardown, payload validation, and counter advance over the freestanding PVH artifact
   - keyboard/mouse is now strict-closed in [`docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md`](docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md)
   - `src/baremetal/ps2_input.zig` now contains a real x86 port-I/O backed PS/2 controller path
   - `scripts/baremetal-qemu-ps2-input-probe-check.ps1` proves IRQ-driven keyboard/mouse state updates against the freestanding PVH artifact
@@ -1098,4 +1098,5 @@ Manual python release trigger:
 ```powershell
 gh workflow run python-release.yml -R adybag14-cyber/ZAR-Zig-Agent-Runtime -f version=<pep440-version> -f release_tag=<release-tag>
 ```
+
 
