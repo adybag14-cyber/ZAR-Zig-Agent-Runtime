@@ -4944,7 +4944,7 @@ fn parseFirstArg(text: []const u8) Error!ParsedArg {
 
     const quote = trimmed[0];
     if (quote == '"' or quote == '\'') {
-        const end_index = std.mem.indexOfScalarPos(u8, trimmed, 1, quote) orelse return error.InvalidQuotedArgument;
+        const end_index = findQuotedArgumentEnd(trimmed, quote) catch return error.InvalidQuotedArgument;
         const arg = trimmed[1..end_index];
         const rest = trimLeftWhitespace(trimmed[end_index + 1 ..]);
         return .{ .arg = arg, .rest = rest };
@@ -4956,6 +4956,21 @@ fn parseFirstArg(text: []const u8) Error!ParsedArg {
         .arg = trimmed[0..idx],
         .rest = trimLeftWhitespace(trimmed[idx..]),
     };
+}
+
+fn findQuotedArgumentEnd(text: []const u8, quote: u8) Error!usize {
+    var idx: usize = 1;
+    while (idx < text.len) : (idx += 1) {
+        const ch = text[idx];
+        if (ch == '\\' and idx + 1 < text.len and isShellEscapable(text[idx + 1])) {
+            idx += 1;
+            continue;
+        }
+        if (ch != quote) continue;
+        if (idx + 1 < text.len and !std.ascii.isWhitespace(text[idx + 1])) return error.InvalidQuotedArgument;
+        return idx;
+    }
+    return error.InvalidQuotedArgument;
 }
 
 fn parseBoolArg(text: []const u8) Error!bool {
@@ -5247,6 +5262,10 @@ fn executeScriptContents(
         if (!at_end) {
             const ch = script[idx];
             if (quote != 0) {
+                if (ch == '\\' and idx + 1 < script.len and isShellEscapable(script[idx + 1])) {
+                    idx += 1;
+                    continue;
+                }
                 if (ch == quote) quote = 0;
                 continue;
             }
@@ -5415,6 +5434,10 @@ fn parseShellLine(line: []const u8) Error!ParsedShellLine {
     while (idx < trimmed.len) : (idx += 1) {
         const ch = trimmed[idx];
         if (quote != 0) {
+            if (ch == '\\' and idx + 1 < trimmed.len and isShellEscapable(trimmed[idx + 1])) {
+                idx += 1;
+                continue;
+            }
             if (ch == quote) quote = 0;
             continue;
         }
@@ -6717,12 +6740,13 @@ test "baremetal tool exec exposes bounded shell batch and globbing" {
     try std.testing.expectEqualStrings("cat failed: FileNotFound\n", redirected_stderr);
 
     try filesystem.writeFile("/tmp/sh/SPACE NAME.TXT", "spaced", 0);
+    try filesystem.writeFile("/tmp/sh/QUO\"TE.TXT", "quoted", 0);
     try filesystem.writeFile("/tmp/sh/STDIN.OC", "echo stdin-shell > /tmp/sh/STDINOUT.TXT", 0);
 
     var shell_input_redirect = try runCapture(
         std.testing.allocator,
-        "shell-run cat < /tmp/sh/A.TXT > /tmp/sh/COPY.TXT; write-file /tmp/sh/FROMSTDIN.TXT < /tmp/sh/A.TXT; cat < \"/tmp/sh/SPACE NAME.TXT\" > /tmp/sh/QUOTE.TXT; echo lt\\<value > /tmp/sh/LT.TXT; shell-run < /tmp/sh/STDIN.OC",
-        1024,
+        "shell-run cat < /tmp/sh/A.TXT > /tmp/sh/COPY.TXT; write-file /tmp/sh/FROMSTDIN.TXT < /tmp/sh/A.TXT; cat < \"/tmp/sh/SPACE NAME.TXT\" > /tmp/sh/QUOTE.TXT; cat < \"/tmp/sh/QUO\\\"TE.TXT\" > /tmp/sh/QUOTED.TXT; echo lt\\<value > /tmp/sh/LT.TXT; shell-run < /tmp/sh/STDIN.OC",
+        1280,
         256,
     );
     defer shell_input_redirect.deinit(std.testing.allocator);
@@ -6742,6 +6766,10 @@ test "baremetal tool exec exposes bounded shell batch and globbing" {
     defer std.testing.allocator.free(quoted_copy);
     try std.testing.expectEqualStrings("spaced", quoted_copy);
 
+    const escaped_quoted_copy = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/QUOTED.TXT", 64);
+    defer std.testing.allocator.free(escaped_quoted_copy);
+    try std.testing.expectEqualStrings("quoted", escaped_quoted_copy);
+
     const escaped_input_redirect = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/LT.TXT", 64);
     defer std.testing.allocator.free(escaped_input_redirect);
     try std.testing.expectEqualStrings("lt<value\n", escaped_input_redirect);
@@ -6749,6 +6777,17 @@ test "baremetal tool exec exposes bounded shell batch and globbing" {
     const nested_shell_input = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/STDINOUT.TXT", 64);
     defer std.testing.allocator.free(nested_shell_input);
     try std.testing.expectEqualStrings("stdin-shell\n", nested_shell_input);
+
+    var shell_invalid_quoted = try runCapture(
+        std.testing.allocator,
+        "shell-run cat \"/tmp/sh/SPACE NAME.TXT\"x",
+        256,
+        256,
+    );
+    defer shell_invalid_quoted.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 2), shell_invalid_quoted.exit_code);
+    try std.testing.expectEqualStrings("", shell_invalid_quoted.stdout);
+    try std.testing.expectEqualStrings("usage: cat <path>\n", shell_invalid_quoted.stderr);
 }
 
 test "baremetal tool exec persists bounded tty session receipts" {
@@ -6894,6 +6933,45 @@ test "baremetal tool exec persists bounded tty session receipts" {
     defer shell_close.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), shell_close.exit_code);
     try std.testing.expectEqualStrings("tty closed shell\n", shell_close.stdout);
+
+    try filesystem.writeFile("/tmp/tty-shell/INPUT.TXT", "file-input", 0);
+
+    var shell_override_open = try runCapture(std.testing.allocator, "tty-open shell-override", 256, 256);
+    defer shell_override_open.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), shell_override_open.exit_code);
+
+    var shell_override_write = try runCapture(std.testing.allocator, "tty-write shell-override queued-tty-data", 256, 256);
+    defer shell_override_write.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), shell_override_write.exit_code);
+
+    const shell_override_script = "cat < \"/tmp/tty-shell/INPUT.TXT\" > /tmp/tty-shell/OVERRIDE.TXT; cat";
+    var shell_override_run = try runCapture(std.testing.allocator, "tty-shell shell-override cat < \"/tmp/tty-shell/INPUT.TXT\" > /tmp/tty-shell/OVERRIDE.TXT; cat", 256, 256);
+    defer shell_override_run.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), shell_override_run.exit_code);
+    try std.testing.expectEqualStrings("queued-tty-data", shell_override_run.stdout);
+    try std.testing.expectEqualStrings("", shell_override_run.stderr);
+
+    const shell_override_file = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/tty-shell/OVERRIDE.TXT", 64);
+    defer std.testing.allocator.free(shell_override_file);
+    try std.testing.expectEqualStrings("file-input", shell_override_file);
+
+    var shell_override_pending = try runCapture(std.testing.allocator, "tty-pending shell-override", 256, 256);
+    defer shell_override_pending.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), shell_override_pending.exit_code);
+    try std.testing.expectEqualStrings("", shell_override_pending.stdout);
+
+    var shell_override_events = try runCapture(std.testing.allocator, "tty-events shell-override", 1024, 256);
+    defer shell_override_events.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), shell_override_events.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, shell_override_events.stdout, "type=write bytes=15") != null);
+    const shell_override_event = try std.fmt.allocPrint(std.testing.allocator, "type=shell exit=0 script_bytes={d} stdin_bytes=15 stdout_bytes=15 stderr_bytes=0", .{shell_override_script.len});
+    defer std.testing.allocator.free(shell_override_event);
+    try std.testing.expect(std.mem.indexOf(u8, shell_override_events.stdout, shell_override_event) != null);
+
+    var shell_override_close = try runCapture(std.testing.allocator, "tty-close shell-override", 256, 256);
+    defer shell_override_close.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), shell_override_close.exit_code);
+    try std.testing.expectEqualStrings("tty closed shell-override\n", shell_override_close.stdout);
 }
 
 test "baremetal tool exec configures app trust and connector and reports app info" {

@@ -102,6 +102,7 @@ This slice explicitly does not claim:
     - `TTYPENDING`
     - `TTYSEND` success and failure with queued stdin drain
     - `TTYSHELL` with queued stdin drain into the bounded shell batch
+    - per-command `< file` override inside `TTYSHELL` while later commands in the same batch still see the drained session stdin if they do not override it
     - `TTYCLEAR`
     - `TTYEVENTS`
     - `TTYREAD`

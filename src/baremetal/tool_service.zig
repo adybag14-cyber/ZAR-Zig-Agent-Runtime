@@ -4390,6 +4390,7 @@ test "baremetal tool service exposes bounded shell batch and globbing" {
     const stdin_put_response = try handleFramedRequest(std.testing.allocator, stdin_put_request, 256, 256, 256);
     defer std.testing.allocator.free(stdin_put_response);
     try std.testing.expectEqualStrings("RESP 40 35\nWROTE 39 bytes to /tmp/sh/STDIN.OC\n", stdin_put_response);
+    try filesystem.writeFile("/tmp/sh/QUO\"TE.TXT", "quoted", 0);
 
     const shell_input_script =
         "cat < /tmp/sh/A.TXT > /tmp/sh/COPY.TXT\n" ++
@@ -4425,127 +4426,189 @@ test "baremetal tool service exposes bounded shell batch and globbing" {
     const nested_shell_input = try handleFramedRequest(std.testing.allocator, "REQ 46 GET /tmp/sh/STDINOUT.TXT", 256, 256, 256);
     defer std.testing.allocator.free(nested_shell_input);
     try std.testing.expectEqualStrings("RESP 46 12\nstdin-shell\n", nested_shell_input);
+
+    const shell_quoted_script =
+        "cat < \"/tmp/sh/QUO\\\"TE.TXT\" > /tmp/sh/QUOTED.TXT\n" ++
+        "cat /tmp/sh/QUOTED.TXT";
+    const shell_quoted_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 47 SHELLRUN {d}\n{s}", .{ shell_quoted_script.len, shell_quoted_script });
+    defer std.testing.allocator.free(shell_quoted_request);
+    const shell_quoted_response = try handleFramedRequest(std.testing.allocator, shell_quoted_request, 256, 256, 256);
+    defer std.testing.allocator.free(shell_quoted_response);
+    try std.testing.expectEqualStrings("RESP 47 6\nquoted", shell_quoted_response);
+
+    const shell_quoted_readback = try handleFramedRequest(std.testing.allocator, "REQ 48 GET /tmp/sh/QUOTED.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(shell_quoted_readback);
+    try std.testing.expectEqualStrings("RESP 48 6\nquoted", shell_quoted_readback);
+
+    const shell_invalid_quote_script = "cat \"/tmp/sh/SPACE NAME.TXT\"x";
+    const shell_invalid_quote_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 49 SHELLRUN {d}\n{s}", .{ shell_invalid_quote_script.len, shell_invalid_quote_script });
+    defer std.testing.allocator.free(shell_invalid_quote_request);
+    const shell_invalid_quote_response = try handleFramedRequest(std.testing.allocator, shell_invalid_quote_request, 256, 256, 256);
+    defer std.testing.allocator.free(shell_invalid_quote_response);
+    try std.testing.expect(std.mem.startsWith(u8, shell_invalid_quote_response, "RESP 49 "));
+    try std.testing.expect(std.mem.indexOf(u8, shell_invalid_quote_response, "ERR exit=2\nusage: cat <path>\n") != null);
 }
 
 test "baremetal tool service persists bounded tty session commands" {
     resetPersistentStateForTest();
 
-    const tty_open = try handleFramedRequest(std.testing.allocator, "REQ 47 TTYOPEN demo", 256, 256, 256);
+    const tty_open = try handleFramedRequest(std.testing.allocator, "REQ 50 TTYOPEN demo", 256, 256, 256);
     defer std.testing.allocator.free(tty_open);
-    try std.testing.expectEqualStrings("RESP 47 16\ntty opened demo\n", tty_open);
+    try std.testing.expectEqualStrings("RESP 50 16\ntty opened demo\n", tty_open);
 
     const tty_write_body = "demo\ntty-service-input";
-    const tty_write_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 48 TTYWRITE {d}\n{s}", .{ tty_write_body.len, tty_write_body });
+    const tty_write_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 51 TTYWRITE {d}\n{s}", .{ tty_write_body.len, tty_write_body });
     defer std.testing.allocator.free(tty_write_request);
     const tty_write = try handleFramedRequest(std.testing.allocator, tty_write_request, 256, 256, 256);
     defer std.testing.allocator.free(tty_write);
-    try std.testing.expectEqualStrings("RESP 48 25\ntty queued demo 17 bytes\n", tty_write);
+    try std.testing.expectEqualStrings("RESP 51 25\ntty queued demo 17 bytes\n", tty_write);
 
-    const tty_pending = try handleFramedRequest(std.testing.allocator, "REQ 49 TTYPENDING demo", 256, 256, 256);
+    const tty_pending = try handleFramedRequest(std.testing.allocator, "REQ 52 TTYPENDING demo", 256, 256, 256);
     defer std.testing.allocator.free(tty_pending);
-    try std.testing.expectEqualStrings("RESP 49 17\ntty-service-input", tty_pending);
+    try std.testing.expectEqualStrings("RESP 52 17\ntty-service-input", tty_pending);
 
     const tty_send_script = "demo cat";
-    const tty_send_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 50 TTYSEND {d}\n{s}", .{ tty_send_script.len, tty_send_script });
+    const tty_send_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 53 TTYSEND {d}\n{s}", .{ tty_send_script.len, tty_send_script });
     defer std.testing.allocator.free(tty_send_request);
     const tty_send = try handleFramedRequest(std.testing.allocator, tty_send_request, 256, 256, 256);
     defer std.testing.allocator.free(tty_send);
-    try std.testing.expectEqualStrings("RESP 50 17\ntty-service-input", tty_send);
+    try std.testing.expectEqualStrings("RESP 53 17\ntty-service-input", tty_send);
 
-    const tty_pending_after_send = try handleFramedRequest(std.testing.allocator, "REQ 51 TTYPENDING demo", 256, 256, 256);
+    const tty_pending_after_send = try handleFramedRequest(std.testing.allocator, "REQ 54 TTYPENDING demo", 256, 256, 256);
     defer std.testing.allocator.free(tty_pending_after_send);
-    try std.testing.expectEqualStrings("RESP 51 0\n", tty_pending_after_send);
+    try std.testing.expectEqualStrings("RESP 54 0\n", tty_pending_after_send);
 
     const tty_stale_body = "demo\nstale-tty";
-    const tty_stale_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 52 TTYWRITE {d}\n{s}", .{ tty_stale_body.len, tty_stale_body });
+    const tty_stale_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 55 TTYWRITE {d}\n{s}", .{ tty_stale_body.len, tty_stale_body });
     defer std.testing.allocator.free(tty_stale_request);
     const tty_stale = try handleFramedRequest(std.testing.allocator, tty_stale_request, 256, 256, 256);
     defer std.testing.allocator.free(tty_stale);
-    try std.testing.expectEqualStrings("RESP 52 24\ntty queued demo 9 bytes\n", tty_stale);
+    try std.testing.expectEqualStrings("RESP 55 24\ntty queued demo 9 bytes\n", tty_stale);
 
-    const tty_clear = try handleFramedRequest(std.testing.allocator, "REQ 53 TTYCLEAR demo", 256, 256, 256);
+    const tty_clear = try handleFramedRequest(std.testing.allocator, "REQ 56 TTYCLEAR demo", 256, 256, 256);
     defer std.testing.allocator.free(tty_clear);
-    try std.testing.expectEqualStrings("RESP 53 17\ntty cleared demo\n", tty_clear);
+    try std.testing.expectEqualStrings("RESP 56 17\ntty cleared demo\n", tty_clear);
 
     const tty_fail_script = "demo cat /tmp/missing-tty.txt";
-    const tty_fail_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 54 TTYSEND {d}\n{s}", .{ tty_fail_script.len, tty_fail_script });
+    const tty_fail_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 57 TTYSEND {d}\n{s}", .{ tty_fail_script.len, tty_fail_script });
     defer std.testing.allocator.free(tty_fail_request);
     const tty_fail = try handleFramedRequest(std.testing.allocator, tty_fail_request, 256, 256, 256);
     defer std.testing.allocator.free(tty_fail);
-    try std.testing.expectEqualStrings("RESP 54 36\nERR exit=1\ncat failed: FileNotFound\n", tty_fail);
+    try std.testing.expectEqualStrings("RESP 57 36\nERR exit=1\ncat failed: FileNotFound\n", tty_fail);
 
-    const tty_list = try handleFramedRequest(std.testing.allocator, "REQ 55 TTYLIST", 256, 256, 256);
+    const tty_list = try handleFramedRequest(std.testing.allocator, "REQ 58 TTYLIST", 256, 256, 256);
     defer std.testing.allocator.free(tty_list);
-    try std.testing.expectEqualStrings("RESP 55 5\ndemo\n", tty_list);
+    try std.testing.expectEqualStrings("RESP 58 5\ndemo\n", tty_list);
 
-    const tty_info = try handleFramedRequest(std.testing.allocator, "REQ 56 TTYINFO demo", 512, 256, 512);
+    const tty_info = try handleFramedRequest(std.testing.allocator, "REQ 59 TTYINFO demo", 512, 256, 512);
     defer std.testing.allocator.free(tty_info);
-    try std.testing.expect(std.mem.startsWith(u8, tty_info, "RESP 56 "));
+    try std.testing.expect(std.mem.startsWith(u8, tty_info, "RESP 59 "));
     try std.testing.expect(std.mem.indexOf(u8, tty_info, "name=demo") != null);
     try std.testing.expect(std.mem.indexOf(u8, tty_info, "command_count=2") != null);
     try std.testing.expect(std.mem.indexOf(u8, tty_info, "pending_input_bytes=0") != null);
     try std.testing.expect(std.mem.indexOf(u8, tty_info, "event_count=6") != null);
 
-    const tty_read = try handleFramedRequest(std.testing.allocator, "REQ 57 TTYREAD demo", 1024, 256, 1024);
+    const tty_read = try handleFramedRequest(std.testing.allocator, "REQ 60 TTYREAD demo", 1024, 256, 1024);
     defer std.testing.allocator.free(tty_read);
-    try std.testing.expect(std.mem.startsWith(u8, tty_read, "RESP 57 "));
+    try std.testing.expect(std.mem.startsWith(u8, tty_read, "RESP 60 "));
     try std.testing.expect(std.mem.indexOf(u8, tty_read, "$ cat\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, tty_read, "stdin:\ntty-service-input\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, tty_read, "$ cat /tmp/missing-tty.txt\n") != null);
 
-    const tty_events = try handleFramedRequest(std.testing.allocator, "REQ 58 TTYEVENTS demo", 1024, 256, 1024);
+    const tty_events = try handleFramedRequest(std.testing.allocator, "REQ 61 TTYEVENTS demo", 1024, 256, 1024);
     defer std.testing.allocator.free(tty_events);
-    try std.testing.expect(std.mem.startsWith(u8, tty_events, "RESP 58 "));
+    try std.testing.expect(std.mem.startsWith(u8, tty_events, "RESP 61 "));
     try std.testing.expect(std.mem.indexOf(u8, tty_events, "type=open") != null);
     try std.testing.expect(std.mem.indexOf(u8, tty_events, "type=write bytes=17") != null);
     try std.testing.expect(std.mem.indexOf(u8, tty_events, "type=clear bytes=9") != null);
 
-    const tty_stdout = try handleFramedRequest(std.testing.allocator, "REQ 59 TTYSTDOUT demo", 256, 256, 256);
+    const tty_stdout = try handleFramedRequest(std.testing.allocator, "REQ 62 TTYSTDOUT demo", 256, 256, 256);
     defer std.testing.allocator.free(tty_stdout);
-    try std.testing.expectEqualStrings("RESP 59 17\ntty-service-input", tty_stdout);
+    try std.testing.expectEqualStrings("RESP 62 17\ntty-service-input", tty_stdout);
 
-    const tty_stderr = try handleFramedRequest(std.testing.allocator, "REQ 60 TTYSTDERR demo", 256, 256, 256);
+    const tty_stderr = try handleFramedRequest(std.testing.allocator, "REQ 63 TTYSTDERR demo", 256, 256, 256);
     defer std.testing.allocator.free(tty_stderr);
-    try std.testing.expectEqualStrings("RESP 60 25\ncat failed: FileNotFound\n", tty_stderr);
+    try std.testing.expectEqualStrings("RESP 63 25\ncat failed: FileNotFound\n", tty_stderr);
 
-    const tty_close = try handleFramedRequest(std.testing.allocator, "REQ 61 TTYCLOSE demo", 256, 256, 256);
+    const tty_close = try handleFramedRequest(std.testing.allocator, "REQ 64 TTYCLOSE demo", 256, 256, 256);
     defer std.testing.allocator.free(tty_close);
-    try std.testing.expectEqualStrings("RESP 61 16\ntty closed demo\n", tty_close);
+    try std.testing.expectEqualStrings("RESP 64 16\ntty closed demo\n", tty_close);
 
-    const tty_shell_open = try handleFramedRequest(std.testing.allocator, "REQ 62 TTYOPEN shell", 256, 256, 256);
+    const tty_shell_open = try handleFramedRequest(std.testing.allocator, "REQ 65 TTYOPEN shell", 256, 256, 256);
     defer std.testing.allocator.free(tty_shell_open);
-    try std.testing.expectEqualStrings("RESP 62 17\ntty opened shell\n", tty_shell_open);
+    try std.testing.expectEqualStrings("RESP 65 17\ntty opened shell\n", tty_shell_open);
 
     const tty_shell_body = "shell\ntty-shell-input";
-    const tty_shell_write_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 63 TTYWRITE {d}\n{s}", .{ tty_shell_body.len, tty_shell_body });
+    const tty_shell_write_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 66 TTYWRITE {d}\n{s}", .{ tty_shell_body.len, tty_shell_body });
     defer std.testing.allocator.free(tty_shell_write_request);
     const tty_shell_write = try handleFramedRequest(std.testing.allocator, tty_shell_write_request, 256, 256, 256);
     defer std.testing.allocator.free(tty_shell_write);
-    try std.testing.expectEqualStrings("RESP 63 26\ntty queued shell 15 bytes\n", tty_shell_write);
+    try std.testing.expectEqualStrings("RESP 66 26\ntty queued shell 15 bytes\n", tty_shell_write);
 
     const tty_shell_script = "shell cat > /tmp/tty-shell/OUT.TXT; cat";
-    const tty_shell_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 64 TTYSHELL {d}\n{s}", .{ tty_shell_script.len, tty_shell_script });
+    const tty_shell_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 67 TTYSHELL {d}\n{s}", .{ tty_shell_script.len, tty_shell_script });
     defer std.testing.allocator.free(tty_shell_request);
     const tty_shell_response = try handleFramedRequest(std.testing.allocator, tty_shell_request, 256, 256, 256);
     defer std.testing.allocator.free(tty_shell_response);
-    try std.testing.expectEqualStrings("RESP 64 15\ntty-shell-input", tty_shell_response);
+    try std.testing.expectEqualStrings("RESP 67 15\ntty-shell-input", tty_shell_response);
 
-    const tty_shell_read = try handleFramedRequest(std.testing.allocator, "REQ 65 TTYREAD shell", 1024, 256, 1024);
+    const tty_shell_read = try handleFramedRequest(std.testing.allocator, "REQ 68 TTYREAD shell", 1024, 256, 1024);
     defer std.testing.allocator.free(tty_shell_read);
-    try std.testing.expect(std.mem.startsWith(u8, tty_shell_read, "RESP 65 "));
+    try std.testing.expect(std.mem.startsWith(u8, tty_shell_read, "RESP 68 "));
     try std.testing.expect(std.mem.indexOf(u8, tty_shell_read, "$ shell-run\nscript:\ncat > /tmp/tty-shell/OUT.TXT; cat\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, tty_shell_read, "stdin:\ntty-shell-input\n") != null);
 
-    const tty_shell_events = try handleFramedRequest(std.testing.allocator, "REQ 66 TTYEVENTS shell", 1024, 256, 1024);
+    const tty_shell_events = try handleFramedRequest(std.testing.allocator, "REQ 69 TTYEVENTS shell", 1024, 256, 1024);
     defer std.testing.allocator.free(tty_shell_events);
-    try std.testing.expect(std.mem.startsWith(u8, tty_shell_events, "RESP 66 "));
+    try std.testing.expect(std.mem.startsWith(u8, tty_shell_events, "RESP 69 "));
     try std.testing.expect(std.mem.indexOf(u8, tty_shell_events, "type=open") != null);
     try std.testing.expect(std.mem.indexOf(u8, tty_shell_events, "type=write bytes=15") != null);
     try std.testing.expect(std.mem.indexOf(u8, tty_shell_events, "type=shell exit=0 script_bytes=33 stdin_bytes=15 stdout_bytes=15 stderr_bytes=0") != null);
 
-    const tty_shell_close = try handleFramedRequest(std.testing.allocator, "REQ 67 TTYCLOSE shell", 256, 256, 256);
+    const tty_shell_close = try handleFramedRequest(std.testing.allocator, "REQ 70 TTYCLOSE shell", 256, 256, 256);
     defer std.testing.allocator.free(tty_shell_close);
-    try std.testing.expectEqualStrings("RESP 67 17\ntty closed shell\n", tty_shell_close);
+    try std.testing.expectEqualStrings("RESP 70 17\ntty closed shell\n", tty_shell_close);
+
+    try filesystem.writeFile("/tmp/tty-shell/INPUT.TXT", "file-input", 0);
+
+    const tty_shell_override_open = try handleFramedRequest(std.testing.allocator, "REQ 71 TTYOPEN shell-override", 256, 256, 256);
+    defer std.testing.allocator.free(tty_shell_override_open);
+    try std.testing.expectEqualStrings("RESP 71 26\ntty opened shell-override\n", tty_shell_override_open);
+
+    const tty_shell_override_body = "shell-override\nqueued-tty-data";
+    const tty_shell_override_write_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 72 TTYWRITE {d}\n{s}", .{ tty_shell_override_body.len, tty_shell_override_body });
+    defer std.testing.allocator.free(tty_shell_override_write_request);
+    const tty_shell_override_write = try handleFramedRequest(std.testing.allocator, tty_shell_override_write_request, 256, 256, 256);
+    defer std.testing.allocator.free(tty_shell_override_write);
+    try std.testing.expectEqualStrings("RESP 72 35\ntty queued shell-override 15 bytes\n", tty_shell_override_write);
+
+    const tty_shell_override_batch = "cat < \"/tmp/tty-shell/INPUT.TXT\" > /tmp/tty-shell/OVERRIDE.TXT; cat";
+    const tty_shell_override_script = "shell-override cat < \"/tmp/tty-shell/INPUT.TXT\" > /tmp/tty-shell/OVERRIDE.TXT; cat";
+    const tty_shell_override_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 73 TTYSHELL {d}\n{s}", .{ tty_shell_override_script.len, tty_shell_override_script });
+    defer std.testing.allocator.free(tty_shell_override_request);
+    const tty_shell_override_response = try handleFramedRequest(std.testing.allocator, tty_shell_override_request, 256, 256, 256);
+    defer std.testing.allocator.free(tty_shell_override_response);
+    try std.testing.expectEqualStrings("RESP 73 15\nqueued-tty-data", tty_shell_override_response);
+
+    const tty_shell_override_readback = try handleFramedRequest(std.testing.allocator, "REQ 74 GET /tmp/tty-shell/OVERRIDE.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(tty_shell_override_readback);
+    try std.testing.expectEqualStrings("RESP 74 10\nfile-input", tty_shell_override_readback);
+
+    const tty_shell_override_pending = try handleFramedRequest(std.testing.allocator, "REQ 75 TTYPENDING shell-override", 256, 256, 256);
+    defer std.testing.allocator.free(tty_shell_override_pending);
+    try std.testing.expectEqualStrings("RESP 75 0\n", tty_shell_override_pending);
+
+    const tty_shell_override_events = try handleFramedRequest(std.testing.allocator, "REQ 76 TTYEVENTS shell-override", 1024, 256, 1024);
+    defer std.testing.allocator.free(tty_shell_override_events);
+    try std.testing.expect(std.mem.startsWith(u8, tty_shell_override_events, "RESP 76 "));
+    try std.testing.expect(std.mem.indexOf(u8, tty_shell_override_events, "type=write bytes=15") != null);
+    const tty_shell_override_event = try std.fmt.allocPrint(std.testing.allocator, "type=shell exit=0 script_bytes={d} stdin_bytes=15 stdout_bytes=15 stderr_bytes=0", .{tty_shell_override_batch.len});
+    defer std.testing.allocator.free(tty_shell_override_event);
+    try std.testing.expect(std.mem.indexOf(u8, tty_shell_override_events, tty_shell_override_event) != null);
+
+    const tty_shell_override_close = try handleFramedRequest(std.testing.allocator, "REQ 77 TTYCLOSE shell-override", 256, 256, 256);
+    defer std.testing.allocator.free(tty_shell_override_close);
+    try std.testing.expectEqualStrings("RESP 77 26\ntty closed shell-override\n", tty_shell_override_close);
 }
 
 test "baremetal tool service uploads and runs persisted scripts" {

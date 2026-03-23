@@ -36,9 +36,11 @@ This slice explicitly does not claim:
   - shared bounded script execution through `executeScriptContents(...)`
   - bounded glob matching across multiple path segments with `*` and `?`
   - bounded shell escaping for `\;`, `\<`, `\>`, `\\`, and quoted separators on the parser path
+  - malformed quoted arguments now fail early when a closing quote is not followed by whitespace or end-of-command
   - bounded stdin redirection through `<`
   - bounded stdout redirection through `>` and `>>`
   - bounded stderr redirection through `2>` and `2>>`
+  - escaped quotes are supported on the redirection-path side of the bounded shell parser; direct quoted-path command tokenization remains intentionally narrow
   - hard `64`-command cap via `max_shell_command_count`
 - `src/baremetal/tool_service/codec.zig`
   - typed `SHELLRUN`

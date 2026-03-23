@@ -15655,6 +15655,201 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
     if (!std.mem.eql(u8, tty_shell_close, "RESP 76 17\ntty closed shell\n")) return error.ToolServiceResponseMismatch;
     qemuDebugWrite("ETS9A9Z\n");
 
+    const quoted_path_write_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 77 PUT /tmp/sh/QUO\"TE.TXT 6\nquoted",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.startsWith(u8, quoted_path_write_response, "RESP 77 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, quoted_path_write_response, "WROTE 6 bytes to /tmp/sh/QUO\"TE.TXT\n") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9AA\n");
+
+    const quoted_path_shell_script =
+        "cat < \"/tmp/sh/QUO\\\"TE.TXT\" > /tmp/sh/QUOTED.TXT\n" ++
+        "cat /tmp/sh/QUOTED.TXT";
+    const quoted_path_shell_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 78 SHELLRUN {d}\n{s}", .{
+        quoted_path_shell_script.len,
+        quoted_path_shell_script,
+    }) catch return error.ToolServiceFailed;
+    const quoted_path_shell_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        quoted_path_shell_request,
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, quoted_path_shell_response, "RESP 78 6\nquoted")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9AB\n");
+
+    const invalid_quoted_shell_script = "cat \"/tmp/sh/SPACE NAME.TXT\"x";
+    const invalid_quoted_shell_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 79 SHELLRUN {d}\n{s}", .{
+        invalid_quoted_shell_script.len,
+        invalid_quoted_shell_script,
+    }) catch return error.ToolServiceFailed;
+    const invalid_quoted_shell_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        invalid_quoted_shell_request,
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.startsWith(u8, invalid_quoted_shell_response, "RESP 79 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, invalid_quoted_shell_response, "ERR exit=2\nusage: cat <path>\n") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9AC\n");
+
+    const tty_shell_override_input_put = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 80 PUT /tmp/tty-shell/INPUT.TXT 10\nfile-input",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.startsWith(u8, tty_shell_override_input_put, "RESP 80 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, tty_shell_override_input_put, "WROTE 10 bytes to /tmp/tty-shell/INPUT.TXT\n") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9AD\n");
+
+    const tty_shell_override_open = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 81 TTYOPEN shell-override",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_shell_override_open, "RESP 81 26\ntty opened shell-override\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9AE\n");
+
+    const tty_shell_override_body = "shell-override\nqueued-tty-data";
+    const tty_shell_override_write_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 82 TTYWRITE {d}\n{s}", .{
+        tty_shell_override_body.len,
+        tty_shell_override_body,
+    }) catch return error.ToolServiceFailed;
+    const tty_shell_override_write = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        tty_shell_override_write_request,
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_shell_override_write, "RESP 82 35\ntty queued shell-override 15 bytes\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9AF\n");
+
+    const tty_shell_override_batch = "cat < \"/tmp/tty-shell/INPUT.TXT\" > /tmp/tty-shell/OVERRIDE.TXT; cat";
+    const tty_shell_override_script = "shell-override cat < \"/tmp/tty-shell/INPUT.TXT\" > /tmp/tty-shell/OVERRIDE.TXT; cat";
+    const tty_shell_override_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 83 TTYSHELL {d}\n{s}", .{
+        tty_shell_override_script.len,
+        tty_shell_override_script,
+    }) catch return error.ToolServiceFailed;
+    const tty_shell_override_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        tty_shell_override_request,
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_shell_override_response, "RESP 83 15\nqueued-tty-data")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9AG\n");
+
+    const tty_shell_override_readback = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 84 GET /tmp/tty-shell/OVERRIDE.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_shell_override_readback, "RESP 84 10\nfile-input")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9AH\n");
+
+    const tty_shell_override_pending = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 85 TTYPENDING shell-override",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_shell_override_pending, "RESP 85 0\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9AI\n");
+
+    const tty_shell_override_events = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 86 TTYEVENTS shell-override",
+        1024,
+        256,
+        1024,
+    );
+    if (!std.mem.startsWith(u8, tty_shell_override_events, "RESP 86 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, tty_shell_override_events, "type=write bytes=15") == null) return error.ToolServiceResponseMismatch;
+    var tty_shell_override_event_buffer: [128]u8 = undefined;
+    const tty_shell_override_event = std.fmt.bufPrint(&tty_shell_override_event_buffer, "type=shell exit=0 script_bytes={d} stdin_bytes=15 stdout_bytes=15 stderr_bytes=0", .{tty_shell_override_batch.len}) catch return error.ToolServiceFailed;
+    if (std.mem.indexOf(u8, tty_shell_override_events, tty_shell_override_event) == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9AJ\n");
+
+    const tty_shell_override_close = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 87 TTYCLOSE shell-override",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_shell_override_close, "RESP 87 26\ntty closed shell-override\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9AK\n");
+
     const virtual_snapshot_response = try exchangeE1000TcpProbeServiceRequest(
         eth,
         scratch,
