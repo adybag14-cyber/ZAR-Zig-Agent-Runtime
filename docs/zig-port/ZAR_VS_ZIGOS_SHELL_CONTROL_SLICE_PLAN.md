@@ -34,13 +34,14 @@ This slice explicitly does not claim:
   - `shell-run <command[;command...]>`
   - `shell-expand <pattern>`
   - shared bounded script execution through `executeScriptContents(...)`
+  - direct wrapper-command bypass of the outer shell-line parser for `shell-run`, `tty-send`, and `tty-shell` so embedded shell text keeps its own redirection semantics
   - bounded glob matching across multiple path segments with `*` and `?`
   - bounded shell escaping for `\;`, `\<`, `\>`, `\\`, and quoted separators on the parser path
   - malformed quoted arguments now fail early when a closing quote is not followed by whitespace or end-of-command
   - bounded stdin redirection through `<`
   - bounded stdout redirection through `>` and `>>`
   - bounded stderr redirection through `2>` and `2>>`
-  - escaped quotes are supported on the redirection-path side of the bounded shell parser and on the direct quoted-path argument path for path-consuming builtins; the parser remains intentionally bounded and is not a full shell tokenizer
+  - escaped quotes are supported on the redirection-path side of the bounded shell parser and on the direct quoted-path argument path for path-consuming builtins; malformed quoted direct-command paths reject early with builtin-specific usage output; the parser remains intentionally bounded and is not a full shell tokenizer
   - hard `64`-command cap via `max_shell_command_count`
 - `src/baremetal/tool_service/codec.zig`
   - typed `SHELLRUN`

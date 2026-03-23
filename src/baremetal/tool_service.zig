@@ -4456,6 +4456,18 @@ test "baremetal tool service exposes bounded shell batch and globbing" {
     defer std.testing.allocator.free(shell_invalid_quote_response);
     try std.testing.expect(std.mem.startsWith(u8, shell_invalid_quote_response, "RESP 51 "));
     try std.testing.expect(std.mem.indexOf(u8, shell_invalid_quote_response, "ERR exit=2\nusage: cat <path>\n") != null);
+
+    const direct_redirect_response = try handleFramedRequest(std.testing.allocator, "REQ 52 CMD echo direct-alpha > /tmp/sh/DIRECT.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(direct_redirect_response);
+    try std.testing.expectEqualStrings("RESP 52 0\n", direct_redirect_response);
+
+    const direct_redirect_readback = try handleFramedRequest(std.testing.allocator, "REQ 53 GET /tmp/sh/DIRECT.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(direct_redirect_readback);
+    try std.testing.expectEqualStrings("RESP 53 13\ndirect-alpha\n", direct_redirect_readback);
+
+    const direct_input_response = try handleFramedRequest(std.testing.allocator, "REQ 54 CMD cat < \"/tmp/sh/QUO\\\"TE.TXT\"", 256, 256, 256);
+    defer std.testing.allocator.free(direct_input_response);
+    try std.testing.expectEqualStrings("RESP 54 6\nquoted", direct_input_response);
 }
 
 test "baremetal tool service persists bounded tty session commands" {
@@ -4472,6 +4484,10 @@ test "baremetal tool service persists bounded tty session commands" {
     defer std.testing.allocator.free(tty_write);
     try std.testing.expectEqualStrings("RESP 51 25\ntty queued demo 17 bytes\n", tty_write);
 
+    const tty_override_input = try handleFramedRequest(std.testing.allocator, "REQ 152 PUT /tmp/tty-input.txt 10\nfile-input", 256, 256, 256);
+    defer std.testing.allocator.free(tty_override_input);
+    try std.testing.expectEqualStrings("RESP 152 37\nWROTE 10 bytes to /tmp/tty-input.txt\n", tty_override_input);
+
     const tty_pending = try handleFramedRequest(std.testing.allocator, "REQ 52 TTYPENDING demo", 256, 256, 256);
     defer std.testing.allocator.free(tty_pending);
     try std.testing.expectEqualStrings("RESP 52 17\ntty-service-input", tty_pending);
@@ -4482,6 +4498,19 @@ test "baremetal tool service persists bounded tty session commands" {
     const tty_send = try handleFramedRequest(std.testing.allocator, tty_send_request, 256, 256, 256);
     defer std.testing.allocator.free(tty_send);
     try std.testing.expectEqualStrings("RESP 53 17\ntty-service-input", tty_send);
+
+    const tty_override_write_body = "demo\nqueued-tty-data";
+    const tty_override_write_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 153 TTYWRITE {d}\n{s}", .{ tty_override_write_body.len, tty_override_write_body });
+    defer std.testing.allocator.free(tty_override_write_request);
+    const tty_override_write = try handleFramedRequest(std.testing.allocator, tty_override_write_request, 256, 256, 256);
+    defer std.testing.allocator.free(tty_override_write);
+    try std.testing.expectEqualStrings("RESP 153 25\ntty queued demo 15 bytes\n", tty_override_write);
+
+    const tty_override_send_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 154 TTYSEND {d}\n{s}", .{ "demo cat < /tmp/tty-input.txt".len, "demo cat < /tmp/tty-input.txt" });
+    defer std.testing.allocator.free(tty_override_send_request);
+    const tty_override_send = try handleFramedRequest(std.testing.allocator, tty_override_send_request, 256, 256, 256);
+    defer std.testing.allocator.free(tty_override_send);
+    try std.testing.expectEqualStrings("RESP 154 10\nfile-input", tty_override_send);
 
     const tty_pending_after_send = try handleFramedRequest(std.testing.allocator, "REQ 54 TTYPENDING demo", 256, 256, 256);
     defer std.testing.allocator.free(tty_pending_after_send);
@@ -4513,9 +4542,9 @@ test "baremetal tool service persists bounded tty session commands" {
     defer std.testing.allocator.free(tty_info);
     try std.testing.expect(std.mem.startsWith(u8, tty_info, "RESP 59 "));
     try std.testing.expect(std.mem.indexOf(u8, tty_info, "name=demo") != null);
-    try std.testing.expect(std.mem.indexOf(u8, tty_info, "command_count=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tty_info, "command_count=3") != null);
     try std.testing.expect(std.mem.indexOf(u8, tty_info, "pending_input_bytes=0") != null);
-    try std.testing.expect(std.mem.indexOf(u8, tty_info, "event_count=6") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tty_info, "event_count=8") != null);
 
     const tty_read = try handleFramedRequest(std.testing.allocator, "REQ 60 TTYREAD demo", 1024, 256, 1024);
     defer std.testing.allocator.free(tty_read);
@@ -4533,7 +4562,7 @@ test "baremetal tool service persists bounded tty session commands" {
 
     const tty_stdout = try handleFramedRequest(std.testing.allocator, "REQ 62 TTYSTDOUT demo", 256, 256, 256);
     defer std.testing.allocator.free(tty_stdout);
-    try std.testing.expectEqualStrings("RESP 62 17\ntty-service-input", tty_stdout);
+    try std.testing.expectEqualStrings("RESP 62 27\ntty-service-inputfile-input", tty_stdout);
 
     const tty_stderr = try handleFramedRequest(std.testing.allocator, "REQ 63 TTYSTDERR demo", 256, 256, 256);
     defer std.testing.allocator.free(tty_stderr);
