@@ -223,25 +223,112 @@ fn runCaptureWithMirrorAndInput(
     var exit_code: u8 = 0;
     try filesystem.init();
 
-    const parsed = parseCommand(command) catch |err| {
-        exit_code = 2;
-        try writeCommandError(&stderr_buffer, err, "command");
-        return .{
-            .exit_code = exit_code,
-            .stdout = try stdout_buffer.toOwnedSlice(),
-            .stderr = try stderr_buffer.toOwnedSlice(),
+    if (shouldBypassDirectShellLineParsing(command)) {
+        const parsed = parseCommand(command) catch |err| {
+            exit_code = 2;
+            try writeCommandError(&stderr_buffer, err, "command");
+            return .{
+                .exit_code = exit_code,
+                .stdout = try stdout_buffer.toOwnedSlice(),
+                .stderr = try stderr_buffer.toOwnedSlice(),
+            };
         };
-    };
-    execute(parsed, &stdout_buffer, &stderr_buffer, &exit_code, stdin_content, allocator, 0) catch |err| {
-        exit_code = 1;
-        try stderr_buffer.appendFmt("{s}\n", .{@errorName(err)});
-    };
+        execute(parsed, &stdout_buffer, &stderr_buffer, &exit_code, stdin_content, allocator, 1) catch |err| {
+            exit_code = 1;
+            try stderr_buffer.appendFmt("{s}\n", .{@errorName(err)});
+        };
+    } else {
+        executeCommandLine(command, "command", &stdout_buffer, &stderr_buffer, &exit_code, stdin_content, allocator, 0) catch |err| {
+            exit_code = 1;
+            try stderr_buffer.appendFmt("{s}\n", .{@errorName(err)});
+        };
+    }
 
     return .{
         .exit_code = exit_code,
         .stdout = try stdout_buffer.toOwnedSlice(),
         .stderr = try stderr_buffer.toOwnedSlice(),
     };
+}
+
+fn shouldBypassDirectShellLineParsing(command: []const u8) bool {
+    const parsed = parseCommand(command) catch return false;
+    return std.ascii.eqlIgnoreCase(parsed.name, "shell-run") or
+        std.ascii.eqlIgnoreCase(parsed.name, "tty-send") or
+        std.ascii.eqlIgnoreCase(parsed.name, "tty-shell");
+}
+
+fn executeCommandLine(
+    line: []const u8,
+    operation: []const u8,
+    stdout_buffer: *OutputBuffer,
+    stderr_buffer: *OutputBuffer,
+    exit_code: *u8,
+    stdin_content: ?[]const u8,
+    allocator: std.mem.Allocator,
+    depth: usize,
+) Error!void {
+    const parsed_line = parseShellLine(line) catch |err| {
+        exit_code.* = 2;
+        try writeCommandError(stderr_buffer, err, operation);
+        return;
+    };
+    const command_text = normalizeShellCommandTextAlloc(allocator, parsed_line.command) catch |err| {
+        exit_code.* = 1;
+        try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+        return;
+    };
+    defer allocator.free(command_text);
+
+    const parsed = parseCommand(command_text) catch |err| {
+        exit_code.* = 2;
+        try writeCommandError(stderr_buffer, err, operation);
+        return;
+    };
+
+    var command_stdin_content: ?[]u8 = null;
+    defer if (command_stdin_content) |bytes| allocator.free(bytes);
+    if (parsed_line.input_path) |input_path_raw| {
+        const input_path = unescapeShellTextAlloc(allocator, input_path_raw) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+            return;
+        };
+        defer allocator.free(input_path);
+
+        const input_limit = @max(stdout_buffer.limit, stderr_buffer.limit);
+        command_stdin_content = filesystem.readFileAlloc(allocator, input_path, input_limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+            return;
+        };
+    }
+
+    if (parsed_line.redirect_path) |redirect_path_raw| {
+        const redirect_path = unescapeShellTextAlloc(allocator, redirect_path_raw) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+            return;
+        };
+        defer allocator.free(redirect_path);
+
+        try executeWithRedirection(
+            parsed,
+            parsed_line.redirect_stream,
+            redirect_path,
+            parsed_line.append,
+            operation,
+            stdout_buffer,
+            stderr_buffer,
+            exit_code,
+            command_stdin_content orelse stdin_content,
+            allocator,
+            depth + 1,
+        );
+        return;
+    }
+
+    try execute(parsed, stdout_buffer, stderr_buffer, exit_code, command_stdin_content orelse stdin_content, allocator, depth + 1);
 }
 
 fn execute(
@@ -5326,64 +5413,7 @@ fn executeScriptContents(
             return;
         }
 
-        const parsed_line = parseShellLine(line) catch |err| {
-            exit_code.* = 2;
-            try writeCommandError(stderr_buffer, err, operation);
-            return;
-        };
-        const command_text = normalizeShellCommandTextAlloc(allocator, parsed_line.command) catch |err| {
-            exit_code.* = 1;
-            try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
-            return;
-        };
-        defer allocator.free(command_text);
-
-        const nested = parseCommand(command_text) catch |err| {
-            exit_code.* = 2;
-            try writeCommandError(stderr_buffer, err, operation);
-            return;
-        };
-        var command_stdin_content: ?[]u8 = null;
-        defer if (command_stdin_content) |bytes| allocator.free(bytes);
-        if (parsed_line.input_path) |input_path_raw| {
-            const input_path = unescapeShellTextAlloc(allocator, input_path_raw) catch |err| {
-                exit_code.* = 1;
-                try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
-                return;
-            };
-            defer allocator.free(input_path);
-
-            const input_limit = @max(stdout_buffer.limit, stderr_buffer.limit);
-            command_stdin_content = filesystem.readFileAlloc(allocator, input_path, input_limit) catch |err| {
-                exit_code.* = 1;
-                try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
-                return;
-            };
-        }
-        if (parsed_line.redirect_path) |redirect_path_raw| {
-            const redirect_path = unescapeShellTextAlloc(allocator, redirect_path_raw) catch |err| {
-                exit_code.* = 1;
-                try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
-                return;
-            };
-            defer allocator.free(redirect_path);
-
-            try executeWithRedirection(
-                nested,
-                parsed_line.redirect_stream,
-                redirect_path,
-                parsed_line.append,
-                operation,
-                stdout_buffer,
-                stderr_buffer,
-                exit_code,
-                command_stdin_content orelse stdin_content,
-                allocator,
-                depth + 1,
-            );
-        } else {
-            try execute(nested, stdout_buffer, stderr_buffer, exit_code, command_stdin_content orelse stdin_content, allocator, depth + 1);
-        }
+        try executeCommandLine(line, operation, stdout_buffer, stderr_buffer, exit_code, stdin_content, allocator, depth);
         if (exit_code.* != 0) return;
     }
 
@@ -6870,6 +6900,50 @@ test "baremetal tool exec exposes bounded shell batch and globbing" {
     try std.testing.expectEqualStrings("usage: cat <path>\n", shell_invalid_quoted.stderr);
 }
 
+test "baremetal tool exec exposes bounded direct command redirection and input precedence" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    vga_text_console.resetForTest();
+
+    try filesystem.createDirPath("/tmp/direct");
+    try filesystem.writeFile("/tmp/direct/A.TXT", "alpha", 0);
+    try filesystem.writeFile("/tmp/direct/QUO\"TE.TXT", "quoted", 0);
+
+    var direct_output_redirect = try runCapture(std.testing.allocator, "echo direct-alpha > /tmp/direct/OUT.TXT", 256, 256);
+    defer direct_output_redirect.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), direct_output_redirect.exit_code);
+    try std.testing.expectEqualStrings("", direct_output_redirect.stdout);
+
+    const direct_output_file = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/direct/OUT.TXT", 64);
+    defer std.testing.allocator.free(direct_output_file);
+    try std.testing.expectEqualStrings("direct-alpha\n", direct_output_file);
+
+    var direct_input_redirect = try runCapture(std.testing.allocator, "cat < \"/tmp/direct/QUO\\\"TE.TXT\"", 256, 256);
+    defer direct_input_redirect.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), direct_input_redirect.exit_code);
+    try std.testing.expectEqualStrings("quoted", direct_input_redirect.stdout);
+
+    var direct_stdin_only = try runCaptureSilentWithInput(std.testing.allocator, "write-file /tmp/direct/FROMSTDIN.TXT", "stdin-direct", 256, 256);
+    defer direct_stdin_only.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), direct_stdin_only.exit_code);
+    const direct_stdin_file = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/direct/FROMSTDIN.TXT", 64);
+    defer std.testing.allocator.free(direct_stdin_file);
+    try std.testing.expectEqualStrings("stdin-direct", direct_stdin_file);
+
+    var direct_file_precedence = try runCaptureSilentWithInput(std.testing.allocator, "write-file /tmp/direct/FROMFILE.TXT < /tmp/direct/A.TXT", "ignored-stdin", 256, 256);
+    defer direct_file_precedence.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), direct_file_precedence.exit_code);
+    const direct_file_precedence_output = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/direct/FROMFILE.TXT", 64);
+    defer std.testing.allocator.free(direct_file_precedence_output);
+    try std.testing.expectEqualStrings("alpha", direct_file_precedence_output);
+
+    var direct_invalid_quoted = try runCapture(std.testing.allocator, "cat \"/tmp/direct/QUO\\\"TE.TXT\"x", 256, 256);
+    defer direct_invalid_quoted.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 2), direct_invalid_quoted.exit_code);
+    try std.testing.expectEqualStrings("", direct_invalid_quoted.stdout);
+    try std.testing.expectEqualStrings("usage: cat <path>\n", direct_invalid_quoted.stderr);
+}
+
 test "baremetal tool exec persists bounded tty session receipts" {
     storage_backend.resetForTest();
     filesystem.resetForTest();
@@ -6895,6 +6969,16 @@ test "baremetal tool exec persists bounded tty session receipts" {
     try std.testing.expectEqual(@as(u8, 0), send_result.exit_code);
     try std.testing.expectEqualStrings("tty-session-input", send_result.stdout);
     try std.testing.expectEqualStrings("", send_result.stderr);
+
+    try filesystem.writeFile("/tmp/tty-input.txt", "file-input", 0);
+    var override_write_result = try runCapture(std.testing.allocator, "tty-write demo queued-tty-data", 256, 256);
+    defer override_write_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), override_write_result.exit_code);
+    var override_send_result = try runCapture(std.testing.allocator, "tty-send demo cat < /tmp/tty-input.txt", 256, 256);
+    defer override_send_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), override_send_result.exit_code);
+    try std.testing.expectEqualStrings("file-input", override_send_result.stdout);
+    try std.testing.expectEqualStrings("", override_send_result.stderr);
 
     var drained_pending = try runCapture(std.testing.allocator, "tty-pending demo", 256, 256);
     defer drained_pending.deinit(std.testing.allocator);
@@ -6927,9 +7011,9 @@ test "baremetal tool exec persists bounded tty session receipts" {
     try std.testing.expectEqual(@as(u8, 0), info_result.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "name=demo") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "open=1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "command_count=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "command_count=3") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "pending_input_bytes=0") != null);
-    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "event_count=6") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "event_count=8") != null);
 
     var read_result = try runCapture(std.testing.allocator, "tty-read demo", 1024, 256);
     defer read_result.deinit(std.testing.allocator);
@@ -6950,7 +7034,7 @@ test "baremetal tool exec persists bounded tty session receipts" {
     var stdout_result = try runCapture(std.testing.allocator, "tty-stdout demo", 256, 256);
     defer stdout_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), stdout_result.exit_code);
-    try std.testing.expectEqualStrings("tty-session-input", stdout_result.stdout);
+    try std.testing.expectEqualStrings("tty-session-inputfile-input", stdout_result.stdout);
 
     var stderr_result = try runCapture(std.testing.allocator, "tty-stderr demo", 256, 256);
     defer stderr_result.deinit(std.testing.allocator);
