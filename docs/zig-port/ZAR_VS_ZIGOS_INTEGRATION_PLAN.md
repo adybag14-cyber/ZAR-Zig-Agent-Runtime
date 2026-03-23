@@ -9,7 +9,7 @@ Current posture:
 - ZigOS upstream is now explicitly `MIT` licensed.
 - ZAR can legally study, adapt, or import ZigOS code when that is the right engineering choice.
 - Current delivered slices remain ZAR-owned implementations with ZAR-native tests, probes, and release gates.
-- Delivered ZigOS-inspired slices now cover NIC breadth, benchmark/stress, introspection overlays, storage breadth, mount layering, a bounded internal VFS router, a bounded storage registry plus ext2/FAT probe seam, and a bounded backend-registry plus mounted-filesystem capability seam.
+- Delivered ZigOS-inspired slices now cover NIC breadth, benchmark/stress, introspection overlays, storage breadth, mount layering, a bounded internal VFS router, a bounded storage registry plus ext2/FAT probe seam, a bounded backend-registry plus mounted-filesystem capability seam, and a bounded shell/control layer over the existing builtin/service surface.
 
 ## Source Baseline
 
@@ -76,7 +76,7 @@ The table below is the current strict classification for every realistic ZigOS a
 | `Ring3/userspace` | `ring3.zig`, `userspace.zig` | High | Major redesign | Separate future OS-model track |
 | `Scheduler/process/signals/ipc/credentials` | `src/kernel/process/*` | High | Major redesign | Separate future syscall/process track |
 | `Syscall ABI` | `src/kernel/process/syscall.zig` | High | Major redesign | Separate ABI design doc first |
-| `Shell parser/glob/jobs/editor` | `src/kernel/shell/*` | Medium-high | Adapt later | Shell/UI design only after runtime-service decision |
+| `Shell parser/glob/jobs/editor` | `src/kernel/shell/*` | Medium-high | Adapt now, bounded | Delivered bounded shell/control layer first; fuller shell later |
 | `HTTPD shell tool` | `src/kernel/shell/httpd.zig` | Low-medium | Adapt later | Only if ZAR wants shell-side admin/http tooling |
 | `Userland binaries` | `user/bin/*` | Medium-high | Major redesign | Not a drop-in fit; separate userland decision |
 | `Userland helper libs` | `user/lib/*` | Medium | Major redesign | Only relevant if ZAR commits to userland |
@@ -217,7 +217,22 @@ Scope:
 - job-control ideas
 - interactive console/editor concepts
 
-This phase is allowed only after ZAR decides whether the shell is:
+Current delivered scope:
+
+- `src/baremetal/tool_exec.zig` now exposes bounded `shell-run` and `shell-expand` helpers over the existing builtin surface
+- `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `SHELLRUN` plus `SHELLEXPAND` over the framed TCP service
+- `src/baremetal_main.zig` now widens the live `E1000` tool-service proof to validate shell help output, bounded command batching, bounded final-component glob expansion, and persisted readback
+- `build.zig` now explicitly wires `scripts/baremetal/pvh_boot.S` plus `scripts/baremetal/pvh_lld.ld` into the bare-metal artifact so the Multiboot2 header remains within the required first `32768` bytes on current Zig `master`
+
+Still intentionally out of scope:
+
+- interactive shell
+- job control
+- redirection or pipelines
+- editor/TTY parity
+- userspace-visible shell ABI
+
+This phase still requires a direction choice before widening further, because ZAR must still decide whether the shell is:
 
 - a builtin command/runtime surface over existing services
 - or the start of a future userspace model
@@ -307,3 +322,4 @@ Concrete ZigOS-derived tracking docs now in-tree:
 
 - `docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`
 - `docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md`
+- `docs/zig-port/ZAR_VS_ZIGOS_SHELL_CONTROL_SLICE_PLAN.md`

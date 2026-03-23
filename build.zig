@@ -213,6 +213,7 @@ pub fn build(b: *std.Build) void {
     baremetal_module.addOptions("build_options", baremetal_options);
     baremetal_module.single_threaded = true;
     baremetal_module.strip = false;
+    baremetal_module.addAssemblyFile(b.path("scripts/baremetal/pvh_boot.S"));
 
     const baremetal_exe = b.addExecutable(.{
         .name = "openclaw-zig-baremetal",
@@ -222,6 +223,7 @@ pub fn build(b: *std.Build) void {
     // Zig master currently garbage-collects the custom `.multiboot` section here
     // unless section GC is disabled at the final bare-metal artifact boundary.
     baremetal_exe.link_gc_sections = false;
+    baremetal_exe.setLinkerScript(b.path("scripts/baremetal/pvh_lld.ld"));
     const install_baremetal = b.addInstallArtifact(baremetal_exe, .{
         .dest_sub_path = "openclaw-zig-baremetal.elf",
     });

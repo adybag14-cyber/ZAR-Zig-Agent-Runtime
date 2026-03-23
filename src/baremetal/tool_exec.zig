@@ -24,6 +24,9 @@ pub const Error = filesystem.Error || trust_store.Error || app_runtime.Error || 
     StreamTooLong,
     InvalidQuotedArgument,
     ScriptDepthExceeded,
+    ShellCommandLimitExceeded,
+    UnsupportedPattern,
+    NoMatches,
     DisplayConnectorMismatch,
     DisplayInterfaceMismatch,
     DisplayOutputNotFound,
@@ -31,6 +34,7 @@ pub const Error = filesystem.Error || trust_store.Error || app_runtime.Error || 
 };
 
 const max_script_depth: usize = 4;
+const max_shell_command_count: usize = 64;
 
 pub const Result = struct {
     exit_code: u8,
@@ -163,7 +167,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, storage-backends, storage-filesystems, storage-backend-info, storage-backend-select, storage-partitions, storage-partition-select, mount-list, mount-info, mount-bind, mount-remove, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-plan-list, workspace-plan-info, workspace-plan-active, workspace-plan-save, workspace-plan-apply, workspace-plan-delete, workspace-plan-release-list, workspace-plan-release-info, workspace-plan-release-save, workspace-plan-release-activate, workspace-plan-release-delete, workspace-plan-release-prune, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-suite-release-channel-list, workspace-suite-release-channel-info, workspace-suite-release-channel-set, workspace-suite-release-channel-activate, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-outputs, display-output, display-output-detail, display-output-capabilities, display-output-modes, display-interface-detail, display-interface-capabilities, display-interface-modes, display-modes, display-set, display-activate, display-activate-preferred, display-activate-interface, display-activate-interface-preferred, display-interface-set, display-interface-activate-mode, display-activate-output, display-activate-output-preferred, display-output-set, display-output-activate-mode, display-profile-list, display-profile-info, display-profile-active, display-profile-save, display-profile-apply, display-profile-delete, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, shell-expand, shell-run, storage-backends, storage-filesystems, storage-backend-info, storage-backend-select, storage-partitions, storage-partition-select, mount-list, mount-info, mount-bind, mount-remove, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-plan-list, workspace-plan-info, workspace-plan-active, workspace-plan-save, workspace-plan-apply, workspace-plan-delete, workspace-plan-release-list, workspace-plan-release-info, workspace-plan-release-save, workspace-plan-release-activate, workspace-plan-release-delete, workspace-plan-release-prune, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-suite-release-channel-list, workspace-suite-release-channel-info, workspace-suite-release-channel-set, workspace-suite-release-channel-activate, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-outputs, display-output, display-output-detail, display-output-capabilities, display-output-modes, display-interface-detail, display-interface-capabilities, display-interface-modes, display-modes, display-set, display-activate, display-activate-preferred, display-activate-interface, display-activate-interface-preferred, display-interface-set, display-interface-activate-mode, display-activate-output, display-activate-output-preferred, display-output-set, display-output-activate-mode, display-profile-list, display-profile-info, display-profile-active, display-profile-save, display-profile-apply, display-profile-delete, run-script, run-package, app-run");
         return;
     }
 
@@ -282,6 +286,37 @@ fn execute(
         };
         defer allocator.free(listing);
         try stdout_buffer.appendSlice(listing);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "shell-expand")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "shell-expand <pattern>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: shell-expand <pattern>");
+            return;
+        }
+        const expanded = expandShellPatternAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("shell-expand failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(expanded);
+        try stdout_buffer.appendSlice(expanded);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "shell-run")) {
+        if (std.mem.trim(u8, parsed.rest, " \t\r\n").len == 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: shell-run <command[;command...]>");
+            return;
+        }
+        try executeScriptContents(parsed.rest, "shell-run", stdout_buffer, stderr_buffer, exit_code, allocator, depth);
         return;
     }
 
@@ -4767,6 +4802,24 @@ fn executeScriptPath(
     };
     defer allocator.free(script);
 
+    try executeScriptContents(script, operation, stdout_buffer, stderr_buffer, exit_code, allocator, depth);
+}
+
+fn executeScriptContents(
+    script: []const u8,
+    operation: []const u8,
+    stdout_buffer: *OutputBuffer,
+    stderr_buffer: *OutputBuffer,
+    exit_code: *u8,
+    allocator: std.mem.Allocator,
+    depth: usize,
+) Error!void {
+    if (depth >= max_script_depth) {
+        exit_code.* = 1;
+        try stderr_buffer.appendFmt("{s} failed: ScriptDepthExceeded\n", .{operation});
+        return;
+    }
+
     try filesystem.beginDeferredPersist();
     var finish_deferred_persist = true;
     defer if (finish_deferred_persist) {
@@ -4776,10 +4829,34 @@ fn executeScriptPath(
         };
     };
 
-    var lines = std.mem.splitScalar(u8, script, '\n');
-    while (lines.next()) |raw_line| {
-        const line = std.mem.trim(u8, raw_line, " \t\r");
+    var start: usize = 0;
+    var quote: u8 = 0;
+    var command_count: usize = 0;
+    var idx: usize = 0;
+    while (idx <= script.len) : (idx += 1) {
+        const at_end = idx == script.len;
+        if (!at_end) {
+            const ch = script[idx];
+            if (quote != 0) {
+                if (ch == quote) quote = 0;
+                continue;
+            }
+            if (ch == '"' or ch == '\'') {
+                quote = ch;
+                continue;
+            }
+            if (ch != ';' and ch != '\n') continue;
+        }
+
+        const line = std.mem.trim(u8, script[start..idx], " \t\r");
+        start = idx + 1;
         if (line.len == 0 or line[0] == '#') continue;
+        command_count += 1;
+        if (command_count > max_shell_command_count) {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("{s} failed: ShellCommandLimitExceeded\n", .{operation});
+            return;
+        }
 
         const nested = parseCommand(line) catch |err| {
             exit_code.* = 2;
@@ -4792,6 +4869,91 @@ fn executeScriptPath(
 
     try filesystem.endDeferredPersist();
     finish_deferred_persist = false;
+}
+
+fn expandShellPatternAlloc(
+    allocator: std.mem.Allocator,
+    pattern: []const u8,
+    max_bytes: usize,
+) Error![]u8 {
+    const trimmed = std.mem.trim(u8, pattern, " \t\r\n");
+    if (trimmed.len == 0) return error.MissingPath;
+    if (trimmed[0] != '/') return error.UnsupportedPattern;
+
+    const slash_index = std.mem.lastIndexOfScalar(u8, trimmed, '/') orelse return error.UnsupportedPattern;
+    const parent = if (slash_index == 0) "/" else trimmed[0..slash_index];
+    const leaf = trimmed[slash_index + 1 ..];
+    if (leaf.len == 0) return error.UnsupportedPattern;
+    if (std.mem.indexOfAny(u8, parent, "*?") != null) return error.UnsupportedPattern;
+
+    if (!containsWildcard(leaf)) {
+        _ = filesystem.statSummary(trimmed) catch return error.NoMatches;
+        return std.fmt.allocPrint(allocator, "{s}\n", .{trimmed});
+    }
+
+    const listing = filesystem.listDirectoryAlloc(allocator, parent, max_bytes) catch |err| switch (err) {
+        error.FileNotFound, error.NotDirectory => return error.NoMatches,
+        else => return err,
+    };
+    defer allocator.free(listing);
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+    var matched_any = false;
+    var lines = std.mem.splitScalar(u8, listing, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        const child_name = childNameFromListingLine(line) orelse continue;
+        if (!globMatches(leaf, child_name)) continue;
+        matched_any = true;
+        const child_path = if (std.mem.eql(u8, parent, "/"))
+            try std.fmt.allocPrint(allocator, "/{s}", .{child_name})
+        else
+            try std.fmt.allocPrint(allocator, "{s}/{s}", .{ parent, child_name });
+        defer allocator.free(child_path);
+        if (out.items.len + child_path.len + 1 > max_bytes) return error.StreamTooLong;
+        try out.appendSlice(allocator, child_path);
+        try out.append(allocator, '\n');
+    }
+    if (!matched_any) return error.NoMatches;
+    return out.toOwnedSlice(allocator);
+}
+
+fn containsWildcard(text: []const u8) bool {
+    return std.mem.indexOfAny(u8, text, "*?") != null;
+}
+
+fn childNameFromListingLine(line: []const u8) ?[]const u8 {
+    if (std.mem.startsWith(u8, line, "dir ")) return line[4..];
+    if (std.mem.startsWith(u8, line, "file ")) {
+        const rest = line[5..];
+        const space_index = std.mem.indexOfScalar(u8, rest, ' ') orelse return null;
+        return rest[0..space_index];
+    }
+    return null;
+}
+
+fn globMatches(pattern: []const u8, text: []const u8) bool {
+    return globMatchesInner(pattern, text, 0, 0);
+}
+
+fn globMatchesInner(pattern: []const u8, text: []const u8, pattern_index: usize, text_index: usize) bool {
+    if (pattern_index == pattern.len) return text_index == text.len;
+
+    return switch (pattern[pattern_index]) {
+        '*' => blk: {
+            var idx = text_index;
+            while (idx <= text.len) : (idx += 1) {
+                if (globMatchesInner(pattern, text, pattern_index + 1, idx)) break :blk true;
+            }
+            break :blk false;
+        },
+        '?' => if (text_index < text.len) globMatchesInner(pattern, text, pattern_index + 1, text_index + 1) else false,
+        else => if (text_index < text.len and pattern[pattern_index] == text[text_index])
+            globMatchesInner(pattern, text, pattern_index + 1, text_index + 1)
+        else
+            false,
+    };
 }
 
 fn writeCommandError(stderr_buffer: *OutputBuffer, err: anyerror, usage: []const u8) Error!void {
@@ -5779,6 +5941,39 @@ test "baremetal tool exec exposes storage and mount controls" {
     defer mount_list_after.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), mount_list_after.exit_code);
     try std.testing.expectEqualStrings("", mount_list_after.stdout);
+}
+
+test "baremetal tool exec exposes bounded shell batch and globbing" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    vga_text_console.resetForTest();
+
+    var shell_run = try runCapture(
+        std.testing.allocator,
+        "shell-run mkdir /tmp/sh; write-file /tmp/sh/A.TXT alpha; write-file /tmp/sh/B.LOG beta; mkdir /tmp/sh/DATA; write-file /tmp/sh/DATA/C.TXT gamma",
+        1024,
+        256,
+    );
+    defer shell_run.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), shell_run.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, shell_run.stdout, "created /tmp/sh\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, shell_run.stdout, "wrote 5 bytes to /tmp/sh/A.TXT\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, shell_run.stdout, "created /tmp/sh/DATA\n") != null);
+
+    var expand_root = try runCapture(std.testing.allocator, "shell-expand /tmp/sh/*.TXT", 256, 256);
+    defer expand_root.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), expand_root.exit_code);
+    try std.testing.expectEqualStrings("/tmp/sh/A.TXT\n", expand_root.stdout);
+
+    var expand_nested = try runCapture(std.testing.allocator, "shell-expand /tmp/sh/DATA/*.TXT", 256, 256);
+    defer expand_nested.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), expand_nested.exit_code);
+    try std.testing.expectEqualStrings("/tmp/sh/DATA/C.TXT\n", expand_nested.stdout);
+
+    var no_match = try runCapture(std.testing.allocator, "shell-expand /tmp/sh/*.BIN", 256, 256);
+    defer no_match.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 1), no_match.exit_code);
+    try std.testing.expectEqualStrings("shell-expand failed: NoMatches\n", no_match.stderr);
 }
 
 test "baremetal tool exec configures app trust and connector and reports app info" {

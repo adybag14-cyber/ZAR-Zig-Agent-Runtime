@@ -18,7 +18,7 @@ This track exists to remove guesswork. It defines the real bare-metal subsystems
 
 ## ZigOS Reference Track
 
-Status: `Slices 1-7 delivered`
+Status: `Slices 1-8 delivered`
 
 This track uses `Cameron-Lyons/zigos` as a reference architecture and source candidate where it improves ZAR.
 
@@ -35,6 +35,7 @@ Tracked docs:
 - `docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md`
 - `docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_NET_SLICE_PLAN.md`
 - `docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_BLOCK_SLICE_PLAN.md`
+- `docs/zig-port/ZAR_VS_ZIGOS_SHELL_CONTROL_SLICE_PLAN.md`
 
 Delivered first adoption slice:
 
@@ -124,6 +125,17 @@ Delivered seventh adoption slice:
 - `scripts/baremetal-qemu-virtio-net-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-arp-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-udp-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-dhcp-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-dns-probe-check.ps1`, and `scripts/baremetal-qemu-virtio-net-tcp-probe-check.ps1` plus `scripts/qemu-virtio-net-dgram-echo.ps1` now prove live QEMU `virtio-net-pci` PCI bind, MAC readout, TX, RX, ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, DHCP discover encode/decode, DNS query/A-response exchange, bounded TCP handshake/payload/teardown, payload validation, and counter advance over the freestanding PVH artifact
 - host regressions in `src/pal/net.zig` plus `src/baremetal_main.zig` now prove bounded framed tool-service reuse and bounded freestanding `HTTP` / `HTTPS` transport reuse over the clean-room `virtio-net` path
 - `scripts/baremetal-qemu-virtio-net-tool-service-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-http-post-probe-check.ps1`, and `scripts/baremetal-qemu-virtio-net-https-post-probe-check.ps1` now prove live QEMU tool-service reuse, `HTTP` POST, and `HTTPS` POST over the same `virtio-net-pci` freestanding path
+
+Delivered eighth adoption slice:
+
+- bounded shell/control helpers inspired by ZigOS shell structure without claiming a GP-OS shell model
+- `src/baremetal/tool_exec.zig` now exposes `shell-expand <pattern>` plus `shell-run <command[;command...]>` over the existing builtin runtime surface
+- `shell-run` now routes through shared bounded script execution with quote-aware separator splitting, deferred filesystem persistence, and a hard `64`-command limit
+- `shell-expand` now provides bounded wildcard expansion over the final path component using `*` and `?`, returning absolute match paths and explicit `NoMatches` failure when nothing resolves
+- `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `SHELLEXPAND` plus `SHELLRUN` over the framed TCP service
+- `src/baremetal_main.zig` now widens the live `E1000` tool-service proof to validate shell help output, bounded shell batching, bounded glob expansion, and persisted filesystem readback on the clean-room NIC lane
+- `build.zig` now explicitly wires `scripts/baremetal/pvh_boot.S` plus `scripts/baremetal/pvh_lld.ld` into the bare-metal artifact so the Multiboot2 header remains within the required first `32768` bytes on current Zig `master`
+- full userspace shell, job control, editor/TTY parity, and syscall-visible shell semantics remain future redesign work
 
 `FS5.5` is not complete until each subsystem has:
 

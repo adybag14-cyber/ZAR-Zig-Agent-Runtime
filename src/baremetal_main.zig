@@ -14756,6 +14756,7 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
     if (!std.mem.startsWith(u8, help_response, "RESP 3 ")) return error.ToolServiceResponseMismatch;
     qemuDebugWrite("ETS6\n");
     if (std.mem.indexOf(u8, help_response, "OpenClaw bare-metal builtins:") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, help_response, "shell-run") == null) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, help_response, "workspace-suite-release-channel-activate") == null) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, help_response, "display-interface-capabilities") == null) return error.ToolServiceResponseMismatch;
 
@@ -14899,6 +14900,69 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
     const tmp_readback = filesystem.readFileAlloc(service_fba.allocator(), "/tmp/cache/tool.txt", 64) catch return error.ToolServiceFailed;
     if (!std.mem.eql(u8, tmp_readback, "edge")) return error.ToolServiceResponseMismatch;
     qemuDebugWrite("ETS9A5\n");
+
+    const shell_script =
+        "mkdir /tmp/sh\n" ++
+        "write-file /tmp/sh/A.TXT alpha\n" ++
+        "write-file /tmp/sh/B.LOG beta\n" ++
+        "mkdir /tmp/sh/DATA\n" ++
+        "write-file /tmp/sh/DATA/C.TXT gamma\n";
+    const shell_run_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 34 SHELLRUN {d}\n{s}", .{
+        shell_script.len,
+        shell_script,
+    }) catch return error.ToolServiceFailed;
+    const shell_run_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        shell_run_request,
+        1024,
+        256,
+        1024,
+    );
+    if (!std.mem.startsWith(u8, shell_run_response, "RESP 34 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, shell_run_response, "created /tmp/sh\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, shell_run_response, "wrote 5 bytes to /tmp/sh/A.TXT\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, shell_run_response, "created /tmp/sh/DATA\n") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A6\n");
+
+    const shell_expand_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 35 SHELLEXPAND /tmp/sh/*.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, shell_expand_response, "RESP 35 14\n/tmp/sh/A.TXT\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A7\n");
+
+    const shell_expand_nested_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 36 SHELLEXPAND /tmp/sh/DATA/*.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, shell_expand_nested_response, "RESP 36 19\n/tmp/sh/DATA/C.TXT\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8\n");
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const shell_nested_readback = filesystem.readFileAlloc(service_fba.allocator(), "/tmp/sh/DATA/C.TXT", 64) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, shell_nested_readback, "gamma")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9\n");
 
     const virtual_snapshot_response = try exchangeE1000TcpProbeServiceRequest(
         eth,

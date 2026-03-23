@@ -15,7 +15,7 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
   - Original OpenClaw baseline (`v2026.3.13-1`): `100/100` covered
   - Original OpenClaw beta baseline (`v2026.3.13-beta.1`): `100/100` covered
   - Union baseline: `141/141` covered (`MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> hosted `451/451`, bare-metal host `441 passed / 1 skipped`
+- Latest local validation: `zig build test --summary all` -> hosted `458/458`, bare-metal host `455 passed / 1 skipped`
 - Current edge release target tag: `v0.2.0-zig-edge.31`
 - License posture: repo-wide `GPL-2.0-only` with Linux-style SPDX headers on repo-owned source and script files
 - Toolchain policy: Codeberg `master` is canonical; `adybag14-cyber/zig` publishes rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
@@ -62,6 +62,7 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
       - [`docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md`](docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md)
       - [`docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_NET_SLICE_PLAN.md`](docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_NET_SLICE_PLAN.md)
       - [`docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_BLOCK_SLICE_PLAN.md`](docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_BLOCK_SLICE_PLAN.md)
+      - [`docs/zig-port/ZAR_VS_ZIGOS_SHELL_CONTROL_SLICE_PLAN.md`](docs/zig-port/ZAR_VS_ZIGOS_SHELL_CONTROL_SLICE_PLAN.md)
     - first delivered adoption slice is a clean-room `E1000` path that reuses ZAR's existing network stack without forcing VFS/userspace redesign
     - `src/baremetal/e1000.zig` now provides the first `82540EM`-class `E1000` path with PCI bind, MMIO + legacy I/O reset, EEPROM MAC readout, bounded TX/RX rings, and raw-frame send/receive telemetry
     - `src/baremetal/pci.zig` now discovers the `E1000` MMIO + I/O BAR pair and enables I/O, memory, and bus-master decode on the selected PCI function
@@ -138,6 +139,13 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
       - `src/baremetal/fat32_ro.zig` now provides the same bounded listing/read/stat surface plus bounded one-level `8.3` file write/overwrite/delete and directory create/remove over deterministic `fat32` images, including nested paths like `/mnt/external/DATA/WRITE.TXT` and bounded directory paths like `/mnt/external/CACHE`
       - `src/baremetal/mounted_external_fs.zig` and `src/baremetal/vfs.zig` now expose those external filesystems through `/__storagefs/{active,ext2,fat32}` and mounted aliases like `/mnt/external/...`
       - `src/baremetal/storage_backend.zig` plus `src/baremetal_main.zig` now expose bounded backend count, availability, and explicit selection so the external mount seam can retarget from RAM-disk back to `virtio-block`
+    - twelfth delivered adoption slice is a bounded shell/control layer over the existing builtin and framed tool-service surface:
+      - `src/baremetal/tool_exec.zig` now exposes `shell-run <command[;command...]>` plus `shell-expand <pattern>` as bounded control helpers instead of claiming a userspace shell
+      - `shell-run` now routes through shared bounded script execution with quote-aware separator splitting, deferred filesystem persistence, and a hard `64`-command limit
+      - `shell-expand` now provides bounded wildcard expansion for the final path component using `*` and `?`, returning one absolute match per line and explicit `NoMatches` failure when nothing resolves
+      - `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `SHELLRUN` plus `SHELLEXPAND` over the framed TCP service
+      - `src/baremetal_main.zig` now widens the live `E1000` tool-service proof to validate shell help output, bounded shell batching, bounded glob expansion, and persisted filesystem readback on the clean-room NIC lane
+      - `build.zig` now explicitly wires `scripts/baremetal/pvh_boot.S` plus `scripts/baremetal/pvh_lld.ld` into the bare-metal artifact so the Multiboot2 header remains within the required first `32768` bytes on current Zig `master`
       - host regressions now prove backend retargeting, mounted `/mnt/external` listing/read/stat, read-only write rejection on `ext2`, bounded FAT32 file mutation, bounded FAT32 directory mutation, and `/sys/storage/{backends,filesystems,registry}` readback
       - `scripts/baremetal-qemu-virtio-block-ext2-mount-probe-check.ps1` and `scripts/baremetal-qemu-virtio-block-fat32-mount-probe-check.ps1` now prove live QEMU bounded `ext2` and `fat32` mounting on `virtio-blk-pci`, including on-disk signature validation, payload readback, root plus nested FAT32 file mutation, bounded mounted-directory create/remove, and mounted alias readback
       - user-facing storage controls are now live through the bare-metal command and framed-service seams:

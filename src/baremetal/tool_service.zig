@@ -196,6 +196,8 @@ fn handleFramedPayload(
         .put => |put_request| try handlePutRequest(allocator, put_request.path, put_request.body, payload_limit),
         .stat => |path| try handleStatRequest(allocator, path, payload_limit),
         .list => |path| try handleListRequest(allocator, path, payload_limit),
+        .shell_expand => |pattern| try handleShellExpandRequest(allocator, pattern, stdout_limit, stderr_limit, payload_limit),
+        .shell_run => |script| try handleShellRunRequest(allocator, script, stdout_limit, stderr_limit, payload_limit),
         .storage_backends => try handleStorageBackendsRequest(allocator, payload_limit),
         .storage_filesystems => try handleStorageFilesystemsRequest(allocator, payload_limit),
         .storage_backend_info => |backend_name| try handleStorageBackendInfoRequest(allocator, backend_name, payload_limit),
@@ -464,6 +466,30 @@ fn handleListRequest(allocator: std.mem.Allocator, path: []const u8, payload_lim
     return filesystem.listDirectoryAlloc(allocator, path, payload_limit) catch |err| {
         return formatOperationError(allocator, "LIST", err, payload_limit);
     };
+}
+
+fn handleShellExpandRequest(
+    allocator: std.mem.Allocator,
+    pattern: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    const command = try std.fmt.allocPrint(allocator, "shell-expand {s}", .{pattern});
+    defer allocator.free(command);
+    return handleCommandRequest(allocator, command, stdout_limit, stderr_limit, payload_limit);
+}
+
+fn handleShellRunRequest(
+    allocator: std.mem.Allocator,
+    script: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    const command = try std.fmt.allocPrint(allocator, "shell-run {s}", .{script});
+    defer allocator.free(command);
+    return handleCommandRequest(allocator, command, stdout_limit, stderr_limit, payload_limit);
 }
 
 fn handleStorageBackendsRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
@@ -4072,6 +4098,33 @@ test "baremetal tool service exposes storage and mount controls" {
     const mount_list_after_remove = try handleFramedRequest(std.testing.allocator, "REQ 29 MOUNTLIST", 512, 256, 512);
     defer std.testing.allocator.free(mount_list_after_remove);
     try std.testing.expectEqualStrings("RESP 29 0\n", mount_list_after_remove);
+}
+
+test "baremetal tool service exposes bounded shell batch and globbing" {
+    resetPersistentStateForTest();
+
+    const shell_script =
+        "mkdir /tmp/sh\n" ++
+        "write-file /tmp/sh/A.TXT alpha\n" ++
+        "write-file /tmp/sh/B.LOG beta\n" ++
+        "mkdir /tmp/sh/DATA\n" ++
+        "write-file /tmp/sh/DATA/C.TXT gamma\n";
+    const shell_run_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 30 SHELLRUN {d}\n{s}", .{ shell_script.len, shell_script });
+    defer std.testing.allocator.free(shell_run_request);
+    const shell_run_response = try handleFramedRequest(std.testing.allocator, shell_run_request, 1024, 256, 1024);
+    defer std.testing.allocator.free(shell_run_response);
+    try std.testing.expect(std.mem.startsWith(u8, shell_run_response, "RESP 30 "));
+    try std.testing.expect(std.mem.indexOf(u8, shell_run_response, "created /tmp/sh\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, shell_run_response, "wrote 5 bytes to /tmp/sh/A.TXT\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, shell_run_response, "created /tmp/sh/DATA\n") != null);
+
+    const shell_expand_root = try handleFramedRequest(std.testing.allocator, "REQ 31 SHELLEXPAND /tmp/sh/*.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(shell_expand_root);
+    try std.testing.expectEqualStrings("RESP 31 14\n/tmp/sh/A.TXT\n", shell_expand_root);
+
+    const shell_expand_nested = try handleFramedRequest(std.testing.allocator, "REQ 32 SHELLEXPAND /tmp/sh/DATA/*.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(shell_expand_nested);
+    try std.testing.expectEqualStrings("RESP 32 19\n/tmp/sh/DATA/C.TXT\n", shell_expand_nested);
 }
 
 test "baremetal tool service uploads and runs persisted scripts" {
