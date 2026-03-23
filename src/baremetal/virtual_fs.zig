@@ -142,8 +142,10 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     if (parseDevTtySessionDirectory(path)) |session_name| {
         try appendFileLineForPath(allocator, &out, "info", try ttySessionFilePathForBase(allocator, dev_tty_sessions_path, session_name, "info"), max_bytes);
         try appendFileLineForPath(allocator, &out, "input", try ttySessionFilePathForBase(allocator, dev_tty_sessions_path, session_name, "input"), max_bytes);
+        try appendFileLineForPath(allocator, &out, "pending", try ttySessionFilePathForBase(allocator, dev_tty_sessions_path, session_name, "pending"), max_bytes);
         try appendFileLineForPath(allocator, &out, "stdout", try ttySessionFilePathForBase(allocator, dev_tty_sessions_path, session_name, "stdout"), max_bytes);
         try appendFileLineForPath(allocator, &out, "stderr", try ttySessionFilePathForBase(allocator, dev_tty_sessions_path, session_name, "stderr"), max_bytes);
+        try appendFileLineForPath(allocator, &out, "events", try ttySessionFilePathForBase(allocator, dev_tty_sessions_path, session_name, "events"), max_bytes);
         try appendFileLineForPath(allocator, &out, "transcript", try ttySessionFilePathForBase(allocator, dev_tty_sessions_path, session_name, "transcript"), max_bytes);
         return out.toOwnedSlice(allocator);
     }
@@ -205,8 +207,10 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     if (parseSysTtySessionDirectory(path)) |session_name| {
         try appendFileLineForPath(allocator, &out, "info", try ttySessionFilePathForBase(allocator, sys_tty_sessions_path, session_name, "info"), max_bytes);
         try appendFileLineForPath(allocator, &out, "input", try ttySessionFilePathForBase(allocator, sys_tty_sessions_path, session_name, "input"), max_bytes);
+        try appendFileLineForPath(allocator, &out, "pending", try ttySessionFilePathForBase(allocator, sys_tty_sessions_path, session_name, "pending"), max_bytes);
         try appendFileLineForPath(allocator, &out, "stdout", try ttySessionFilePathForBase(allocator, sys_tty_sessions_path, session_name, "stdout"), max_bytes);
         try appendFileLineForPath(allocator, &out, "stderr", try ttySessionFilePathForBase(allocator, sys_tty_sessions_path, session_name, "stderr"), max_bytes);
+        try appendFileLineForPath(allocator, &out, "events", try ttySessionFilePathForBase(allocator, sys_tty_sessions_path, session_name, "events"), max_bytes);
         try appendFileLineForPath(allocator, &out, "transcript", try ttySessionFilePathForBase(allocator, sys_tty_sessions_path, session_name, "transcript"), max_bytes);
         return out.toOwnedSlice(allocator);
     }
@@ -414,8 +418,10 @@ fn renderFileAlloc(allocator: std.mem.Allocator, path: []const u8) Error![]u8 {
         return switch (request.kind) {
             .info => renderTtySessionFileAlloc(allocator, request.session_name, .info),
             .input => renderTtySessionFileAlloc(allocator, request.session_name, .input),
+            .pending => renderTtySessionFileAlloc(allocator, request.session_name, .pending),
             .stdout => renderTtySessionFileAlloc(allocator, request.session_name, .stdout),
             .stderr => renderTtySessionFileAlloc(allocator, request.session_name, .stderr),
+            .events => renderTtySessionFileAlloc(allocator, request.session_name, .events),
             .transcript => renderTtySessionFileAlloc(allocator, request.session_name, .transcript),
         };
     }
@@ -501,12 +507,22 @@ fn renderTtySessionFileAlloc(
             error.OutOfMemory => error.OutOfMemory,
             else => error.FileNotFound,
         },
+        .pending => tty_runtime.pendingAlloc(allocator, session_name, max_stat_render_bytes) catch |err| switch (err) {
+            error.ResponseTooLarge => error.ResponseTooLarge,
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.FileNotFound,
+        },
         .stdout => tty_runtime.stdoutAlloc(allocator, session_name, max_stat_render_bytes) catch |err| switch (err) {
             error.ResponseTooLarge => error.ResponseTooLarge,
             error.OutOfMemory => error.OutOfMemory,
             else => error.FileNotFound,
         },
         .stderr => tty_runtime.stderrAlloc(allocator, session_name, max_stat_render_bytes) catch |err| switch (err) {
+            error.ResponseTooLarge => error.ResponseTooLarge,
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.FileNotFound,
+        },
+        .events => tty_runtime.eventsAlloc(allocator, session_name, max_stat_render_bytes) catch |err| switch (err) {
             error.ResponseTooLarge => error.ResponseTooLarge,
             error.OutOfMemory => error.OutOfMemory,
             else => error.FileNotFound,
@@ -697,8 +713,10 @@ const OutputFileRequest = struct {
 const TtySessionFileKind = enum {
     info,
     input,
+    pending,
     stdout,
     stderr,
+    events,
     transcript,
 };
 
@@ -749,8 +767,10 @@ fn parseTtySessionFilePathForBase(base_path: []const u8, path: []const u8) ?TtyS
     if (std.mem.indexOfScalar(u8, file_name, '/')) |_| return null;
     if (std.mem.eql(u8, file_name, "info")) return .{ .session_name = session_name, .kind = .info };
     if (std.mem.eql(u8, file_name, "input")) return .{ .session_name = session_name, .kind = .input };
+    if (std.mem.eql(u8, file_name, "pending")) return .{ .session_name = session_name, .kind = .pending };
     if (std.mem.eql(u8, file_name, "stdout")) return .{ .session_name = session_name, .kind = .stdout };
     if (std.mem.eql(u8, file_name, "stderr")) return .{ .session_name = session_name, .kind = .stderr };
+    if (std.mem.eql(u8, file_name, "events")) return .{ .session_name = session_name, .kind = .events };
     if (std.mem.eql(u8, file_name, "transcript")) return .{ .session_name = session_name, .kind = .transcript };
     return null;
 }

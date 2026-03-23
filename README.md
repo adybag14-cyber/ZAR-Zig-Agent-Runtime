@@ -153,12 +153,12 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
       - user-facing storage controls are now live through the bare-metal command and framed-service seams:
         - CLI: `storage-backends`, `storage-filesystems`, `storage-backend-info`, `storage-backend-select`, `storage-partitions`, `storage-partition-select`, `mount-list`, `mount-info`, `mount-bind`, `mount-remove`
         - typed service: `STORAGEBACKENDS`, `STORAGEFILESYSTEMS`, `STORAGEBACKENDINFO`, `STORAGEBACKENDSELECT`, `STORAGEPARTITIONS`, `STORAGEPARTITIONSELECT`, `MOUNTLIST`, `MOUNTINFO`, `MOUNTBIND`, `MOUNTREMOVE`
-    - thirteenth delivered adoption slice is a bounded TTY/session control layer over the existing builtin and framed tool-service surface:
-      - `src/baremetal/tty_runtime.zig` now persists bounded TTY session receipts under `/runtime/tty/<name>/` with `state.txt`, `input.log`, `stdout.log`, `stderr.log`, and `transcript.log`
-      - `src/baremetal/tool_exec.zig` now exposes `tty-list`, `tty-open`, `tty-info`, `tty-read`, `tty-stdout`, `tty-stderr`, `tty-send`, and `tty-close`
-      - `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `TTYLIST`, `TTYOPEN`, `TTYINFO`, `TTYREAD`, `TTYSTDOUT`, `TTYSTDERR`, `TTYSEND`, and `TTYCLOSE`
-      - `src/baremetal/virtual_fs.zig` now exposes bounded TTY state through `/dev/tty/state`, `/dev/tty/sessions/...`, `/sys/tty/state`, and `/sys/tty/sessions/...`
-      - `src/baremetal_main.zig` now widens the live `E1000` tool-service proof to validate TTY open/send/read/stdout/stderr/close behavior plus `/dev` and `/sys` TTY state readback on the clean-room NIC lane
+    - thirteenth delivered adoption slice is a bounded TTY/session input-control layer over the existing builtin and framed tool-service surface:
+      - `src/baremetal/tty_runtime.zig` now persists bounded TTY session receipts under `/runtime/tty/<name>/` with `state.txt`, `input.log`, `pending.log`, `stdout.log`, `stderr.log`, `events.log`, and `transcript.log`
+      - `src/baremetal/tool_exec.zig` now exposes `tty-list`, `tty-open`, `tty-info`, `tty-read`, `tty-pending`, `tty-events`, `tty-stdout`, `tty-stderr`, `tty-write`, `tty-send`, `tty-clear`, and `tty-close`
+      - `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `TTYLIST`, `TTYOPEN`, `TTYINFO`, `TTYREAD`, `TTYPENDING`, `TTYEVENTS`, `TTYSTDOUT`, `TTYSTDERR`, `TTYWRITE`, `TTYSEND`, `TTYCLEAR`, and `TTYCLOSE`
+      - `src/baremetal/virtual_fs.zig` now exposes bounded TTY state through `/dev/tty/state`, `/dev/tty/sessions/<name>/{info,input,pending,stdout,stderr,events,transcript}`, `/sys/tty/state`, and `/sys/tty/sessions/<name>/{info,input,pending,stdout,stderr,events,transcript}`
+      - `src/baremetal_main.zig` now widens the live `E1000` tool-service proof to validate queued input write/drain, pending clear, event receipts, transcript stdin capture, and `/dev` plus `/sys` TTY state readback on the clean-room NIC lane
   - keyboard/mouse is now strict-closed in [`docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md`](docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md)
   - `src/baremetal/ps2_input.zig` now contains a real x86 port-I/O backed PS/2 controller path
   - `scripts/baremetal-qemu-ps2-input-probe-check.ps1` proves IRQ-driven keyboard/mouse state updates against the freestanding PVH artifact

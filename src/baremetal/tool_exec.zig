@@ -142,9 +142,30 @@ pub fn runCaptureSilent(
     return runCaptureWithMirror(allocator, command, stdout_limit, stderr_limit, false);
 }
 
+pub fn runCaptureSilentWithInput(
+    allocator: std.mem.Allocator,
+    command: []const u8,
+    stdin_content: ?[]const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+) Error!Result {
+    return runCaptureWithMirrorAndInput(allocator, command, stdin_content, stdout_limit, stderr_limit, false);
+}
+
 fn runCaptureWithMirror(
     allocator: std.mem.Allocator,
     command: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    mirror: bool,
+) Error!Result {
+    return runCaptureWithMirrorAndInput(allocator, command, null, stdout_limit, stderr_limit, mirror);
+}
+
+fn runCaptureWithMirrorAndInput(
+    allocator: std.mem.Allocator,
+    command: []const u8,
+    stdin_content: ?[]const u8,
     stdout_limit: usize,
     stderr_limit: usize,
     mirror: bool,
@@ -165,7 +186,7 @@ fn runCaptureWithMirror(
             .stderr = try stderr_buffer.toOwnedSlice(),
         };
     };
-    execute(parsed, &stdout_buffer, &stderr_buffer, &exit_code, null, allocator, 0) catch |err| {
+    execute(parsed, &stdout_buffer, &stderr_buffer, &exit_code, stdin_content, allocator, 0) catch |err| {
         exit_code = 1;
         try stderr_buffer.appendFmt("{s}\n", .{@errorName(err)});
     };
@@ -189,7 +210,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, shell-expand, shell-run, tty-list, tty-open, tty-info, tty-read, tty-stdout, tty-stderr, tty-send, tty-close, storage-backends, storage-filesystems, storage-backend-info, storage-backend-select, storage-partitions, storage-partition-select, mount-list, mount-info, mount-bind, mount-remove, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-plan-list, workspace-plan-info, workspace-plan-active, workspace-plan-save, workspace-plan-apply, workspace-plan-delete, workspace-plan-release-list, workspace-plan-release-info, workspace-plan-release-save, workspace-plan-release-activate, workspace-plan-release-delete, workspace-plan-release-prune, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-suite-release-channel-list, workspace-suite-release-channel-info, workspace-suite-release-channel-set, workspace-suite-release-channel-activate, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-outputs, display-output, display-output-detail, display-output-capabilities, display-output-modes, display-interface-detail, display-interface-capabilities, display-interface-modes, display-modes, display-set, display-activate, display-activate-preferred, display-activate-interface, display-activate-interface-preferred, display-interface-set, display-interface-activate-mode, display-activate-output, display-activate-output-preferred, display-output-set, display-output-activate-mode, display-profile-list, display-profile-info, display-profile-active, display-profile-save, display-profile-apply, display-profile-delete, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, shell-expand, shell-run, tty-list, tty-open, tty-info, tty-read, tty-pending, tty-events, tty-stdout, tty-stderr, tty-write, tty-send, tty-clear, tty-close, storage-backends, storage-filesystems, storage-backend-info, storage-backend-select, storage-partitions, storage-partition-select, mount-list, mount-info, mount-bind, mount-remove, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-plan-list, workspace-plan-info, workspace-plan-active, workspace-plan-save, workspace-plan-apply, workspace-plan-delete, workspace-plan-release-list, workspace-plan-release-info, workspace-plan-release-save, workspace-plan-release-activate, workspace-plan-release-delete, workspace-plan-release-prune, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-suite-release-channel-list, workspace-suite-release-channel-info, workspace-suite-release-channel-set, workspace-suite-release-channel-activate, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-outputs, display-output, display-output-detail, display-output-capabilities, display-output-modes, display-interface-detail, display-interface-capabilities, display-interface-modes, display-modes, display-set, display-activate, display-activate-preferred, display-activate-interface, display-activate-interface-preferred, display-interface-set, display-interface-activate-mode, display-activate-output, display-activate-output-preferred, display-output-set, display-output-activate-mode, display-profile-list, display-profile-info, display-profile-active, display-profile-save, display-profile-apply, display-profile-delete, run-script, run-package, app-run");
         return;
     }
 
@@ -451,6 +472,48 @@ fn execute(
         return;
     }
 
+    if (std.ascii.eqlIgnoreCase(parsed.name, "tty-pending")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "tty-pending <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: tty-pending <name>");
+            return;
+        }
+        const rendered = tty_runtime.pendingAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("tty-pending failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(rendered);
+        try stdout_buffer.appendSlice(rendered);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "tty-events")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "tty-events <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: tty-events <name>");
+            return;
+        }
+        const rendered = tty_runtime.eventsAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("tty-events failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(rendered);
+        try stdout_buffer.appendSlice(rendered);
+        return;
+    }
+
     if (std.ascii.eqlIgnoreCase(parsed.name, "tty-stdout")) {
         const arg = parseFirstArg(parsed.rest) catch |err| {
             exit_code.* = 2;
@@ -493,6 +556,27 @@ fn execute(
         return;
     }
 
+    if (std.ascii.eqlIgnoreCase(parsed.name, "tty-write")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "tty-write <name> <content>");
+            return;
+        };
+        const content = arg.rest;
+        if (content.len == 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: tty-write <name> <content>");
+            return;
+        }
+        tty_runtime.writePendingInput(allocator, arg.arg, content, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("tty-write failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("tty queued {s} {d} bytes\n", .{ arg.arg, content.len });
+        return;
+    }
+
     if (std.ascii.eqlIgnoreCase(parsed.name, "tty-send")) {
         const arg = parseFirstArg(parsed.rest) catch |err| {
             exit_code.* = 2;
@@ -505,14 +589,22 @@ fn execute(
             try stderr_buffer.appendLine("usage: tty-send <name> <command>");
             return;
         }
-        var result = runCaptureSilent(allocator, command, stdout_buffer.limit, stderr_buffer.limit) catch |err| {
+        const pending_input = tty_runtime.takePendingInputAlloc(allocator, arg.arg, stdout_buffer.limit, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("tty-send failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(pending_input);
+        const tty_stdin: ?[]const u8 = if (pending_input.len == 0) null else pending_input;
+
+        var result = runCaptureSilentWithInput(allocator, command, tty_stdin, stdout_buffer.limit, stderr_buffer.limit) catch |err| {
             exit_code.* = 1;
             try stderr_buffer.appendFmt("tty-send failed: {s}\n", .{@errorName(err)});
             return;
         };
         defer result.deinit(allocator);
 
-        tty_runtime.recordCommand(allocator, arg.arg, command, result.exit_code, result.stdout, result.stderr, 0) catch |err| {
+        tty_runtime.recordCommand(allocator, arg.arg, command, tty_stdin orelse "", result.exit_code, result.stdout, result.stderr, 0) catch |err| {
             exit_code.* = 1;
             try stderr_buffer.appendFmt("tty-send failed: {s}\n", .{@errorName(err)});
             return;
@@ -521,6 +613,26 @@ fn execute(
         exit_code.* = result.exit_code;
         try stdout_buffer.appendSlice(result.stdout);
         try stderr_buffer.appendSlice(result.stderr);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "tty-clear")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "tty-clear <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: tty-clear <name>");
+            return;
+        }
+        tty_runtime.clearPendingInput(allocator, arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("tty-clear failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("tty cleared {s}\n", .{arg.arg});
         return;
     }
 
@@ -6576,11 +6688,36 @@ test "baremetal tool exec persists bounded tty session receipts" {
     try std.testing.expectEqual(@as(u8, 0), open_result.exit_code);
     try std.testing.expectEqualStrings("tty opened demo\n", open_result.stdout);
 
-    var send_result = try runCapture(std.testing.allocator, "tty-send demo echo tty-session-ok", 256, 256);
+    var write_result = try runCapture(std.testing.allocator, "tty-write demo tty-session-input", 256, 256);
+    defer write_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), write_result.exit_code);
+    try std.testing.expectEqualStrings("tty queued demo 17 bytes\n", write_result.stdout);
+
+    var pending_result = try runCapture(std.testing.allocator, "tty-pending demo", 256, 256);
+    defer pending_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), pending_result.exit_code);
+    try std.testing.expectEqualStrings("tty-session-input", pending_result.stdout);
+
+    var send_result = try runCapture(std.testing.allocator, "tty-send demo cat", 256, 256);
     defer send_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), send_result.exit_code);
-    try std.testing.expectEqualStrings("tty-session-ok\n", send_result.stdout);
+    try std.testing.expectEqualStrings("tty-session-input", send_result.stdout);
     try std.testing.expectEqualStrings("", send_result.stderr);
+
+    var drained_pending = try runCapture(std.testing.allocator, "tty-pending demo", 256, 256);
+    defer drained_pending.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), drained_pending.exit_code);
+    try std.testing.expectEqualStrings("", drained_pending.stdout);
+
+    var stale_write = try runCapture(std.testing.allocator, "tty-write demo stale-tty", 256, 256);
+    defer stale_write.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), stale_write.exit_code);
+    try std.testing.expectEqualStrings("tty queued demo 9 bytes\n", stale_write.stdout);
+
+    var clear_result = try runCapture(std.testing.allocator, "tty-clear demo", 256, 256);
+    defer clear_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), clear_result.exit_code);
+    try std.testing.expectEqualStrings("tty cleared demo\n", clear_result.stdout);
 
     var stderr_send = try runCapture(std.testing.allocator, "tty-send demo cat /tmp/missing-tty.txt", 256, 256);
     defer stderr_send.deinit(std.testing.allocator);
@@ -6599,18 +6736,29 @@ test "baremetal tool exec persists bounded tty session receipts" {
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "name=demo") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "open=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "command_count=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "pending_input_bytes=0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "event_count=6") != null);
 
     var read_result = try runCapture(std.testing.allocator, "tty-read demo", 1024, 256);
     defer read_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), read_result.exit_code);
-    try std.testing.expect(std.mem.indexOf(u8, read_result.stdout, "$ echo tty-session-ok\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, read_result.stdout, "$ cat\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, read_result.stdout, "stdin:\ntty-session-input\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, read_result.stdout, "$ cat /tmp/missing-tty.txt\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, read_result.stdout, "stderr:\ncat failed: FileNotFound\n") != null);
+
+    var events_result = try runCapture(std.testing.allocator, "tty-events demo", 1024, 256);
+    defer events_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), events_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, events_result.stdout, "type=open") != null);
+    try std.testing.expect(std.mem.indexOf(u8, events_result.stdout, "type=write bytes=17") != null);
+    try std.testing.expect(std.mem.indexOf(u8, events_result.stdout, "type=send exit=0 stdin_bytes=17 stdout_bytes=17 stderr_bytes=0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, events_result.stdout, "type=clear bytes=9") != null);
 
     var stdout_result = try runCapture(std.testing.allocator, "tty-stdout demo", 256, 256);
     defer stdout_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), stdout_result.exit_code);
-    try std.testing.expectEqualStrings("tty-session-ok\n", stdout_result.stdout);
+    try std.testing.expectEqualStrings("tty-session-input", stdout_result.stdout);
 
     var stderr_result = try runCapture(std.testing.allocator, "tty-stderr demo", 256, 256);
     defer stderr_result.deinit(std.testing.allocator);

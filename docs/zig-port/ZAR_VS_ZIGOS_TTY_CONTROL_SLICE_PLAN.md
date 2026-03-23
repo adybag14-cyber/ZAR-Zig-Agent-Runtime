@@ -13,6 +13,7 @@ Deliver the first TTY/session slice without forcing a GP-OS jump.
 This slice is intentionally limited to:
 
 - bounded persisted TTY session receipts
+- bounded queued TTY input and event receipts
 - bounded command submission through the existing builtin runtime
 - bounded stdout/stderr/transcript readback
 - bounded `/dev/tty` and `/sys/tty` export over persisted session state
@@ -34,8 +35,10 @@ This slice explicitly does not claim:
   - persisted bounded TTY sessions under `/runtime/tty/<name>/`
   - `state.txt`
   - `input.log`
+  - `pending.log`
   - `stdout.log`
   - `stderr.log`
+  - `events.log`
   - `transcript.log`
   - bounded helpers:
     - `listSessionsAlloc(...)`
@@ -43,6 +46,11 @@ This slice explicitly does not claim:
     - `openSession(...)`
     - `closeSession(...)`
     - `recordCommand(...)`
+    - `writePendingInput(...)`
+    - `clearPendingInput(...)`
+    - `takePendingInputAlloc(...)`
+    - `pendingAlloc(...)`
+    - `eventsAlloc(...)`
     - `infoAlloc(...)`
     - `inputAlloc(...)`
     - `stdoutAlloc(...)`
@@ -53,9 +61,13 @@ This slice explicitly does not claim:
   - `tty-open <name>`
   - `tty-info <name>`
   - `tty-read <name>`
+  - `tty-pending <name>`
+  - `tty-events <name>`
   - `tty-stdout <name>`
   - `tty-stderr <name>`
+  - `tty-write <name> <content>`
   - `tty-send <name> <command>`
+  - `tty-clear <name>`
   - `tty-close <name>`
 - `src/baremetal/tool_service/codec.zig`
   - typed:
@@ -63,28 +75,38 @@ This slice explicitly does not claim:
     - `TTYOPEN`
     - `TTYINFO`
     - `TTYREAD`
+    - `TTYPENDING`
+    - `TTYEVENTS`
     - `TTYSTDOUT`
     - `TTYSTDERR`
+    - `TTYWRITE`
     - `TTYSEND`
+    - `TTYCLEAR`
     - `TTYCLOSE`
 - `src/baremetal/tool_service.zig`
   - framed request handling for bounded TTY/session control
 - `src/baremetal/virtual_fs.zig`
   - `/dev/tty/state`
-  - `/dev/tty/sessions/<name>/{info,input,stdout,stderr,transcript}`
+  - `/dev/tty/sessions/<name>/{info,input,pending,stdout,stderr,events,transcript}`
   - `/sys/tty/state`
-  - `/sys/tty/sessions/<name>/{info,input,stdout,stderr,transcript}`
+  - `/sys/tty/sessions/<name>/{info,input,pending,stdout,stderr,events,transcript}`
 - `src/baremetal_main.zig`
   - live `E1000` tool-service proof widened to validate:
     - help exposure of `tty-send`
     - `TTYOPEN`
-    - `TTYSEND` success and failure
+    - `TTYWRITE`
+    - `TTYPENDING`
+    - `TTYSEND` success and failure with queued stdin drain
+    - `TTYCLEAR`
+    - `TTYEVENTS`
     - `TTYREAD`
     - `TTYSTDOUT`
     - `TTYSTDERR`
     - `/dev/tty/state`
     - `/dev/tty/sessions`
     - `/dev/tty/sessions/<name>/info`
+    - `/dev/tty/sessions/<name>/pending`
+    - `/dev/tty/sessions/<name>/events`
     - `TTYCLOSE`
     - `/sys/tty/state`
 
@@ -104,5 +126,5 @@ Allowed later if ZAR chooses to widen the TTY path deliberately:
 - PTY-style session split
 - shell job control integration
 - pipe and redirection semantics beyond the current command/session layer
-- evented TTY input stream
+- full terminal emulation
 - userspace-visible TTY ABI

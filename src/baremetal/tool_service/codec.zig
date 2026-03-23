@@ -26,9 +26,13 @@ pub const RequestOp = enum {
     tty_open,
     tty_info,
     tty_read,
+    tty_pending,
+    tty_events,
     tty_stdout,
     tty_stderr,
+    tty_write,
     tty_send,
+    tty_clear,
     tty_close,
     storage_backends,
     storage_filesystems,
@@ -249,6 +253,11 @@ pub const TtySendRequest = struct {
     command: []const u8,
 };
 
+pub const TtyWriteRequest = struct {
+    session_name: []const u8,
+    input: []const u8,
+};
+
 pub const PackageReleasePruneRequest = struct {
     package_name: []const u8,
     keep: u32,
@@ -395,9 +404,13 @@ pub const FramedRequest = struct {
         tty_open: []const u8,
         tty_info: []const u8,
         tty_read: []const u8,
+        tty_pending: []const u8,
+        tty_events: []const u8,
         tty_stdout: []const u8,
         tty_stderr: []const u8,
+        tty_write: TtyWriteRequest,
         tty_send: TtySendRequest,
+        tty_clear: []const u8,
         tty_close: []const u8,
         storage_backends: void,
         storage_filesystems: void,
@@ -757,6 +770,22 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         };
     }
 
+    if (std.ascii.eqlIgnoreCase(op_part.token, "TTYPENDING")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .tty_pending = op_part.rest } },
+            .consumed_len = if (newline_index != null) prefix_len + newline_index.? + 1 else request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "TTYEVENTS")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .tty_events = op_part.rest } },
+            .consumed_len = if (newline_index != null) prefix_len + newline_index.? + 1 else request.len,
+        };
+    }
+
     if (std.ascii.eqlIgnoreCase(op_part.token, "TTYSTDOUT")) {
         if (op_part.rest.len == 0) return error.InvalidFrame;
         return .{
@@ -770,6 +799,29 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         return .{
             .framed = .{ .request_id = request_id, .operation = .{ .tty_stderr = op_part.rest } },
             .consumed_len = if (newline_index != null) prefix_len + newline_index.? + 1 else request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "TTYWRITE")) {
+        const length_part = try splitFirstToken(op_part.rest);
+        if (length_part.rest.len != 0) return error.InvalidFrame;
+        const body_len = std.fmt.parseUnsigned(usize, length_part.token, 10) catch return error.InvalidFrame;
+        const body_start = newline_index orelse return error.InvalidFrame;
+        const payload_start = body_start + 1;
+        if (trimmed.len < payload_start + body_len) return error.InvalidFrame;
+        const body_payload = trimmed[payload_start .. payload_start + body_len];
+        const session_end = std.mem.indexOfScalar(u8, body_payload, '\n') orelse return error.InvalidFrame;
+        const session_name = body_payload[0..session_end];
+        if (session_name.len == 0) return error.InvalidFrame;
+        return .{
+            .framed = .{
+                .request_id = request_id,
+                .operation = .{ .tty_write = .{
+                    .session_name = session_name,
+                    .input = body_payload[session_end + 1 ..],
+                } },
+            },
+            .consumed_len = prefix_len + payload_start + body_len,
         };
     }
 
@@ -792,6 +844,14 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
                 } },
             },
             .consumed_len = prefix_len + payload_start + body_len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "TTYCLEAR")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .tty_clear = op_part.rest } },
+            .consumed_len = if (newline_index != null) prefix_len + newline_index.? + 1 else request.len,
         };
     }
 

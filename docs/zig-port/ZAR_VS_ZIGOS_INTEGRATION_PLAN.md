@@ -9,7 +9,7 @@ Current posture:
 - ZigOS upstream is now explicitly `MIT` licensed.
 - ZAR can legally study, adapt, or import ZigOS code when that is the right engineering choice.
 - Current delivered slices remain ZAR-owned implementations with ZAR-native tests, probes, and release gates.
-- Delivered ZigOS-inspired slices now cover NIC breadth, benchmark/stress, introspection overlays, storage breadth, mount layering, a bounded internal VFS router, a bounded storage registry plus ext2/FAT probe seam, a bounded backend-registry plus mounted-filesystem capability seam, a bounded shell/control layer over the existing builtin/service surface, and a bounded TTY/session control layer over that same command/service seam.
+- Delivered ZigOS-inspired slices now cover NIC breadth, benchmark/stress, introspection overlays, storage breadth, mount layering, a bounded internal VFS router, a bounded storage registry plus ext2/FAT probe seam, a bounded backend-registry plus mounted-filesystem capability seam, a bounded shell/control layer over the existing builtin/service surface, and a bounded TTY/session input-control layer over that same command/service seam.
 
 ## Source Baseline
 
@@ -224,11 +224,11 @@ Current delivered scope:
 - `src/baremetal/tool_exec.zig` now also supports bounded metacharacter escaping for separators/redirection including escaped `<`, bounded stdin redirection through `<`, bounded stdout redirection through `>` / `>>`, bounded stderr redirection through `2>` / `2>>`, and `shell-expand` now supports bounded multi-segment glob expansion
 - `src/baremetal_main.zig` now widens the live `E1000` tool-service proof to validate shell help output, bounded command batching, escaped metacharacters, multi-segment glob expansion, redirected stdout/stderr capture, and persisted readback
 - `build.zig` now explicitly wires `scripts/baremetal/pvh_boot.S` plus `scripts/baremetal/pvh_lld.ld` into the bare-metal artifact so the Multiboot2 header remains within the required first `32768` bytes on current Zig `master`
-- `src/baremetal/tty_runtime.zig` now adds a bounded TTY/session receipt layer under `/runtime/tty/<name>/` with persisted state, input, stdout, stderr, and transcript logs
-- `src/baremetal/tool_exec.zig` now exposes `tty-list`, `tty-open`, `tty-info`, `tty-read`, `tty-stdout`, `tty-stderr`, `tty-send`, and `tty-close`
-- `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `TTYLIST`, `TTYOPEN`, `TTYINFO`, `TTYREAD`, `TTYSTDOUT`, `TTYSTDERR`, `TTYSEND`, and `TTYCLOSE`
-- `src/baremetal/virtual_fs.zig` now exposes bounded TTY state through `/dev/tty/state`, `/dev/tty/sessions/...`, `/sys/tty/state`, and `/sys/tty/sessions/...`
-- `src/baremetal_main.zig` now widens the live `E1000` tool-service proof to validate TTY open/send/read/stdout/stderr/close behavior plus `/dev` and `/sys` TTY state readback
+- `src/baremetal/tty_runtime.zig` now adds a bounded TTY/session receipt layer under `/runtime/tty/<name>/` with persisted state, input, pending, stdout, stderr, events, and transcript logs
+- `src/baremetal/tool_exec.zig` now exposes `tty-list`, `tty-open`, `tty-info`, `tty-read`, `tty-pending`, `tty-events`, `tty-stdout`, `tty-stderr`, `tty-write`, `tty-send`, `tty-clear`, and `tty-close`
+- `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `TTYLIST`, `TTYOPEN`, `TTYINFO`, `TTYREAD`, `TTYPENDING`, `TTYEVENTS`, `TTYSTDOUT`, `TTYSTDERR`, `TTYWRITE`, `TTYSEND`, `TTYCLEAR`, and `TTYCLOSE`
+- `src/baremetal/virtual_fs.zig` now exposes bounded TTY state through `/dev/tty/state`, `/dev/tty/sessions/...`, `/sys/tty/state`, and `/sys/tty/sessions/...`, including `pending` and `events`
+- `src/baremetal_main.zig` now widens the live `E1000` tool-service proof to validate TTY open/write/pending/send/clear/events/read/stdout/stderr/close behavior plus `/dev` and `/sys` TTY state readback
 
 Still intentionally out of scope:
 
@@ -236,6 +236,8 @@ Still intentionally out of scope:
 - job control
 - pipelines
 - editor/TTY parity
+- terminal emulation
+- userspace-visible TTY ABI
 - userspace-visible shell ABI
 
 This phase still requires a direction choice before widening further, because ZAR must still decide whether the shell is:

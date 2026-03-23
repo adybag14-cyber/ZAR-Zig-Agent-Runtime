@@ -15227,8 +15227,43 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
     if (!std.mem.eql(u8, tty_open_response, "RESP 51 16\ntty opened demo\n")) return error.ToolServiceResponseMismatch;
     qemuDebugWrite("ETS9A9A\n");
 
-    const tty_send_success_body = "demo echo tty-service-ok";
-    const tty_send_success_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 52 TTYSEND {d}\n{s}", .{
+    const tty_write_body = "demo\nqueued-tty-input\n";
+    const tty_write_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 52 TTYWRITE {d}\n{s}", .{
+        tty_write_body.len,
+        tty_write_body,
+    }) catch return error.ToolServiceFailed;
+    const tty_write_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        tty_write_request,
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_write_response, "RESP 52 25\ntty queued demo 17 bytes\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9B\n");
+
+    const tty_pending_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 53 TTYPENDING demo",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_pending_response, "RESP 53 17\nqueued-tty-input\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9C\n");
+
+    const tty_send_success_body = "demo cat";
+    const tty_send_success_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 54 TTYSEND {d}\n{s}", .{
         tty_send_success_body.len,
         tty_send_success_body,
     }) catch return error.ToolServiceFailed;
@@ -15244,11 +15279,80 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
         256,
         256,
     );
-    if (!std.mem.eql(u8, tty_send_success_response, "RESP 52 15\ntty-service-ok\n")) return error.ToolServiceResponseMismatch;
-    qemuDebugWrite("ETS9A9B\n");
+    if (!std.mem.eql(u8, tty_send_success_response, "RESP 54 17\nqueued-tty-input\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9D\n");
+
+    const tty_pending_empty_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 55 TTYPENDING demo",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_pending_empty_response, "RESP 55 0\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9E\n");
+
+    const tty_clear_body = "demo\nstale-tty";
+    const tty_clear_write_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 56 TTYWRITE {d}\n{s}", .{
+        tty_clear_body.len,
+        tty_clear_body,
+    }) catch return error.ToolServiceFailed;
+    const tty_clear_write_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        tty_clear_write_request,
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_clear_write_response, "RESP 56 24\ntty queued demo 9 bytes\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9F\n");
+
+    const tty_clear_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 57 TTYCLEAR demo",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_clear_response, "RESP 57 17\ntty cleared demo\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9G\n");
+
+    const tty_events_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 58 TTYEVENTS demo",
+        1024,
+        256,
+        1024,
+    );
+    if (!std.mem.startsWith(u8, tty_events_response, "RESP 58 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, tty_events_response, "type=open") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, tty_events_response, "type=write bytes=17") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, tty_events_response, "type=send exit=0 stdin_bytes=17 stdout_bytes=17 stderr_bytes=0") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, tty_events_response, "type=clear bytes=9") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9H\n");
 
     const tty_send_failure_body = "demo cat /tmp/missing-tty.txt";
-    const tty_send_failure_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 53 TTYSEND {d}\n{s}", .{
+    const tty_send_failure_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 59 TTYSEND {d}\n{s}", .{
         tty_send_failure_body.len,
         tty_send_failure_body,
     }) catch return error.ToolServiceFailed;
@@ -15264,56 +15368,8 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
         256,
         256,
     );
-    if (!std.mem.eql(u8, tty_send_failure_response, "RESP 53 36\nERR exit=1\ncat failed: FileNotFound\n")) return error.ToolServiceResponseMismatch;
-    qemuDebugWrite("ETS9A9C\n");
-
-    const tty_read_response = try exchangeE1000TcpProbeServiceRequest(
-        eth,
-        scratch,
-        &client,
-        &server,
-        source_ip,
-        destination_ip,
-        "REQ 54 TTYREAD demo",
-        1536,
-        256,
-        1536,
-    );
-    if (!std.mem.startsWith(u8, tty_read_response, "RESP 54 ")) return error.ToolServiceResponseMismatch;
-    if (std.mem.indexOf(u8, tty_read_response, "$ echo tty-service-ok\n") == null) return error.ToolServiceResponseMismatch;
-    if (std.mem.indexOf(u8, tty_read_response, "$ cat /tmp/missing-tty.txt\n") == null) return error.ToolServiceResponseMismatch;
-    if (std.mem.indexOf(u8, tty_read_response, "stderr:\ncat failed: FileNotFound\n") == null) return error.ToolServiceResponseMismatch;
-    qemuDebugWrite("ETS9A9D\n");
-
-    const tty_stdout_response = try exchangeE1000TcpProbeServiceRequest(
-        eth,
-        scratch,
-        &client,
-        &server,
-        source_ip,
-        destination_ip,
-        "REQ 55 TTYSTDOUT demo",
-        256,
-        256,
-        256,
-    );
-    if (!std.mem.eql(u8, tty_stdout_response, "RESP 55 15\ntty-service-ok\n")) return error.ToolServiceResponseMismatch;
-    qemuDebugWrite("ETS9A9E\n");
-
-    const tty_stderr_response = try exchangeE1000TcpProbeServiceRequest(
-        eth,
-        scratch,
-        &client,
-        &server,
-        source_ip,
-        destination_ip,
-        "REQ 56 TTYSTDERR demo",
-        256,
-        256,
-        256,
-    );
-    if (!std.mem.eql(u8, tty_stderr_response, "RESP 56 25\ncat failed: FileNotFound\n")) return error.ToolServiceResponseMismatch;
-    qemuDebugWrite("ETS9A9F\n");
+    if (!std.mem.eql(u8, tty_send_failure_response, "RESP 59 36\nERR exit=1\ncat failed: FileNotFound\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9I\n");
 
     const dev_tty_state_response = try exchangeE1000TcpProbeServiceRequest(
         eth,
@@ -15322,15 +15378,16 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
         &server,
         source_ip,
         destination_ip,
-        "REQ 57 GET /dev/tty/state",
+        "REQ 60 GET /dev/tty/state",
         256,
         256,
         256,
     );
-    if (!std.mem.startsWith(u8, dev_tty_state_response, "RESP 57 ")) return error.ToolServiceResponseMismatch;
+    if (!std.mem.startsWith(u8, dev_tty_state_response, "RESP 60 ")) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, dev_tty_state_response, "sessions=1") == null) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, dev_tty_state_response, "open_sessions=1") == null) return error.ToolServiceResponseMismatch;
-    qemuDebugWrite("ETS9A9G\n");
+    if (std.mem.indexOf(u8, dev_tty_state_response, "pending_bytes=0") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9J\n");
 
     const dev_tty_list_response = try exchangeE1000TcpProbeServiceRequest(
         eth,
@@ -15339,14 +15396,14 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
         &server,
         source_ip,
         destination_ip,
-        "REQ 58 LIST /dev/tty/sessions",
+        "REQ 61 LIST /dev/tty/sessions",
         256,
         256,
         256,
     );
-    if (!std.mem.startsWith(u8, dev_tty_list_response, "RESP 58 ")) return error.ToolServiceResponseMismatch;
+    if (!std.mem.startsWith(u8, dev_tty_list_response, "RESP 61 ")) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, dev_tty_list_response, "dir demo\n") == null) return error.ToolServiceResponseMismatch;
-    qemuDebugWrite("ETS9A9H\n");
+    qemuDebugWrite("ETS9A9K\n");
 
     const dev_tty_info_response = try exchangeE1000TcpProbeServiceRequest(
         eth,
@@ -15355,15 +15412,97 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
         &server,
         source_ip,
         destination_ip,
-        "REQ 59 GET /dev/tty/sessions/demo/info",
+        "REQ 62 GET /dev/tty/sessions/demo/info",
         768,
         256,
         768,
     );
-    if (!std.mem.startsWith(u8, dev_tty_info_response, "RESP 59 ")) return error.ToolServiceResponseMismatch;
+    if (!std.mem.startsWith(u8, dev_tty_info_response, "RESP 62 ")) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, dev_tty_info_response, "name=demo") == null) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, dev_tty_info_response, "command_count=2") == null) return error.ToolServiceResponseMismatch;
-    qemuDebugWrite("ETS9A9I\n");
+    if (std.mem.indexOf(u8, dev_tty_info_response, "pending_input_bytes=0") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, dev_tty_info_response, "event_count=6") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9L\n");
+
+    const dev_tty_pending_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 63 GET /dev/tty/sessions/demo/pending",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, dev_tty_pending_response, "RESP 63 0\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9M\n");
+
+    const dev_tty_events_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 64 GET /dev/tty/sessions/demo/events",
+        1024,
+        256,
+        1024,
+    );
+    if (!std.mem.startsWith(u8, dev_tty_events_response, "RESP 64 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, dev_tty_events_response, "type=clear bytes=9") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9N\n");
+
+    const tty_read_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 65 TTYREAD demo",
+        1536,
+        256,
+        1536,
+    );
+    if (!std.mem.startsWith(u8, tty_read_response, "RESP 65 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, tty_read_response, "$ cat\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, tty_read_response, "stdin:\nqueued-tty-input\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, tty_read_response, "$ cat /tmp/missing-tty.txt\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, tty_read_response, "stderr:\ncat failed: FileNotFound\n") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9O\n");
+
+    const tty_stdout_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 66 TTYSTDOUT demo",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_stdout_response, "RESP 66 17\nqueued-tty-input\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9P\n");
+
+    const tty_stderr_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 67 TTYSTDERR demo",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_stderr_response, "RESP 67 25\ncat failed: FileNotFound\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9Q\n");
 
     const tty_close_response = try exchangeE1000TcpProbeServiceRequest(
         eth,
@@ -15372,13 +15511,13 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
         &server,
         source_ip,
         destination_ip,
-        "REQ 60 TTYCLOSE demo",
+        "REQ 68 TTYCLOSE demo",
         256,
         256,
         256,
     );
-    if (!std.mem.eql(u8, tty_close_response, "RESP 60 16\ntty closed demo\n")) return error.ToolServiceResponseMismatch;
-    qemuDebugWrite("ETS9A9J\n");
+    if (!std.mem.eql(u8, tty_close_response, "RESP 68 16\ntty closed demo\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9R\n");
 
     const sys_tty_state_response = try exchangeE1000TcpProbeServiceRequest(
         eth,
@@ -15387,14 +15526,14 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
         &server,
         source_ip,
         destination_ip,
-        "REQ 61 GET /sys/tty/state",
+        "REQ 69 GET /sys/tty/state",
         256,
         256,
         256,
     );
-    if (!std.mem.startsWith(u8, sys_tty_state_response, "RESP 61 ")) return error.ToolServiceResponseMismatch;
+    if (!std.mem.startsWith(u8, sys_tty_state_response, "RESP 69 ")) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, sys_tty_state_response, "open_sessions=0") == null) return error.ToolServiceResponseMismatch;
-    qemuDebugWrite("ETS9A9K\n");
+    qemuDebugWrite("ETS9A9S\n");
 
     const virtual_snapshot_response = try exchangeE1000TcpProbeServiceRequest(
         eth,
