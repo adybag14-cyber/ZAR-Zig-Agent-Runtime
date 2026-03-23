@@ -14995,6 +14995,93 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
     if (!std.mem.eql(u8, redirected_output_response, "RESP 38 11\nalpha\nbeta\n")) return error.ToolServiceResponseMismatch;
     qemuDebugWrite("ETS9A8C\n");
 
+    const shell_escaped_script =
+        "echo alpha\\;beta > /tmp/sh/ESC.TXT\n" ++
+        "echo gt\\>value > /tmp/sh/GT.TXT\n";
+    const shell_escaped_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 39 SHELLRUN {d}\n{s}", .{
+        shell_escaped_script.len,
+        shell_escaped_script,
+    }) catch return error.ToolServiceFailed;
+    const shell_escaped_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        shell_escaped_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, shell_escaped_response, "RESP 39 0\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8D\n");
+
+    const escaped_separator_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 40 GET /tmp/sh/ESC.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, escaped_separator_response, "RESP 40 11\nalpha;beta\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8E\n");
+
+    const escaped_redirect_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 41 GET /tmp/sh/GT.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, escaped_redirect_response, "RESP 41 9\ngt>value\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8F\n");
+
+    const shell_stderr_script = "cat /tmp/sh/MISSING.TXT 2> /tmp/sh/ERR.TXT";
+    const shell_stderr_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 42 SHELLRUN {d}\n{s}", .{
+        shell_stderr_script.len,
+        shell_stderr_script,
+    }) catch return error.ToolServiceFailed;
+    const shell_stderr_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        shell_stderr_request,
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, shell_stderr_response, "RESP 42 11\nERR exit=1\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8G\n");
+
+    const redirected_stderr_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 43 GET /tmp/sh/ERR.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, redirected_stderr_response, "RESP 43 25\ncat failed: FileNotFound\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8H\n");
+
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const shell_nested_readback = filesystem.readFileAlloc(service_fba.allocator(), "/tmp/sh/DATA/C.TXT", 64) catch return error.ToolServiceFailed;
     if (!std.mem.eql(u8, shell_nested_readback, "gamma")) return error.ToolServiceResponseMismatch;

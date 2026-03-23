@@ -4139,6 +4139,34 @@ test "baremetal tool service exposes bounded shell batch and globbing" {
     const redirected_output = try handleFramedRequest(std.testing.allocator, "REQ 34 GET /tmp/sh/OUT.TXT", 256, 256, 256);
     defer std.testing.allocator.free(redirected_output);
     try std.testing.expectEqualStrings("RESP 34 11\nalpha\nbeta\n", redirected_output);
+
+    const shell_escaped_script =
+        "echo alpha\\;beta > /tmp/sh/ESC.TXT\n" ++
+        "echo gt\\>value > /tmp/sh/GT.TXT\n";
+    const shell_escaped_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 35 SHELLRUN {d}\n{s}", .{ shell_escaped_script.len, shell_escaped_script });
+    defer std.testing.allocator.free(shell_escaped_request);
+    const shell_escaped_response = try handleFramedRequest(std.testing.allocator, shell_escaped_request, 512, 256, 512);
+    defer std.testing.allocator.free(shell_escaped_response);
+    try std.testing.expectEqualStrings("RESP 35 0\n", shell_escaped_response);
+
+    const escaped_separator = try handleFramedRequest(std.testing.allocator, "REQ 36 GET /tmp/sh/ESC.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(escaped_separator);
+    try std.testing.expectEqualStrings("RESP 36 11\nalpha;beta\n", escaped_separator);
+
+    const escaped_redirect = try handleFramedRequest(std.testing.allocator, "REQ 37 GET /tmp/sh/GT.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(escaped_redirect);
+    try std.testing.expectEqualStrings("RESP 37 9\ngt>value\n", escaped_redirect);
+
+    const shell_stderr_script = "cat /tmp/sh/MISSING.TXT 2> /tmp/sh/ERR.TXT";
+    const shell_stderr_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 38 SHELLRUN {d}\n{s}", .{ shell_stderr_script.len, shell_stderr_script });
+    defer std.testing.allocator.free(shell_stderr_request);
+    const shell_stderr_response = try handleFramedRequest(std.testing.allocator, shell_stderr_request, 256, 256, 256);
+    defer std.testing.allocator.free(shell_stderr_response);
+    try std.testing.expectEqualStrings("RESP 38 11\nERR exit=1\n", shell_stderr_response);
+
+    const redirected_stderr = try handleFramedRequest(std.testing.allocator, "REQ 39 GET /tmp/sh/ERR.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(redirected_stderr);
+    try std.testing.expectEqualStrings("RESP 39 25\ncat failed: FileNotFound\n", redirected_stderr);
 }
 
 test "baremetal tool service uploads and runs persisted scripts" {

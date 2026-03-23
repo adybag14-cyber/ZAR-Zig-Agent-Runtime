@@ -221,15 +221,15 @@ Current delivered scope:
 
 - `src/baremetal/tool_exec.zig` now exposes bounded `shell-run` and `shell-expand` helpers over the existing builtin surface
 - `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `SHELLRUN` plus `SHELLEXPAND` over the framed TCP service
-- `src/baremetal/tool_exec.zig` now also supports bounded stdout redirection through `>` and `>>`, and `shell-expand` now supports bounded multi-segment glob expansion
-- `src/baremetal_main.zig` now widens the live `E1000` tool-service proof to validate shell help output, bounded command batching, multi-segment glob expansion, redirected output capture, and persisted readback
+- `src/baremetal/tool_exec.zig` now also supports bounded metacharacter escaping for separators/redirection, bounded stdout redirection through `>` / `>>`, bounded stderr redirection through `2>` / `2>>`, and `shell-expand` now supports bounded multi-segment glob expansion
+- `src/baremetal_main.zig` now widens the live `E1000` tool-service proof to validate shell help output, bounded command batching, escaped metacharacters, multi-segment glob expansion, redirected stdout/stderr capture, and persisted readback
 - `build.zig` now explicitly wires `scripts/baremetal/pvh_boot.S` plus `scripts/baremetal/pvh_lld.ld` into the bare-metal artifact so the Multiboot2 header remains within the required first `32768` bytes on current Zig `master`
 
 Still intentionally out of scope:
 
 - interactive shell
 - job control
-- pipelines, input redirection, and stderr redirection
+- pipelines and input redirection
 - editor/TTY parity
 - userspace-visible shell ABI
 

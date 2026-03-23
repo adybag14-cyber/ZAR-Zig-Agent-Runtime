@@ -108,7 +108,13 @@ const ParsedArg = struct {
 const ParsedShellLine = struct {
     command: []const u8,
     redirect_path: ?[]const u8 = null,
+    redirect_stream: RedirectStream = .stdout,
     append: bool = false,
+};
+
+const RedirectStream = enum {
+    stdout,
+    stderr,
 };
 
 const ListingChild = struct {
@@ -4854,6 +4860,10 @@ fn executeScriptContents(
                 if (ch == quote) quote = 0;
                 continue;
             }
+            if (ch == '\\' and idx + 1 < script.len and isShellEscapable(script[idx + 1])) {
+                idx += 1;
+                continue;
+            }
             if (ch == '"' or ch == '\'') {
                 quote = ch;
                 continue;
@@ -4876,18 +4886,33 @@ fn executeScriptContents(
             try writeCommandError(stderr_buffer, err, operation);
             return;
         };
-        const nested = parseCommand(parsed_line.command) catch |err| {
+        const command_text = unescapeShellTextAlloc(allocator, parsed_line.command) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+            return;
+        };
+        defer allocator.free(command_text);
+
+        const nested = parseCommand(command_text) catch |err| {
             exit_code.* = 2;
             try writeCommandError(stderr_buffer, err, operation);
             return;
         };
-        if (parsed_line.redirect_path) |redirect_path| {
-            try executeWithStdoutRedirection(
+        if (parsed_line.redirect_path) |redirect_path_raw| {
+            const redirect_path = unescapeShellTextAlloc(allocator, redirect_path_raw) catch |err| {
+                exit_code.* = 1;
+                try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+                return;
+            };
+            defer allocator.free(redirect_path);
+
+            try executeWithRedirection(
                 nested,
+                parsed_line.redirect_stream,
                 redirect_path,
                 parsed_line.append,
                 operation,
-                stdout_buffer.limit,
+                stdout_buffer,
                 stderr_buffer,
                 exit_code,
                 allocator,
@@ -4903,22 +4928,30 @@ fn executeScriptContents(
     finish_deferred_persist = false;
 }
 
-fn executeWithStdoutRedirection(
+fn executeWithRedirection(
     parsed: ParsedCommand,
+    redirect_stream: RedirectStream,
     redirect_path: []const u8,
     append_mode: bool,
     operation: []const u8,
-    stdout_limit: usize,
+    stdout_buffer: *OutputBuffer,
     stderr_buffer: *OutputBuffer,
     exit_code: *u8,
     allocator: std.mem.Allocator,
     depth: usize,
 ) Error!void {
-    var redirected_stdout = OutputBuffer.init(allocator, stdout_limit, false);
-    defer redirected_stdout.deinit();
+    const stream_limit = switch (redirect_stream) {
+        .stdout => stdout_buffer.limit,
+        .stderr => stderr_buffer.limit,
+    };
+    var redirected_stream = OutputBuffer.init(allocator, stream_limit, false);
+    defer redirected_stream.deinit();
 
-    try execute(parsed, &redirected_stdout, stderr_buffer, exit_code, allocator, depth);
-    if (exit_code.* != 0) return;
+    switch (redirect_stream) {
+        .stdout => try execute(parsed, &redirected_stream, stderr_buffer, exit_code, allocator, depth),
+        .stderr => try execute(parsed, stdout_buffer, &redirected_stream, exit_code, allocator, depth),
+    }
+    if (redirect_stream == .stdout and exit_code.* != 0) return;
 
     ensureParentDirectory(redirect_path) catch |err| {
         exit_code.* = 1;
@@ -4927,7 +4960,7 @@ fn executeWithStdoutRedirection(
     };
 
     if (append_mode) {
-        const existing = filesystem.readFileAlloc(allocator, redirect_path, stdout_limit) catch |err| switch (err) {
+        const existing = filesystem.readFileAlloc(allocator, redirect_path, stream_limit) catch |err| switch (err) {
             error.FileNotFound => null,
             else => {
                 exit_code.* = 1;
@@ -4938,7 +4971,7 @@ fn executeWithStdoutRedirection(
         defer if (existing) |bytes| allocator.free(bytes);
 
         const existing_len: usize = if (existing) |bytes| bytes.len else 0;
-        if (existing_len + redirected_stdout.list.items.len > stdout_limit) {
+        if (existing_len + redirected_stream.list.items.len > stream_limit) {
             exit_code.* = 1;
             try stderr_buffer.appendFmt("{s} failed: StreamTooLong\n", .{operation});
             return;
@@ -4947,7 +4980,7 @@ fn executeWithStdoutRedirection(
         var combined = std.ArrayList(u8).empty;
         defer combined.deinit(allocator);
         if (existing) |bytes| try combined.appendSlice(allocator, bytes);
-        try combined.appendSlice(allocator, redirected_stdout.list.items);
+        try combined.appendSlice(allocator, redirected_stream.list.items);
         filesystem.writeFile(redirect_path, combined.items, 0) catch |err| {
             exit_code.* = 1;
             try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
@@ -4956,7 +4989,7 @@ fn executeWithStdoutRedirection(
         return;
     }
 
-    filesystem.writeFile(redirect_path, redirected_stdout.list.items, 0) catch |err| {
+    filesystem.writeFile(redirect_path, redirected_stream.list.items, 0) catch |err| {
         exit_code.* = 1;
         try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
         return;
@@ -4975,14 +5008,24 @@ fn parseShellLine(line: []const u8) Error!ParsedShellLine {
             if (ch == quote) quote = 0;
             continue;
         }
+        if (ch == '\\' and idx + 1 < trimmed.len and isShellEscapable(trimmed[idx + 1])) {
+            idx += 1;
+            continue;
+        }
         if (ch == '"' or ch == '\'') {
             quote = ch;
             continue;
         }
         if (ch != '>') continue;
 
+        var redirect_stream: RedirectStream = .stdout;
+        var command_end = idx;
+        if (idx > 0 and (trimmed[idx - 1] == '1' or trimmed[idx - 1] == '2') and isRedirectionFdPrefixBoundary(trimmed, idx - 1)) {
+            redirect_stream = if (trimmed[idx - 1] == '2') .stderr else .stdout;
+            command_end = idx - 1;
+        }
         const append_mode = idx + 1 < trimmed.len and trimmed[idx + 1] == '>';
-        const command = std.mem.trim(u8, trimmed[0..idx], " \t\r");
+        const command = std.mem.trim(u8, trimmed[0..command_end], " \t\r");
         if (command.len == 0) return error.InvalidRedirection;
 
         const rest_start = idx + (if (append_mode) @as(usize, 2) else @as(usize, 1));
@@ -4994,11 +5037,43 @@ fn parseShellLine(line: []const u8) Error!ParsedShellLine {
         return .{
             .command = command,
             .redirect_path = redirect_arg.arg,
+            .redirect_stream = redirect_stream,
             .append = append_mode,
         };
     }
 
     return .{ .command = trimmed };
+}
+
+fn isShellEscapable(byte: u8) bool {
+    return switch (byte) {
+        ';', '>', '\\', '"', '\'', '\n' => true,
+        else => false,
+    };
+}
+
+fn isRedirectionFdPrefixBoundary(text: []const u8, digit_index: usize) bool {
+    if (digit_index == 0) return true;
+    return std.ascii.isWhitespace(text[digit_index - 1]);
+}
+
+fn unescapeShellTextAlloc(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
+    if (std.mem.indexOfScalar(u8, text, '\\') == null) return allocator.dupe(u8, text);
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    var idx: usize = 0;
+    while (idx < text.len) : (idx += 1) {
+        const ch = text[idx];
+        if (ch == '\\' and idx + 1 < text.len and isShellEscapable(text[idx + 1])) {
+            idx += 1;
+            try out.append(allocator, text[idx]);
+            continue;
+        }
+        try out.append(allocator, ch);
+    }
+    return out.toOwnedSlice(allocator);
 }
 
 fn expandShellPatternAlloc(
@@ -6169,6 +6244,40 @@ test "baremetal tool exec exposes bounded shell batch and globbing" {
     const redirected = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/OUT.TXT", 64);
     defer std.testing.allocator.free(redirected);
     try std.testing.expectEqualStrings("alpha\nbeta\n", redirected);
+
+    var shell_escaped = try runCapture(
+        std.testing.allocator,
+        "shell-run echo alpha\\;beta > /tmp/sh/ESC.TXT; echo gt\\>value > /tmp/sh/GT.TXT",
+        512,
+        256,
+    );
+    defer shell_escaped.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), shell_escaped.exit_code);
+    try std.testing.expectEqualStrings("", shell_escaped.stdout);
+    try std.testing.expectEqualStrings("", shell_escaped.stderr);
+
+    const escaped_separator = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/ESC.TXT", 64);
+    defer std.testing.allocator.free(escaped_separator);
+    try std.testing.expectEqualStrings("alpha;beta\n", escaped_separator);
+
+    const escaped_redirect = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/GT.TXT", 64);
+    defer std.testing.allocator.free(escaped_redirect);
+    try std.testing.expectEqualStrings("gt>value\n", escaped_redirect);
+
+    var shell_stderr_redirect = try runCapture(
+        std.testing.allocator,
+        "shell-run cat /tmp/sh/MISSING.TXT 2> /tmp/sh/ERR.TXT",
+        256,
+        256,
+    );
+    defer shell_stderr_redirect.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 1), shell_stderr_redirect.exit_code);
+    try std.testing.expectEqualStrings("", shell_stderr_redirect.stdout);
+    try std.testing.expectEqualStrings("", shell_stderr_redirect.stderr);
+
+    const redirected_stderr = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/ERR.TXT", 64);
+    defer std.testing.allocator.free(redirected_stderr);
+    try std.testing.expectEqualStrings("cat failed: FileNotFound\n", redirected_stderr);
 }
 
 test "baremetal tool exec configures app trust and connector and reports app info" {
