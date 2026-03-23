@@ -32,6 +32,7 @@ pub const RequestOp = enum {
     tty_stderr,
     tty_write,
     tty_send,
+    tty_shell,
     tty_clear,
     tty_close,
     storage_backends,
@@ -410,6 +411,7 @@ pub const FramedRequest = struct {
         tty_stderr: []const u8,
         tty_write: TtyWriteRequest,
         tty_send: TtySendRequest,
+        tty_shell: TtySendRequest,
         tty_clear: []const u8,
         tty_close: []const u8,
         storage_backends: void,
@@ -839,6 +841,28 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
             .framed = .{
                 .request_id = request_id,
                 .operation = .{ .tty_send = .{
+                    .session_name = session_part.token,
+                    .command = session_part.rest,
+                } },
+            },
+            .consumed_len = prefix_len + payload_start + body_len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "TTYSHELL")) {
+        const length_part = try splitFirstToken(op_part.rest);
+        if (length_part.rest.len != 0) return error.InvalidFrame;
+        const body_len = std.fmt.parseUnsigned(usize, length_part.token, 10) catch return error.InvalidFrame;
+        const body_start = newline_index orelse return error.InvalidFrame;
+        const payload_start = body_start + 1;
+        if (trimmed.len < payload_start + body_len) return error.InvalidFrame;
+        const body_payload = trimmed[payload_start .. payload_start + body_len];
+        const session_part = try splitFirstToken(body_payload);
+        if (session_part.rest.len == 0) return error.InvalidFrame;
+        return .{
+            .framed = .{
+                .request_id = request_id,
+                .operation = .{ .tty_shell = .{
                     .session_name = session_part.token,
                     .command = session_part.rest,
                 } },

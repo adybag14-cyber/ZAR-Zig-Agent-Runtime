@@ -8,13 +8,14 @@
 
 ### Scope
 
-Deliver the first TTY/session slice without forcing a GP-OS jump.
+Deliver the first TTY/session control plus shell-execution slice without forcing a GP-OS jump.
 
 This slice is intentionally limited to:
 
 - bounded persisted TTY session receipts
 - bounded queued TTY input and event receipts
 - bounded command submission through the existing builtin runtime
+- bounded shell batch submission through the existing builtin runtime
 - bounded stdout/stderr/transcript readback
 - bounded `/dev/tty` and `/sys/tty` export over persisted session state
 - typed framed reuse over the existing TCP tool-service path
@@ -46,6 +47,7 @@ This slice explicitly does not claim:
     - `openSession(...)`
     - `closeSession(...)`
     - `recordCommand(...)`
+    - `recordShell(...)`
     - `writePendingInput(...)`
     - `clearPendingInput(...)`
     - `takePendingInputAlloc(...)`
@@ -67,6 +69,7 @@ This slice explicitly does not claim:
   - `tty-stderr <name>`
   - `tty-write <name> <content>`
   - `tty-send <name> <command>`
+  - `tty-shell <name> <script>`
   - `tty-clear <name>`
   - `tty-close <name>`
 - `src/baremetal/tool_service/codec.zig`
@@ -81,6 +84,7 @@ This slice explicitly does not claim:
     - `TTYSTDERR`
     - `TTYWRITE`
     - `TTYSEND`
+    - `TTYSHELL`
     - `TTYCLEAR`
     - `TTYCLOSE`
 - `src/baremetal/tool_service.zig`
@@ -92,11 +96,12 @@ This slice explicitly does not claim:
   - `/sys/tty/sessions/<name>/{info,input,pending,stdout,stderr,events,transcript}`
 - `src/baremetal_main.zig`
   - live `E1000` tool-service proof widened to validate:
-    - help exposure of `tty-send`
+    - help exposure of `tty-send` plus `tty-shell`
     - `TTYOPEN`
     - `TTYWRITE`
     - `TTYPENDING`
     - `TTYSEND` success and failure with queued stdin drain
+    - `TTYSHELL` with queued stdin drain into the bounded shell batch
     - `TTYCLEAR`
     - `TTYEVENTS`
     - `TTYREAD`
@@ -107,6 +112,7 @@ This slice explicitly does not claim:
     - `/dev/tty/sessions/<name>/info`
     - `/dev/tty/sessions/<name>/pending`
     - `/dev/tty/sessions/<name>/events`
+    - persisted shell output readback
     - `TTYCLOSE`
     - `/sys/tty/state`
 
