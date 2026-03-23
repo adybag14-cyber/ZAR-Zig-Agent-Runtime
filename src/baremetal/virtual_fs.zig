@@ -7,6 +7,7 @@ const runtime_bridge = @import("runtime_bridge.zig");
 const storage_backend = @import("storage_backend.zig");
 const storage_backend_registry = @import("storage_backend_registry.zig");
 const storage_registry = @import("storage_registry.zig");
+const tty_runtime = @import("tty_runtime.zig");
 const pal_net = @import("../pal/net.zig");
 
 pub const Error = std.mem.Allocator.Error || error{
@@ -37,6 +38,9 @@ const dev_storage_state_path = "/dev/storage/state";
 const dev_storage_backends_path = "/dev/storage/backends";
 const dev_storage_filesystems_path = "/dev/storage/filesystems";
 const dev_storage_registry_path = "/dev/storage/registry";
+const dev_tty_path = "/dev/tty";
+const dev_tty_state_path = "/dev/tty/state";
+const dev_tty_sessions_path = "/dev/tty/sessions";
 const dev_display_path = "/dev/display";
 const dev_display_state_path = "/dev/display/state";
 const dev_display_outputs_path = "/dev/display/outputs";
@@ -49,6 +53,9 @@ const sys_storage_state_path = "/sys/storage/state";
 const sys_storage_backends_path = "/sys/storage/backends";
 const sys_storage_filesystems_path = "/sys/storage/filesystems";
 const sys_storage_registry_path = "/sys/storage/registry";
+const sys_tty_path = "/sys/tty";
+const sys_tty_state_path = "/sys/tty/state";
+const sys_tty_sessions_path = "/sys/tty/sessions";
 const sys_display_state_path = "/sys/display/state";
 const sys_display_outputs_path = "/sys/display/outputs";
 const sys_net_state_path = "/sys/net/state";
@@ -110,6 +117,7 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     }
     if (std.mem.eql(u8, path, "/dev")) {
         try appendDirectoryLine(allocator, &out, "storage", max_bytes);
+        try appendDirectoryLine(allocator, &out, "tty", max_bytes);
         try appendDirectoryLine(allocator, &out, "display", max_bytes);
         try appendDirectoryLine(allocator, &out, "net", max_bytes);
         try appendFileLine(allocator, &out, "null", dev_null_path, max_bytes);
@@ -120,6 +128,23 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
         try appendFileLine(allocator, &out, "backends", dev_storage_backends_path, max_bytes);
         try appendFileLine(allocator, &out, "filesystems", dev_storage_filesystems_path, max_bytes);
         try appendFileLine(allocator, &out, "registry", dev_storage_registry_path, max_bytes);
+        return out.toOwnedSlice(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_tty_path)) {
+        try appendFileLine(allocator, &out, "state", dev_tty_state_path, max_bytes);
+        try appendDirectoryLine(allocator, &out, "sessions", max_bytes);
+        return out.toOwnedSlice(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_tty_sessions_path)) {
+        try appendTtySessionDirectory(allocator, &out, max_bytes);
+        return out.toOwnedSlice(allocator);
+    }
+    if (parseDevTtySessionDirectory(path)) |session_name| {
+        try appendFileLineForPath(allocator, &out, "info", try ttySessionFilePathForBase(allocator, dev_tty_sessions_path, session_name, "info"), max_bytes);
+        try appendFileLineForPath(allocator, &out, "input", try ttySessionFilePathForBase(allocator, dev_tty_sessions_path, session_name, "input"), max_bytes);
+        try appendFileLineForPath(allocator, &out, "stdout", try ttySessionFilePathForBase(allocator, dev_tty_sessions_path, session_name, "stdout"), max_bytes);
+        try appendFileLineForPath(allocator, &out, "stderr", try ttySessionFilePathForBase(allocator, dev_tty_sessions_path, session_name, "stderr"), max_bytes);
+        try appendFileLineForPath(allocator, &out, "transcript", try ttySessionFilePathForBase(allocator, dev_tty_sessions_path, session_name, "transcript"), max_bytes);
         return out.toOwnedSlice(allocator);
     }
     if (std.mem.eql(u8, path, dev_display_path)) {
@@ -151,6 +176,7 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     if (std.mem.eql(u8, path, "/sys")) {
         try appendDirectoryLine(allocator, &out, "kernel", max_bytes);
         try appendDirectoryLine(allocator, &out, "storage", max_bytes);
+        try appendDirectoryLine(allocator, &out, "tty", max_bytes);
         try appendDirectoryLine(allocator, &out, "display", max_bytes);
         try appendDirectoryLine(allocator, &out, "net", max_bytes);
         return out.toOwnedSlice(allocator);
@@ -165,6 +191,23 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
         try appendFileLine(allocator, &out, "backends", sys_storage_backends_path, max_bytes);
         try appendFileLine(allocator, &out, "filesystems", sys_storage_filesystems_path, max_bytes);
         try appendFileLine(allocator, &out, "registry", sys_storage_registry_path, max_bytes);
+        return out.toOwnedSlice(allocator);
+    }
+    if (std.mem.eql(u8, path, sys_tty_path)) {
+        try appendFileLine(allocator, &out, "state", sys_tty_state_path, max_bytes);
+        try appendDirectoryLine(allocator, &out, "sessions", max_bytes);
+        return out.toOwnedSlice(allocator);
+    }
+    if (std.mem.eql(u8, path, sys_tty_sessions_path)) {
+        try appendTtySessionDirectory(allocator, &out, max_bytes);
+        return out.toOwnedSlice(allocator);
+    }
+    if (parseSysTtySessionDirectory(path)) |session_name| {
+        try appendFileLineForPath(allocator, &out, "info", try ttySessionFilePathForBase(allocator, sys_tty_sessions_path, session_name, "info"), max_bytes);
+        try appendFileLineForPath(allocator, &out, "input", try ttySessionFilePathForBase(allocator, sys_tty_sessions_path, session_name, "input"), max_bytes);
+        try appendFileLineForPath(allocator, &out, "stdout", try ttySessionFilePathForBase(allocator, sys_tty_sessions_path, session_name, "stdout"), max_bytes);
+        try appendFileLineForPath(allocator, &out, "stderr", try ttySessionFilePathForBase(allocator, sys_tty_sessions_path, session_name, "stderr"), max_bytes);
+        try appendFileLineForPath(allocator, &out, "transcript", try ttySessionFilePathForBase(allocator, sys_tty_sessions_path, session_name, "transcript"), max_bytes);
         return out.toOwnedSlice(allocator);
     }
     if (std.mem.eql(u8, path, "/sys/display")) {
@@ -228,16 +271,22 @@ fn isDirectoryPath(path: []const u8) bool {
     if (std.mem.eql(u8, path, proc_runtime_sessions_path)) return true;
     if (std.mem.eql(u8, path, "/dev")) return true;
     if (std.mem.eql(u8, path, dev_storage_path)) return true;
+    if (std.mem.eql(u8, path, dev_tty_path)) return true;
+    if (std.mem.eql(u8, path, dev_tty_sessions_path)) return true;
     if (std.mem.eql(u8, path, dev_display_path)) return true;
     if (std.mem.eql(u8, path, dev_display_outputs_path)) return true;
     if (std.mem.eql(u8, path, dev_net_path)) return true;
     if (std.mem.eql(u8, path, "/sys")) return true;
     if (std.mem.eql(u8, path, "/sys/kernel")) return true;
     if (std.mem.eql(u8, path, "/sys/storage")) return true;
+    if (std.mem.eql(u8, path, sys_tty_path)) return true;
+    if (std.mem.eql(u8, path, sys_tty_sessions_path)) return true;
     if (std.mem.eql(u8, path, "/sys/display")) return true;
     if (std.mem.eql(u8, path, sys_display_outputs_path)) return true;
     if (std.mem.eql(u8, path, "/sys/net")) return true;
     if (parseDevOutputDirectory(path)) |_| return true;
+    if (parseDevTtySessionDirectory(path) != null) return true;
+    if (parseSysTtySessionDirectory(path) != null) return true;
     return parseOutputDirectory(path) != null;
 }
 
@@ -250,6 +299,7 @@ fn isFilePath(path: []const u8) bool {
     if (std.mem.eql(u8, path, dev_storage_backends_path)) return true;
     if (std.mem.eql(u8, path, dev_storage_filesystems_path)) return true;
     if (std.mem.eql(u8, path, dev_storage_registry_path)) return true;
+    if (std.mem.eql(u8, path, dev_tty_state_path)) return true;
     if (std.mem.eql(u8, path, dev_display_state_path)) return true;
     if (std.mem.eql(u8, path, dev_net_state_path)) return true;
     if (std.mem.eql(u8, path, dev_net_route_path)) return true;
@@ -259,10 +309,12 @@ fn isFilePath(path: []const u8) bool {
     if (std.mem.eql(u8, path, sys_storage_backends_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_filesystems_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_registry_path)) return true;
+    if (std.mem.eql(u8, path, sys_tty_state_path)) return true;
     if (std.mem.eql(u8, path, sys_display_state_path)) return true;
     if (std.mem.eql(u8, path, sys_net_state_path)) return true;
     if (std.mem.eql(u8, path, sys_net_route_path)) return true;
     if (parseDevOutputFilePath(path) != null) return true;
+    if (parseTtySessionFilePath(path) != null) return true;
     if (parseOutputFilePath(path) != null) return true;
     return false;
 }
@@ -298,6 +350,9 @@ fn renderFileAlloc(allocator: std.mem.Allocator, path: []const u8) Error![]u8 {
     }
     if (std.mem.eql(u8, path, dev_storage_registry_path)) {
         return storage_registry.renderAlloc(allocator, max_stat_render_bytes);
+    }
+    if (std.mem.eql(u8, path, dev_tty_state_path) or std.mem.eql(u8, path, sys_tty_state_path)) {
+        return renderTtyStateAlloc(allocator);
     }
     if (std.mem.eql(u8, path, dev_display_state_path)) {
         return renderDisplayStateAlloc(allocator);
@@ -355,6 +410,15 @@ fn renderFileAlloc(allocator: std.mem.Allocator, path: []const u8) Error![]u8 {
             .modes => renderDisplayOutputModesAlloc(allocator, request.index),
         };
     }
+    if (parseTtySessionFilePath(path)) |request| {
+        return switch (request.kind) {
+            .info => renderTtySessionFileAlloc(allocator, request.session_name, .info),
+            .input => renderTtySessionFileAlloc(allocator, request.session_name, .input),
+            .stdout => renderTtySessionFileAlloc(allocator, request.session_name, .stdout),
+            .stderr => renderTtySessionFileAlloc(allocator, request.session_name, .stderr),
+            .transcript => renderTtySessionFileAlloc(allocator, request.session_name, .transcript),
+        };
+    }
     return error.FileNotFound;
 }
 
@@ -395,6 +459,64 @@ fn appendRuntimeSessionDirectory(allocator: std.mem.Allocator, out: *std.ArrayLi
         defer allocator.free(path);
         try appendFileLine(allocator, out, session_id, path, max_bytes);
     }
+}
+
+fn appendTtySessionDirectory(allocator: std.mem.Allocator, out: *std.ArrayList(u8), max_bytes: usize) Error!void {
+    const listing = tty_runtime.listSessionsAlloc(allocator, max_stat_render_bytes) catch |err| switch (err) {
+        error.ResponseTooLarge => return error.ResponseTooLarge,
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.FileNotFound,
+    };
+    defer allocator.free(listing);
+
+    var iterator = std.mem.splitScalar(u8, listing, '\n');
+    while (iterator.next()) |session_name| {
+        const trimmed = std.mem.trim(u8, session_name, " \t\r");
+        if (trimmed.len == 0) continue;
+        try appendDirectoryLine(allocator, out, trimmed, max_bytes);
+    }
+}
+
+fn renderTtyStateAlloc(allocator: std.mem.Allocator) Error![]u8 {
+    return tty_runtime.renderStateAlloc(allocator, max_stat_render_bytes) catch |err| switch (err) {
+        error.ResponseTooLarge => error.ResponseTooLarge,
+        error.OutOfMemory => error.OutOfMemory,
+        else => error.FileNotFound,
+    };
+}
+
+fn renderTtySessionFileAlloc(
+    allocator: std.mem.Allocator,
+    session_name: []const u8,
+    kind: TtySessionFileKind,
+) Error![]u8 {
+    return switch (kind) {
+        .info => tty_runtime.infoAlloc(allocator, session_name, max_stat_render_bytes) catch |err| switch (err) {
+            error.ResponseTooLarge => error.ResponseTooLarge,
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.FileNotFound,
+        },
+        .input => tty_runtime.inputAlloc(allocator, session_name, max_stat_render_bytes) catch |err| switch (err) {
+            error.ResponseTooLarge => error.ResponseTooLarge,
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.FileNotFound,
+        },
+        .stdout => tty_runtime.stdoutAlloc(allocator, session_name, max_stat_render_bytes) catch |err| switch (err) {
+            error.ResponseTooLarge => error.ResponseTooLarge,
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.FileNotFound,
+        },
+        .stderr => tty_runtime.stderrAlloc(allocator, session_name, max_stat_render_bytes) catch |err| switch (err) {
+            error.ResponseTooLarge => error.ResponseTooLarge,
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.FileNotFound,
+        },
+        .transcript => tty_runtime.transcriptAlloc(allocator, session_name, max_stat_render_bytes) catch |err| switch (err) {
+            error.ResponseTooLarge => error.ResponseTooLarge,
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.FileNotFound,
+        },
+    };
 }
 
 fn renderStorageStateAlloc(allocator: std.mem.Allocator) Error![]u8 {
@@ -572,6 +694,19 @@ const OutputFileRequest = struct {
     kind: OutputFileKind,
 };
 
+const TtySessionFileKind = enum {
+    info,
+    input,
+    stdout,
+    stderr,
+    transcript,
+};
+
+const TtySessionFileRequest = struct {
+    session_name: []const u8,
+    kind: TtySessionFileKind,
+};
+
 fn parseRuntimeSessionPath(path: []const u8) ?[]const u8 {
     if (!std.mem.startsWith(u8, path, proc_runtime_sessions_path)) return null;
     if (path.len <= proc_runtime_sessions_path.len or path[proc_runtime_sessions_path.len] != '/') return null;
@@ -579,6 +714,45 @@ fn parseRuntimeSessionPath(path: []const u8) ?[]const u8 {
     if (session_id.len == 0) return null;
     if (std.mem.indexOfScalar(u8, session_id, '/')) |_| return null;
     return session_id;
+}
+
+fn parseDevTtySessionDirectory(path: []const u8) ?[]const u8 {
+    return parseTtySessionDirectoryForBase(dev_tty_sessions_path, path);
+}
+
+fn parseSysTtySessionDirectory(path: []const u8) ?[]const u8 {
+    return parseTtySessionDirectoryForBase(sys_tty_sessions_path, path);
+}
+
+fn parseTtySessionDirectoryForBase(base_path: []const u8, path: []const u8) ?[]const u8 {
+    if (!std.mem.startsWith(u8, path, base_path)) return null;
+    if (path.len <= base_path.len or path[base_path.len] != '/') return null;
+    const tail = path[base_path.len + 1 ..];
+    if (tail.len == 0) return null;
+    if (std.mem.indexOfScalar(u8, tail, '/')) |_| return null;
+    return tail;
+}
+
+fn parseTtySessionFilePath(path: []const u8) ?TtySessionFileRequest {
+    if (parseTtySessionFilePathForBase(dev_tty_sessions_path, path)) |request| return request;
+    return parseTtySessionFilePathForBase(sys_tty_sessions_path, path);
+}
+
+fn parseTtySessionFilePathForBase(base_path: []const u8, path: []const u8) ?TtySessionFileRequest {
+    if (!std.mem.startsWith(u8, path, base_path)) return null;
+    if (path.len <= base_path.len or path[base_path.len] != '/') return null;
+    const tail = path[base_path.len + 1 ..];
+    const slash = std.mem.indexOfScalar(u8, tail, '/') orelse return null;
+    const session_name = tail[0..slash];
+    const file_name = tail[slash + 1 ..];
+    if (session_name.len == 0 or file_name.len == 0) return null;
+    if (std.mem.indexOfScalar(u8, file_name, '/')) |_| return null;
+    if (std.mem.eql(u8, file_name, "info")) return .{ .session_name = session_name, .kind = .info };
+    if (std.mem.eql(u8, file_name, "input")) return .{ .session_name = session_name, .kind = .input };
+    if (std.mem.eql(u8, file_name, "stdout")) return .{ .session_name = session_name, .kind = .stdout };
+    if (std.mem.eql(u8, file_name, "stderr")) return .{ .session_name = session_name, .kind = .stderr };
+    if (std.mem.eql(u8, file_name, "transcript")) return .{ .session_name = session_name, .kind = .transcript };
+    return null;
 }
 
 fn parseOutputDirectory(path: []const u8) ?u16 {
@@ -635,6 +809,15 @@ fn outputDetailPathForBase(allocator: std.mem.Allocator, base_path: []const u8, 
 
 fn outputModesPathForBase(allocator: std.mem.Allocator, base_path: []const u8, index: u16) ![]u8 {
     return std.fmt.allocPrint(allocator, "{s}/{d}/modes", .{ base_path, index });
+}
+
+fn ttySessionFilePathForBase(
+    allocator: std.mem.Allocator,
+    base_path: []const u8,
+    session_name: []const u8,
+    file_name: []const u8,
+) ![]u8 {
+    return std.fmt.allocPrint(allocator, "{s}/{s}/{s}", .{ base_path, session_name, file_name });
 }
 
 fn checksumBytes(bytes: []const u8) u32 {

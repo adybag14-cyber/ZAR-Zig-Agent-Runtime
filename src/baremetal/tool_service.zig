@@ -13,6 +13,7 @@ const runtime_bridge = @import("runtime_bridge.zig");
 const storage_backend = @import("storage_backend.zig");
 const storage_backend_registry = @import("storage_backend_registry.zig");
 const storage_registry = @import("storage_registry.zig");
+const tty_runtime = @import("tty_runtime.zig");
 const trust_store = @import("trust_store.zig");
 const tool_exec = @import("tool_exec.zig");
 const tool_layout = @import("tool_layout.zig");
@@ -33,6 +34,7 @@ pub const PackagePutRequest = codec.PackagePutRequest;
 pub const PackageDisplayRequest = codec.PackageDisplayRequest;
 pub const NamedValueRequest = codec.NamedValueRequest;
 pub const DisplayModeRequest = codec.DisplayModeRequest;
+pub const TtySendRequest = codec.TtySendRequest;
 pub const PackageReleasePruneRequest = codec.PackageReleasePruneRequest;
 pub const PackageChannelSetRequest = codec.PackageChannelSetRequest;
 pub const AppPlanSaveRequest = codec.AppPlanSaveRequest;
@@ -198,6 +200,14 @@ fn handleFramedPayload(
         .list => |path| try handleListRequest(allocator, path, payload_limit),
         .shell_expand => |pattern| try handleShellExpandRequest(allocator, pattern, stdout_limit, stderr_limit, payload_limit),
         .shell_run => |script| try handleShellRunRequest(allocator, script, stdout_limit, stderr_limit, payload_limit),
+        .tty_list => try handleTtyListRequest(allocator, stdout_limit, stderr_limit, payload_limit),
+        .tty_open => |session_name| try handleTtyOpenRequest(allocator, session_name, stdout_limit, stderr_limit, payload_limit),
+        .tty_info => |session_name| try handleTtyInfoRequest(allocator, session_name, stdout_limit, stderr_limit, payload_limit),
+        .tty_read => |session_name| try handleTtyReadRequest(allocator, session_name, stdout_limit, stderr_limit, payload_limit),
+        .tty_stdout => |session_name| try handleTtyStdoutRequest(allocator, session_name, stdout_limit, stderr_limit, payload_limit),
+        .tty_stderr => |session_name| try handleTtyStderrRequest(allocator, session_name, stdout_limit, stderr_limit, payload_limit),
+        .tty_send => |request| try handleTtySendRequest(allocator, request.session_name, request.command, stdout_limit, stderr_limit, payload_limit),
+        .tty_close => |session_name| try handleTtyCloseRequest(allocator, session_name, stdout_limit, stderr_limit, payload_limit),
         .storage_backends => try handleStorageBackendsRequest(allocator, payload_limit),
         .storage_filesystems => try handleStorageFilesystemsRequest(allocator, payload_limit),
         .storage_backend_info => |backend_name| try handleStorageBackendInfoRequest(allocator, backend_name, payload_limit),
@@ -490,6 +500,116 @@ fn handleShellRunRequest(
     const command = try std.fmt.allocPrint(allocator, "shell-run {s}", .{script});
     defer allocator.free(command);
     return handleCommandRequest(allocator, command, stdout_limit, stderr_limit, payload_limit);
+}
+
+fn handleTtyListRequest(
+    allocator: std.mem.Allocator,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    _ = stderr_limit;
+    _ = stdout_limit;
+    return tty_runtime.listSessionsAlloc(allocator, payload_limit) catch |err| {
+        return formatOperationError(allocator, "TTYLIST", err, payload_limit);
+    };
+}
+
+fn handleTtyOpenRequest(
+    allocator: std.mem.Allocator,
+    session_name: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    _ = stdout_limit;
+    _ = stderr_limit;
+    const command = try std.fmt.allocPrint(allocator, "tty-open {s}", .{session_name});
+    defer allocator.free(command);
+    return handleCommandRequest(allocator, command, payload_limit, payload_limit, payload_limit);
+}
+
+fn handleTtyInfoRequest(
+    allocator: std.mem.Allocator,
+    session_name: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    _ = stdout_limit;
+    _ = stderr_limit;
+    return tty_runtime.infoAlloc(allocator, session_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "TTYINFO", err, payload_limit);
+    };
+}
+
+fn handleTtyReadRequest(
+    allocator: std.mem.Allocator,
+    session_name: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    _ = stdout_limit;
+    _ = stderr_limit;
+    return tty_runtime.transcriptAlloc(allocator, session_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "TTYREAD", err, payload_limit);
+    };
+}
+
+fn handleTtyStdoutRequest(
+    allocator: std.mem.Allocator,
+    session_name: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    _ = stdout_limit;
+    _ = stderr_limit;
+    return tty_runtime.stdoutAlloc(allocator, session_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "TTYSTDOUT", err, payload_limit);
+    };
+}
+
+fn handleTtyStderrRequest(
+    allocator: std.mem.Allocator,
+    session_name: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    _ = stdout_limit;
+    _ = stderr_limit;
+    return tty_runtime.stderrAlloc(allocator, session_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "TTYSTDERR", err, payload_limit);
+    };
+}
+
+fn handleTtySendRequest(
+    allocator: std.mem.Allocator,
+    session_name: []const u8,
+    command_text: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    const command = try std.fmt.allocPrint(allocator, "tty-send {s} {s}", .{ session_name, command_text });
+    defer allocator.free(command);
+    return handleCommandRequest(allocator, command, stdout_limit, stderr_limit, payload_limit);
+}
+
+fn handleTtyCloseRequest(
+    allocator: std.mem.Allocator,
+    session_name: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    _ = stdout_limit;
+    _ = stderr_limit;
+    const command = try std.fmt.allocPrint(allocator, "tty-close {s}", .{session_name});
+    defer allocator.free(command);
+    return handleCommandRequest(allocator, command, payload_limit, payload_limit, payload_limit);
 }
 
 fn handleStorageBackendsRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
@@ -4209,6 +4329,56 @@ test "baremetal tool service exposes bounded shell batch and globbing" {
     const nested_shell_input = try handleFramedRequest(std.testing.allocator, "REQ 46 GET /tmp/sh/STDINOUT.TXT", 256, 256, 256);
     defer std.testing.allocator.free(nested_shell_input);
     try std.testing.expectEqualStrings("RESP 46 12\nstdin-shell\n", nested_shell_input);
+}
+
+test "baremetal tool service persists bounded tty session commands" {
+    resetPersistentStateForTest();
+
+    const tty_open = try handleFramedRequest(std.testing.allocator, "REQ 47 TTYOPEN demo", 256, 256, 256);
+    defer std.testing.allocator.free(tty_open);
+    try std.testing.expectEqualStrings("RESP 47 16\ntty opened demo\n", tty_open);
+
+    const tty_send_script = "demo echo tty-service-ok";
+    const tty_send_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 48 TTYSEND {d}\n{s}", .{ tty_send_script.len, tty_send_script });
+    defer std.testing.allocator.free(tty_send_request);
+    const tty_send = try handleFramedRequest(std.testing.allocator, tty_send_request, 256, 256, 256);
+    defer std.testing.allocator.free(tty_send);
+    try std.testing.expectEqualStrings("RESP 48 15\ntty-service-ok\n", tty_send);
+
+    const tty_fail_script = "demo cat /tmp/missing-tty.txt";
+    const tty_fail_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 49 TTYSEND {d}\n{s}", .{ tty_fail_script.len, tty_fail_script });
+    defer std.testing.allocator.free(tty_fail_request);
+    const tty_fail = try handleFramedRequest(std.testing.allocator, tty_fail_request, 256, 256, 256);
+    defer std.testing.allocator.free(tty_fail);
+    try std.testing.expectEqualStrings("RESP 49 36\nERR exit=1\ncat failed: FileNotFound\n", tty_fail);
+
+    const tty_list = try handleFramedRequest(std.testing.allocator, "REQ 50 TTYLIST", 256, 256, 256);
+    defer std.testing.allocator.free(tty_list);
+    try std.testing.expectEqualStrings("RESP 50 5\ndemo\n", tty_list);
+
+    const tty_info = try handleFramedRequest(std.testing.allocator, "REQ 51 TTYINFO demo", 512, 256, 512);
+    defer std.testing.allocator.free(tty_info);
+    try std.testing.expect(std.mem.startsWith(u8, tty_info, "RESP 51 "));
+    try std.testing.expect(std.mem.indexOf(u8, tty_info, "name=demo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tty_info, "command_count=2") != null);
+
+    const tty_read = try handleFramedRequest(std.testing.allocator, "REQ 52 TTYREAD demo", 1024, 256, 1024);
+    defer std.testing.allocator.free(tty_read);
+    try std.testing.expect(std.mem.startsWith(u8, tty_read, "RESP 52 "));
+    try std.testing.expect(std.mem.indexOf(u8, tty_read, "$ echo tty-service-ok\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tty_read, "$ cat /tmp/missing-tty.txt\n") != null);
+
+    const tty_stdout = try handleFramedRequest(std.testing.allocator, "REQ 53 TTYSTDOUT demo", 256, 256, 256);
+    defer std.testing.allocator.free(tty_stdout);
+    try std.testing.expectEqualStrings("RESP 53 15\ntty-service-ok\n", tty_stdout);
+
+    const tty_stderr = try handleFramedRequest(std.testing.allocator, "REQ 54 TTYSTDERR demo", 256, 256, 256);
+    defer std.testing.allocator.free(tty_stderr);
+    try std.testing.expectEqualStrings("RESP 54 25\ncat failed: FileNotFound\n", tty_stderr);
+
+    const tty_close = try handleFramedRequest(std.testing.allocator, "REQ 55 TTYCLOSE demo", 256, 256, 256);
+    defer std.testing.allocator.free(tty_close);
+    try std.testing.expectEqualStrings("RESP 55 16\ntty closed demo\n", tty_close);
 }
 
 test "baremetal tool service uploads and runs persisted scripts" {

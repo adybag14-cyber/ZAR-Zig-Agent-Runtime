@@ -18,7 +18,7 @@ This track exists to remove guesswork. It defines the real bare-metal subsystems
 
 ## ZigOS Reference Track
 
-Status: `Slices 1-8 delivered`
+Status: `Slices 1-9 delivered`
 
 This track uses `Cameron-Lyons/zigos` as a reference architecture and source candidate where it improves ZAR.
 
@@ -36,6 +36,7 @@ Tracked docs:
 - `docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_NET_SLICE_PLAN.md`
 - `docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_BLOCK_SLICE_PLAN.md`
 - `docs/zig-port/ZAR_VS_ZIGOS_SHELL_CONTROL_SLICE_PLAN.md`
+- `docs/zig-port/ZAR_VS_ZIGOS_TTY_CONTROL_SLICE_PLAN.md`
 
 Delivered first adoption slice:
 
@@ -137,6 +138,17 @@ Delivered eighth adoption slice:
 - `src/baremetal_main.zig` now widens the live `E1000` tool-service proof to validate shell help output, bounded shell batching, escaped metacharacters, file-fed stdin flows, multi-segment glob expansion, redirected stdout/stderr capture, and persisted filesystem readback on the clean-room NIC lane
 - `build.zig` now explicitly wires `scripts/baremetal/pvh_boot.S` plus `scripts/baremetal/pvh_lld.ld` into the bare-metal artifact so the Multiboot2 header remains within the required first `32768` bytes on current Zig `master`
 - full userspace shell, job control, pipelines, broader input/output process plumbing, richer quoting/escaping, editor/TTY parity, and syscall-visible shell semantics remain future redesign work
+
+Delivered ninth adoption slice:
+
+- bounded TTY/session control layer inspired by ZigOS TTY concepts without claiming a GP-OS interactive console
+- `src/baremetal/tty_runtime.zig` now persists bounded TTY session receipts under `/runtime/tty/<name>/` with `state.txt`, `input.log`, `stdout.log`, `stderr.log`, and `transcript.log`
+- `src/baremetal/tool_exec.zig` now exposes `tty-list`, `tty-open`, `tty-info`, `tty-read`, `tty-stdout`, `tty-stderr`, `tty-send`, and `tty-close`
+- `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `TTYLIST`, `TTYOPEN`, `TTYINFO`, `TTYREAD`, `TTYSTDOUT`, `TTYSTDERR`, `TTYSEND`, and `TTYCLOSE`
+- `src/baremetal/virtual_fs.zig` now exposes bounded TTY state through `/dev/tty/state`, `/dev/tty/sessions/...`, `/sys/tty/state`, and `/sys/tty/sessions/...`
+- host regressions now prove bounded TTY open/send/read/stdout/stderr/close behavior plus `/dev` and `/sys` TTY readback
+- `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves the same TTY/session slice live on the clean-room `E1000` tool-service path
+- interactive job control, pipes, terminal emulation, and editor/TTY parity remain future redesign work
 
 `FS5.5` is not complete until each subsystem has:
 
