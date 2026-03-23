@@ -850,6 +850,12 @@ Full-stack replacement execution reference:
     - new runtime tests:
       - `tool runtime file sandbox blocks traversal and out-of-root writes`
       - `tool runtime exec policy denies non-allowlisted commands`
+  - Hosted coding-agent runtime slice shipped:
+    - `src/runtime/tool_runtime.zig` now adds bounded `execute_code`, `file.search`, `file.patch`, `web.search`, `web.extract`, `process.start`, `process.list`, `process.poll`, `process.read`, `process.wait`, and `process.kill` on top of the existing runtime-state/session seam.
+    - `src/runtime/process_registry.zig` adds bounded hosted background-process tracking with lifecycle snapshots plus stdout/stderr log capture paths.
+    - `src/runtime/web_tools.zig` adds bounded hosted web search/extract helpers for HTML and JSON payloads.
+    - `src/gateway/registry.zig` and `src/gateway/dispatcher.zig` now expose `execute_code`, the file/web/process tool family, and `sessions.search`, and `tools.catalog` plus browser tool-context messaging now advertise the expanded hosted coding-agent surface.
+    - `scripts/hermes-port-rpc-smoke.mjs` is now tracked as the hosted `/rpc` coding-agent smoke helper for the combined execute/file/web/process/session path.
   - FS1 runtime recovery slice shipped:
     - runtime state persistence/replay added for tool runtime sessions + pending queue (`src/runtime/state.zig`).
     - persisted at `<state_path>/runtime-state.json` (or explicit JSON path override) and restored during runtime bootstrap.

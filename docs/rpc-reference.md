@@ -21,14 +21,14 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 
 ## Summary
 
-- Total methods: **175**
-- Prefix groups: **34**
+- Total methods: **187**
+- Prefix groups: **35**
 
 ## Prefix Overview
 
 | Prefix | Count |
 | --- | ---: |
-| (root) | 13 |
+| (root) | 14 |
 | agent | 2 |
 | agents | 7 |
 | auth | 6 |
@@ -42,16 +42,17 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 | doctor | 1 |
 | edge | 25 |
 | exec | 8 |
-| file | 2 |
+| file | 4 |
 | gateway | 1 |
 | logs | 1 |
 | models | 1 |
 | node | 16 |
+| process | 6 |
 | push | 1 |
 | secrets | 7 |
 | security | 1 |
 | session | 1 |
-| sessions | 12 |
+| sessions | 13 |
 | skills | 4 |
 | system | 12 |
 | talk | 2 |
@@ -60,7 +61,7 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 | update | 3 |
 | usage | 2 |
 | voicewake | 2 |
-| web | 4 |
+| web | 6 |
 | wizard | 4 |
 
 ## Method Index
@@ -70,6 +71,7 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 - agent
 - connect
 - doctor
+- execute_code
 - health
 - last-heartbeat
 - poll
@@ -201,7 +203,9 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 
 ### file
 
+- file.patch
 - file.read
+- file.search
 - file.write
 
 ### gateway
@@ -235,6 +239,15 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 - node.pending.pull
 - node.rename
 
+### process
+
+- process.kill
+- process.list
+- process.poll
+- process.read
+- process.start
+- process.wait
+
 ### push
 
 - push.test
@@ -267,6 +280,7 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 - sessions.preview
 - sessions.reset
 - sessions.resolve
+- sessions.search
 - sessions.send
 - sessions.usage
 - sessions.usage.logs
@@ -330,10 +344,12 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 
 ### web
 
+- web.extract
 - web.login.complete
 - web.login.start
 - web.login.status
 - web.login.wait
+- web.search
 
 ### wizard
 

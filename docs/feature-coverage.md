@@ -25,13 +25,19 @@ This page summarizes functional coverage across all major OpenClaw Zig runtime d
 
 - tool runtime:
   - `exec.run`
+  - `execute_code` for constrained hosted snippet execution (`javascript`, `python`, `zig`, `bash`, `shell`)
   - `file.read`
   - `file.write`
+  - `file.search`
+  - `file.patch`
+  - web discovery and extraction: `web.search`, `web.extract`
+  - background process lifecycle: `process.start`, `process.list`, `process.poll`, `process.read`, `process.wait`, `process.kill`
+  - Hermes-style hosted coding-agent smoke proof exists via `scripts/hermes-port-rpc-smoke.mjs`
 - session and history lifecycle:
   - list/preview/status
   - patch/resolve/reset/delete/compact
   - usage, timeseries, logs
-  - `sessions.history`, `chat.history`
+  - `sessions.history`, `sessions.search`, `chat.history`
 
 ## Security and Diagnostics
 
@@ -105,7 +111,7 @@ This page summarizes functional coverage across all major OpenClaw Zig runtime d
 ## Memory
 
 - persistent store with append/history/stats
-- memory-backed doctor status and session/chat history retrieval
+- memory-backed doctor status, session/chat history retrieval, and semantic session recall
 - efficient trim and session removal with linear compaction
 - strict FS3 gate source:
   - [`docs/zig-port/FS3_MEMORY_KNOWLEDGE_MATRIX.md`](zig-port/FS3_MEMORY_KNOWLEDGE_MATRIX.md)
