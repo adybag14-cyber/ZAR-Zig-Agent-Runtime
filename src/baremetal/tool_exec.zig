@@ -1024,12 +1024,18 @@ fn execute(
             try stderr_buffer.appendLine("usage: mount-bind <name> <target>");
             return;
         }
-        filesystem.bindMount(name_arg.arg, target_arg.arg, 0) catch |err| {
+        const target_path = unescapeShellTextAlloc(allocator, target_arg.arg) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "mount-bind <name> <target>");
+            return;
+        };
+        defer allocator.free(target_path);
+        filesystem.bindMount(name_arg.arg, target_path, 0) catch |err| {
             exit_code.* = 1;
             try stderr_buffer.appendFmt("mount-bind failed: {s}\n", .{@errorName(err)});
             return;
         };
-        try stdout_buffer.appendFmt("mount bound {s} -> {s}\n", .{ name_arg.arg, target_arg.arg });
+        try stdout_buffer.appendFmt("mount bound {s} -> {s}\n", .{ name_arg.arg, target_path });
         return;
     }
 
@@ -4603,7 +4609,13 @@ fn execute(
             try stderr_buffer.appendLine("usage: run-script <path>");
             return;
         }
-        try executeScriptPath(arg.arg, "run-script", stdout_buffer, stderr_buffer, exit_code, allocator, depth);
+        const path = unescapeShellTextAlloc(allocator, arg.arg) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "run-script <path>");
+            return;
+        };
+        defer allocator.free(path);
+        try executeScriptPath(path, "run-script", stdout_buffer, stderr_buffer, exit_code, allocator, depth);
         return;
     }
 
@@ -6012,6 +6024,44 @@ test "baremetal tool exec runs persisted scripts through the baremetal filesyste
     try std.testing.expectEqualStrings("script-data", content);
 }
 
+test "baremetal tool exec runs escaped direct script paths and mount targets" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    vga_text_console.resetForTest();
+
+    try filesystem.init();
+    try filesystem.createDirPath("/tools/scripts");
+    try filesystem.writeFile(
+        "/tools/scripts/SPACE NAME.oc",
+        "mkdir /tools/space-out\nwrite-file /tools/space-out/data.txt spaced-script\n",
+        0,
+    );
+    try filesystem.createDirPath("/tmp/direct/CACHE DIR");
+    try filesystem.writeFile("/tmp/direct/CACHE DIR/ITEM.TXT", "cache-item", 0);
+
+    var run_script_result = try runCapture(std.testing.allocator, "run-script /tools/scripts/SPACE\\ NAME.oc", 512, 256);
+    defer run_script_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), run_script_result.exit_code);
+    try std.testing.expectEqualStrings("created /tools/space-out\nwrote 13 bytes to /tools/space-out/data.txt\n", run_script_result.stdout);
+    try std.testing.expectEqualStrings("", run_script_result.stderr);
+
+    const script_output = try filesystem.readFileAlloc(std.testing.allocator, "/tools/space-out/data.txt", 64);
+    defer std.testing.allocator.free(script_output);
+    try std.testing.expectEqualStrings("spaced-script", script_output);
+
+    var bind_result = try runCapture(std.testing.allocator, "mount-bind cache /tmp/direct/CACHE\\ DIR", 256, 256);
+    defer bind_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), bind_result.exit_code);
+    try std.testing.expectEqualStrings("mount bound cache -> /tmp/direct/CACHE DIR\n", bind_result.stdout);
+    try std.testing.expectEqualStrings("", bind_result.stderr);
+
+    var cache_read_result = try runCapture(std.testing.allocator, "cat /mnt/cache/ITEM.TXT", 256, 256);
+    defer cache_read_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), cache_read_result.exit_code);
+    try std.testing.expectEqualStrings("cache-item", cache_read_result.stdout);
+    try std.testing.expectEqualStrings("", cache_read_result.stderr);
+}
+
 test "baremetal tool exec runs packages from the canonical package layout" {
     storage_backend.resetForTest();
     filesystem.resetForTest();
@@ -6921,6 +6971,14 @@ test "baremetal tool exec exposes bounded direct command redirection and input p
     try filesystem.writeFile("/tmp/direct/A.TXT", "alpha", 0);
     try filesystem.writeFile("/tmp/direct/QUO\"TE.TXT", "quoted", 0);
     try filesystem.writeFile("/tmp/direct/SPACE NAME.TXT", "spaced-direct", 0);
+    try filesystem.createDirPath("/tmp/direct/CACHE DIR");
+    try filesystem.writeFile("/tmp/direct/CACHE DIR/ITEM.TXT", "cache-item", 0);
+    try filesystem.createDirPath("/tools/scripts");
+    try filesystem.writeFile(
+        "/tools/scripts/SPACE NAME.oc",
+        "mkdir /tmp/direct/SCRIPT\nwrite-file /tmp/direct/SCRIPT/OUT.TXT script-space\n",
+        0,
+    );
 
     var direct_output_redirect = try runCapture(std.testing.allocator, "echo direct-alpha > /tmp/direct/OUT.TXT", 256, 256);
     defer direct_output_redirect.deinit(std.testing.allocator);
@@ -6953,6 +7011,24 @@ test "baremetal tool exec exposes bounded direct command redirection and input p
     const direct_escaped_space_writeback = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/direct/SPACE OUT.TXT", 64);
     defer std.testing.allocator.free(direct_escaped_space_writeback);
     try std.testing.expectEqualStrings("direct-space", direct_escaped_space_writeback);
+
+    var direct_mount_bind = try runCapture(std.testing.allocator, "mount-bind cache /tmp/direct/CACHE\\ DIR", 256, 256);
+    defer direct_mount_bind.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), direct_mount_bind.exit_code);
+    try std.testing.expectEqualStrings("mount bound cache -> /tmp/direct/CACHE DIR\n", direct_mount_bind.stdout);
+
+    var direct_mount_readback = try runCapture(std.testing.allocator, "cat /mnt/cache/ITEM.TXT", 256, 256);
+    defer direct_mount_readback.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), direct_mount_readback.exit_code);
+    try std.testing.expectEqualStrings("cache-item", direct_mount_readback.stdout);
+
+    var direct_run_script = try runCapture(std.testing.allocator, "run-script /tools/scripts/SPACE\\ NAME.oc", 512, 256);
+    defer direct_run_script.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), direct_run_script.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, direct_run_script.stdout, "wrote 12 bytes to /tmp/direct/SCRIPT/OUT.TXT\n") != null);
+    const direct_run_script_output = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/direct/SCRIPT/OUT.TXT", 64);
+    defer std.testing.allocator.free(direct_run_script_output);
+    try std.testing.expectEqualStrings("script-space", direct_run_script_output);
 
     var direct_stdin_only = try runCaptureSilentWithInput(std.testing.allocator, "write-file /tmp/direct/FROMSTDIN.TXT", "stdin-direct", 256, 256);
     defer direct_stdin_only.deinit(std.testing.allocator);

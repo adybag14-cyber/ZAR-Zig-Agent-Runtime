@@ -105,7 +105,7 @@ This slice explicitly does not claim:
     - per-command `< file` override inside `TTYSHELL` while later commands in the same batch still see the drained session stdin if they do not override it
   - direct `tty-send <name> <command>` preserves embedded `< file` override precedence through the inner bounded parser
   - escaped-whitespace file overrides on both `tty-send` and `tty-shell` through the same bounded redirection parser
-  - direct `tty-send` and `tty-shell` now also benefit from escaped-whitespace direct path arguments for path-consuming builtins inside the inner bounded parser
+  - direct `tty-send` and `tty-shell` now also benefit from escaped-whitespace direct path arguments for path-consuming builtins inside the inner bounded parser, including direct `run-script` script paths plus `mount-bind` target paths
     - bounded quoted-path shell receipts through the same direct path-consuming builtin rules used by `SHELLRUN`
     - `TTYCLEAR`
     - `TTYEVENTS`

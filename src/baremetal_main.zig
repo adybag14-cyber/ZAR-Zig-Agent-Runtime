@@ -15132,6 +15132,15 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
     if (std.mem.indexOf(u8, shell_input_response, "wrote 6 bytes to /tmp/sh/SPACE NAME.TXT\n") == null) return error.ToolServiceResponseMismatch;
     qemuDebugWrite("ETS9A8J\n");
 
+    filesystem.createDirPath("/tmp/sh/CACHE DIR") catch return error.ToolServiceFailed;
+    filesystem.writeFile("/tmp/sh/CACHE DIR/ITEM.TXT", "cache-item", 0) catch return error.ToolServiceFailed;
+    filesystem.writeFile(
+        "/tools/scripts/SPACE NAME.oc",
+        "mkdir /tmp/sh/SCRIPT\nwrite-file /tmp/sh/SCRIPT/OUT.TXT script-space\n",
+        0,
+    ) catch return error.ToolServiceFailed;
+    qemuDebugWrite("ETS9A8K\n");
+
     const copied_input_response = try exchangeE1000TcpProbeServiceRequest(
         eth,
         scratch,
@@ -15841,6 +15850,68 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
     );
     if (!std.mem.eql(u8, direct_space_write_readback, "RESP 82 9\ncmd-space")) return error.ToolServiceResponseMismatch;
     qemuDebugWrite("ETS9AF\n");
+
+    const direct_mount_bind_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 178 CMD mount-bind cache /tmp/sh/CACHE\\ DIR",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.startsWith(u8, direct_mount_bind_response, "RESP 178 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, direct_mount_bind_response, "mount bound cache -> /tmp/sh/CACHE DIR\n") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9AF1\n");
+
+    const direct_mount_readback = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 179 GET /mnt/cache/ITEM.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, direct_mount_readback, "RESP 179 10\ncache-item")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9AF2\n");
+
+    const direct_run_script_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 180 CMD run-script /tools/scripts/SPACE\\ NAME.oc",
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.startsWith(u8, direct_run_script_response, "RESP 180 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, direct_run_script_response, "wrote 12 bytes to /tmp/sh/SCRIPT/OUT.TXT\n") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9AF3\n");
+
+    const direct_run_script_readback = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 181 GET /tmp/sh/SCRIPT/OUT.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, direct_run_script_readback, "RESP 181 12\nscript-space")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9AF4\n");
 
     const tty_shell_override_input_put = try exchangeE1000TcpProbeServiceRequest(
         eth,

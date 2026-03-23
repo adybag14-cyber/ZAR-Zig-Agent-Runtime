@@ -4391,6 +4391,14 @@ test "baremetal tool service exposes bounded shell batch and globbing" {
     defer std.testing.allocator.free(stdin_put_response);
     try std.testing.expectEqualStrings("RESP 40 35\nWROTE 39 bytes to /tmp/sh/STDIN.OC\n", stdin_put_response);
     try filesystem.writeFile("/tmp/sh/QUO\"TE.TXT", "quoted", 0);
+    try filesystem.createDirPath("/tmp/sh/CACHE DIR");
+    try filesystem.writeFile("/tmp/sh/CACHE DIR/ITEM.TXT", "cache-item", 0);
+    try filesystem.createDirPath("/tools/scripts");
+    try filesystem.writeFile(
+        "/tools/scripts/SPACE NAME.oc",
+        "mkdir /tmp/sh/SCRIPT\nwrite-file /tmp/sh/SCRIPT/OUT.TXT script-space\n",
+        0,
+    );
 
     const shell_input_script =
         "cat < /tmp/sh/A.TXT > /tmp/sh/COPY.TXT\n" ++
@@ -4481,6 +4489,24 @@ test "baremetal tool service exposes bounded shell batch and globbing" {
     const direct_space_write_readback = try handleFramedRequest(std.testing.allocator, "REQ 57 GET /tmp/sh/CMD SPACE.TXT", 256, 256, 256);
     defer std.testing.allocator.free(direct_space_write_readback);
     try std.testing.expectEqualStrings("RESP 57 9\ncmd-space", direct_space_write_readback);
+
+    const direct_mount_bind_response = try handleFramedRequest(std.testing.allocator, "REQ 58 CMD mount-bind cache /tmp/sh/CACHE\\ DIR", 256, 256, 256);
+    defer std.testing.allocator.free(direct_mount_bind_response);
+    try std.testing.expect(std.mem.startsWith(u8, direct_mount_bind_response, "RESP 58 "));
+    try std.testing.expect(std.mem.indexOf(u8, direct_mount_bind_response, "mount bound cache -> /tmp/sh/CACHE DIR\n") != null);
+
+    const direct_mount_readback = try handleFramedRequest(std.testing.allocator, "REQ 59 GET /mnt/cache/ITEM.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(direct_mount_readback);
+    try std.testing.expectEqualStrings("RESP 59 10\ncache-item", direct_mount_readback);
+
+    const direct_run_script_response = try handleFramedRequest(std.testing.allocator, "REQ 60 CMD run-script /tools/scripts/SPACE\\ NAME.oc", 512, 256, 512);
+    defer std.testing.allocator.free(direct_run_script_response);
+    try std.testing.expect(std.mem.startsWith(u8, direct_run_script_response, "RESP 60 "));
+    try std.testing.expect(std.mem.indexOf(u8, direct_run_script_response, "wrote 12 bytes to /tmp/sh/SCRIPT/OUT.TXT\n") != null);
+
+    const direct_run_script_readback = try handleFramedRequest(std.testing.allocator, "REQ 61 GET /tmp/sh/SCRIPT/OUT.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(direct_run_script_readback);
+    try std.testing.expectEqualStrings("RESP 61 12\nscript-space", direct_run_script_readback);
 }
 
 test "baremetal tool service persists bounded tty session commands" {
