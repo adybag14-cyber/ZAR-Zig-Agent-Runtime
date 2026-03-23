@@ -189,6 +189,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1
 
+      - name: Bare-metal QEMU virtio-block mount control probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-block-mount-control-probe-check.ps1
+
       - name: Bare-metal QEMU virtio-block ext2 mount probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-virtio-block-ext2-mount-probe-check.ps1

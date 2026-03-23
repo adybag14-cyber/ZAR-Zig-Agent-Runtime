@@ -98,7 +98,7 @@ pub fn renderFilesystemSupportAlloc(allocator: std.mem.Allocator, max_bytes: usi
         "filesystem=zarfs detect=1 mount=1 write=1 source=zar_native\n",
         "filesystem=tmpfs detect=synthetic mount=1 write=1 source=zar_native\n",
         "filesystem=ext2 detect=1 mount=1 write=0 source=zar_bounded_read_only\n",
-        "filesystem=fat32 detect=1 mount=1 write=0 source=zar_bounded_read_only\n",
+        "filesystem=fat32 detect=1 mount=1 write=1 source=zar_bounded_writable_root_only\n",
     };
     for (rows) |row| {
         if (out.items.len + row.len > max_bytes) return error.ResponseTooLarge;
@@ -280,5 +280,5 @@ test "backend registry exposes filesystem support matrix" {
 
     try std.testing.expect(std.mem.indexOf(u8, rendered, "filesystem=zarfs detect=1 mount=1 write=1 source=zar_native") != null);
     try std.testing.expect(std.mem.indexOf(u8, rendered, "filesystem=ext2 detect=1 mount=1 write=0 source=zar_bounded_read_only") != null);
-    try std.testing.expect(std.mem.indexOf(u8, rendered, "filesystem=fat32 detect=1 mount=1 write=0 source=zar_bounded_read_only") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "filesystem=fat32 detect=1 mount=1 write=1 source=zar_bounded_writable_root_only") != null);
 }

@@ -16,7 +16,9 @@ $filesystemMagic = 0x4f434653
 $filesystemSuperblockLba = 130
 $blockSize = 512
 $expectedLoaderMarker = 'backend=virtio_block'
+$expectedBootMountRegistryMarker = '/runtime/mounts/boot.txt'
 $expectedMountRegistryMarker = '/runtime/mounts/runtime.txt'
+$expectedCacheMountRegistryMarker = '/runtime/mounts/cache.txt'
 $expectedMountPayloadMarker = 'mounted-via-alias'
 
 function Resolve-ZigExecutable {
@@ -273,8 +275,14 @@ if ($fsMagic -ne $filesystemMagic) {
 if (-not $imageText.Contains($expectedLoaderMarker)) {
     throw "Virtio-block mount image does not contain expected loader marker '$expectedLoaderMarker'."
 }
+if (-not $imageText.Contains($expectedBootMountRegistryMarker)) {
+    throw "Virtio-block mount image does not contain expected boot registry marker '$expectedBootMountRegistryMarker'."
+}
 if (-not $imageText.Contains($expectedMountRegistryMarker)) {
     throw "Virtio-block mount image does not contain expected registry marker '$expectedMountRegistryMarker'."
+}
+if (-not $imageText.Contains($expectedCacheMountRegistryMarker)) {
+    throw "Virtio-block mount image does not contain expected cache registry marker '$expectedCacheMountRegistryMarker'."
 }
 if (-not $imageText.Contains($expectedMountPayloadMarker)) {
     throw "Virtio-block mount image does not contain expected payload marker '$expectedMountPayloadMarker'."
@@ -287,5 +295,7 @@ Write-Output "BAREMETAL_QEMU_VIRTIO_BLOCK_MOUNT_IMAGE=$diskImage"
 Write-Output ("BAREMETAL_VIRTIO_BLOCK_MOUNT_TOOL_LAYOUT_MAGIC=0x{0:X8}" -f $toolMagic)
 Write-Output ("BAREMETAL_VIRTIO_BLOCK_MOUNT_FILESYSTEM_MAGIC=0x{0:X8}" -f $fsMagic)
 Write-Output "BAREMETAL_VIRTIO_BLOCK_MOUNT_LOADER_MARKER=$expectedLoaderMarker"
+Write-Output "BAREMETAL_VIRTIO_BLOCK_MOUNT_BOOT_REGISTRY_MARKER=$expectedBootMountRegistryMarker"
 Write-Output "BAREMETAL_VIRTIO_BLOCK_MOUNT_REGISTRY_MARKER=$expectedMountRegistryMarker"
+Write-Output "BAREMETAL_VIRTIO_BLOCK_MOUNT_CACHE_REGISTRY_MARKER=$expectedCacheMountRegistryMarker"
 Write-Output "BAREMETAL_VIRTIO_BLOCK_MOUNT_PAYLOAD_MARKER=$expectedMountPayloadMarker"

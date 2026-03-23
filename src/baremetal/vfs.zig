@@ -74,7 +74,15 @@ pub fn writeFile(persistent: anytype, path: []const u8, data: []const u8, tick: 
             else => error.InvalidPath,
         },
         .virtual => return error.ReadOnlyPath,
-        .external => return error.ReadOnlyPath,
+        .external => return mounted_external_fs.writeFile(routed.full, data, tick) catch |err| switch (err) {
+            error.FileNotFound => error.FileNotFound,
+            error.IsDirectory => error.IsDirectory,
+            error.FileTooBig => error.FileTooBig,
+            error.UnsupportedPath => error.InvalidPath,
+            error.NoSpace => error.NoSpace,
+            error.ReadOnlyPath => error.ReadOnlyPath,
+            else => error.InvalidPath,
+        },
         .persistent => return persistent.writeFile(routed.full, data, tick),
     }
 }
@@ -90,7 +98,13 @@ pub fn deleteFile(persistent: anytype, path: []const u8, tick: u64, normalized_b
             else => error.InvalidPath,
         },
         .virtual => return error.ReadOnlyPath,
-        .external => return error.ReadOnlyPath,
+        .external => return mounted_external_fs.deleteFile(routed.full) catch |err| switch (err) {
+            error.FileNotFound => error.FileNotFound,
+            error.IsDirectory => error.IsDirectory,
+            error.ReadOnlyPath => error.ReadOnlyPath,
+            error.UnsupportedPath => error.InvalidPath,
+            else => error.InvalidPath,
+        },
         .persistent => return persistent.deleteFile(routed.full, tick),
     }
 }

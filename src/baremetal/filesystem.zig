@@ -202,6 +202,16 @@ pub fn bindMount(name: []const u8, target: []const u8, tick: u64) Error!void {
     try init();
     mount_table.validateName(name) catch return error.InvalidPath;
     mount_table.validateTarget(target) catch return error.InvalidPath;
+    switch (storage_registry.detectPersistentFilesystemKind()) {
+        .ext2, .fat32 => {
+            mount_table.set(name, target, tick) catch |err| switch (err) {
+                error.InvalidMountName, error.InvalidTarget => return error.InvalidPath,
+                error.NoSpace => return error.NoSpace,
+            };
+            return;
+        },
+        else => {},
+    }
     try createDirPath(mount_registry_root);
 
     var path_buf: [max_path_len]u8 = undefined;
@@ -212,6 +222,13 @@ pub fn bindMount(name: []const u8, target: []const u8, tick: u64) Error!void {
 pub fn removeMount(name: []const u8, tick: u64) Error!void {
     try init();
     mount_table.validateName(name) catch return error.InvalidPath;
+    switch (storage_registry.detectPersistentFilesystemKind()) {
+        .ext2, .fat32 => {
+            _ = mount_table.remove(name);
+            return;
+        },
+        else => {},
+    }
 
     var path_buf: [max_path_len]u8 = undefined;
     const registry_path = try mountRegistryPath(name, path_buf[0..]);
@@ -1170,7 +1187,7 @@ test "filesystem exposes virtual proc sys and dev overlays" {
     const dev_storage_filesystems = try readFileAlloc(std.testing.allocator, "/dev/storage/filesystems", 512);
     defer std.testing.allocator.free(dev_storage_filesystems);
     try std.testing.expect(std.mem.indexOf(u8, dev_storage_filesystems, "filesystem=ext2 detect=1 mount=1 write=0") != null);
-    try std.testing.expect(std.mem.indexOf(u8, dev_storage_filesystems, "filesystem=fat32 detect=1 mount=1 write=0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dev_storage_filesystems, "filesystem=fat32 detect=1 mount=1 write=1") != null);
 
     const dev_display_state = try readFileAlloc(std.testing.allocator, "/dev/display/state", 512);
     defer std.testing.allocator.free(dev_display_state);

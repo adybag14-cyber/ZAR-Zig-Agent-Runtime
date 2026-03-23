@@ -256,6 +256,12 @@ pub const ethernet_backend_virtio_net: u8 = 3;
 pub const storage_backend_ram_disk: u8 = 1;
 pub const storage_backend_ata_pio: u8 = 2;
 pub const storage_backend_virtio_block: u8 = 3;
+pub const storage_filesystem_kind_unknown: u8 = 0;
+pub const storage_filesystem_kind_zarfs: u8 = 1;
+pub const storage_filesystem_kind_tmpfs: u8 = 2;
+pub const storage_filesystem_kind_virtual: u8 = 3;
+pub const storage_filesystem_kind_ext2: u8 = 4;
+pub const storage_filesystem_kind_fat32: u8 = 5;
 pub const input_modifier_shift: u8 = 1 << 0;
 pub const input_modifier_ctrl: u8 = 1 << 1;
 pub const input_modifier_alt: u8 = 1 << 2;
@@ -433,6 +439,35 @@ pub const BaremetalStoragePartitionInfo = extern struct {
     reserved0: [3]u8,
     start_lba: u32,
     sector_count: u32,
+};
+
+pub const BaremetalStorageBackendInfo = extern struct {
+    backend: u8,
+    available: u8,
+    selected: u8,
+    mounted: u8,
+    filesystem_kind: u8,
+    preferred_order: u8,
+    partition_count: u8,
+    reserved0: u8,
+    selected_partition: i16,
+    reserved1: [2]u8,
+    block_size: u32,
+    block_count: u32,
+    logical_base_lba: u32,
+    name_len: u8,
+    reserved2: [3]u8,
+    name: [24]u8,
+};
+
+pub const BaremetalMountInfo = extern struct {
+    name_len: u8,
+    reserved0: [7]u8,
+    target_len: u16,
+    reserved1: [6]u8,
+    modified_tick: u64,
+    name: [32]u8,
+    target: [224]u8,
 };
 
 pub const BaremetalEthernetState = extern struct {
@@ -897,6 +932,8 @@ test "baremetal kernel info size contract stays stable" {
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalConsoleState));
     try std.testing.expectEqual(@as(usize, 56), @sizeOf(BaremetalStorageState));
     try std.testing.expectEqual(@as(usize, 12), @sizeOf(BaremetalStoragePartitionInfo));
+    try std.testing.expectEqual(@as(usize, 52), @sizeOf(BaremetalStorageBackendInfo));
+    try std.testing.expectEqual(@as(usize, 280), @sizeOf(BaremetalMountInfo));
     try std.testing.expectEqual(@as(usize, 76), @sizeOf(BaremetalEthernetState));
     try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalToolLayoutState));
     try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalToolSlot));

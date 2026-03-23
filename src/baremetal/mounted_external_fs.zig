@@ -17,6 +17,7 @@ pub const Error = std.mem.Allocator.Error || storage_backend.Error || ext2_ro.Er
     NotDirectory,
     IsDirectory,
     ResponseTooLarge,
+    ReadOnlyPath,
 };
 
 pub const SimpleStat = struct {
@@ -93,6 +94,28 @@ pub fn statSummary(path: []const u8) Error!SimpleStat {
     return switch (kind) {
         .ext2 => mapStat(try ext2_ro.statSummary(parsed.relative)),
         .fat32 => mapStat(try fat32_ro.statSummary(parsed.relative)),
+        else => error.FileNotFound,
+    };
+}
+
+pub fn writeFile(path: []const u8, data: []const u8, tick: u64) Error!void {
+    const parsed = parsePath(path) orelse return error.FileNotFound;
+    const kind = try resolveKind(parsed.kind);
+    if (parsed.relative.len == 0 or std.mem.eql(u8, parsed.relative, "/")) return error.IsDirectory;
+    return switch (kind) {
+        .fat32 => fat32_ro.writeFile(parsed.relative, data, tick),
+        .ext2 => error.ReadOnlyPath,
+        else => error.FileNotFound,
+    };
+}
+
+pub fn deleteFile(path: []const u8) Error!void {
+    const parsed = parsePath(path) orelse return error.FileNotFound;
+    const kind = try resolveKind(parsed.kind);
+    if (parsed.relative.len == 0 or std.mem.eql(u8, parsed.relative, "/")) return error.IsDirectory;
+    return switch (kind) {
+        .fat32 => fat32_ro.deleteFile(parsed.relative),
+        .ext2 => error.ReadOnlyPath,
         else => error.FileNotFound,
     };
 }
@@ -180,4 +203,20 @@ test "mounted external fs routes fat32 reads through active root" {
     const file = try readFileAlloc(std.testing.allocator, active_root ++ "/HELLO.TXT", 64);
     defer std.testing.allocator.free(file);
     try std.testing.expectEqualStrings(fat32_ro.test_file_payload, file);
+}
+
+test "mounted external fs routes bounded fat32 writes through active root" {
+    storage_backend.resetForTest();
+    virtio_block.testEnableMockDevice(256);
+    defer virtio_block.testDisableMockDevice();
+    storage_backend.init();
+    try fat32_ro.seedTestImage();
+
+    try writeFile(active_root ++ "/WRITE.TXT", "mounted-fat32", 9);
+    const file = try readFileAlloc(std.testing.allocator, active_root ++ "/WRITE.TXT", 64);
+    defer std.testing.allocator.free(file);
+    try std.testing.expectEqualStrings("mounted-fat32", file);
+
+    try deleteFile(active_root ++ "/WRITE.TXT");
+    try std.testing.expectEqual(error.FileNotFound, readFileAlloc(std.testing.allocator, active_root ++ "/WRITE.TXT", 64));
 }
