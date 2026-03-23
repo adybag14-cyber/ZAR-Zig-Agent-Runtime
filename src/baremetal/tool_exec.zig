@@ -5626,6 +5626,12 @@ fn normalizeShellCommandTextAlloc(allocator: std.mem.Allocator, text: []const u8
                 try out.append(allocator, next);
                 continue;
             }
+            if (next == ' ' or next == '\t') {
+                try out.append(allocator, ch);
+                idx += 1;
+                try out.append(allocator, next);
+                continue;
+            }
             idx += 1;
             try out.append(allocator, next);
             continue;
@@ -6934,6 +6940,19 @@ test "baremetal tool exec exposes bounded direct command redirection and input p
     defer direct_escaped_space_redirect.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), direct_escaped_space_redirect.exit_code);
     try std.testing.expectEqualStrings("spaced-direct", direct_escaped_space_redirect.stdout);
+
+    var direct_escaped_space_cat = try runCapture(std.testing.allocator, "cat /tmp/direct/SPACE\\ NAME.TXT", 256, 256);
+    defer direct_escaped_space_cat.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), direct_escaped_space_cat.exit_code);
+    try std.testing.expectEqualStrings("spaced-direct", direct_escaped_space_cat.stdout);
+
+    var direct_escaped_space_write = try runCapture(std.testing.allocator, "write-file /tmp/direct/SPACE\\ OUT.TXT direct-space", 256, 256);
+    defer direct_escaped_space_write.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), direct_escaped_space_write.exit_code);
+    try std.testing.expectEqualStrings("wrote 12 bytes to /tmp/direct/SPACE OUT.TXT\n", direct_escaped_space_write.stdout);
+    const direct_escaped_space_writeback = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/direct/SPACE OUT.TXT", 64);
+    defer std.testing.allocator.free(direct_escaped_space_writeback);
+    try std.testing.expectEqualStrings("direct-space", direct_escaped_space_writeback);
 
     var direct_stdin_only = try runCaptureSilentWithInput(std.testing.allocator, "write-file /tmp/direct/FROMSTDIN.TXT", "stdin-direct", 256, 256);
     defer direct_stdin_only.deinit(std.testing.allocator);

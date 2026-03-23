@@ -4468,6 +4468,19 @@ test "baremetal tool service exposes bounded shell batch and globbing" {
     const direct_input_response = try handleFramedRequest(std.testing.allocator, "REQ 54 CMD cat < \"/tmp/sh/QUO\\\"TE.TXT\"", 256, 256, 256);
     defer std.testing.allocator.free(direct_input_response);
     try std.testing.expectEqualStrings("RESP 54 6\nquoted", direct_input_response);
+
+    const direct_space_cat_response = try handleFramedRequest(std.testing.allocator, "REQ 55 CMD cat /tmp/sh/SPACE\\ NAME.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(direct_space_cat_response);
+    try std.testing.expectEqualStrings("RESP 55 6\nspaced", direct_space_cat_response);
+
+    const direct_space_write_response = try handleFramedRequest(std.testing.allocator, "REQ 56 CMD write-file /tmp/sh/CMD\\ SPACE.TXT cmd-space", 256, 256, 256);
+    defer std.testing.allocator.free(direct_space_write_response);
+    try std.testing.expect(std.mem.startsWith(u8, direct_space_write_response, "RESP 56 "));
+    try std.testing.expect(std.mem.indexOf(u8, direct_space_write_response, "wrote 9 bytes to /tmp/sh/CMD SPACE.TXT\n") != null);
+
+    const direct_space_write_readback = try handleFramedRequest(std.testing.allocator, "REQ 57 GET /tmp/sh/CMD SPACE.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(direct_space_write_readback);
+    try std.testing.expectEqualStrings("RESP 57 9\ncmd-space", direct_space_write_readback);
 }
 
 test "baremetal tool service persists bounded tty session commands" {
