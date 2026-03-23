@@ -3,7 +3,7 @@
 
 ## Objective
 
-Move from raw on-disk filesystem detection to bounded mounted external-filesystem support without forcing a full GP-OS VFS/syscall transplant into ZAR.
+Track the delivered bounded mounted external-filesystem seam and the remaining work beyond it without forcing a full GP-OS VFS/syscall transplant into ZAR.
 
 This slice is informed by ZigOS filesystem breadth and may use Linux and ZigOS as references, but the implementation remains ZAR-native.
 
@@ -37,21 +37,29 @@ Current capability posture:
   - write: yes
 - `ext2`
   - detect: yes
-  - mount: not yet
+  - mount: yes
   - write: not yet
 - `fat32`
   - detect: yes
-  - mount: not yet
+  - mount: yes
   - write: not yet
 
-## Deliberate scope for the next external-filesystem step
+## Delivered bounded mount step
 
-First bounded mounted-filesystem phase:
+Delivered:
 
 1. read-only external mount classification
 2. explicit mount target under `/mnt/fs/<name>` or equivalent bounded alias
 3. bounded directory listing
 4. bounded file read
+5. bounded stat
+6. bounded backend retargeting before rebinding the filesystem
+7. live `virtio-block` proof for deterministic ext2/fat32 images
+
+## Deliberate scope for the next external-filesystem step
+
+Still deferred:
+
 5. no write path
 6. no journaling
 7. no userspace syscall ABI
@@ -61,7 +69,7 @@ First bounded mounted-filesystem phase:
 
 ### Phase A: ext2 read-only mount
 
-Deliver:
+Delivered:
 
 - ext2 superblock parse
 - block-group descriptor parse
@@ -76,29 +84,40 @@ Do not deliver yet:
 - permissions/ownership semantics beyond bounded metadata export
 - symlink/device/special-node parity
 
-### Phase B: FAT32 read-only mount
+### Phase B: FAT32 bounded writable mount
 
-Deliver:
+Delivered:
 
 - BPB + FAT32 info-sector parse
 - cluster-chain walk
 - short-name directory iteration
 - bounded long-file-name handling only if needed by proofs
 - read-only file data path
+- bounded root-only 8.3 write/overwrite/delete
 - bounded mount proof against a deterministic FAT32 image
 
 Do not deliver yet:
 
-- FAT writes
 - VFAT edge-case parity beyond the bounded proof surface
+- nested/subdirectory writes
+- rename, append, truncate, or long-file-name write parity
 
 ### Phase C: mount registry integration
 
-After A and B:
+Delivered on top of A and B:
 
 - extend mount registry records with `filesystem=<kind>`
 - extend VFS router so mounted external roots participate through the same bounded path seam
-- keep mounted external roots read-only until a later write-design slice exists
+- keep mounted `ext2` roots read-only while allowing bounded FAT32 root-only writes
+
+### Phase D: mount-control ABI seam
+
+Delivered:
+
+- bounded storage-backend info export through `oc_storage_backend_info`
+- bounded mount export through `oc_filesystem_mount_count` and `oc_filesystem_mount_entry`
+- bounded bind/remove controls through `oc_filesystem_bind_mount` and `oc_filesystem_remove_mount`
+- live `virtio-blk-pci` proof for bind, reload, and remove on the exported seam
 
 ## Required ZAR-native success gates
 
@@ -118,7 +137,8 @@ Before the ext2/FAT slice is considered delivered:
 - no POSIX syscall mount ABI
 - no general-purpose userland `mount(2)` surface
 - no full devfs/procfs/ext2/fat32 transplant from ZigOS
-- no writable external filesystem support in the first slice
+- no writable `ext2`
+- no general-purpose FAT32 write surface beyond bounded root-only 8.3 files
 
 ## Why this is the right boundary
 

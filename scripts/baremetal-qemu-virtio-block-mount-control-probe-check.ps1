@@ -9,17 +9,12 @@ $ErrorActionPreference = 'Stop'
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $releaseDir = Join-Path $repo 'release'
-$expectedProbeCode = 0x5A
+$expectedProbeCode = 0x5D
 $expectedExitCode = ($expectedProbeCode * 2) + 1
-$toolLayoutMagic = 0x4f43544c
 $filesystemMagic = 0x4f434653
 $filesystemSuperblockLba = 130
 $blockSize = 512
-$expectedLoaderMarker = 'backend=virtio_block'
-$expectedBootMountRegistryMarker = '/runtime/mounts/boot.txt'
-$expectedMountRegistryMarker = '/runtime/mounts/runtime.txt'
-$expectedCacheMountRegistryMarker = '/runtime/mounts/cache.txt'
-$expectedMountPayloadMarker = 'mounted-via-alias'
+$expectedMountPayloadMarker = 'virtio-block-mount-control'
 
 function Resolve-ZigExecutable {
     $defaultWindowsZig = 'C:\Users\Ady\Documents\toolchains\zig-master\current\zig.exe'
@@ -92,12 +87,12 @@ New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
 $zig = Resolve-ZigExecutable
 $qemu = Resolve-Executable @('qemu-system-x86_64', 'qemu-system-x86_64.exe', 'C:\Program Files\qemu\qemu-system-x86_64.exe')
 $clang = Resolve-Executable @('clang', 'clang.exe', 'C:\Users\Ady\Documents\starpro\tooling\emsdk\upstream\bin\clang.exe')
-$zigGlobalCacheDir = if ($env:ZIG_GLOBAL_CACHE_DIR -and $env:ZIG_GLOBAL_CACHE_DIR.Trim().Length -gt 0) { $env:ZIG_GLOBAL_CACHE_DIR } else { Join-Path $repo '.zig-global-cache-virtio-block-mount-probe' }
-$zigLocalCacheDir = if ($env:ZIG_LOCAL_CACHE_DIR -and $env:ZIG_LOCAL_CACHE_DIR.Trim().Length -gt 0) { $env:ZIG_LOCAL_CACHE_DIR } else { Join-Path $repo '.zig-cache-virtio-block-mount-probe' }
+$zigGlobalCacheDir = if ($env:ZIG_GLOBAL_CACHE_DIR -and $env:ZIG_GLOBAL_CACHE_DIR.Trim().Length -gt 0) { $env:ZIG_GLOBAL_CACHE_DIR } else { Join-Path $repo '.zig-global-cache-virtio-block-mount-control-probe' }
+$zigLocalCacheDir = if ($env:ZIG_LOCAL_CACHE_DIR -and $env:ZIG_LOCAL_CACHE_DIR.Trim().Length -gt 0) { $env:ZIG_LOCAL_CACHE_DIR } else { Join-Path $repo '.zig-cache-virtio-block-mount-control-probe' }
 
 if ($null -eq $qemu) {
     Write-Output 'BAREMETAL_QEMU_AVAILABLE=False'
-    Write-Output 'BAREMETAL_QEMU_VIRTIO_BLOCK_MOUNT_PROBE=skipped'
+    Write-Output 'BAREMETAL_QEMU_VIRTIO_BLOCK_MOUNT_CONTROL_PROBE=skipped'
     return
 }
 
@@ -106,19 +101,19 @@ if ($null -eq $clang) {
     Write-Output "BAREMETAL_QEMU_BINARY=$qemu"
     Write-Output 'BAREMETAL_QEMU_PVH_TOOLCHAIN_AVAILABLE=False'
     Write-Output 'BAREMETAL_QEMU_PVH_MISSING=clang'
-    Write-Output 'BAREMETAL_QEMU_VIRTIO_BLOCK_MOUNT_PROBE=skipped'
+    Write-Output 'BAREMETAL_QEMU_VIRTIO_BLOCK_MOUNT_CONTROL_PROBE=skipped'
     return
 }
 
-$optionsPath = Join-Path $releaseDir 'qemu-virtio-block-mount-probe-options.zig'
-$mainObj = Join-Path $releaseDir 'openclaw-zig-baremetal-main-virtio-block-mount-probe.o'
-$bootObj = Join-Path $releaseDir 'openclaw-zig-pvh-boot-virtio-block-mount-probe.o'
-$artifact = Join-Path $releaseDir 'openclaw-zig-baremetal-pvh-virtio-block-mount-probe.elf'
-$diskImage = Join-Path $releaseDir 'qemu-virtio-block-mount-probe.img'
+$optionsPath = Join-Path $releaseDir 'qemu-virtio-block-mount-control-probe-options.zig'
+$mainObj = Join-Path $releaseDir 'openclaw-zig-baremetal-main-virtio-block-mount-control-probe.o'
+$bootObj = Join-Path $releaseDir 'openclaw-zig-pvh-boot-virtio-block-mount-control-probe.o'
+$artifact = Join-Path $releaseDir 'openclaw-zig-baremetal-pvh-virtio-block-mount-control-probe.elf'
+$diskImage = Join-Path $releaseDir 'qemu-virtio-block-mount-control-probe.img'
 $bootSource = Join-Path $repo 'scripts\baremetal\pvh_boot.S'
 $linkerScript = Join-Path $repo 'scripts\baremetal\pvh_lld.ld'
-$stdoutPath = Join-Path $releaseDir 'qemu-virtio-block-mount-probe.stdout.log'
-$stderrPath = Join-Path $releaseDir 'qemu-virtio-block-mount-probe.stderr.log'
+$stdoutPath = Join-Path $releaseDir 'qemu-virtio-block-mount-control-probe.stdout.log'
+$stderrPath = Join-Path $releaseDir 'qemu-virtio-block-mount-control-probe.stderr.log'
 
 if (-not $SkipBuild) {
     New-Item -ItemType Directory -Force -Path $zigGlobalCacheDir | Out-Null
@@ -132,7 +127,8 @@ pub const ata_gpt_installer_probe: bool = false;
 pub const virtio_gpu_display_probe: bool = false;
 pub const virtio_block_probe: bool = false;
 pub const virtio_block_installer_probe: bool = false;
-pub const virtio_block_mount_probe: bool = true;
+pub const virtio_block_mount_probe: bool = false;
+pub const virtio_block_mount_control_probe: bool = true;
 pub const e1000_probe: bool = false;
 pub const e1000_arp_probe: bool = false;
 pub const e1000_ipv4_probe: bool = false;
@@ -179,7 +175,7 @@ pub const tool_runtime_probe: bool = false;
         "-Mbuild_options=$optionsPath" `
         --cache-dir "$zigLocalCacheDir" `
         --global-cache-dir "$zigGlobalCacheDir" `
-        --name 'openclaw-zig-baremetal-main-virtio-block-mount-probe' `
+        --name 'openclaw-zig-baremetal-main-virtio-block-mount-control-probe' `
         "-femit-bin=$mainObj"
     if ($LASTEXITCODE -ne 0) {
         throw "zig build-obj for virtio-block mount probe failed with exit code $LASTEXITCODE"
@@ -262,27 +258,11 @@ if ($exitCode -ne $expectedExitCode) {
 }
 
 $imageBytes = [System.IO.File]::ReadAllBytes($diskImage)
-$toolMagic = Read-ImageU32LE -Bytes $imageBytes -Lba 0
 $fsMagic = Read-ImageU32LE -Bytes $imageBytes -Lba $filesystemSuperblockLba
 $imageText = [System.Text.Encoding]::ASCII.GetString($imageBytes)
 
-if ($toolMagic -ne $toolLayoutMagic) {
-    throw ("Virtio-block mount tool-layout superblock magic mismatch. Expected 0x{0:X8}, got 0x{1:X8}." -f $toolLayoutMagic, $toolMagic)
-}
 if ($fsMagic -ne $filesystemMagic) {
     throw ("Virtio-block mount filesystem superblock magic mismatch. Expected 0x{0:X8}, got 0x{1:X8}." -f $filesystemMagic, $fsMagic)
-}
-if (-not $imageText.Contains($expectedLoaderMarker)) {
-    throw "Virtio-block mount image does not contain expected loader marker '$expectedLoaderMarker'."
-}
-if (-not $imageText.Contains($expectedBootMountRegistryMarker)) {
-    throw "Virtio-block mount image does not contain expected boot registry marker '$expectedBootMountRegistryMarker'."
-}
-if (-not $imageText.Contains($expectedMountRegistryMarker)) {
-    throw "Virtio-block mount image does not contain expected registry marker '$expectedMountRegistryMarker'."
-}
-if (-not $imageText.Contains($expectedCacheMountRegistryMarker)) {
-    throw "Virtio-block mount image does not contain expected cache registry marker '$expectedCacheMountRegistryMarker'."
 }
 if (-not $imageText.Contains($expectedMountPayloadMarker)) {
     throw "Virtio-block mount image does not contain expected payload marker '$expectedMountPayloadMarker'."
@@ -290,12 +270,8 @@ if (-not $imageText.Contains($expectedMountPayloadMarker)) {
 
 Write-Output 'BAREMETAL_QEMU_AVAILABLE=True'
 Write-Output "BAREMETAL_QEMU_BINARY=$qemu"
-Write-Output 'BAREMETAL_QEMU_VIRTIO_BLOCK_MOUNT_PROBE=pass'
+Write-Output 'BAREMETAL_QEMU_VIRTIO_BLOCK_MOUNT_CONTROL_PROBE=pass'
 Write-Output "BAREMETAL_QEMU_VIRTIO_BLOCK_MOUNT_IMAGE=$diskImage"
-Write-Output ("BAREMETAL_VIRTIO_BLOCK_MOUNT_TOOL_LAYOUT_MAGIC=0x{0:X8}" -f $toolMagic)
 Write-Output ("BAREMETAL_VIRTIO_BLOCK_MOUNT_FILESYSTEM_MAGIC=0x{0:X8}" -f $fsMagic)
-Write-Output "BAREMETAL_VIRTIO_BLOCK_MOUNT_LOADER_MARKER=$expectedLoaderMarker"
-Write-Output "BAREMETAL_VIRTIO_BLOCK_MOUNT_BOOT_REGISTRY_MARKER=$expectedBootMountRegistryMarker"
-Write-Output "BAREMETAL_VIRTIO_BLOCK_MOUNT_REGISTRY_MARKER=$expectedMountRegistryMarker"
-Write-Output "BAREMETAL_VIRTIO_BLOCK_MOUNT_CACHE_REGISTRY_MARKER=$expectedCacheMountRegistryMarker"
 Write-Output "BAREMETAL_VIRTIO_BLOCK_MOUNT_PAYLOAD_MARKER=$expectedMountPayloadMarker"
+

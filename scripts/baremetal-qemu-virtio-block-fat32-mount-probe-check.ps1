@@ -9,17 +9,12 @@ $ErrorActionPreference = 'Stop'
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $releaseDir = Join-Path $repo 'release'
-$expectedProbeCode = 0x5A
+$expectedProbeCode = 0x5C
 $expectedExitCode = ($expectedProbeCode * 2) + 1
-$toolLayoutMagic = 0x4f43544c
-$filesystemMagic = 0x4f434653
-$filesystemSuperblockLba = 130
-$blockSize = 512
-$expectedLoaderMarker = 'backend=virtio_block'
-$expectedBootMountRegistryMarker = '/runtime/mounts/boot.txt'
-$expectedMountRegistryMarker = '/runtime/mounts/runtime.txt'
-$expectedCacheMountRegistryMarker = '/runtime/mounts/cache.txt'
-$expectedMountPayloadMarker = 'mounted-via-alias'
+$expectedPayloadMarker = 'hello-from-fat32'
+$expectedWriteMarker = 'fat32-overwrite'
+$fat32TypeOffset = 82
+$bootSignatureOffset = 510
 
 function Resolve-ZigExecutable {
     $defaultWindowsZig = 'C:\Users\Ady\Documents\toolchains\zig-master\current\zig.exe'
@@ -34,19 +29,14 @@ function Resolve-ZigExecutable {
     if ($null -ne $zigCmd -and $zigCmd.Path) {
         return $zigCmd.Path
     }
-
     if (Test-Path $defaultWindowsZig) {
         return $defaultWindowsZig
     }
-
     throw 'Zig executable not found. Set OPENCLAW_ZIG_BIN or ensure `zig` is on PATH.'
 }
 
 function Resolve-Executable {
-    param(
-        [string[]] $Candidates
-    )
-
+    param([string[]] $Candidates)
     foreach ($candidate in $Candidates) {
         $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
         if ($null -ne $cmd -and $cmd.Path) {
@@ -56,16 +46,11 @@ function Resolve-Executable {
             return (Resolve-Path $candidate).Path
         }
     }
-
     return $null
 }
 
 function New-RawDiskImage {
-    param(
-        [string] $Path,
-        [int] $SizeMiB
-    )
-
+    param([string] $Path, [int] $SizeMiB)
     if (Test-Path $Path) {
         Remove-Item -Force $Path
     }
@@ -77,27 +62,18 @@ function New-RawDiskImage {
     }
 }
 
-function Read-ImageU32LE {
-    param(
-        [byte[]] $Bytes,
-        [uint32] $Lba
-    )
-
-    return [System.BitConverter]::ToUInt32($Bytes, [int]$Lba * $blockSize)
-}
-
 Set-Location $repo
 New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
 
 $zig = Resolve-ZigExecutable
 $qemu = Resolve-Executable @('qemu-system-x86_64', 'qemu-system-x86_64.exe', 'C:\Program Files\qemu\qemu-system-x86_64.exe')
 $clang = Resolve-Executable @('clang', 'clang.exe', 'C:\Users\Ady\Documents\starpro\tooling\emsdk\upstream\bin\clang.exe')
-$zigGlobalCacheDir = if ($env:ZIG_GLOBAL_CACHE_DIR -and $env:ZIG_GLOBAL_CACHE_DIR.Trim().Length -gt 0) { $env:ZIG_GLOBAL_CACHE_DIR } else { Join-Path $repo '.zig-global-cache-virtio-block-mount-probe' }
-$zigLocalCacheDir = if ($env:ZIG_LOCAL_CACHE_DIR -and $env:ZIG_LOCAL_CACHE_DIR.Trim().Length -gt 0) { $env:ZIG_LOCAL_CACHE_DIR } else { Join-Path $repo '.zig-cache-virtio-block-mount-probe' }
+$zigGlobalCacheDir = if ($env:ZIG_GLOBAL_CACHE_DIR -and $env:ZIG_GLOBAL_CACHE_DIR.Trim().Length -gt 0) { $env:ZIG_GLOBAL_CACHE_DIR } else { Join-Path $repo '.zig-global-cache-virtio-block-fat32-mount-probe' }
+$zigLocalCacheDir = if ($env:ZIG_LOCAL_CACHE_DIR -and $env:ZIG_LOCAL_CACHE_DIR.Trim().Length -gt 0) { $env:ZIG_LOCAL_CACHE_DIR } else { Join-Path $repo '.zig-cache-virtio-block-fat32-mount-probe' }
 
 if ($null -eq $qemu) {
     Write-Output 'BAREMETAL_QEMU_AVAILABLE=False'
-    Write-Output 'BAREMETAL_QEMU_VIRTIO_BLOCK_MOUNT_PROBE=skipped'
+    Write-Output 'BAREMETAL_QEMU_VIRTIO_BLOCK_FAT32_MOUNT_PROBE=skipped'
     return
 }
 
@@ -106,19 +82,19 @@ if ($null -eq $clang) {
     Write-Output "BAREMETAL_QEMU_BINARY=$qemu"
     Write-Output 'BAREMETAL_QEMU_PVH_TOOLCHAIN_AVAILABLE=False'
     Write-Output 'BAREMETAL_QEMU_PVH_MISSING=clang'
-    Write-Output 'BAREMETAL_QEMU_VIRTIO_BLOCK_MOUNT_PROBE=skipped'
+    Write-Output 'BAREMETAL_QEMU_VIRTIO_BLOCK_FAT32_MOUNT_PROBE=skipped'
     return
 }
 
-$optionsPath = Join-Path $releaseDir 'qemu-virtio-block-mount-probe-options.zig'
-$mainObj = Join-Path $releaseDir 'openclaw-zig-baremetal-main-virtio-block-mount-probe.o'
-$bootObj = Join-Path $releaseDir 'openclaw-zig-pvh-boot-virtio-block-mount-probe.o'
-$artifact = Join-Path $releaseDir 'openclaw-zig-baremetal-pvh-virtio-block-mount-probe.elf'
-$diskImage = Join-Path $releaseDir 'qemu-virtio-block-mount-probe.img'
+$optionsPath = Join-Path $releaseDir 'qemu-virtio-block-fat32-mount-probe-options.zig'
+$mainObj = Join-Path $releaseDir 'openclaw-zig-baremetal-main-virtio-block-fat32-mount-probe.o'
+$bootObj = Join-Path $releaseDir 'openclaw-zig-pvh-boot-virtio-block-fat32-mount-probe.o'
+$artifact = Join-Path $releaseDir 'openclaw-zig-baremetal-pvh-virtio-block-fat32-mount-probe.elf'
+$diskImage = Join-Path $releaseDir 'qemu-virtio-block-fat32-mount-probe.img'
 $bootSource = Join-Path $repo 'scripts\baremetal\pvh_boot.S'
 $linkerScript = Join-Path $repo 'scripts\baremetal\pvh_lld.ld'
-$stdoutPath = Join-Path $releaseDir 'qemu-virtio-block-mount-probe.stdout.log'
-$stderrPath = Join-Path $releaseDir 'qemu-virtio-block-mount-probe.stderr.log'
+$stdoutPath = Join-Path $releaseDir 'qemu-virtio-block-fat32-mount-probe.stdout.log'
+$stderrPath = Join-Path $releaseDir 'qemu-virtio-block-fat32-mount-probe.stderr.log'
 
 if (-not $SkipBuild) {
     New-Item -ItemType Directory -Force -Path $zigGlobalCacheDir | Out-Null
@@ -132,7 +108,9 @@ pub const ata_gpt_installer_probe: bool = false;
 pub const virtio_gpu_display_probe: bool = false;
 pub const virtio_block_probe: bool = false;
 pub const virtio_block_installer_probe: bool = false;
-pub const virtio_block_mount_probe: bool = true;
+pub const virtio_block_mount_probe: bool = false;
+pub const virtio_block_ext2_mount_probe: bool = false;
+pub const virtio_block_fat32_mount_probe: bool = true;
 pub const e1000_probe: bool = false;
 pub const e1000_arp_probe: bool = false;
 pub const e1000_ipv4_probe: bool = false;
@@ -168,46 +146,18 @@ pub const tool_exec_probe: bool = false;
 pub const tool_runtime_probe: bool = false;
 "@ | Set-Content -Path $optionsPath -Encoding Ascii
 
-    & $zig build-obj `
-        -fno-strip `
-        -fsingle-threaded `
-        -OReleaseSafe `
-        -target x86_64-freestanding-none `
-        -mcpu baseline `
-        --dep build_options `
-        "-Mroot=$repo\src\baremetal_main.zig" `
-        "-Mbuild_options=$optionsPath" `
-        --cache-dir "$zigLocalCacheDir" `
-        --global-cache-dir "$zigGlobalCacheDir" `
-        --name 'openclaw-zig-baremetal-main-virtio-block-mount-probe' `
-        "-femit-bin=$mainObj"
-    if ($LASTEXITCODE -ne 0) {
-        throw "zig build-obj for virtio-block mount probe failed with exit code $LASTEXITCODE"
-    }
+    & $zig build-obj -fno-strip -fsingle-threaded -OReleaseSafe -target x86_64-freestanding-none -mcpu baseline --dep build_options "-Mroot=$repo\src\baremetal_main.zig" "-Mbuild_options=$optionsPath" --cache-dir "$zigLocalCacheDir" --global-cache-dir "$zigGlobalCacheDir" --name 'openclaw-zig-baremetal-main-virtio-block-fat32-mount-probe' "-femit-bin=$mainObj"
+    if ($LASTEXITCODE -ne 0) { throw "zig build-obj for virtio-block fat32 mount probe failed with exit code $LASTEXITCODE" }
 
     & $clang -c -target x86_64-unknown-elf $bootSource -o $bootObj
-    if ($LASTEXITCODE -ne 0) {
-        throw "clang assemble for virtio-block mount PVH shim failed with exit code $LASTEXITCODE"
-    }
+    if ($LASTEXITCODE -ne 0) { throw "clang assemble for virtio-block fat32 mount PVH shim failed with exit code $LASTEXITCODE" }
 
-    & $zig build-exe `
-        $mainObj `
-        $bootObj `
-        -ODebug `
-        -target x86_64-freestanding-none `
-        "-T$linkerScript" `
-        -fcompiler-rt `
-        -fno-strip `
-        --cache-dir "$zigLocalCacheDir" `
-        --global-cache-dir "$zigGlobalCacheDir" `
-        "-femit-bin=$artifact"
-    if ($LASTEXITCODE -ne 0) {
-        throw "zig final link for virtio-block mount PVH artifact failed with exit code $LASTEXITCODE"
-    }
+    & $zig build-exe $mainObj $bootObj -ODebug -target x86_64-freestanding-none "-T$linkerScript" -fcompiler-rt -fno-strip --cache-dir "$zigLocalCacheDir" --global-cache-dir "$zigGlobalCacheDir" "-femit-bin=$artifact"
+    if ($LASTEXITCODE -ne 0) { throw "zig final link for virtio-block fat32 mount PVH artifact failed with exit code $LASTEXITCODE" }
 }
 
 if (-not (Test-Path $artifact)) {
-    throw "Virtio-block mount probe artifact is missing: $artifact"
+    throw "Virtio-block fat32 mount probe artifact is missing: $artifact"
 }
 
 New-RawDiskImage -Path $diskImage -SizeMiB $DiskSizeMiB
@@ -231,13 +181,7 @@ $psi.FileName = $qemu
 $psi.UseShellExecute = $false
 $psi.RedirectStandardOutput = $true
 $psi.RedirectStandardError = $true
-$psi.Arguments = (($qemuArgs | ForEach-Object {
-    if ("$_" -match '[\s"]') {
-        '"{0}"' -f (($_ -replace '"', '\"'))
-    } else {
-        "$_"
-    }
-}) -join ' ')
+$psi.Arguments = (($qemuArgs | ForEach-Object { if ("$_" -match '[\s"]') { '"{0}"' -f (($_ -replace '"', '\"')) } else { "$_" } }) -join ' ')
 
 $proc = New-Object System.Diagnostics.Process
 $proc.StartInfo = $psi
@@ -247,7 +191,7 @@ $stderrTask = $proc.StandardError.ReadToEndAsync()
 
 if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
     try { $proc.Kill($true) } catch {}
-    throw "QEMU virtio-block mount probe timed out after $TimeoutSeconds seconds."
+    throw "QEMU virtio-block fat32 mount probe timed out after $TimeoutSeconds seconds."
 }
 
 $proc.WaitForExit()
@@ -255,47 +199,33 @@ $stdout = $stdoutTask.GetAwaiter().GetResult()
 $stderr = $stderrTask.GetAwaiter().GetResult()
 Set-Content -Path $stdoutPath -Value $stdout -Encoding Ascii
 Set-Content -Path $stderrPath -Value $stderr -Encoding Ascii
-$exitCode = $proc.ExitCode
-if ($exitCode -ne $expectedExitCode) {
-    $probeCode = [int](($exitCode - 1) / 2)
-    throw ("QEMU virtio-block mount probe failed with exit code {0} (probe code 0x{1:X2})." -f $exitCode, $probeCode)
+if ($proc.ExitCode -ne $expectedExitCode) {
+    $probeCode = [int](($proc.ExitCode - 1) / 2)
+    throw ("QEMU virtio-block fat32 mount probe failed with exit code {0} (probe code 0x{1:X2})." -f $proc.ExitCode, $probeCode)
 }
 
 $imageBytes = [System.IO.File]::ReadAllBytes($diskImage)
-$toolMagic = Read-ImageU32LE -Bytes $imageBytes -Lba 0
-$fsMagic = Read-ImageU32LE -Bytes $imageBytes -Lba $filesystemSuperblockLba
+$bootSig = [System.BitConverter]::ToUInt16($imageBytes, $bootSignatureOffset)
+$fat32Type = [System.Text.Encoding]::ASCII.GetString($imageBytes, $fat32TypeOffset, 8)
 $imageText = [System.Text.Encoding]::ASCII.GetString($imageBytes)
-
-if ($toolMagic -ne $toolLayoutMagic) {
-    throw ("Virtio-block mount tool-layout superblock magic mismatch. Expected 0x{0:X8}, got 0x{1:X8}." -f $toolLayoutMagic, $toolMagic)
+if ($bootSig -ne 0xAA55) {
+    throw ("Virtio-block fat32 mount probe boot signature mismatch. Expected 0xAA55, got 0x{0:X4}." -f $bootSig)
 }
-if ($fsMagic -ne $filesystemMagic) {
-    throw ("Virtio-block mount filesystem superblock magic mismatch. Expected 0x{0:X8}, got 0x{1:X8}." -f $filesystemMagic, $fsMagic)
+if ($fat32Type -ne 'FAT32   ') {
+    throw "Virtio-block fat32 mount probe type marker mismatch. Expected 'FAT32   ', got '$fat32Type'."
 }
-if (-not $imageText.Contains($expectedLoaderMarker)) {
-    throw "Virtio-block mount image does not contain expected loader marker '$expectedLoaderMarker'."
+if (-not $imageText.Contains($expectedPayloadMarker)) {
+    throw "Virtio-block fat32 mount image does not contain expected payload marker '$expectedPayloadMarker'."
 }
-if (-not $imageText.Contains($expectedBootMountRegistryMarker)) {
-    throw "Virtio-block mount image does not contain expected boot registry marker '$expectedBootMountRegistryMarker'."
-}
-if (-not $imageText.Contains($expectedMountRegistryMarker)) {
-    throw "Virtio-block mount image does not contain expected registry marker '$expectedMountRegistryMarker'."
-}
-if (-not $imageText.Contains($expectedCacheMountRegistryMarker)) {
-    throw "Virtio-block mount image does not contain expected cache registry marker '$expectedCacheMountRegistryMarker'."
-}
-if (-not $imageText.Contains($expectedMountPayloadMarker)) {
-    throw "Virtio-block mount image does not contain expected payload marker '$expectedMountPayloadMarker'."
+if (-not $imageText.Contains($expectedWriteMarker)) {
+    throw "Virtio-block fat32 mount image does not contain expected write marker '$expectedWriteMarker'."
 }
 
 Write-Output 'BAREMETAL_QEMU_AVAILABLE=True'
 Write-Output "BAREMETAL_QEMU_BINARY=$qemu"
-Write-Output 'BAREMETAL_QEMU_VIRTIO_BLOCK_MOUNT_PROBE=pass'
-Write-Output "BAREMETAL_QEMU_VIRTIO_BLOCK_MOUNT_IMAGE=$diskImage"
-Write-Output ("BAREMETAL_VIRTIO_BLOCK_MOUNT_TOOL_LAYOUT_MAGIC=0x{0:X8}" -f $toolMagic)
-Write-Output ("BAREMETAL_VIRTIO_BLOCK_MOUNT_FILESYSTEM_MAGIC=0x{0:X8}" -f $fsMagic)
-Write-Output "BAREMETAL_VIRTIO_BLOCK_MOUNT_LOADER_MARKER=$expectedLoaderMarker"
-Write-Output "BAREMETAL_VIRTIO_BLOCK_MOUNT_BOOT_REGISTRY_MARKER=$expectedBootMountRegistryMarker"
-Write-Output "BAREMETAL_VIRTIO_BLOCK_MOUNT_REGISTRY_MARKER=$expectedMountRegistryMarker"
-Write-Output "BAREMETAL_VIRTIO_BLOCK_MOUNT_CACHE_REGISTRY_MARKER=$expectedCacheMountRegistryMarker"
-Write-Output "BAREMETAL_VIRTIO_BLOCK_MOUNT_PAYLOAD_MARKER=$expectedMountPayloadMarker"
+Write-Output 'BAREMETAL_QEMU_VIRTIO_BLOCK_FAT32_MOUNT_PROBE=pass'
+Write-Output "BAREMETAL_QEMU_VIRTIO_BLOCK_FAT32_MOUNT_IMAGE=$diskImage"
+Write-Output ('BAREMETAL_VIRTIO_BLOCK_FAT32_BOOT_SIG=0x{0:X4}' -f $bootSig)
+Write-Output "BAREMETAL_VIRTIO_BLOCK_FAT32_TYPE=$fat32Type"
+Write-Output "BAREMETAL_VIRTIO_BLOCK_FAT32_PAYLOAD_MARKER=$expectedPayloadMarker"
+Write-Output "BAREMETAL_VIRTIO_BLOCK_FAT32_WRITE_MARKER=$expectedWriteMarker"

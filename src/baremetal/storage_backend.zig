@@ -9,7 +9,9 @@ pub const block_size: usize = ram_disk.block_size;
 pub const block_count: usize = ram_disk.block_count;
 pub const capacity_bytes: usize = block_size * block_count;
 
-pub const Error = ram_disk.Error || ata_pio_disk.Error || virtio_block.Error;
+pub const Error = ram_disk.Error || ata_pio_disk.Error || virtio_block.Error || error{
+    NoDevice,
+};
 
 const Backend = enum {
     ram_disk,
@@ -18,27 +20,46 @@ const Backend = enum {
 };
 
 var active_backend: Backend = .ram_disk;
+var initialized = false;
+
+fn primeBackends() void {
+    ata_pio_disk.init();
+    virtio_block.init();
+    ram_disk.init();
+}
+
+fn backendAvailable(backend: Backend) bool {
+    return switch (backend) {
+        .ram_disk => true,
+        .ata_pio => ata_pio_disk.statePtr().mounted != 0,
+        .virtio_block => virtio_block.statePtr().mounted != 0,
+    };
+}
+
+fn defaultBackend() Backend {
+    if (backendAvailable(.ata_pio)) return .ata_pio;
+    if (backendAvailable(.virtio_block)) return .virtio_block;
+    return .ram_disk;
+}
 
 pub fn resetForTest() void {
     ram_disk.resetForTest();
     ata_pio_disk.resetForTest();
     virtio_block.resetForTest();
     active_backend = .ram_disk;
+    initialized = false;
 }
 
 pub fn init() void {
-    ata_pio_disk.init();
-    if (ata_pio_disk.statePtr().mounted != 0) {
-        active_backend = .ata_pio;
+    primeBackends();
+    if (!initialized) {
+        active_backend = defaultBackend();
+        initialized = true;
         return;
     }
-    virtio_block.init();
-    if (virtio_block.statePtr().mounted != 0) {
-        active_backend = .virtio_block;
-        return;
+    if (!backendAvailable(active_backend)) {
+        active_backend = defaultBackend();
     }
-    ram_disk.init();
-    active_backend = .ram_disk;
 }
 
 pub fn statePtr() *const abi.BaremetalStorageState {
@@ -51,6 +72,37 @@ pub fn statePtr() *const abi.BaremetalStorageState {
 
 pub fn activeBackend() u8 {
     return statePtr().backend;
+}
+
+pub fn backendCount() u8 {
+    return 3;
+}
+
+pub fn isBackendAvailable(backend: u8) bool {
+    primeBackends();
+    return switch (backend) {
+        abi.storage_backend_ram_disk => true,
+        abi.storage_backend_ata_pio => backendAvailable(.ata_pio),
+        abi.storage_backend_virtio_block => backendAvailable(.virtio_block),
+        else => false,
+    };
+}
+
+pub fn selectBackendById(backend: u8) Error!void {
+    primeBackends();
+    switch (backend) {
+        abi.storage_backend_ram_disk => active_backend = .ram_disk,
+        abi.storage_backend_ata_pio => {
+            if (!backendAvailable(.ata_pio)) return error.NoDevice;
+            active_backend = .ata_pio;
+        },
+        abi.storage_backend_virtio_block => {
+            if (!backendAvailable(.virtio_block)) return error.NoDevice;
+            active_backend = .virtio_block;
+        },
+        else => return error.OutOfRange,
+    }
+    initialized = true;
 }
 
 pub fn logicalBaseLba() u32 {
@@ -245,4 +297,30 @@ test "storage backend facade exports and selects ata partitions" {
     try writeBlocks(5, payload[0..]);
     try std.testing.expectEqual(@as(u8, 0x44), ata_pio_disk.testReadMockByteRaw(8192 + 5, 0));
     try std.testing.expectEqual(@as(u8, 0), ata_pio_disk.testReadMockByteRaw(2048 + 5, 0));
+}
+
+test "storage backend facade supports explicit backend selection" {
+    resetForTest();
+    ata_pio_disk.testEnableMockDevice(8192);
+    ata_pio_disk.testInstallMockMbrPartition(2048, 4096, 0x83);
+    virtio_block.testEnableMockDevice(128);
+    defer ata_pio_disk.testDisableMockDevice();
+    defer virtio_block.testDisableMockDevice();
+
+    init();
+    try std.testing.expectEqual(@as(u8, abi.storage_backend_ata_pio), activeBackend());
+    try std.testing.expectEqual(@as(u8, 3), backendCount());
+    try std.testing.expect(isBackendAvailable(abi.storage_backend_ram_disk));
+    try std.testing.expect(isBackendAvailable(abi.storage_backend_ata_pio));
+    try std.testing.expect(isBackendAvailable(abi.storage_backend_virtio_block));
+
+    try selectBackendById(abi.storage_backend_virtio_block);
+    try std.testing.expectEqual(@as(u8, abi.storage_backend_virtio_block), activeBackend());
+    try std.testing.expectEqual(@as(u8, abi.storage_backend_virtio_block), statePtr().backend);
+
+    try selectBackendById(abi.storage_backend_ram_disk);
+    try std.testing.expectEqual(@as(u8, abi.storage_backend_ram_disk), activeBackend());
+    try std.testing.expectEqual(@as(u8, abi.storage_backend_ram_disk), statePtr().backend);
+
+    try std.testing.expectError(error.OutOfRange, selectBackendById(99));
 }
