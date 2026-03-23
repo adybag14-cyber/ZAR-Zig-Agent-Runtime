@@ -281,12 +281,18 @@ fn execute(
             try stderr_buffer.appendLine("usage: mkdir <path>");
             return;
         }
-        filesystem.createDirPath(arg.arg) catch |err| {
+        const path = unescapeShellTextAlloc(allocator, arg.arg) catch |err| {
             exit_code.* = 1;
             try stderr_buffer.appendFmt("mkdir failed: {s}\n", .{@errorName(err)});
             return;
         };
-        try stdout_buffer.appendFmt("created {s}\n", .{arg.arg});
+        defer allocator.free(path);
+        filesystem.createDirPath(path) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("mkdir failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("created {s}\n", .{path});
         return;
     }
 
@@ -310,7 +316,13 @@ fn execute(
             try stderr_buffer.appendLine("usage: cat <path>");
             return;
         }
-        const content = filesystem.readFileAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+        const path = unescapeShellTextAlloc(allocator, arg.arg) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("cat failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(path);
+        const content = filesystem.readFileAlloc(allocator, path, stdout_buffer.limit) catch |err| {
             exit_code.* = 1;
             try stderr_buffer.appendFmt("cat failed: {s}\n", .{@errorName(err)});
             return;
@@ -339,17 +351,23 @@ fn execute(
             try stderr_buffer.appendLine("usage: write-file <path> <content>");
             return;
         }
-        ensureParentDirectory(arg.arg) catch |err| {
+        const path = unescapeShellTextAlloc(allocator, arg.arg) catch |err| {
             exit_code.* = 1;
             try stderr_buffer.appendFmt("write-file failed: {s}\n", .{@errorName(err)});
             return;
         };
-        filesystem.writeFile(arg.arg, content, 0) catch |err| {
+        defer allocator.free(path);
+        ensureParentDirectory(path) catch |err| {
             exit_code.* = 1;
             try stderr_buffer.appendFmt("write-file failed: {s}\n", .{@errorName(err)});
             return;
         };
-        try stdout_buffer.appendFmt("wrote {d} bytes to {s}\n", .{ content.len, arg.arg });
+        filesystem.writeFile(path, content, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("write-file failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("wrote {d} bytes to {s}\n", .{ content.len, path });
         return;
     }
 
@@ -364,7 +382,13 @@ fn execute(
             try stderr_buffer.appendLine("usage: stat <path>");
             return;
         }
-        const stat = filesystem.statSummary(arg.arg) catch |err| {
+        const path = unescapeShellTextAlloc(allocator, arg.arg) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("stat failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(path);
+        const stat = filesystem.statSummary(path) catch |err| {
             exit_code.* = 1;
             try stderr_buffer.appendFmt("stat failed: {s}\n", .{@errorName(err)});
             return;
@@ -374,7 +398,7 @@ fn execute(
             .file => "file",
             else => "unknown",
         };
-        try stdout_buffer.appendFmt("path={s} kind={s} size={d}\n", .{ arg.arg, kind, stat.size });
+        try stdout_buffer.appendFmt("path={s} kind={s} size={d}\n", .{ path, kind, stat.size });
         return;
     }
 
@@ -389,7 +413,13 @@ fn execute(
             try stderr_buffer.appendLine("usage: ls <path>");
             return;
         }
-        const listing = filesystem.listDirectoryAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+        const path = unescapeShellTextAlloc(allocator, arg.arg) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("ls failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(path);
+        const listing = filesystem.listDirectoryAlloc(allocator, path, stdout_buffer.limit) catch |err| {
             exit_code.* = 1;
             try stderr_buffer.appendFmt("ls failed: {s}\n", .{@errorName(err)});
             return;
@@ -410,7 +440,13 @@ fn execute(
             try stderr_buffer.appendLine("usage: shell-expand <pattern>");
             return;
         }
-        const expanded = expandShellPatternAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+        const pattern = unescapeShellTextAlloc(allocator, arg.arg) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("shell-expand failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(pattern);
+        const expanded = expandShellPatternAlloc(allocator, pattern, stdout_buffer.limit) catch |err| {
             exit_code.* = 1;
             try stderr_buffer.appendFmt("shell-expand failed: {s}\n", .{@errorName(err)});
             return;
@@ -5295,7 +5331,7 @@ fn executeScriptContents(
             try writeCommandError(stderr_buffer, err, operation);
             return;
         };
-        const command_text = unescapeShellTextAlloc(allocator, parsed_line.command) catch |err| {
+        const command_text = normalizeShellCommandTextAlloc(allocator, parsed_line.command) catch |err| {
             exit_code.* = 1;
             try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
             return;
@@ -5533,6 +5569,42 @@ fn unescapeShellTextAlloc(allocator: std.mem.Allocator, text: []const u8) ![]u8 
         }
         try out.append(allocator, ch);
     }
+    return out.toOwnedSlice(allocator);
+}
+
+fn normalizeShellCommandTextAlloc(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
+    if (std.mem.indexOfScalar(u8, text, '\\') == null) return allocator.dupe(u8, text);
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    var quote: u8 = 0;
+    var idx: usize = 0;
+    while (idx < text.len) : (idx += 1) {
+        const ch = text[idx];
+        if (ch == '\\' and idx + 1 < text.len and isShellEscapable(text[idx + 1])) {
+            const next = text[idx + 1];
+            if (quote != 0 and (next == quote or next == '\\')) {
+                try out.append(allocator, ch);
+                idx += 1;
+                try out.append(allocator, next);
+                continue;
+            }
+            idx += 1;
+            try out.append(allocator, next);
+            continue;
+        }
+
+        if (ch == '"' or ch == '\'') {
+            if (quote == 0) {
+                quote = ch;
+            } else if (quote == ch) {
+                quote = 0;
+            }
+        }
+        try out.append(allocator, ch);
+    }
+
     return out.toOwnedSlice(allocator);
 }
 
@@ -6745,7 +6817,7 @@ test "baremetal tool exec exposes bounded shell batch and globbing" {
 
     var shell_input_redirect = try runCapture(
         std.testing.allocator,
-        "shell-run cat < /tmp/sh/A.TXT > /tmp/sh/COPY.TXT; write-file /tmp/sh/FROMSTDIN.TXT < /tmp/sh/A.TXT; cat < \"/tmp/sh/SPACE NAME.TXT\" > /tmp/sh/QUOTE.TXT; cat < \"/tmp/sh/QUO\\\"TE.TXT\" > /tmp/sh/QUOTED.TXT; echo lt\\<value > /tmp/sh/LT.TXT; shell-run < /tmp/sh/STDIN.OC",
+        "shell-run cat < /tmp/sh/A.TXT > /tmp/sh/COPY.TXT; write-file /tmp/sh/FROMSTDIN.TXT < /tmp/sh/A.TXT; cat < \"/tmp/sh/SPACE NAME.TXT\" > /tmp/sh/QUOTE.TXT; cat < \"/tmp/sh/QUO\\\"TE.TXT\" > /tmp/sh/QUOTED.TXT; cat \"/tmp/sh/QUO\\\"TE.TXT\" > /tmp/sh/QUOTED2.TXT; write-file \"/tmp/sh/OUT\\\"PUT.TXT\" quoted2; cat \"/tmp/sh/OUT\\\"PUT.TXT\" > /tmp/sh/QUOTED3.TXT; echo lt\\<value > /tmp/sh/LT.TXT; shell-run < /tmp/sh/STDIN.OC",
         1280,
         256,
     );
@@ -6769,6 +6841,14 @@ test "baremetal tool exec exposes bounded shell batch and globbing" {
     const escaped_quoted_copy = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/QUOTED.TXT", 64);
     defer std.testing.allocator.free(escaped_quoted_copy);
     try std.testing.expectEqualStrings("quoted", escaped_quoted_copy);
+
+    const escaped_quoted_copy_2 = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/QUOTED2.TXT", 64);
+    defer std.testing.allocator.free(escaped_quoted_copy_2);
+    try std.testing.expectEqualStrings("quoted", escaped_quoted_copy_2);
+
+    const escaped_written_output = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/QUOTED3.TXT", 64);
+    defer std.testing.allocator.free(escaped_written_output);
+    try std.testing.expectEqualStrings("quoted2", escaped_written_output);
 
     const escaped_input_redirect = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/LT.TXT", 64);
     defer std.testing.allocator.free(escaped_input_redirect);

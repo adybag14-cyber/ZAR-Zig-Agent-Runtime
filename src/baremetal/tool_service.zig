@@ -4427,25 +4427,34 @@ test "baremetal tool service exposes bounded shell batch and globbing" {
     defer std.testing.allocator.free(nested_shell_input);
     try std.testing.expectEqualStrings("RESP 46 12\nstdin-shell\n", nested_shell_input);
 
+    const quoted_cmd_write = try handleFramedRequest(std.testing.allocator, "REQ 47 CMD write-file \"/tmp/sh/OUT\\\"PUT.TXT\" quoted2", 256, 256, 256);
+    defer std.testing.allocator.free(quoted_cmd_write);
+    try std.testing.expect(std.mem.startsWith(u8, quoted_cmd_write, "RESP 47 "));
+    try std.testing.expect(std.mem.indexOf(u8, quoted_cmd_write, "wrote 7 bytes to /tmp/sh/OUT\"PUT.TXT\n") != null);
+
+    const quoted_cmd_cat = try handleFramedRequest(std.testing.allocator, "REQ 48 CMD cat \"/tmp/sh/OUT\\\"PUT.TXT\"", 256, 256, 256);
+    defer std.testing.allocator.free(quoted_cmd_cat);
+    try std.testing.expectEqualStrings("RESP 48 7\nquoted2", quoted_cmd_cat);
+
     const shell_quoted_script =
-        "cat < \"/tmp/sh/QUO\\\"TE.TXT\" > /tmp/sh/QUOTED.TXT\n" ++
+        "cat \"/tmp/sh/QUO\\\"TE.TXT\" > /tmp/sh/QUOTED.TXT\n" ++
         "cat /tmp/sh/QUOTED.TXT";
-    const shell_quoted_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 47 SHELLRUN {d}\n{s}", .{ shell_quoted_script.len, shell_quoted_script });
+    const shell_quoted_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 49 SHELLRUN {d}\n{s}", .{ shell_quoted_script.len, shell_quoted_script });
     defer std.testing.allocator.free(shell_quoted_request);
     const shell_quoted_response = try handleFramedRequest(std.testing.allocator, shell_quoted_request, 256, 256, 256);
     defer std.testing.allocator.free(shell_quoted_response);
-    try std.testing.expectEqualStrings("RESP 47 6\nquoted", shell_quoted_response);
+    try std.testing.expectEqualStrings("RESP 49 6\nquoted", shell_quoted_response);
 
-    const shell_quoted_readback = try handleFramedRequest(std.testing.allocator, "REQ 48 GET /tmp/sh/QUOTED.TXT", 256, 256, 256);
+    const shell_quoted_readback = try handleFramedRequest(std.testing.allocator, "REQ 50 GET /tmp/sh/QUOTED.TXT", 256, 256, 256);
     defer std.testing.allocator.free(shell_quoted_readback);
-    try std.testing.expectEqualStrings("RESP 48 6\nquoted", shell_quoted_readback);
+    try std.testing.expectEqualStrings("RESP 50 6\nquoted", shell_quoted_readback);
 
     const shell_invalid_quote_script = "cat \"/tmp/sh/SPACE NAME.TXT\"x";
-    const shell_invalid_quote_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 49 SHELLRUN {d}\n{s}", .{ shell_invalid_quote_script.len, shell_invalid_quote_script });
+    const shell_invalid_quote_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 51 SHELLRUN {d}\n{s}", .{ shell_invalid_quote_script.len, shell_invalid_quote_script });
     defer std.testing.allocator.free(shell_invalid_quote_request);
     const shell_invalid_quote_response = try handleFramedRequest(std.testing.allocator, shell_invalid_quote_request, 256, 256, 256);
     defer std.testing.allocator.free(shell_invalid_quote_response);
-    try std.testing.expect(std.mem.startsWith(u8, shell_invalid_quote_response, "RESP 49 "));
+    try std.testing.expect(std.mem.startsWith(u8, shell_invalid_quote_response, "RESP 51 "));
     try std.testing.expect(std.mem.indexOf(u8, shell_invalid_quote_response, "ERR exit=2\nusage: cat <path>\n") != null);
 }
 
