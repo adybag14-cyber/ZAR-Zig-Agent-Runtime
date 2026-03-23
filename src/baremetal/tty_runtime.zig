@@ -133,26 +133,75 @@ pub fn recordCommand(
     stderr: []const u8,
     tick: u64,
 ) Error!void {
+    try recordInteraction(allocator, name, .send, command, null, stdin, exit_code, stdout, stderr, tick);
+}
+
+pub fn recordShell(
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    script: []const u8,
+    stdin: []const u8,
+    exit_code: u8,
+    stdout: []const u8,
+    stderr: []const u8,
+    tick: u64,
+) Error!void {
+    try recordInteraction(allocator, name, .shell, "shell-run", script, stdin, exit_code, stdout, stderr, tick);
+}
+
+const InteractionKind = enum {
+    send,
+    shell,
+};
+
+fn recordInteraction(
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    interaction: InteractionKind,
+    command: []const u8,
+    script: ?[]const u8,
+    stdin: []const u8,
+    exit_code: u8,
+    stdout: []const u8,
+    stderr: []const u8,
+    tick: u64,
+) Error!void {
     var state = try loadState(allocator, name);
     if (!state.open) return error.TtySessionNotFound;
 
-    const transcript_entry = try renderTranscriptEntryAlloc(allocator, command, stdin, exit_code, stdout, stderr);
+    const transcript_entry = try renderTranscriptEntryAlloc(allocator, command, script, stdin, exit_code, stdout, stderr);
     defer allocator.free(transcript_entry);
 
-    try appendSessionFile(allocator, name, .input, command, max_input_bytes, tick);
-    try appendSessionFile(allocator, name, .input, "\n", max_input_bytes, tick);
+    if (script) |script_bytes| {
+        try appendSessionFile(allocator, name, .input, "shell-run\n", max_input_bytes, tick);
+        try appendSessionFile(allocator, name, .input, script_bytes, max_input_bytes, tick);
+        if (script_bytes.len == 0 or script_bytes[script_bytes.len - 1] != '\n') {
+            try appendSessionFile(allocator, name, .input, "\n", max_input_bytes, tick);
+        }
+    } else {
+        try appendSessionFile(allocator, name, .input, command, max_input_bytes, tick);
+        try appendSessionFile(allocator, name, .input, "\n", max_input_bytes, tick);
+    }
     try appendSessionFile(allocator, name, .stdout, stdout, max_stream_bytes, tick);
     try appendSessionFile(allocator, name, .stderr, stderr, max_stream_bytes, tick);
     try appendSessionFile(allocator, name, .transcript, transcript_entry, max_transcript_bytes, tick);
-    try appendEventLine(
-        name,
-        tick,
-        "type=send exit={d} stdin_bytes={d} stdout_bytes={d} stderr_bytes={d}\n",
-        .{ exit_code, stdin.len, stdout.len, stderr.len },
-    );
+    switch (interaction) {
+        .send => try appendEventLine(
+            name,
+            tick,
+            "type=send exit={d} stdin_bytes={d} stdout_bytes={d} stderr_bytes={d}\n",
+            .{ exit_code, stdin.len, stdout.len, stderr.len },
+        ),
+        .shell => try appendEventLine(
+            name,
+            tick,
+            "type=shell exit={d} script_bytes={d} stdin_bytes={d} stdout_bytes={d} stderr_bytes={d}\n",
+            .{ exit_code, script.?.len, stdin.len, stdout.len, stderr.len },
+        ),
+    }
 
     state.command_count +%= 1;
-    state.input_bytes +%= @as(u32, @intCast(command.len));
+    state.input_bytes +%= @as(u32, @intCast(if (script) |script_bytes| script_bytes.len else command.len));
     state.stdout_bytes +%= @as(u32, @intCast(stdout.len));
     state.stderr_bytes +%= @as(u32, @intCast(stderr.len));
     state.event_count +%= 1;
@@ -444,6 +493,7 @@ fn appendEventLine(name: []const u8, tick: u64, comptime fmt: []const u8, args: 
 fn renderTranscriptEntryAlloc(
     allocator: std.mem.Allocator,
     command: []const u8,
+    script: ?[]const u8,
     stdin: []const u8,
     exit_code: u8,
     stdout: []const u8,
@@ -455,6 +505,11 @@ fn renderTranscriptEntryAlloc(
     try out.appendSlice(allocator, "$ ");
     try out.appendSlice(allocator, command);
     try out.appendSlice(allocator, "\n");
+    if (script) |script_bytes| {
+        try out.appendSlice(allocator, "script:\n");
+        try out.appendSlice(allocator, script_bytes);
+        if (script_bytes.len == 0 or script_bytes[script_bytes.len - 1] != '\n') try out.append(allocator, '\n');
+    }
     const exit_line = try std.fmt.allocPrint(allocator, "exit={d}\n", .{exit_code});
     defer allocator.free(exit_line);
     try out.appendSlice(allocator, exit_line);
@@ -566,4 +621,30 @@ test "tty runtime records bounded session receipts" {
     defer std.testing.allocator.free(closed_info);
     try std.testing.expect(std.mem.indexOf(u8, closed_info, "open=0") != null);
     try std.testing.expect(std.mem.indexOf(u8, closed_info, "event_count=4") != null);
+}
+
+test "tty runtime records bounded shell receipts" {
+    filesystem.resetForTest();
+    try filesystem.init();
+
+    try openSession("shell", 1);
+    try writePendingInput(std.testing.allocator, "shell", "tty-shell\n", 2);
+
+    const stdin_bytes = try takePendingInputAlloc(std.testing.allocator, "shell", 128, 3);
+    defer std.testing.allocator.free(stdin_bytes);
+    const script = "cat > /tmp/tty-shell.txt; cat";
+    try recordShell(std.testing.allocator, "shell", script, stdin_bytes, 0, "tty-shell\n", "", 4);
+
+    const input = try inputAlloc(std.testing.allocator, "shell", 128);
+    defer std.testing.allocator.free(input);
+    try std.testing.expect(std.mem.indexOf(u8, input, "shell-run\ncat > /tmp/tty-shell.txt; cat\n") != null);
+
+    const events = try eventsAlloc(std.testing.allocator, "shell", 512);
+    defer std.testing.allocator.free(events);
+    try std.testing.expect(std.mem.indexOf(u8, events, "type=shell exit=0 script_bytes=29 stdin_bytes=10 stdout_bytes=10 stderr_bytes=0") != null);
+
+    const transcript = try transcriptAlloc(std.testing.allocator, "shell", 512);
+    defer std.testing.allocator.free(transcript);
+    try std.testing.expect(std.mem.indexOf(u8, transcript, "$ shell-run\nscript:\ncat > /tmp/tty-shell.txt; cat\nexit=0\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, transcript, "stdout:\ntty-shell\n") != null);
 }
