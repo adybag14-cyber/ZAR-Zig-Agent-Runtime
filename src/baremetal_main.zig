@@ -7266,7 +7266,7 @@ const Rtl8139TcpProbeScratch = struct {
     framed_request_copy_buffer: [512]u8,
     http_post_scratch: [2048]u8,
     https_trust_store_scratch: [2048]u8,
-    service_request_put_buffer: [256]u8,
+    service_request_put_buffer: [1024]u8,
     service_response_put_expected_buffer: [160]u8,
     service_batch_request_buffer: [2048]u8,
     service_batch_response_expected_buffer: [4096]u8,
@@ -14906,7 +14906,11 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
         "write-file /tmp/sh/A.TXT alpha\n" ++
         "write-file /tmp/sh/B.LOG beta\n" ++
         "mkdir /tmp/sh/DATA\n" ++
-        "write-file /tmp/sh/DATA/C.TXT gamma\n";
+        "write-file /tmp/sh/DATA/C.TXT gamma\n" ++
+        "mkdir /tmp/sh/DATA/DEEP\n" ++
+        "write-file /tmp/sh/DATA/DEEP/Z.TXT delta\n" ++
+        "echo alpha > /tmp/sh/OUT.TXT\n" ++
+        "echo beta >> /tmp/sh/OUT.TXT\n";
     const shell_run_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 34 SHELLRUN {d}\n{s}", .{
         shell_script.len,
         shell_script,
@@ -14919,14 +14923,16 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
         source_ip,
         destination_ip,
         shell_run_request,
-        1024,
+        1536,
         256,
-        1024,
+        1536,
     );
     if (!std.mem.startsWith(u8, shell_run_response, "RESP 34 ")) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, shell_run_response, "created /tmp/sh\n") == null) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, shell_run_response, "wrote 5 bytes to /tmp/sh/A.TXT\n") == null) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, shell_run_response, "created /tmp/sh/DATA\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, shell_run_response, "created /tmp/sh/DATA/DEEP\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, shell_run_response, "alpha\n") != null) return error.ToolServiceResponseMismatch;
     qemuDebugWrite("ETS9A6\n");
 
     const shell_expand_response = try exchangeE1000TcpProbeServiceRequest(
@@ -14936,7 +14942,7 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
         &server,
         source_ip,
         destination_ip,
-        "REQ 35 SHELLEXPAND /tmp/sh/*.TXT",
+        "REQ 35 SHELLEXPAND /tmp/sh/A*.TXT",
         256,
         256,
         256,
@@ -14958,6 +14964,36 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
     );
     if (!std.mem.eql(u8, shell_expand_nested_response, "RESP 36 19\n/tmp/sh/DATA/C.TXT\n")) return error.ToolServiceResponseMismatch;
     qemuDebugWrite("ETS9A8\n");
+
+    const shell_expand_deep_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 37 SHELLEXPAND /tmp/sh/*/*/*.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, shell_expand_deep_response, "RESP 37 24\n/tmp/sh/DATA/DEEP/Z.TXT\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8B\n");
+
+    const redirected_output_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 38 GET /tmp/sh/OUT.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, redirected_output_response, "RESP 38 11\nalpha\nbeta\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8C\n");
 
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const shell_nested_readback = filesystem.readFileAlloc(service_fba.allocator(), "/tmp/sh/DATA/C.TXT", 64) catch return error.ToolServiceFailed;

@@ -131,11 +131,12 @@ Delivered eighth adoption slice:
 - bounded shell/control helpers inspired by ZigOS shell structure without claiming a GP-OS shell model
 - `src/baremetal/tool_exec.zig` now exposes `shell-expand <pattern>` plus `shell-run <command[;command...]>` over the existing builtin runtime surface
 - `shell-run` now routes through shared bounded script execution with quote-aware separator splitting, deferred filesystem persistence, and a hard `64`-command limit
-- `shell-expand` now provides bounded wildcard expansion over the final path component using `*` and `?`, returning absolute match paths and explicit `NoMatches` failure when nothing resolves
+- `shell-run` now also supports bounded stdout redirection through `>` and `>>` onto the existing filesystem surface without adding pipes or job control
+- `shell-expand` now provides bounded wildcard expansion across multiple path segments using `*` and `?`, returning absolute match paths and explicit `NoMatches` failure when nothing resolves
 - `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `SHELLEXPAND` plus `SHELLRUN` over the framed TCP service
-- `src/baremetal_main.zig` now widens the live `E1000` tool-service proof to validate shell help output, bounded shell batching, bounded glob expansion, and persisted filesystem readback on the clean-room NIC lane
+- `src/baremetal_main.zig` now widens the live `E1000` tool-service proof to validate shell help output, bounded shell batching, multi-segment glob expansion, redirected output capture, and persisted filesystem readback on the clean-room NIC lane
 - `build.zig` now explicitly wires `scripts/baremetal/pvh_boot.S` plus `scripts/baremetal/pvh_lld.ld` into the bare-metal artifact so the Multiboot2 header remains within the required first `32768` bytes on current Zig `master`
-- full userspace shell, job control, editor/TTY parity, and syscall-visible shell semantics remain future redesign work
+- full userspace shell, job control, pipelines, richer redirection, editor/TTY parity, and syscall-visible shell semantics remain future redesign work
 
 `FS5.5` is not complete until each subsystem has:
 

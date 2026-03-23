@@ -14,6 +14,7 @@ This slice is intentionally limited to:
 
 - bounded command batching over existing builtins
 - bounded glob expansion over the current filesystem surface
+- bounded stdout redirection over the current filesystem surface
 - typed framed reuse over the existing TCP tool-service path
 - live proof over an existing real NIC lane
 
@@ -21,7 +22,8 @@ This slice explicitly does not claim:
 
 - interactive shell
 - job control
-- pipelines or redirection
+- pipelines
+- input or stderr redirection
 - userspace programs
 - editor/TTY parity
 - a syscall-visible shell ABI
@@ -32,7 +34,8 @@ This slice explicitly does not claim:
   - `shell-run <command[;command...]>`
   - `shell-expand <pattern>`
   - shared bounded script execution through `executeScriptContents(...)`
-  - bounded glob matching on the final path component with `*` and `?`
+  - bounded glob matching across multiple path segments with `*` and `?`
+  - bounded stdout redirection through `>` and `>>`
   - hard `64`-command cap via `max_shell_command_count`
 - `src/baremetal/tool_service/codec.zig`
   - typed `SHELLRUN`
@@ -40,7 +43,7 @@ This slice explicitly does not claim:
 - `src/baremetal/tool_service.zig`
   - framed request handling for bounded shell batching and glob expansion
 - `src/baremetal_main.zig`
-  - live `E1000` tool-service proof widened to validate shell help, bounded batch execution, bounded glob expansion, and persisted filesystem readback
+  - live `E1000` tool-service proof widened to validate shell help, bounded batch execution, multi-segment glob expansion, redirected output capture, and persisted filesystem readback
 - `build.zig`
   - bare-metal artifact now explicitly includes `scripts/baremetal/pvh_boot.S` and `scripts/baremetal/pvh_lld.ld` so the Multiboot2 header remains within the required first `32768` bytes on current Zig `master`
 
@@ -58,7 +61,8 @@ This slice explicitly does not claim:
 Allowed later if ZAR chooses to widen the shell path deliberately:
 
 - parser depth beyond separator-aware batching
-- richer globbing across multiple path segments
+- richer quoting and escaping
+- stderr redirection and pipelines
 - interactive TTY/session model
 - job control
 - editor/httpd utilities

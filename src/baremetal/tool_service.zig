@@ -4108,23 +4108,37 @@ test "baremetal tool service exposes bounded shell batch and globbing" {
         "write-file /tmp/sh/A.TXT alpha\n" ++
         "write-file /tmp/sh/B.LOG beta\n" ++
         "mkdir /tmp/sh/DATA\n" ++
-        "write-file /tmp/sh/DATA/C.TXT gamma\n";
+        "write-file /tmp/sh/DATA/C.TXT gamma\n" ++
+        "mkdir /tmp/sh/DATA/DEEP\n" ++
+        "write-file /tmp/sh/DATA/DEEP/Z.TXT delta\n" ++
+        "echo alpha > /tmp/sh/OUT.TXT\n" ++
+        "echo beta >> /tmp/sh/OUT.TXT\n";
     const shell_run_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 30 SHELLRUN {d}\n{s}", .{ shell_script.len, shell_script });
     defer std.testing.allocator.free(shell_run_request);
-    const shell_run_response = try handleFramedRequest(std.testing.allocator, shell_run_request, 1024, 256, 1024);
+    const shell_run_response = try handleFramedRequest(std.testing.allocator, shell_run_request, 1536, 256, 1536);
     defer std.testing.allocator.free(shell_run_response);
     try std.testing.expect(std.mem.startsWith(u8, shell_run_response, "RESP 30 "));
     try std.testing.expect(std.mem.indexOf(u8, shell_run_response, "created /tmp/sh\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, shell_run_response, "wrote 5 bytes to /tmp/sh/A.TXT\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, shell_run_response, "created /tmp/sh/DATA\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, shell_run_response, "created /tmp/sh/DATA/DEEP\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, shell_run_response, "alpha\n") == null);
 
-    const shell_expand_root = try handleFramedRequest(std.testing.allocator, "REQ 31 SHELLEXPAND /tmp/sh/*.TXT", 256, 256, 256);
+    const shell_expand_root = try handleFramedRequest(std.testing.allocator, "REQ 31 SHELLEXPAND /tmp/sh/A*.TXT", 256, 256, 256);
     defer std.testing.allocator.free(shell_expand_root);
     try std.testing.expectEqualStrings("RESP 31 14\n/tmp/sh/A.TXT\n", shell_expand_root);
 
     const shell_expand_nested = try handleFramedRequest(std.testing.allocator, "REQ 32 SHELLEXPAND /tmp/sh/DATA/*.TXT", 256, 256, 256);
     defer std.testing.allocator.free(shell_expand_nested);
     try std.testing.expectEqualStrings("RESP 32 19\n/tmp/sh/DATA/C.TXT\n", shell_expand_nested);
+
+    const shell_expand_deep = try handleFramedRequest(std.testing.allocator, "REQ 33 SHELLEXPAND /tmp/sh/*/*/*.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(shell_expand_deep);
+    try std.testing.expectEqualStrings("RESP 33 24\n/tmp/sh/DATA/DEEP/Z.TXT\n", shell_expand_deep);
+
+    const redirected_output = try handleFramedRequest(std.testing.allocator, "REQ 34 GET /tmp/sh/OUT.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(redirected_output);
+    try std.testing.expectEqualStrings("RESP 34 11\nalpha\nbeta\n", redirected_output);
 }
 
 test "baremetal tool service uploads and runs persisted scripts" {

@@ -23,6 +23,7 @@ pub const Error = filesystem.Error || trust_store.Error || app_runtime.Error || 
     MissingPath,
     StreamTooLong,
     InvalidQuotedArgument,
+    InvalidRedirection,
     ScriptDepthExceeded,
     ShellCommandLimitExceeded,
     UnsupportedPattern,
@@ -35,6 +36,7 @@ pub const Error = filesystem.Error || trust_store.Error || app_runtime.Error || 
 
 const max_script_depth: usize = 4;
 const max_shell_command_count: usize = 64;
+const max_shell_glob_segments: usize = 16;
 
 pub const Result = struct {
     exit_code: u8,
@@ -101,6 +103,17 @@ const ParsedCommand = struct {
 const ParsedArg = struct {
     arg: []const u8,
     rest: []const u8,
+};
+
+const ParsedShellLine = struct {
+    command: []const u8,
+    redirect_path: ?[]const u8 = null,
+    append: bool = false,
+};
+
+const ListingChild = struct {
+    name: []const u8,
+    kind: std.Io.File.Kind,
 };
 
 pub fn runCapture(
@@ -4858,17 +4871,134 @@ fn executeScriptContents(
             return;
         }
 
-        const nested = parseCommand(line) catch |err| {
+        const parsed_line = parseShellLine(line) catch |err| {
             exit_code.* = 2;
             try writeCommandError(stderr_buffer, err, operation);
             return;
         };
-        try execute(nested, stdout_buffer, stderr_buffer, exit_code, allocator, depth + 1);
+        const nested = parseCommand(parsed_line.command) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, operation);
+            return;
+        };
+        if (parsed_line.redirect_path) |redirect_path| {
+            try executeWithStdoutRedirection(
+                nested,
+                redirect_path,
+                parsed_line.append,
+                operation,
+                stdout_buffer.limit,
+                stderr_buffer,
+                exit_code,
+                allocator,
+                depth + 1,
+            );
+        } else {
+            try execute(nested, stdout_buffer, stderr_buffer, exit_code, allocator, depth + 1);
+        }
         if (exit_code.* != 0) return;
     }
 
     try filesystem.endDeferredPersist();
     finish_deferred_persist = false;
+}
+
+fn executeWithStdoutRedirection(
+    parsed: ParsedCommand,
+    redirect_path: []const u8,
+    append_mode: bool,
+    operation: []const u8,
+    stdout_limit: usize,
+    stderr_buffer: *OutputBuffer,
+    exit_code: *u8,
+    allocator: std.mem.Allocator,
+    depth: usize,
+) Error!void {
+    var redirected_stdout = OutputBuffer.init(allocator, stdout_limit, false);
+    defer redirected_stdout.deinit();
+
+    try execute(parsed, &redirected_stdout, stderr_buffer, exit_code, allocator, depth);
+    if (exit_code.* != 0) return;
+
+    ensureParentDirectory(redirect_path) catch |err| {
+        exit_code.* = 1;
+        try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+        return;
+    };
+
+    if (append_mode) {
+        const existing = filesystem.readFileAlloc(allocator, redirect_path, stdout_limit) catch |err| switch (err) {
+            error.FileNotFound => null,
+            else => {
+                exit_code.* = 1;
+                try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+                return;
+            },
+        };
+        defer if (existing) |bytes| allocator.free(bytes);
+
+        const existing_len: usize = if (existing) |bytes| bytes.len else 0;
+        if (existing_len + redirected_stdout.list.items.len > stdout_limit) {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("{s} failed: StreamTooLong\n", .{operation});
+            return;
+        }
+
+        var combined = std.ArrayList(u8).empty;
+        defer combined.deinit(allocator);
+        if (existing) |bytes| try combined.appendSlice(allocator, bytes);
+        try combined.appendSlice(allocator, redirected_stdout.list.items);
+        filesystem.writeFile(redirect_path, combined.items, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+            return;
+        };
+        return;
+    }
+
+    filesystem.writeFile(redirect_path, redirected_stdout.list.items, 0) catch |err| {
+        exit_code.* = 1;
+        try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+        return;
+    };
+}
+
+fn parseShellLine(line: []const u8) Error!ParsedShellLine {
+    const trimmed = std.mem.trim(u8, line, " \t\r");
+    if (trimmed.len == 0) return error.MissingCommand;
+
+    var quote: u8 = 0;
+    var idx: usize = 0;
+    while (idx < trimmed.len) : (idx += 1) {
+        const ch = trimmed[idx];
+        if (quote != 0) {
+            if (ch == quote) quote = 0;
+            continue;
+        }
+        if (ch == '"' or ch == '\'') {
+            quote = ch;
+            continue;
+        }
+        if (ch != '>') continue;
+
+        const append_mode = idx + 1 < trimmed.len and trimmed[idx + 1] == '>';
+        const command = std.mem.trim(u8, trimmed[0..idx], " \t\r");
+        if (command.len == 0) return error.InvalidRedirection;
+
+        const rest_start = idx + (if (append_mode) @as(usize, 2) else @as(usize, 1));
+        const redirect_rest = trimLeftWhitespace(trimmed[rest_start..]);
+        if (redirect_rest.len == 0) return error.InvalidRedirection;
+
+        const redirect_arg = parseFirstArg(redirect_rest) catch return error.InvalidRedirection;
+        if (redirect_arg.arg.len == 0 or redirect_arg.rest.len != 0) return error.InvalidRedirection;
+        return .{
+            .command = command,
+            .redirect_path = redirect_arg.arg,
+            .append = append_mode,
+        };
+    }
+
+    return .{ .command = trimmed };
 }
 
 fn expandShellPatternAlloc(
@@ -4880,42 +5010,28 @@ fn expandShellPatternAlloc(
     if (trimmed.len == 0) return error.MissingPath;
     if (trimmed[0] != '/') return error.UnsupportedPattern;
 
-    const slash_index = std.mem.lastIndexOfScalar(u8, trimmed, '/') orelse return error.UnsupportedPattern;
-    const parent = if (slash_index == 0) "/" else trimmed[0..slash_index];
-    const leaf = trimmed[slash_index + 1 ..];
-    if (leaf.len == 0) return error.UnsupportedPattern;
-    if (std.mem.indexOfAny(u8, parent, "*?") != null) return error.UnsupportedPattern;
-
-    if (!containsWildcard(leaf)) {
+    if (!containsWildcard(trimmed)) {
         _ = filesystem.statSummary(trimmed) catch return error.NoMatches;
         return std.fmt.allocPrint(allocator, "{s}\n", .{trimmed});
     }
 
-    const listing = filesystem.listDirectoryAlloc(allocator, parent, max_bytes) catch |err| switch (err) {
-        error.FileNotFound, error.NotDirectory => return error.NoMatches,
-        else => return err,
-    };
-    defer allocator.free(listing);
+    if (std.mem.eql(u8, trimmed, "/")) return error.UnsupportedPattern;
+
+    var segments_storage: [max_shell_glob_segments][]const u8 = undefined;
+    var segment_count: usize = 0;
+    var segments_iter = std.mem.splitScalar(u8, trimmed[1..], '/');
+    while (segments_iter.next()) |segment| {
+        if (segment.len == 0) return error.UnsupportedPattern;
+        if (segment_count >= segments_storage.len) return error.UnsupportedPattern;
+        segments_storage[segment_count] = segment;
+        segment_count += 1;
+    }
+    if (segment_count == 0) return error.UnsupportedPattern;
 
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
-    var matched_any = false;
-    var lines = std.mem.splitScalar(u8, listing, '\n');
-    while (lines.next()) |line| {
-        if (line.len == 0) continue;
-        const child_name = childNameFromListingLine(line) orelse continue;
-        if (!globMatches(leaf, child_name)) continue;
-        matched_any = true;
-        const child_path = if (std.mem.eql(u8, parent, "/"))
-            try std.fmt.allocPrint(allocator, "/{s}", .{child_name})
-        else
-            try std.fmt.allocPrint(allocator, "{s}/{s}", .{ parent, child_name });
-        defer allocator.free(child_path);
-        if (out.items.len + child_path.len + 1 > max_bytes) return error.StreamTooLong;
-        try out.appendSlice(allocator, child_path);
-        try out.append(allocator, '\n');
-    }
-    if (!matched_any) return error.NoMatches;
+    try expandShellPatternSegments(allocator, &out, max_bytes, "/", segments_storage[0..segment_count], 0);
+    if (out.items.len == 0) return error.NoMatches;
     return out.toOwnedSlice(allocator);
 }
 
@@ -4923,14 +5039,82 @@ fn containsWildcard(text: []const u8) bool {
     return std.mem.indexOfAny(u8, text, "*?") != null;
 }
 
-fn childNameFromListingLine(line: []const u8) ?[]const u8 {
-    if (std.mem.startsWith(u8, line, "dir ")) return line[4..];
+fn childFromListingLine(line: []const u8) ?ListingChild {
+    if (std.mem.startsWith(u8, line, "dir ")) return .{
+        .name = line[4..],
+        .kind = .directory,
+    };
     if (std.mem.startsWith(u8, line, "file ")) {
         const rest = line[5..];
         const space_index = std.mem.indexOfScalar(u8, rest, ' ') orelse return null;
-        return rest[0..space_index];
+        return .{
+            .name = rest[0..space_index],
+            .kind = .file,
+        };
     }
     return null;
+}
+
+fn expandShellPatternSegments(
+    allocator: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    max_bytes: usize,
+    parent: []const u8,
+    segments: []const []const u8,
+    segment_index: usize,
+) Error!void {
+    const segment = segments[segment_index];
+    const is_last = segment_index + 1 == segments.len;
+
+    if (containsWildcard(segment)) {
+        const listing = filesystem.listDirectoryAlloc(allocator, parent, max_bytes) catch |err| switch (err) {
+            error.FileNotFound, error.NotDirectory => return,
+            else => return err,
+        };
+        defer allocator.free(listing);
+
+        var lines = std.mem.splitScalar(u8, listing, '\n');
+        while (lines.next()) |line| {
+            if (line.len == 0) continue;
+            const child = childFromListingLine(line) orelse continue;
+            if (!globMatches(segment, child.name)) continue;
+
+            const child_path = try joinShellChildPath(allocator, parent, child.name);
+            defer allocator.free(child_path);
+
+            if (is_last) {
+                try appendExpandedShellPath(allocator, out, max_bytes, child_path);
+                continue;
+            }
+            if (child.kind != .directory) continue;
+            try expandShellPatternSegments(allocator, out, max_bytes, child_path, segments, segment_index + 1);
+        }
+        return;
+    }
+
+    const child_path = try joinShellChildPath(allocator, parent, segment);
+    defer allocator.free(child_path);
+    const stat = filesystem.statSummary(child_path) catch |err| switch (err) {
+        error.FileNotFound, error.NotDirectory => return,
+        else => return err,
+    };
+    if (is_last) {
+        try appendExpandedShellPath(allocator, out, max_bytes, child_path);
+        return;
+    }
+    if (stat.kind != .directory) return;
+    try expandShellPatternSegments(allocator, out, max_bytes, child_path, segments, segment_index + 1);
+}
+
+fn joinShellChildPath(allocator: std.mem.Allocator, parent: []const u8, child_name: []const u8) ![]u8 {
+    if (std.mem.eql(u8, parent, "/")) return std.fmt.allocPrint(allocator, "/{s}", .{child_name});
+    return std.fmt.allocPrint(allocator, "{s}/{s}", .{ parent, child_name });
+}
+
+fn appendExpandedShellPath(allocator: std.mem.Allocator, out: *std.ArrayList(u8), max_bytes: usize, path: []const u8) !void {
+    if (out.items.len + path.len + 1 > max_bytes) return error.StreamTooLong;
+    try out.appendSlice(allocator, path);
+    try out.append(allocator, '\n');
 }
 
 fn globMatches(pattern: []const u8, text: []const u8) bool {
@@ -4958,7 +5142,7 @@ fn globMatchesInner(pattern: []const u8, text: []const u8, pattern_index: usize,
 
 fn writeCommandError(stderr_buffer: *OutputBuffer, err: anyerror, usage: []const u8) Error!void {
     switch (err) {
-        error.MissingCommand, error.MissingPath, error.InvalidQuotedArgument => {
+        error.MissingCommand, error.MissingPath, error.InvalidQuotedArgument, error.InvalidRedirection => {
             try stderr_buffer.appendFmt("usage: {s}\n", .{usage});
         },
         else => try stderr_buffer.appendFmt("{s}\n", .{@errorName(err)}),
@@ -5950,8 +6134,8 @@ test "baremetal tool exec exposes bounded shell batch and globbing" {
 
     var shell_run = try runCapture(
         std.testing.allocator,
-        "shell-run mkdir /tmp/sh; write-file /tmp/sh/A.TXT alpha; write-file /tmp/sh/B.LOG beta; mkdir /tmp/sh/DATA; write-file /tmp/sh/DATA/C.TXT gamma",
-        1024,
+        "shell-run mkdir /tmp/sh; write-file /tmp/sh/A.TXT alpha; write-file /tmp/sh/B.LOG beta; mkdir /tmp/sh/DATA; write-file /tmp/sh/DATA/C.TXT gamma; mkdir /tmp/sh/DATA/DEEP; write-file /tmp/sh/DATA/DEEP/Z.TXT delta; echo alpha > /tmp/sh/OUT.TXT; echo beta >> /tmp/sh/OUT.TXT",
+        1536,
         256,
     );
     defer shell_run.deinit(std.testing.allocator);
@@ -5959,8 +6143,10 @@ test "baremetal tool exec exposes bounded shell batch and globbing" {
     try std.testing.expect(std.mem.indexOf(u8, shell_run.stdout, "created /tmp/sh\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, shell_run.stdout, "wrote 5 bytes to /tmp/sh/A.TXT\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, shell_run.stdout, "created /tmp/sh/DATA\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, shell_run.stdout, "created /tmp/sh/DATA/DEEP\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, shell_run.stdout, "alpha\n") == null);
 
-    var expand_root = try runCapture(std.testing.allocator, "shell-expand /tmp/sh/*.TXT", 256, 256);
+    var expand_root = try runCapture(std.testing.allocator, "shell-expand /tmp/sh/A*.TXT", 256, 256);
     defer expand_root.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), expand_root.exit_code);
     try std.testing.expectEqualStrings("/tmp/sh/A.TXT\n", expand_root.stdout);
@@ -5970,10 +6156,19 @@ test "baremetal tool exec exposes bounded shell batch and globbing" {
     try std.testing.expectEqual(@as(u8, 0), expand_nested.exit_code);
     try std.testing.expectEqualStrings("/tmp/sh/DATA/C.TXT\n", expand_nested.stdout);
 
+    var expand_deep = try runCapture(std.testing.allocator, "shell-expand /tmp/sh/*/*/*.TXT", 256, 256);
+    defer expand_deep.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), expand_deep.exit_code);
+    try std.testing.expectEqualStrings("/tmp/sh/DATA/DEEP/Z.TXT\n", expand_deep.stdout);
+
     var no_match = try runCapture(std.testing.allocator, "shell-expand /tmp/sh/*.BIN", 256, 256);
     defer no_match.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 1), no_match.exit_code);
     try std.testing.expectEqualStrings("shell-expand failed: NoMatches\n", no_match.stderr);
+
+    const redirected = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/OUT.TXT", 64);
+    defer std.testing.allocator.free(redirected);
+    try std.testing.expectEqualStrings("alpha\nbeta\n", redirected);
 }
 
 test "baremetal tool exec configures app trust and connector and reports app info" {
