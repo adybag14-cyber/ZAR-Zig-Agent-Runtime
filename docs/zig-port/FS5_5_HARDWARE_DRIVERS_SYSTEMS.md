@@ -18,7 +18,7 @@ This track exists to remove guesswork. It defines the real bare-metal subsystems
 
 ## ZigOS Reference Track
 
-Status: `Slices 1-7 delivered`
+Status: `Slices 1-9 delivered`
 
 This track uses `Cameron-Lyons/zigos` as a reference architecture and source candidate where it improves ZAR.
 
@@ -35,6 +35,8 @@ Tracked docs:
 - `docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md`
 - `docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_NET_SLICE_PLAN.md`
 - `docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_BLOCK_SLICE_PLAN.md`
+- `docs/zig-port/ZAR_VS_ZIGOS_SHELL_CONTROL_SLICE_PLAN.md`
+- `docs/zig-port/ZAR_VS_ZIGOS_TTY_CONTROL_SLICE_PLAN.md`
 
 Delivered first adoption slice:
 
@@ -103,14 +105,15 @@ Delivered sixth adoption slice:
 - `src/baremetal/virtual_fs.zig` now exposes that registry through `/dev/storage/registry` and `/sys/storage/registry`, while `/sys/storage/state` now also reports `detected_filesystem` plus `supported_filesystem_probes=zarfs,ext2,fat32`
 - `src/baremetal_main.zig` now widens the same `virtio-block` mount proof to validate `/sys/storage/state`, `/sys/storage/registry`, persistent `zarfs` classification on `virtio-block`, and `tmpfs` classification for `/mnt/cache -> /tmp/cache`
 - `src/baremetal/storage_backend_registry.zig` now exports a bounded backend registry over `ram_disk`, `ata_pio`, and `virtio_block`, including availability, active-selection state, preferred-order, logical-base-LBA, partition metadata, and detected filesystem kind per backend
-- `src/baremetal/virtual_fs.zig` now also exposes `/dev/storage/backends`, `/dev/storage/filesystems`, `/sys/storage/backends`, and `/sys/storage/filesystems`, making the mounted-filesystem posture explicit at runtime: `zarfs` mounted+writable, `ext2` mounted read-only, and `fat32` bounded writable at the root-only 8.3 surface
+- `src/baremetal/virtual_fs.zig` now also exposes `/dev/storage/backends`, `/dev/storage/filesystems`, `/sys/storage/backends`, and `/sys/storage/filesystems`, making the mounted-filesystem posture explicit at runtime: `zarfs` mounted+writable, `ext2` mounted read-only, and `fat32` bounded writable at the one-level `8.3` surface
 - `src/baremetal_main.zig` now widens the same `virtio-block` mount proof to validate `/sys/storage/backends` plus `/sys/storage/filesystems` on the live `virtio-blk-pci` path
-- `src/baremetal/ext2_ro.zig` now provides bounded read-only root listing, file read, and stat over deterministic external images seeded onto the active backend, while `src/baremetal/fat32_ro.zig` extends that same bounded surface with root-only 8.3 write/overwrite/delete
-- `src/baremetal/mounted_external_fs.zig` now exposes those external filesystems under `/__storagefs/{active,ext2,fat32}`, while `src/baremetal/vfs.zig` routes mounted aliases like `/mnt/external/...` through that bounded external-filesystem seam and only permits writes/deletes on the FAT32 lane
+- `src/baremetal/ext2_ro.zig` now provides bounded read-only root listing, file read, and stat over deterministic external images seeded onto the active backend, while `src/baremetal/fat32_ro.zig` extends that same bounded surface with one-level `8.3` file write/overwrite/delete plus bounded directory create/remove
+- `src/baremetal/mounted_external_fs.zig` now exposes those external filesystems under `/__storagefs/{active,ext2,fat32}`, while `src/baremetal/vfs.zig` routes mounted aliases like `/mnt/external/...` through that bounded external-filesystem seam and only permits file/directory mutation on the FAT32 lane
 - `src/baremetal/storage_backend.zig` plus `src/baremetal_main.zig` now export bounded backend count, availability, and explicit selection so the mounted external-filesystem seam can retarget the active backend before rebinding the filesystem
 - `src/baremetal_main.zig` now also exports bounded storage-backend info plus mount bind/remove controls through `oc_storage_backend_info`, `oc_filesystem_mount_count`, `oc_filesystem_mount_entry`, `oc_filesystem_bind_mount`, and `oc_filesystem_remove_mount`
+- `src/baremetal/tool_exec.zig`, `src/baremetal/tool_service.zig`, and `src/baremetal/tool_service/codec.zig` now expose the same storage and mount controls to users through CLI verbs (`storage-backends`, `storage-filesystems`, `storage-backend-info`, `storage-backend-select`, `storage-partitions`, `storage-partition-select`, `mount-list`, `mount-info`, `mount-bind`, `mount-remove`) and typed framed verbs (`STORAGEBACKENDS`, `STORAGEFILESYSTEMS`, `STORAGEBACKENDINFO`, `STORAGEBACKENDSELECT`, `STORAGEPARTITIONS`, `STORAGEPARTITIONSELECT`, `MOUNTLIST`, `MOUNTINFO`, `MOUNTBIND`, `MOUNTREMOVE`)
 - `scripts/baremetal-qemu-virtio-block-mount-control-probe-check.ps1` now proves live mount bind/remove export behavior on `virtio-blk-pci`, including persisted alias reload on the same controller path
-- `scripts/baremetal-qemu-virtio-block-ext2-mount-probe-check.ps1` and `scripts/baremetal-qemu-virtio-block-fat32-mount-probe-check.ps1` now prove live bounded `ext2` and `fat32` mounting on `virtio-blk-pci`, including signature validation, mounted `/mnt/external` listing/read/stat, read-only write rejection on `ext2`, and bounded write mutation on `fat32`
+- `scripts/baremetal-qemu-virtio-block-ext2-mount-probe-check.ps1` and `scripts/baremetal-qemu-virtio-block-fat32-mount-probe-check.ps1` now prove live bounded `ext2` and `fat32` mounting on `virtio-blk-pci`, including signature validation, mounted `/mnt/external` listing/read/stat, read-only write rejection on `ext2`, bounded root plus nested file mutation on `fat32`, and bounded mounted-directory create/remove on the FAT32 lane
 
 Delivered seventh adoption slice:
 
@@ -123,6 +126,29 @@ Delivered seventh adoption slice:
 - `scripts/baremetal-qemu-virtio-net-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-arp-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-udp-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-dhcp-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-dns-probe-check.ps1`, and `scripts/baremetal-qemu-virtio-net-tcp-probe-check.ps1` plus `scripts/qemu-virtio-net-dgram-echo.ps1` now prove live QEMU `virtio-net-pci` PCI bind, MAC readout, TX, RX, ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, DHCP discover encode/decode, DNS query/A-response exchange, bounded TCP handshake/payload/teardown, payload validation, and counter advance over the freestanding PVH artifact
 - host regressions in `src/pal/net.zig` plus `src/baremetal_main.zig` now prove bounded framed tool-service reuse and bounded freestanding `HTTP` / `HTTPS` transport reuse over the clean-room `virtio-net` path
 - `scripts/baremetal-qemu-virtio-net-tool-service-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-http-post-probe-check.ps1`, and `scripts/baremetal-qemu-virtio-net-https-post-probe-check.ps1` now prove live QEMU tool-service reuse, `HTTP` POST, and `HTTPS` POST over the same `virtio-net-pci` freestanding path
+
+Delivered eighth adoption slice:
+
+- bounded shell/control helpers inspired by ZigOS shell structure without claiming a GP-OS shell model
+- `src/baremetal/tool_exec.zig` now exposes `shell-expand <pattern>` plus `shell-run <command[;command...]>` over the existing builtin runtime surface
+- `shell-run` now routes through shared bounded script execution with quote-aware separator splitting, deferred filesystem persistence, and a hard `64`-command limit
+- `shell-run` now also supports bounded metacharacter escaping for separators/redirection including escaped `<`, bounded stdin redirection through `<`, bounded stdout redirection through `>` / `>>`, and bounded stderr redirection through `2>` / `2>>` onto the existing filesystem surface without adding pipes or job control
+- `shell-expand` now provides bounded wildcard expansion across multiple path segments using `*` and `?`, returning absolute match paths and explicit `NoMatches` failure when nothing resolves
+- `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `SHELLEXPAND` plus `SHELLRUN` over the framed TCP service
+- `src/baremetal_main.zig` now widens the live `E1000` tool-service proof to validate shell help output, bounded shell batching, escaped metacharacters, file-fed stdin flows, multi-segment glob expansion, redirected stdout/stderr capture, and persisted filesystem readback on the clean-room NIC lane
+- `build.zig` now explicitly wires `scripts/baremetal/pvh_boot.S` plus `scripts/baremetal/pvh_lld.ld` into the bare-metal artifact so the Multiboot2 header remains within the required first `32768` bytes on current Zig `master`
+- full userspace shell, job control, pipelines, broader input/output process plumbing, richer quoting/escaping, editor/TTY parity, and syscall-visible shell semantics remain future redesign work
+
+Delivered ninth adoption slice:
+
+- bounded TTY/session input-control layer inspired by ZigOS TTY concepts without claiming a GP-OS interactive console
+- `src/baremetal/tty_runtime.zig` now persists bounded TTY session receipts under `/runtime/tty/<name>/` with `state.txt`, `input.log`, `pending.log`, `stdout.log`, `stderr.log`, `events.log`, and `transcript.log`
+- `src/baremetal/tool_exec.zig` now exposes `tty-list`, `tty-open`, `tty-info`, `tty-read`, `tty-pending`, `tty-events`, `tty-stdout`, `tty-stderr`, `tty-write`, `tty-send`, `tty-clear`, and `tty-close`
+- `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `TTYLIST`, `TTYOPEN`, `TTYINFO`, `TTYREAD`, `TTYPENDING`, `TTYEVENTS`, `TTYSTDOUT`, `TTYSTDERR`, `TTYWRITE`, `TTYSEND`, `TTYCLEAR`, and `TTYCLOSE`
+- `src/baremetal/virtual_fs.zig` now exposes bounded TTY state through `/dev/tty/state`, `/dev/tty/sessions/<name>/{info,input,pending,stdout,stderr,events,transcript}`, `/sys/tty/state`, and `/sys/tty/sessions/<name>/{info,input,pending,stdout,stderr,events,transcript}`
+- host regressions now prove bounded TTY open/write/pending/send/clear/events/read/stdout/stderr/close behavior plus `/dev` and `/sys` TTY readback
+- `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves the same queued-input and event-receipt slice live on the clean-room `E1000` tool-service path
+- interactive job control, pipes, terminal emulation, editor/TTY parity, and userspace-visible TTY ABI remain future redesign work
 
 `FS5.5` is not complete until each subsystem has:
 

@@ -11,6 +11,9 @@ const pal_framebuffer = @import("../pal/framebuffer.zig");
 const package_store = @import("package_store.zig");
 const runtime_bridge = @import("runtime_bridge.zig");
 const storage_backend = @import("storage_backend.zig");
+const storage_backend_registry = @import("storage_backend_registry.zig");
+const storage_registry = @import("storage_registry.zig");
+const tty_runtime = @import("tty_runtime.zig");
 const trust_store = @import("trust_store.zig");
 const tool_exec = @import("tool_exec.zig");
 const tool_layout = @import("tool_layout.zig");
@@ -31,6 +34,8 @@ pub const PackagePutRequest = codec.PackagePutRequest;
 pub const PackageDisplayRequest = codec.PackageDisplayRequest;
 pub const NamedValueRequest = codec.NamedValueRequest;
 pub const DisplayModeRequest = codec.DisplayModeRequest;
+pub const TtySendRequest = codec.TtySendRequest;
+pub const TtyWriteRequest = codec.TtyWriteRequest;
 pub const PackageReleasePruneRequest = codec.PackageReleasePruneRequest;
 pub const PackageChannelSetRequest = codec.PackageChannelSetRequest;
 pub const AppPlanSaveRequest = codec.AppPlanSaveRequest;
@@ -194,6 +199,30 @@ fn handleFramedPayload(
         .put => |put_request| try handlePutRequest(allocator, put_request.path, put_request.body, payload_limit),
         .stat => |path| try handleStatRequest(allocator, path, payload_limit),
         .list => |path| try handleListRequest(allocator, path, payload_limit),
+        .shell_expand => |pattern| try handleShellExpandRequest(allocator, pattern, stdout_limit, stderr_limit, payload_limit),
+        .shell_run => |script| try handleShellRunRequest(allocator, script, stdout_limit, stderr_limit, payload_limit),
+        .tty_list => try handleTtyListRequest(allocator, stdout_limit, stderr_limit, payload_limit),
+        .tty_open => |session_name| try handleTtyOpenRequest(allocator, session_name, stdout_limit, stderr_limit, payload_limit),
+        .tty_info => |session_name| try handleTtyInfoRequest(allocator, session_name, stdout_limit, stderr_limit, payload_limit),
+        .tty_read => |session_name| try handleTtyReadRequest(allocator, session_name, stdout_limit, stderr_limit, payload_limit),
+        .tty_pending => |session_name| try handleTtyPendingRequest(allocator, session_name, stdout_limit, stderr_limit, payload_limit),
+        .tty_events => |session_name| try handleTtyEventsRequest(allocator, session_name, stdout_limit, stderr_limit, payload_limit),
+        .tty_stdout => |session_name| try handleTtyStdoutRequest(allocator, session_name, stdout_limit, stderr_limit, payload_limit),
+        .tty_stderr => |session_name| try handleTtyStderrRequest(allocator, session_name, stdout_limit, stderr_limit, payload_limit),
+        .tty_write => |request| try handleTtyWriteRequest(allocator, request.session_name, request.input, stdout_limit, stderr_limit, payload_limit),
+        .tty_send => |request| try handleTtySendRequest(allocator, request.session_name, request.command, stdout_limit, stderr_limit, payload_limit),
+        .tty_clear => |session_name| try handleTtyClearRequest(allocator, session_name, stdout_limit, stderr_limit, payload_limit),
+        .tty_close => |session_name| try handleTtyCloseRequest(allocator, session_name, stdout_limit, stderr_limit, payload_limit),
+        .storage_backends => try handleStorageBackendsRequest(allocator, payload_limit),
+        .storage_filesystems => try handleStorageFilesystemsRequest(allocator, payload_limit),
+        .storage_backend_info => |backend_name| try handleStorageBackendInfoRequest(allocator, backend_name, payload_limit),
+        .storage_backend_select => |backend_name| try handleStorageBackendSelectRequest(allocator, backend_name, payload_limit),
+        .storage_partitions => try handleStoragePartitionsRequest(allocator, payload_limit),
+        .storage_partition_select => |index_text| try handleStoragePartitionSelectRequest(allocator, index_text, payload_limit),
+        .mount_list => try handleMountListRequest(allocator, payload_limit),
+        .mount_info => |mount_name| try handleMountInfoRequest(allocator, mount_name, payload_limit),
+        .mount_bind => |request| try handleMountBindRequest(allocator, request.package_name, request.value, payload_limit),
+        .mount_remove => |mount_name| try handleMountRemoveRequest(allocator, mount_name, payload_limit),
         .install => try handleInstallRequest(allocator, payload_limit),
         .manifest => try handleManifestRequest(allocator, payload_limit),
         .package_install => |package_request| try handlePackageInstallRequest(allocator, package_request.path, package_request.body, payload_limit),
@@ -452,6 +481,469 @@ fn handleListRequest(allocator: std.mem.Allocator, path: []const u8, payload_lim
     return filesystem.listDirectoryAlloc(allocator, path, payload_limit) catch |err| {
         return formatOperationError(allocator, "LIST", err, payload_limit);
     };
+}
+
+fn handleShellExpandRequest(
+    allocator: std.mem.Allocator,
+    pattern: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    const command = try std.fmt.allocPrint(allocator, "shell-expand {s}", .{pattern});
+    defer allocator.free(command);
+    return handleCommandRequest(allocator, command, stdout_limit, stderr_limit, payload_limit);
+}
+
+fn handleShellRunRequest(
+    allocator: std.mem.Allocator,
+    script: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    const command = try std.fmt.allocPrint(allocator, "shell-run {s}", .{script});
+    defer allocator.free(command);
+    return handleCommandRequest(allocator, command, stdout_limit, stderr_limit, payload_limit);
+}
+
+fn handleTtyListRequest(
+    allocator: std.mem.Allocator,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    _ = stderr_limit;
+    _ = stdout_limit;
+    return tty_runtime.listSessionsAlloc(allocator, payload_limit) catch |err| {
+        return formatOperationError(allocator, "TTYLIST", err, payload_limit);
+    };
+}
+
+fn handleTtyOpenRequest(
+    allocator: std.mem.Allocator,
+    session_name: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    _ = stdout_limit;
+    _ = stderr_limit;
+    const command = try std.fmt.allocPrint(allocator, "tty-open {s}", .{session_name});
+    defer allocator.free(command);
+    return handleCommandRequest(allocator, command, payload_limit, payload_limit, payload_limit);
+}
+
+fn handleTtyInfoRequest(
+    allocator: std.mem.Allocator,
+    session_name: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    _ = stdout_limit;
+    _ = stderr_limit;
+    return tty_runtime.infoAlloc(allocator, session_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "TTYINFO", err, payload_limit);
+    };
+}
+
+fn handleTtyReadRequest(
+    allocator: std.mem.Allocator,
+    session_name: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    _ = stdout_limit;
+    _ = stderr_limit;
+    return tty_runtime.transcriptAlloc(allocator, session_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "TTYREAD", err, payload_limit);
+    };
+}
+
+fn handleTtyPendingRequest(
+    allocator: std.mem.Allocator,
+    session_name: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    _ = stdout_limit;
+    _ = stderr_limit;
+    return tty_runtime.pendingAlloc(allocator, session_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "TTYPENDING", err, payload_limit);
+    };
+}
+
+fn handleTtyEventsRequest(
+    allocator: std.mem.Allocator,
+    session_name: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    _ = stdout_limit;
+    _ = stderr_limit;
+    return tty_runtime.eventsAlloc(allocator, session_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "TTYEVENTS", err, payload_limit);
+    };
+}
+
+fn handleTtyStdoutRequest(
+    allocator: std.mem.Allocator,
+    session_name: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    _ = stdout_limit;
+    _ = stderr_limit;
+    return tty_runtime.stdoutAlloc(allocator, session_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "TTYSTDOUT", err, payload_limit);
+    };
+}
+
+fn handleTtyStderrRequest(
+    allocator: std.mem.Allocator,
+    session_name: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    _ = stdout_limit;
+    _ = stderr_limit;
+    return tty_runtime.stderrAlloc(allocator, session_name, payload_limit) catch |err| {
+        return formatOperationError(allocator, "TTYSTDERR", err, payload_limit);
+    };
+}
+
+fn handleTtyWriteRequest(
+    allocator: std.mem.Allocator,
+    session_name: []const u8,
+    input: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    _ = stdout_limit;
+    _ = stderr_limit;
+    tty_runtime.writePendingInput(allocator, session_name, input, 0) catch |err| {
+        return formatOperationError(allocator, "TTYWRITE", err, payload_limit);
+    };
+    const payload = try std.fmt.allocPrint(allocator, "tty queued {s} {d} bytes\n", .{ session_name, input.len });
+    errdefer allocator.free(payload);
+    if (payload.len > payload_limit) return error.ResponseTooLarge;
+    return payload;
+}
+
+fn handleTtySendRequest(
+    allocator: std.mem.Allocator,
+    session_name: []const u8,
+    command_text: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    const command = try std.fmt.allocPrint(allocator, "tty-send {s} {s}", .{ session_name, command_text });
+    defer allocator.free(command);
+    return handleCommandRequest(allocator, command, stdout_limit, stderr_limit, payload_limit);
+}
+
+fn handleTtyClearRequest(
+    allocator: std.mem.Allocator,
+    session_name: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    _ = stdout_limit;
+    _ = stderr_limit;
+    tty_runtime.clearPendingInput(allocator, session_name, 0) catch |err| {
+        return formatOperationError(allocator, "TTYCLEAR", err, payload_limit);
+    };
+    const payload = try std.fmt.allocPrint(allocator, "tty cleared {s}\n", .{session_name});
+    errdefer allocator.free(payload);
+    if (payload.len > payload_limit) return error.ResponseTooLarge;
+    return payload;
+}
+
+fn handleTtyCloseRequest(
+    allocator: std.mem.Allocator,
+    session_name: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    payload_limit: usize,
+) Error![]u8 {
+    _ = stdout_limit;
+    _ = stderr_limit;
+    const command = try std.fmt.allocPrint(allocator, "tty-close {s}", .{session_name});
+    defer allocator.free(command);
+    return handleCommandRequest(allocator, command, payload_limit, payload_limit, payload_limit);
+}
+
+fn handleStorageBackendsRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    return storage_backend_registry.renderAlloc(allocator, payload_limit) catch |err| {
+        return formatOperationError(allocator, "STORAGEBACKENDS", err, payload_limit);
+    };
+}
+
+fn handleStorageFilesystemsRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    return storage_backend_registry.renderFilesystemSupportAlloc(allocator, payload_limit) catch |err| {
+        return formatOperationError(allocator, "STORAGEFILESYSTEMS", err, payload_limit);
+    };
+}
+
+fn handleStorageBackendInfoRequest(
+    allocator: std.mem.Allocator,
+    backend_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    const backend = parseStorageBackendName(backend_name) catch |err| {
+        return formatOperationError(allocator, "STORAGEBACKENDINFO", err, payload_limit);
+    };
+
+    var index: usize = 0;
+    while (index < storage_backend_registry.entryCount()) : (index += 1) {
+        const entry = storage_backend_registry.entry(index) orelse continue;
+        if (entry.backend != backend) continue;
+        return formatStorageBackendEntry(allocator, index, entry, payload_limit);
+    }
+    return formatOperationError(allocator, "STORAGEBACKENDINFO", error.FileNotFound, payload_limit);
+}
+
+fn handleStorageBackendSelectRequest(
+    allocator: std.mem.Allocator,
+    backend_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    const backend = parseStorageBackendName(backend_name) catch |err| {
+        return formatOperationError(allocator, "STORAGEBACKENDSELECT", err, payload_limit);
+    };
+    storage_backend.selectBackendById(backend) catch |err| {
+        return formatOperationError(allocator, "STORAGEBACKENDSELECT", err, payload_limit);
+    };
+    tool_layout.invalidateForBackendChange();
+    filesystem.invalidateForBackendChange();
+
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "STORAGEBACKENDSELECT {s}\n",
+        .{storage_registry.backendName(backend)},
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleStoragePartitionsRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    const backend = storage_backend.activeBackend();
+    const partition_count = storage_backend.partitionCount();
+    const selected = storage_backend.selectedPartitionIndex();
+    const header = if (selected) |index|
+        try std.fmt.allocPrint(
+            allocator,
+            "backend={s} partition_count={d} selected={d} logical_base_lba={d}\n",
+            .{ storage_registry.backendName(backend), partition_count, index, storage_backend.logicalBaseLba() },
+        )
+    else
+        try std.fmt.allocPrint(
+            allocator,
+            "backend={s} partition_count={d} selected=none logical_base_lba={d}\n",
+            .{ storage_registry.backendName(backend), partition_count, storage_backend.logicalBaseLba() },
+        );
+    defer allocator.free(header);
+    if (header.len > payload_limit) return error.ResponseTooLarge;
+    try out.appendSlice(allocator, header);
+
+    var index: u8 = 0;
+    while (index < partition_count) : (index += 1) {
+        const info = storage_backend.partitionInfo(index) orelse continue;
+        const line = try std.fmt.allocPrint(
+            allocator,
+            "partition[{d}] scheme={s} start_lba={d} sector_count={d} selected={d}\n",
+            .{
+                index,
+                switch (info.scheme) {
+                    .mbr => "mbr",
+                    .gpt => "gpt",
+                },
+                info.start_lba,
+                info.sector_count,
+                if (selected != null and selected.? == index) @as(u8, 1) else @as(u8, 0),
+            },
+        );
+        defer allocator.free(line);
+        if (out.items.len + line.len > payload_limit) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, line);
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+fn handleStoragePartitionSelectRequest(
+    allocator: std.mem.Allocator,
+    index_text: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    const index = std.fmt.parseUnsigned(u8, index_text, 10) catch |err| {
+        return formatOperationError(allocator, "STORAGEPARTITIONSELECT", err, payload_limit);
+    };
+    storage_backend.selectPartition(index) catch |err| {
+        return formatOperationError(allocator, "STORAGEPARTITIONSELECT", err, payload_limit);
+    };
+    tool_layout.invalidateForBackendChange();
+    filesystem.invalidateForBackendChange();
+
+    const response = try std.fmt.allocPrint(allocator, "STORAGEPARTITIONSELECT {d}\n", .{index});
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleMountListRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    var index: usize = 0;
+    while (index < filesystem.mountCount()) : (index += 1) {
+        const entry = filesystem.mountEntry(index) orelse continue;
+        const line = try formatMountEntry(allocator, entry, payload_limit -| out.items.len);
+        defer allocator.free(line);
+        if (out.items.len + line.len > payload_limit) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, line);
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+fn handleMountInfoRequest(
+    allocator: std.mem.Allocator,
+    mount_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    var index: usize = 0;
+    while (index < filesystem.mountCount()) : (index += 1) {
+        const entry = filesystem.mountEntry(index) orelse continue;
+        if (!std.mem.eql(u8, entry.name[0..entry.name_len], mount_name)) continue;
+        return formatMountEntry(allocator, entry, payload_limit);
+    }
+    return formatOperationError(allocator, "MOUNTINFO", error.FileNotFound, payload_limit);
+}
+
+fn handleMountBindRequest(
+    allocator: std.mem.Allocator,
+    mount_name: []const u8,
+    target: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    filesystem.bindMount(mount_name, target, 0) catch |err| {
+        return formatOperationError(allocator, "MOUNTBIND", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "MOUNTBIND {s} {s}\n", .{ mount_name, target });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleMountRemoveRequest(
+    allocator: std.mem.Allocator,
+    mount_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    filesystem.removeMount(mount_name, 0) catch |err| {
+        return formatOperationError(allocator, "MOUNTREMOVE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "MOUNTREMOVE {s}\n", .{mount_name});
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn parseStorageBackendName(text: []const u8) error{InvalidFrame}!u8 {
+    if (std.ascii.eqlIgnoreCase(text, "ram_disk") or std.ascii.eqlIgnoreCase(text, "ram-disk")) {
+        return abi.storage_backend_ram_disk;
+    }
+    if (std.ascii.eqlIgnoreCase(text, "ata_pio") or std.ascii.eqlIgnoreCase(text, "ata-pio")) {
+        return abi.storage_backend_ata_pio;
+    }
+    if (std.ascii.eqlIgnoreCase(text, "virtio_block") or std.ascii.eqlIgnoreCase(text, "virtio-block")) {
+        return abi.storage_backend_virtio_block;
+    }
+    return error.InvalidFrame;
+}
+
+fn formatStorageBackendEntry(
+    allocator: std.mem.Allocator,
+    index: usize,
+    entry: storage_backend_registry.Entry,
+    payload_limit: usize,
+) Error![]u8 {
+    const response = if (entry.selected_partition == std.math.maxInt(u8))
+        try std.fmt.allocPrint(
+            allocator,
+            "backend[{d}]=name={s} backend={s} available={d} selected={d} mounted={d} preferred_order={d} filesystem={s} block_size={d} block_count={d} logical_base_lba={d} partition_count={d} selected_partition=none\n",
+            .{
+                index,
+                entry.nameSlice(),
+                storage_registry.backendName(entry.backend),
+                entry.available,
+                entry.selected,
+                entry.mounted,
+                entry.preferred_order,
+                storage_registry.filesystemKindName(entry.filesystem_kind),
+                entry.block_size,
+                entry.block_count,
+                entry.logical_base_lba,
+                entry.partition_count,
+            },
+        )
+    else
+        try std.fmt.allocPrint(
+            allocator,
+            "backend[{d}]=name={s} backend={s} available={d} selected={d} mounted={d} preferred_order={d} filesystem={s} block_size={d} block_count={d} logical_base_lba={d} partition_count={d} selected_partition={d}\n",
+            .{
+                index,
+                entry.nameSlice(),
+                storage_registry.backendName(entry.backend),
+                entry.available,
+                entry.selected,
+                entry.mounted,
+                entry.preferred_order,
+                storage_registry.filesystemKindName(entry.filesystem_kind),
+                entry.block_size,
+                entry.block_count,
+                entry.logical_base_lba,
+                entry.partition_count,
+                entry.selected_partition,
+            },
+        );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn formatMountEntry(
+    allocator: std.mem.Allocator,
+    entry: @TypeOf(filesystem.mountEntry(0).?),
+    payload_limit: usize,
+) Error![]u8 {
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "mount name={s} path=/mnt/{s} target={s} modified_tick={d}\n",
+        .{
+            entry.name[0..entry.name_len],
+            entry.name[0..entry.name_len],
+            entry.target[0..entry.target_len],
+            entry.modified_tick,
+        },
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
 }
 
 fn handleInstallRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
@@ -2644,6 +3136,21 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
+    const storage_backend_info = try parseFramedRequest("REQ 14 STORAGEBACKENDINFO virtio_block");
+    switch (storage_backend_info.operation) {
+        .storage_backend_info => |backend_name| try std.testing.expectEqualStrings("virtio_block", backend_name),
+        else => return error.InvalidFrame,
+    }
+
+    const mount_bind = try parseFramedRequest("REQ 14 MOUNTBIND state /runtime/state");
+    switch (mount_bind.operation) {
+        .mount_bind => |request| {
+            try std.testing.expectEqualStrings("state", request.package_name);
+            try std.testing.expectEqualStrings("/runtime/state", request.value);
+        },
+        else => return error.InvalidFrame,
+    }
+
     const pkg = try parseFramedRequest("REQ 15 PKG demo 4\nedge");
     switch (pkg.operation) {
         .package_install => |payload| {
@@ -3738,6 +4245,246 @@ test "baremetal tool service exposes virtual proc sys and dev overlays" {
     defer std.testing.allocator.free(stat_snapshot);
     try std.testing.expect(std.mem.startsWith(u8, stat_snapshot, "RESP 19 "));
     try std.testing.expect(std.mem.indexOf(u8, stat_snapshot, "path=/proc/runtime/snapshot kind=file size=") != null);
+}
+
+test "baremetal tool service exposes storage and mount controls" {
+    resetPersistentStateForTest();
+
+    const storage_backends = try handleFramedRequest(std.testing.allocator, "REQ 21 STORAGEBACKENDS", 512, 256, 1024);
+    defer std.testing.allocator.free(storage_backends);
+    try std.testing.expect(std.mem.startsWith(u8, storage_backends, "RESP 21 "));
+    try std.testing.expect(std.mem.indexOf(u8, storage_backends, "backend[0]=name=ram_disk backend=ram_disk available=1 selected=1 mounted=1") != null);
+
+    const storage_filesystems = try handleFramedRequest(std.testing.allocator, "REQ 22 STORAGEFILESYSTEMS", 512, 256, 512);
+    defer std.testing.allocator.free(storage_filesystems);
+    try std.testing.expect(std.mem.startsWith(u8, storage_filesystems, "RESP 22 "));
+    try std.testing.expect(std.mem.indexOf(u8, storage_filesystems, "filesystem=fat32 detect=1 mount=1 write=1 source=zar_bounded_writable_one_level_83") != null);
+
+    const backend_info = try handleFramedRequest(std.testing.allocator, "REQ 23 STORAGEBACKENDINFO ram_disk", 512, 256, 512);
+    defer std.testing.allocator.free(backend_info);
+    try std.testing.expect(std.mem.startsWith(u8, backend_info, "RESP 23 "));
+    try std.testing.expect(std.mem.indexOf(u8, backend_info, "backend[0]=name=ram_disk backend=ram_disk available=1 selected=1 mounted=1") != null);
+
+    const partitions = try handleFramedRequest(std.testing.allocator, "REQ 24 STORAGEPARTITIONS", 512, 256, 512);
+    defer std.testing.allocator.free(partitions);
+    try std.testing.expectEqualStrings("RESP 24 68\nbackend=ram_disk partition_count=0 selected=none logical_base_lba=0\n", partitions);
+
+    const bind = try handleFramedRequest(std.testing.allocator, "REQ 25 MOUNTBIND state /runtime/state", 512, 256, 512);
+    defer std.testing.allocator.free(bind);
+    try std.testing.expectEqualStrings("RESP 25 31\nMOUNTBIND state /runtime/state\n", bind);
+
+    const mount_list = try handleFramedRequest(std.testing.allocator, "REQ 26 MOUNTLIST", 512, 256, 512);
+    defer std.testing.allocator.free(mount_list);
+    try std.testing.expectEqualStrings("RESP 26 71\nmount name=state path=/mnt/state target=/runtime/state modified_tick=0\n", mount_list);
+
+    const mount_info = try handleFramedRequest(std.testing.allocator, "REQ 27 MOUNTINFO state", 512, 256, 512);
+    defer std.testing.allocator.free(mount_info);
+    try std.testing.expectEqualStrings("RESP 27 71\nmount name=state path=/mnt/state target=/runtime/state modified_tick=0\n", mount_info);
+
+    const remove = try handleFramedRequest(std.testing.allocator, "REQ 28 MOUNTREMOVE state", 512, 256, 512);
+    defer std.testing.allocator.free(remove);
+    try std.testing.expectEqualStrings("RESP 28 18\nMOUNTREMOVE state\n", remove);
+
+    const mount_list_after_remove = try handleFramedRequest(std.testing.allocator, "REQ 29 MOUNTLIST", 512, 256, 512);
+    defer std.testing.allocator.free(mount_list_after_remove);
+    try std.testing.expectEqualStrings("RESP 29 0\n", mount_list_after_remove);
+}
+
+test "baremetal tool service exposes bounded shell batch and globbing" {
+    resetPersistentStateForTest();
+
+    const shell_script =
+        "mkdir /tmp/sh\n" ++
+        "write-file /tmp/sh/A.TXT alpha\n" ++
+        "write-file /tmp/sh/B.LOG beta\n" ++
+        "mkdir /tmp/sh/DATA\n" ++
+        "write-file /tmp/sh/DATA/C.TXT gamma\n" ++
+        "mkdir /tmp/sh/DATA/DEEP\n" ++
+        "write-file /tmp/sh/DATA/DEEP/Z.TXT delta\n" ++
+        "echo alpha > /tmp/sh/OUT.TXT\n" ++
+        "echo beta >> /tmp/sh/OUT.TXT\n";
+    const shell_run_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 30 SHELLRUN {d}\n{s}", .{ shell_script.len, shell_script });
+    defer std.testing.allocator.free(shell_run_request);
+    const shell_run_response = try handleFramedRequest(std.testing.allocator, shell_run_request, 1536, 256, 1536);
+    defer std.testing.allocator.free(shell_run_response);
+    try std.testing.expect(std.mem.startsWith(u8, shell_run_response, "RESP 30 "));
+    try std.testing.expect(std.mem.indexOf(u8, shell_run_response, "created /tmp/sh\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, shell_run_response, "wrote 5 bytes to /tmp/sh/A.TXT\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, shell_run_response, "created /tmp/sh/DATA\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, shell_run_response, "created /tmp/sh/DATA/DEEP\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, shell_run_response, "alpha\n") == null);
+
+    const shell_expand_root = try handleFramedRequest(std.testing.allocator, "REQ 31 SHELLEXPAND /tmp/sh/A*.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(shell_expand_root);
+    try std.testing.expectEqualStrings("RESP 31 14\n/tmp/sh/A.TXT\n", shell_expand_root);
+
+    const shell_expand_nested = try handleFramedRequest(std.testing.allocator, "REQ 32 SHELLEXPAND /tmp/sh/DATA/*.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(shell_expand_nested);
+    try std.testing.expectEqualStrings("RESP 32 19\n/tmp/sh/DATA/C.TXT\n", shell_expand_nested);
+
+    const shell_expand_deep = try handleFramedRequest(std.testing.allocator, "REQ 33 SHELLEXPAND /tmp/sh/*/*/*.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(shell_expand_deep);
+    try std.testing.expectEqualStrings("RESP 33 24\n/tmp/sh/DATA/DEEP/Z.TXT\n", shell_expand_deep);
+
+    const redirected_output = try handleFramedRequest(std.testing.allocator, "REQ 34 GET /tmp/sh/OUT.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(redirected_output);
+    try std.testing.expectEqualStrings("RESP 34 11\nalpha\nbeta\n", redirected_output);
+
+    const shell_escaped_script =
+        "echo alpha\\;beta > /tmp/sh/ESC.TXT\n" ++
+        "echo gt\\>value > /tmp/sh/GT.TXT\n";
+    const shell_escaped_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 35 SHELLRUN {d}\n{s}", .{ shell_escaped_script.len, shell_escaped_script });
+    defer std.testing.allocator.free(shell_escaped_request);
+    const shell_escaped_response = try handleFramedRequest(std.testing.allocator, shell_escaped_request, 512, 256, 512);
+    defer std.testing.allocator.free(shell_escaped_response);
+    try std.testing.expectEqualStrings("RESP 35 0\n", shell_escaped_response);
+
+    const escaped_separator = try handleFramedRequest(std.testing.allocator, "REQ 36 GET /tmp/sh/ESC.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(escaped_separator);
+    try std.testing.expectEqualStrings("RESP 36 11\nalpha;beta\n", escaped_separator);
+
+    const escaped_redirect = try handleFramedRequest(std.testing.allocator, "REQ 37 GET /tmp/sh/GT.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(escaped_redirect);
+    try std.testing.expectEqualStrings("RESP 37 9\ngt>value\n", escaped_redirect);
+
+    const shell_stderr_script = "cat /tmp/sh/MISSING.TXT 2> /tmp/sh/ERR.TXT";
+    const shell_stderr_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 38 SHELLRUN {d}\n{s}", .{ shell_stderr_script.len, shell_stderr_script });
+    defer std.testing.allocator.free(shell_stderr_request);
+    const shell_stderr_response = try handleFramedRequest(std.testing.allocator, shell_stderr_request, 256, 256, 256);
+    defer std.testing.allocator.free(shell_stderr_response);
+    try std.testing.expectEqualStrings("RESP 38 11\nERR exit=1\n", shell_stderr_response);
+
+    const redirected_stderr = try handleFramedRequest(std.testing.allocator, "REQ 39 GET /tmp/sh/ERR.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(redirected_stderr);
+    try std.testing.expectEqualStrings("RESP 39 25\ncat failed: FileNotFound\n", redirected_stderr);
+
+    const stdin_script = "echo stdin-shell > /tmp/sh/STDINOUT.TXT";
+    const stdin_put_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 40 PUT /tmp/sh/STDIN.OC {d}\n{s}", .{ stdin_script.len, stdin_script });
+    defer std.testing.allocator.free(stdin_put_request);
+    const stdin_put_response = try handleFramedRequest(std.testing.allocator, stdin_put_request, 256, 256, 256);
+    defer std.testing.allocator.free(stdin_put_response);
+    try std.testing.expectEqualStrings("RESP 40 35\nWROTE 39 bytes to /tmp/sh/STDIN.OC\n", stdin_put_response);
+
+    const shell_input_script =
+        "cat < /tmp/sh/A.TXT > /tmp/sh/COPY.TXT\n" ++
+        "write-file /tmp/sh/FROMSTDIN.TXT < /tmp/sh/A.TXT\n" ++
+        "write-file \"/tmp/sh/SPACE NAME.TXT\" spaced\n" ++
+        "cat < \"/tmp/sh/SPACE NAME.TXT\" > /tmp/sh/QUOTE.TXT\n" ++
+        "echo lt\\<value > /tmp/sh/LT.TXT\n" ++
+        "shell-run < /tmp/sh/STDIN.OC";
+    const shell_input_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 41 SHELLRUN {d}\n{s}", .{ shell_input_script.len, shell_input_script });
+    defer std.testing.allocator.free(shell_input_request);
+    const shell_input_response = try handleFramedRequest(std.testing.allocator, shell_input_request, 1024, 256, 1024);
+    defer std.testing.allocator.free(shell_input_response);
+    try std.testing.expect(std.mem.startsWith(u8, shell_input_response, "RESP 41 "));
+    try std.testing.expect(std.mem.indexOf(u8, shell_input_response, "wrote 5 bytes to /tmp/sh/FROMSTDIN.TXT\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, shell_input_response, "wrote 6 bytes to /tmp/sh/SPACE NAME.TXT\n") != null);
+
+    const copied_input = try handleFramedRequest(std.testing.allocator, "REQ 42 GET /tmp/sh/COPY.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(copied_input);
+    try std.testing.expectEqualStrings("RESP 42 5\nalpha", copied_input);
+
+    const stdin_written = try handleFramedRequest(std.testing.allocator, "REQ 43 GET /tmp/sh/FROMSTDIN.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(stdin_written);
+    try std.testing.expectEqualStrings("RESP 43 5\nalpha", stdin_written);
+
+    const quoted_copy = try handleFramedRequest(std.testing.allocator, "REQ 44 GET /tmp/sh/QUOTE.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(quoted_copy);
+    try std.testing.expectEqualStrings("RESP 44 6\nspaced", quoted_copy);
+
+    const escaped_input_redirect = try handleFramedRequest(std.testing.allocator, "REQ 45 GET /tmp/sh/LT.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(escaped_input_redirect);
+    try std.testing.expectEqualStrings("RESP 45 9\nlt<value\n", escaped_input_redirect);
+
+    const nested_shell_input = try handleFramedRequest(std.testing.allocator, "REQ 46 GET /tmp/sh/STDINOUT.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(nested_shell_input);
+    try std.testing.expectEqualStrings("RESP 46 12\nstdin-shell\n", nested_shell_input);
+}
+
+test "baremetal tool service persists bounded tty session commands" {
+    resetPersistentStateForTest();
+
+    const tty_open = try handleFramedRequest(std.testing.allocator, "REQ 47 TTYOPEN demo", 256, 256, 256);
+    defer std.testing.allocator.free(tty_open);
+    try std.testing.expectEqualStrings("RESP 47 16\ntty opened demo\n", tty_open);
+
+    const tty_write_body = "demo\ntty-service-input";
+    const tty_write_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 48 TTYWRITE {d}\n{s}", .{ tty_write_body.len, tty_write_body });
+    defer std.testing.allocator.free(tty_write_request);
+    const tty_write = try handleFramedRequest(std.testing.allocator, tty_write_request, 256, 256, 256);
+    defer std.testing.allocator.free(tty_write);
+    try std.testing.expectEqualStrings("RESP 48 25\ntty queued demo 17 bytes\n", tty_write);
+
+    const tty_pending = try handleFramedRequest(std.testing.allocator, "REQ 49 TTYPENDING demo", 256, 256, 256);
+    defer std.testing.allocator.free(tty_pending);
+    try std.testing.expectEqualStrings("RESP 49 17\ntty-service-input", tty_pending);
+
+    const tty_send_script = "demo cat";
+    const tty_send_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 50 TTYSEND {d}\n{s}", .{ tty_send_script.len, tty_send_script });
+    defer std.testing.allocator.free(tty_send_request);
+    const tty_send = try handleFramedRequest(std.testing.allocator, tty_send_request, 256, 256, 256);
+    defer std.testing.allocator.free(tty_send);
+    try std.testing.expectEqualStrings("RESP 50 17\ntty-service-input", tty_send);
+
+    const tty_pending_after_send = try handleFramedRequest(std.testing.allocator, "REQ 51 TTYPENDING demo", 256, 256, 256);
+    defer std.testing.allocator.free(tty_pending_after_send);
+    try std.testing.expectEqualStrings("RESP 51 0\n", tty_pending_after_send);
+
+    const tty_stale_body = "demo\nstale-tty";
+    const tty_stale_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 52 TTYWRITE {d}\n{s}", .{ tty_stale_body.len, tty_stale_body });
+    defer std.testing.allocator.free(tty_stale_request);
+    const tty_stale = try handleFramedRequest(std.testing.allocator, tty_stale_request, 256, 256, 256);
+    defer std.testing.allocator.free(tty_stale);
+    try std.testing.expectEqualStrings("RESP 52 24\ntty queued demo 9 bytes\n", tty_stale);
+
+    const tty_clear = try handleFramedRequest(std.testing.allocator, "REQ 53 TTYCLEAR demo", 256, 256, 256);
+    defer std.testing.allocator.free(tty_clear);
+    try std.testing.expectEqualStrings("RESP 53 17\ntty cleared demo\n", tty_clear);
+
+    const tty_fail_script = "demo cat /tmp/missing-tty.txt";
+    const tty_fail_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 54 TTYSEND {d}\n{s}", .{ tty_fail_script.len, tty_fail_script });
+    defer std.testing.allocator.free(tty_fail_request);
+    const tty_fail = try handleFramedRequest(std.testing.allocator, tty_fail_request, 256, 256, 256);
+    defer std.testing.allocator.free(tty_fail);
+    try std.testing.expectEqualStrings("RESP 54 36\nERR exit=1\ncat failed: FileNotFound\n", tty_fail);
+
+    const tty_list = try handleFramedRequest(std.testing.allocator, "REQ 55 TTYLIST", 256, 256, 256);
+    defer std.testing.allocator.free(tty_list);
+    try std.testing.expectEqualStrings("RESP 55 5\ndemo\n", tty_list);
+
+    const tty_info = try handleFramedRequest(std.testing.allocator, "REQ 56 TTYINFO demo", 512, 256, 512);
+    defer std.testing.allocator.free(tty_info);
+    try std.testing.expect(std.mem.startsWith(u8, tty_info, "RESP 56 "));
+    try std.testing.expect(std.mem.indexOf(u8, tty_info, "name=demo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tty_info, "command_count=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tty_info, "pending_input_bytes=0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tty_info, "event_count=6") != null);
+
+    const tty_read = try handleFramedRequest(std.testing.allocator, "REQ 57 TTYREAD demo", 1024, 256, 1024);
+    defer std.testing.allocator.free(tty_read);
+    try std.testing.expect(std.mem.startsWith(u8, tty_read, "RESP 57 "));
+    try std.testing.expect(std.mem.indexOf(u8, tty_read, "$ cat\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tty_read, "stdin:\ntty-service-input\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tty_read, "$ cat /tmp/missing-tty.txt\n") != null);
+
+    const tty_events = try handleFramedRequest(std.testing.allocator, "REQ 58 TTYEVENTS demo", 1024, 256, 1024);
+    defer std.testing.allocator.free(tty_events);
+    try std.testing.expect(std.mem.startsWith(u8, tty_events, "RESP 58 "));
+    try std.testing.expect(std.mem.indexOf(u8, tty_events, "type=open") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tty_events, "type=write bytes=17") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tty_events, "type=clear bytes=9") != null);
+
+    const tty_stdout = try handleFramedRequest(std.testing.allocator, "REQ 59 TTYSTDOUT demo", 256, 256, 256);
+    defer std.testing.allocator.free(tty_stdout);
+    try std.testing.expectEqualStrings("RESP 59 17\ntty-service-input", tty_stdout);
+
+    const tty_stderr = try handleFramedRequest(std.testing.allocator, "REQ 60 TTYSTDERR demo", 256, 256, 256);
+    defer std.testing.allocator.free(tty_stderr);
+    try std.testing.expectEqualStrings("RESP 60 25\ncat failed: FileNotFound\n", tty_stderr);
+
+    const tty_close = try handleFramedRequest(std.testing.allocator, "REQ 61 TTYCLOSE demo", 256, 256, 256);
+    defer std.testing.allocator.free(tty_close);
+    try std.testing.expectEqualStrings("RESP 61 16\ntty closed demo\n", tty_close);
 }
 
 test "baremetal tool service uploads and runs persisted scripts" {

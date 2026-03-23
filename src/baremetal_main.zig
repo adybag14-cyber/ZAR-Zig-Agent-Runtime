@@ -28,6 +28,7 @@ const package_store = @import("baremetal/package_store.zig");
 const app_runtime = @import("baremetal/app_runtime.zig");
 const ps2_input = @import("baremetal/ps2_input.zig");
 const tool_layout = @import("baremetal/tool_layout.zig");
+const tool_exec = @import("baremetal/tool_exec.zig");
 const tool_service = @import("baremetal/tool_service.zig");
 const trust_store = @import("baremetal/trust_store.zig");
 const tool_runtime = @import("runtime/tool_runtime.zig");
@@ -407,6 +408,17 @@ const VirtioBlockFat32MountProbeError = error{
     ExternalAliasWriteFailed,
     ExternalAliasOverwriteFailed,
     ExternalAliasDeleteFailed,
+    NestedAliasListingFailed,
+    NestedAliasReadbackFailed,
+    NestedAliasWriteFailed,
+    NestedAliasOverwriteFailed,
+    NestedAliasDeleteFailed,
+    DirectoryAliasCreateFailed,
+    DirectoryAliasReadbackFailed,
+    DirectoryAliasWriteFailed,
+    DirectoryAliasDeleteFailed,
+    NestedDirectoryAliasCreateFailed,
+    NestedDirectoryAliasDeleteFailed,
     FilesystemMatrixReadbackFailed,
     StorageRegistryReadbackFailed,
     BackendRegistryReadbackFailed,
@@ -418,8 +430,13 @@ const VirtioBlockMountControlProbeError = error{
     CapacityTooSmall,
     BackendInfoMismatch,
     FormatFailed,
+    StorageBackendsReadFailed,
+    StorageFilesystemsReadFailed,
+    StorageBackendInfoReadFailed,
     MountBindFailed,
     MountExportMismatch,
+    MountListReadFailed,
+    MountInfoReadFailed,
     AliasWriteFailed,
     AliasReadbackFailed,
     ReloadFailed,
@@ -3590,7 +3607,7 @@ fn runVirtioBlockMountProbe() VirtioBlockMountProbeError!void {
     defer probe_allocator.free(storage_filesystems);
     if (std.mem.indexOf(u8, storage_filesystems, "filesystem=zarfs detect=1 mount=1 write=1 source=zar_native") == null or
         std.mem.indexOf(u8, storage_filesystems, "filesystem=ext2 detect=1 mount=1 write=0 source=zar_bounded_read_only") == null or
-        std.mem.indexOf(u8, storage_filesystems, "filesystem=fat32 detect=1 mount=1 write=1 source=zar_bounded_writable_root_only") == null)
+        std.mem.indexOf(u8, storage_filesystems, "filesystem=fat32 detect=1 mount=1 write=1 source=zar_bounded_writable_one_level_83") == null)
     {
         return error.StorageFilesystemMatrixReadbackFailed;
     }
@@ -3639,7 +3656,7 @@ fn runVirtioBlockMountProbe() VirtioBlockMountProbeError!void {
 }
 
 fn runVirtioBlockMountControlProbe() VirtioBlockMountControlProbeError!void {
-    var probe_allocator_backing = [_]u8{0} ** 256;
+    var probe_allocator_backing = [_]u8{0} ** 4096;
     var probe_fba = std.heap.FixedBufferAllocator.init(&probe_allocator_backing);
     const probe_allocator = if (builtin.is_test) std.testing.allocator else probe_fba.allocator();
 
@@ -3658,15 +3675,75 @@ fn runVirtioBlockMountControlProbe() VirtioBlockMountControlProbeError!void {
     }
 
     if (oc_filesystem_format() != abi.result_ok) return error.FormatFailed;
-    if (oc_filesystem_bind_mount("state".ptr, 5, "/runtime/state".ptr, 14, status.ticks + 1) != abi.result_ok) return error.MountBindFailed;
+
+    var storage_backends_result = tool_exec.runCaptureSilent(probe_allocator, "storage-backends", 1024, 256) catch return error.StorageBackendsReadFailed;
+    defer storage_backends_result.deinit(probe_allocator);
+    if (storage_backends_result.exit_code != 0 or
+        std.mem.indexOf(u8, storage_backends_result.stdout, "backend[2]=name=virtio_block backend=virtio_block available=1 selected=1 mounted=1") == null)
+    {
+        return error.StorageBackendsReadFailed;
+    }
+
+    var storage_filesystems_result = tool_exec.runCaptureSilent(probe_allocator, "storage-filesystems", 512, 256) catch return error.StorageFilesystemsReadFailed;
+    defer storage_filesystems_result.deinit(probe_allocator);
+    if (storage_filesystems_result.exit_code != 0 or
+        std.mem.indexOf(u8, storage_filesystems_result.stdout, "filesystem=fat32 detect=1 mount=1 write=1 source=zar_bounded_writable_one_level_83") == null)
+    {
+        return error.StorageFilesystemsReadFailed;
+    }
+
+    const backend_info_response = tool_service.handleFramedRequest(
+        probe_allocator,
+        "REQ 41 STORAGEBACKENDINFO virtio_block",
+        1024,
+        256,
+        1024,
+    ) catch return error.StorageBackendInfoReadFailed;
+    defer probe_allocator.free(backend_info_response);
+    if (!std.mem.startsWith(u8, backend_info_response, "RESP 41 ") or
+        std.mem.indexOf(u8, backend_info_response, "backend[2]=name=virtio_block backend=virtio_block available=1 selected=1 mounted=1") == null)
+    {
+        return error.StorageBackendInfoReadFailed;
+    }
+
+    const mount_bind_response = tool_service.handleFramedRequest(
+        probe_allocator,
+        "REQ 42 MOUNTBIND state /runtime/state",
+        1024,
+        256,
+        512,
+    ) catch return error.MountBindFailed;
+    defer probe_allocator.free(mount_bind_response);
+    if (!std.mem.eql(u8, mount_bind_response, "RESP 42 31\nMOUNTBIND state /runtime/state\n")) return error.MountBindFailed;
+
     if (oc_filesystem_mount_count() != 1) return error.MountExportMismatch;
 
     const mount = oc_filesystem_mount_entry(0);
     if (!std.mem.eql(u8, mount.name[0..mount.name_len], "state") or
         !std.mem.eql(u8, mount.target[0..mount.target_len], "/runtime/state") or
-        mount.modified_tick != status.ticks + 1)
+        mount.modified_tick != 0)
     {
         return error.MountExportMismatch;
+    }
+
+    const mount_list_response = tool_service.handleFramedRequest(
+        probe_allocator,
+        "REQ 43 MOUNTLIST",
+        1024,
+        256,
+        512,
+    ) catch return error.MountListReadFailed;
+    defer probe_allocator.free(mount_list_response);
+    if (!std.mem.eql(u8, mount_list_response, "RESP 43 71\nmount name=state path=/mnt/state target=/runtime/state modified_tick=0\n")) {
+        return error.MountListReadFailed;
+    }
+
+    var mount_info_result = tool_exec.runCaptureSilent(probe_allocator, "mount-info state", 256, 256) catch return error.MountInfoReadFailed;
+    defer mount_info_result.deinit(probe_allocator);
+    if (mount_info_result.exit_code != 0 or
+        !std.mem.eql(u8, mount_info_result.stdout, "mount name=state path=/mnt/state target=/runtime/state modified_tick=0\n"))
+    {
+        return error.MountInfoReadFailed;
     }
 
     filesystem.createDirPath("/mnt/state") catch return error.AliasWriteFailed;
@@ -3685,7 +3762,15 @@ fn runVirtioBlockMountControlProbe() VirtioBlockMountControlProbeError!void {
     }
     if (!probeFilesystemContent("/mnt/state/control.txt", "virtio-block-mount-control")) return error.ReloadFailed;
 
-    if (oc_filesystem_remove_mount("state".ptr, 5, status.ticks + 3) != abi.result_ok) return error.MountRemoveFailed;
+    const mount_remove_response = tool_service.handleFramedRequest(
+        probe_allocator,
+        "REQ 44 MOUNTREMOVE state",
+        1024,
+        256,
+        512,
+    ) catch return error.MountRemoveFailed;
+    defer probe_allocator.free(mount_remove_response);
+    if (!std.mem.eql(u8, mount_remove_response, "RESP 44 18\nMOUNTREMOVE state\n")) return error.MountRemoveFailed;
     if (oc_filesystem_mount_count() != 0) return error.MountRemoveFailed;
     const registry_read = filesystem.readFileAlloc(probe_allocator, "/runtime/mounts/state.txt", 64) catch |err| switch (err) {
         error.FileNotFound => null,
@@ -3764,7 +3849,15 @@ fn runVirtioBlockExternalFsProbe(
 
     const listing = filesystem.listDirectoryAlloc(probe_allocator, "/mnt/external", 256) catch return error.ExternalAliasListingFailed;
     defer probe_allocator.free(listing);
-    const expected_listing = std.fmt.allocPrint(probe_allocator, "file {s} {d}\n", .{ file_name, expected_payload.len }) catch return error.ExternalAliasListingFailed;
+    const expected_listing = switch (filesystem_kind) {
+        .ext2 => std.fmt.allocPrint(probe_allocator, "file {s} {d}\n", .{ file_name, expected_payload.len }) catch return error.ExternalAliasListingFailed,
+        .fat32 => std.fmt.allocPrint(
+            probe_allocator,
+            "file {s} {d}\ndir {s}\n",
+            .{ file_name, expected_payload.len, fat32_ro.test_subdir_name },
+        ) catch return error.ExternalAliasListingFailed,
+        else => return error.ExternalAliasListingFailed,
+    };
     defer probe_allocator.free(expected_listing);
     if (!std.mem.eql(u8, listing, expected_listing)) return error.ExternalAliasListingFailed;
 
@@ -3795,6 +3888,48 @@ fn runVirtioBlockExternalFsProbe(
             filesystem.deleteFile("/mnt/external/WRITE.TXT", status.ticks + 4) catch return error.ExternalAliasDeleteFailed;
             const deleted = filesystem.readFileAlloc(probe_allocator, "/mnt/external/WRITE.TXT", 64);
             if (deleted != error.FileNotFound) return error.ExternalAliasDeleteFailed;
+
+            const nested_listing = filesystem.listDirectoryAlloc(probe_allocator, "/mnt/external/DATA", 256) catch return error.NestedAliasListingFailed;
+            defer probe_allocator.free(nested_listing);
+            if (std.mem.indexOf(u8, nested_listing, "file NOTE.TXT 23\n") == null) return error.NestedAliasListingFailed;
+
+            const nested_payload = filesystem.readFileAlloc(probe_allocator, "/mnt/external/DATA/NOTE.TXT", 64) catch return error.NestedAliasReadbackFailed;
+            defer probe_allocator.free(nested_payload);
+            if (!std.mem.eql(u8, nested_payload, fat32_ro.test_nested_file_payload)) return error.NestedAliasReadbackFailed;
+
+            filesystem.writeFile("/mnt/external/DATA/WRITE.TXT", "fat32-nested-write", status.ticks + 5) catch return error.NestedAliasWriteFailed;
+            if (!probeFilesystemContent("/mnt/external/DATA/WRITE.TXT", "fat32-nested-write")) return error.NestedAliasWriteFailed;
+
+            filesystem.writeFile("/mnt/external/DATA/WRITE.TXT", "fat32-nested-overwrite", status.ticks + 6) catch return error.NestedAliasOverwriteFailed;
+            if (!probeFilesystemContent("/mnt/external/DATA/WRITE.TXT", "fat32-nested-overwrite")) return error.NestedAliasOverwriteFailed;
+
+            filesystem.deleteFile("/mnt/external/DATA/WRITE.TXT", status.ticks + 7) catch return error.NestedAliasDeleteFailed;
+            const nested_deleted = filesystem.readFileAlloc(probe_allocator, "/mnt/external/DATA/WRITE.TXT", 64);
+            if (nested_deleted != error.FileNotFound) return error.NestedAliasDeleteFailed;
+
+            filesystem.createDirPath("/mnt/external/CACHE") catch return error.DirectoryAliasCreateFailed;
+            const root_listing_after_dir = filesystem.listDirectoryAlloc(probe_allocator, "/mnt/external", 256) catch return error.DirectoryAliasReadbackFailed;
+            defer probe_allocator.free(root_listing_after_dir);
+            if (std.mem.indexOf(u8, root_listing_after_dir, "dir CACHE\n") == null) return error.DirectoryAliasReadbackFailed;
+
+            filesystem.writeFile("/mnt/external/CACHE/LOG.TXT", "fat32-dir-write", status.ticks + 8) catch return error.DirectoryAliasWriteFailed;
+            if (!probeFilesystemContent("/mnt/external/CACHE/LOG.TXT", "fat32-dir-write")) return error.DirectoryAliasWriteFailed;
+
+            filesystem.createDirPath("/mnt/external/DATA/ARCHIVE") catch return error.NestedDirectoryAliasCreateFailed;
+            const nested_listing_after_dir = filesystem.listDirectoryAlloc(probe_allocator, "/mnt/external/DATA", 256) catch return error.NestedDirectoryAliasCreateFailed;
+            defer probe_allocator.free(nested_listing_after_dir);
+            if (std.mem.indexOf(u8, nested_listing_after_dir, "dir ARCHIVE\n") == null) return error.NestedDirectoryAliasCreateFailed;
+
+            filesystem.deleteTree("/mnt/external/CACHE", status.ticks + 9) catch return error.DirectoryAliasDeleteFailed;
+            if (filesystem.readFileAlloc(probe_allocator, "/mnt/external/CACHE/LOG.TXT", 64) != error.FileNotFound) return error.DirectoryAliasDeleteFailed;
+            const root_listing_after_delete = filesystem.listDirectoryAlloc(probe_allocator, "/mnt/external", 256) catch return error.DirectoryAliasDeleteFailed;
+            defer probe_allocator.free(root_listing_after_delete);
+            if (std.mem.indexOf(u8, root_listing_after_delete, "dir CACHE\n") != null) return error.DirectoryAliasDeleteFailed;
+
+            filesystem.deleteTree("/mnt/external/DATA/ARCHIVE", status.ticks + 10) catch return error.NestedDirectoryAliasDeleteFailed;
+            const nested_listing_after_delete = filesystem.listDirectoryAlloc(probe_allocator, "/mnt/external/DATA", 256) catch return error.NestedDirectoryAliasDeleteFailed;
+            defer probe_allocator.free(nested_listing_after_delete);
+            if (std.mem.indexOf(u8, nested_listing_after_delete, "dir ARCHIVE\n") != null) return error.NestedDirectoryAliasDeleteFailed;
         },
         else => {},
     }
@@ -3803,7 +3938,7 @@ fn runVirtioBlockExternalFsProbe(
     defer probe_allocator.free(storage_filesystems);
     const expected_filesystem_row = switch (filesystem_kind) {
         .ext2 => "filesystem=ext2 detect=1 mount=1 write=0 source=zar_bounded_read_only",
-        .fat32 => "filesystem=fat32 detect=1 mount=1 write=1 source=zar_bounded_writable_root_only",
+        .fat32 => "filesystem=fat32 detect=1 mount=1 write=1 source=zar_bounded_writable_one_level_83",
         else => return error.FilesystemMatrixReadbackFailed,
     };
     if (std.mem.indexOf(u8, storage_filesystems, expected_filesystem_row) == null) return error.FilesystemMatrixReadbackFailed;
@@ -7131,7 +7266,7 @@ const Rtl8139TcpProbeScratch = struct {
     framed_request_copy_buffer: [512]u8,
     http_post_scratch: [2048]u8,
     https_trust_store_scratch: [2048]u8,
-    service_request_put_buffer: [256]u8,
+    service_request_put_buffer: [1024]u8,
     service_response_put_expected_buffer: [160]u8,
     service_batch_request_buffer: [2048]u8,
     service_batch_response_expected_buffer: [4096]u8,
@@ -7868,6 +8003,7 @@ fn runVirtioNetToolServiceProbe() VirtioNetToolServiceProbeError!void {
     );
     if (!std.mem.startsWith(u8, virtual_dev_listing, "RESP 28 ")) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, virtual_dev_listing, "dir storage\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, virtual_dev_listing, "dir tty\n") == null) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, virtual_dev_listing, "dir display\n") == null) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, virtual_dev_listing, "dir net\n") == null) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, virtual_dev_listing, "file null 0\n") == null) return error.ToolServiceResponseMismatch;
@@ -14621,6 +14757,8 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
     if (!std.mem.startsWith(u8, help_response, "RESP 3 ")) return error.ToolServiceResponseMismatch;
     qemuDebugWrite("ETS6\n");
     if (std.mem.indexOf(u8, help_response, "OpenClaw bare-metal builtins:") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, help_response, "shell-run") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, help_response, "tty-send") == null) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, help_response, "workspace-suite-release-channel-activate") == null) return error.ToolServiceResponseMismatch;
     if (std.mem.indexOf(u8, help_response, "display-interface-capabilities") == null) return error.ToolServiceResponseMismatch;
 
@@ -14764,6 +14902,638 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
     const tmp_readback = filesystem.readFileAlloc(service_fba.allocator(), "/tmp/cache/tool.txt", 64) catch return error.ToolServiceFailed;
     if (!std.mem.eql(u8, tmp_readback, "edge")) return error.ToolServiceResponseMismatch;
     qemuDebugWrite("ETS9A5\n");
+
+    const shell_script =
+        "mkdir /tmp/sh\n" ++
+        "write-file /tmp/sh/A.TXT alpha\n" ++
+        "write-file /tmp/sh/B.LOG beta\n" ++
+        "mkdir /tmp/sh/DATA\n" ++
+        "write-file /tmp/sh/DATA/C.TXT gamma\n" ++
+        "mkdir /tmp/sh/DATA/DEEP\n" ++
+        "write-file /tmp/sh/DATA/DEEP/Z.TXT delta\n" ++
+        "echo alpha > /tmp/sh/OUT.TXT\n" ++
+        "echo beta >> /tmp/sh/OUT.TXT\n";
+    const shell_run_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 34 SHELLRUN {d}\n{s}", .{
+        shell_script.len,
+        shell_script,
+    }) catch return error.ToolServiceFailed;
+    const shell_run_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        shell_run_request,
+        1536,
+        256,
+        1536,
+    );
+    if (!std.mem.startsWith(u8, shell_run_response, "RESP 34 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, shell_run_response, "created /tmp/sh\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, shell_run_response, "wrote 5 bytes to /tmp/sh/A.TXT\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, shell_run_response, "created /tmp/sh/DATA\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, shell_run_response, "created /tmp/sh/DATA/DEEP\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, shell_run_response, "alpha\n") != null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A6\n");
+
+    const shell_expand_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 35 SHELLEXPAND /tmp/sh/A*.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, shell_expand_response, "RESP 35 14\n/tmp/sh/A.TXT\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A7\n");
+
+    const shell_expand_nested_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 36 SHELLEXPAND /tmp/sh/DATA/*.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, shell_expand_nested_response, "RESP 36 19\n/tmp/sh/DATA/C.TXT\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8\n");
+
+    const shell_expand_deep_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 37 SHELLEXPAND /tmp/sh/*/*/*.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, shell_expand_deep_response, "RESP 37 24\n/tmp/sh/DATA/DEEP/Z.TXT\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8B\n");
+
+    const redirected_output_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 38 GET /tmp/sh/OUT.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, redirected_output_response, "RESP 38 11\nalpha\nbeta\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8C\n");
+
+    const shell_escaped_script =
+        "echo alpha\\;beta > /tmp/sh/ESC.TXT\n" ++
+        "echo gt\\>value > /tmp/sh/GT.TXT\n";
+    const shell_escaped_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 39 SHELLRUN {d}\n{s}", .{
+        shell_escaped_script.len,
+        shell_escaped_script,
+    }) catch return error.ToolServiceFailed;
+    const shell_escaped_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        shell_escaped_request,
+        512,
+        256,
+        512,
+    );
+    if (!std.mem.eql(u8, shell_escaped_response, "RESP 39 0\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8D\n");
+
+    const escaped_separator_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 40 GET /tmp/sh/ESC.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, escaped_separator_response, "RESP 40 11\nalpha;beta\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8E\n");
+
+    const escaped_redirect_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 41 GET /tmp/sh/GT.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, escaped_redirect_response, "RESP 41 9\ngt>value\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8F\n");
+
+    const shell_stderr_script = "cat /tmp/sh/MISSING.TXT 2> /tmp/sh/ERR.TXT";
+    const shell_stderr_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 42 SHELLRUN {d}\n{s}", .{
+        shell_stderr_script.len,
+        shell_stderr_script,
+    }) catch return error.ToolServiceFailed;
+    const shell_stderr_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        shell_stderr_request,
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, shell_stderr_response, "RESP 42 11\nERR exit=1\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8G\n");
+
+    const redirected_stderr_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 43 GET /tmp/sh/ERR.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, redirected_stderr_response, "RESP 43 25\ncat failed: FileNotFound\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8H\n");
+
+    const stdin_script = "echo stdin-shell > /tmp/sh/STDINOUT.TXT";
+    const stdin_put_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 44 PUT /tmp/sh/STDIN.OC {d}\n{s}", .{
+        stdin_script.len,
+        stdin_script,
+    }) catch return error.ToolServiceFailed;
+    const stdin_put_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        stdin_put_request,
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, stdin_put_response, "RESP 44 35\nWROTE 39 bytes to /tmp/sh/STDIN.OC\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8I\n");
+
+    const shell_input_script =
+        "cat < /tmp/sh/A.TXT > /tmp/sh/COPY.TXT\n" ++
+        "write-file /tmp/sh/FROMSTDIN.TXT < /tmp/sh/A.TXT\n" ++
+        "write-file \"/tmp/sh/SPACE NAME.TXT\" spaced\n" ++
+        "cat < \"/tmp/sh/SPACE NAME.TXT\" > /tmp/sh/QUOTE.TXT\n" ++
+        "echo lt\\<value > /tmp/sh/LT.TXT\n" ++
+        "shell-run < /tmp/sh/STDIN.OC";
+    const shell_input_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 45 SHELLRUN {d}\n{s}", .{
+        shell_input_script.len,
+        shell_input_script,
+    }) catch return error.ToolServiceFailed;
+    const shell_input_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        shell_input_request,
+        1024,
+        256,
+        1024,
+    );
+    if (!std.mem.startsWith(u8, shell_input_response, "RESP 45 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, shell_input_response, "wrote 5 bytes to /tmp/sh/FROMSTDIN.TXT\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, shell_input_response, "wrote 6 bytes to /tmp/sh/SPACE NAME.TXT\n") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8J\n");
+
+    const copied_input_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 46 GET /tmp/sh/COPY.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, copied_input_response, "RESP 46 5\nalpha")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8K\n");
+
+    const stdin_written_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 47 GET /tmp/sh/FROMSTDIN.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, stdin_written_response, "RESP 47 5\nalpha")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8L\n");
+
+    const quoted_copy_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 48 GET /tmp/sh/QUOTE.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, quoted_copy_response, "RESP 48 6\nspaced")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8M\n");
+
+    const escaped_input_redirect_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 49 GET /tmp/sh/LT.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, escaped_input_redirect_response, "RESP 49 9\nlt<value\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8N\n");
+
+    const nested_shell_input_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 50 GET /tmp/sh/STDINOUT.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, nested_shell_input_response, "RESP 50 12\nstdin-shell\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8O\n");
+
+    service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
+    const shell_nested_readback = filesystem.readFileAlloc(service_fba.allocator(), "/tmp/sh/DATA/C.TXT", 64) catch return error.ToolServiceFailed;
+    if (!std.mem.eql(u8, shell_nested_readback, "gamma")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9\n");
+
+    const tty_open_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 51 TTYOPEN demo",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_open_response, "RESP 51 16\ntty opened demo\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9A\n");
+
+    const tty_write_body = "demo\nqueued-tty-input\n";
+    const tty_write_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 52 TTYWRITE {d}\n{s}", .{
+        tty_write_body.len,
+        tty_write_body,
+    }) catch return error.ToolServiceFailed;
+    const tty_write_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        tty_write_request,
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_write_response, "RESP 52 25\ntty queued demo 17 bytes\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9B\n");
+
+    const tty_pending_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 53 TTYPENDING demo",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_pending_response, "RESP 53 17\nqueued-tty-input\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9C\n");
+
+    const tty_send_success_body = "demo cat";
+    const tty_send_success_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 54 TTYSEND {d}\n{s}", .{
+        tty_send_success_body.len,
+        tty_send_success_body,
+    }) catch return error.ToolServiceFailed;
+    const tty_send_success_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        tty_send_success_request,
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_send_success_response, "RESP 54 17\nqueued-tty-input\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9D\n");
+
+    const tty_pending_empty_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 55 TTYPENDING demo",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_pending_empty_response, "RESP 55 0\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9E\n");
+
+    const tty_clear_body = "demo\nstale-tty";
+    const tty_clear_write_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 56 TTYWRITE {d}\n{s}", .{
+        tty_clear_body.len,
+        tty_clear_body,
+    }) catch return error.ToolServiceFailed;
+    const tty_clear_write_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        tty_clear_write_request,
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_clear_write_response, "RESP 56 24\ntty queued demo 9 bytes\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9F\n");
+
+    const tty_clear_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 57 TTYCLEAR demo",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_clear_response, "RESP 57 17\ntty cleared demo\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9G\n");
+
+    const tty_events_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 58 TTYEVENTS demo",
+        1024,
+        256,
+        1024,
+    );
+    if (!std.mem.startsWith(u8, tty_events_response, "RESP 58 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, tty_events_response, "type=open") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, tty_events_response, "type=write bytes=17") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, tty_events_response, "type=send exit=0 stdin_bytes=17 stdout_bytes=17 stderr_bytes=0") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, tty_events_response, "type=clear bytes=9") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9H\n");
+
+    const tty_send_failure_body = "demo cat /tmp/missing-tty.txt";
+    const tty_send_failure_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 59 TTYSEND {d}\n{s}", .{
+        tty_send_failure_body.len,
+        tty_send_failure_body,
+    }) catch return error.ToolServiceFailed;
+    const tty_send_failure_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        tty_send_failure_request,
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_send_failure_response, "RESP 59 36\nERR exit=1\ncat failed: FileNotFound\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9I\n");
+
+    const dev_tty_state_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 60 GET /dev/tty/state",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.startsWith(u8, dev_tty_state_response, "RESP 60 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, dev_tty_state_response, "sessions=1") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, dev_tty_state_response, "open_sessions=1") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, dev_tty_state_response, "pending_bytes=0") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9J\n");
+
+    const dev_tty_list_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 61 LIST /dev/tty/sessions",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.startsWith(u8, dev_tty_list_response, "RESP 61 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, dev_tty_list_response, "dir demo\n") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9K\n");
+
+    const dev_tty_info_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 62 GET /dev/tty/sessions/demo/info",
+        768,
+        256,
+        768,
+    );
+    if (!std.mem.startsWith(u8, dev_tty_info_response, "RESP 62 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, dev_tty_info_response, "name=demo") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, dev_tty_info_response, "command_count=2") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, dev_tty_info_response, "pending_input_bytes=0") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, dev_tty_info_response, "event_count=6") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9L\n");
+
+    const dev_tty_pending_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 63 GET /dev/tty/sessions/demo/pending",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, dev_tty_pending_response, "RESP 63 0\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9M\n");
+
+    const dev_tty_events_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 64 GET /dev/tty/sessions/demo/events",
+        1024,
+        256,
+        1024,
+    );
+    if (!std.mem.startsWith(u8, dev_tty_events_response, "RESP 64 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, dev_tty_events_response, "type=clear bytes=9") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9N\n");
+
+    const tty_read_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 65 TTYREAD demo",
+        1536,
+        256,
+        1536,
+    );
+    if (!std.mem.startsWith(u8, tty_read_response, "RESP 65 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, tty_read_response, "$ cat\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, tty_read_response, "stdin:\nqueued-tty-input\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, tty_read_response, "$ cat /tmp/missing-tty.txt\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, tty_read_response, "stderr:\ncat failed: FileNotFound\n") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9O\n");
+
+    const tty_stdout_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 66 TTYSTDOUT demo",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_stdout_response, "RESP 66 17\nqueued-tty-input\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9P\n");
+
+    const tty_stderr_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 67 TTYSTDERR demo",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_stderr_response, "RESP 67 25\ncat failed: FileNotFound\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9Q\n");
+
+    const tty_close_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 68 TTYCLOSE demo",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, tty_close_response, "RESP 68 16\ntty closed demo\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9R\n");
+
+    const sys_tty_state_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 69 GET /sys/tty/state",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.startsWith(u8, sys_tty_state_response, "RESP 69 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, sys_tty_state_response, "open_sessions=0") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A9S\n");
 
     const virtual_snapshot_response = try exchangeE1000TcpProbeServiceRequest(
         eth,
@@ -16554,10 +17324,21 @@ fn virtioBlockFat32MountProbeFailureCode(err: VirtioBlockFat32MountProbeError) u
         error.ExternalAliasWriteFailed => 0xAC,
         error.ExternalAliasOverwriteFailed => 0xAD,
         error.ExternalAliasDeleteFailed => 0xAE,
-        error.FilesystemMatrixReadbackFailed => 0xAF,
-        error.StorageRegistryReadbackFailed => 0xB0,
-        error.BackendRegistryReadbackFailed => 0xB1,
-        error.PciDiscoveryMismatch => 0xB2,
+        error.NestedAliasListingFailed => 0xAF,
+        error.NestedAliasReadbackFailed => 0xB0,
+        error.NestedAliasWriteFailed => 0xB1,
+        error.NestedAliasOverwriteFailed => 0xB2,
+        error.NestedAliasDeleteFailed => 0xB3,
+        error.DirectoryAliasCreateFailed => 0xB4,
+        error.DirectoryAliasReadbackFailed => 0xB5,
+        error.DirectoryAliasWriteFailed => 0xB6,
+        error.DirectoryAliasDeleteFailed => 0xB7,
+        error.NestedDirectoryAliasCreateFailed => 0xB8,
+        error.NestedDirectoryAliasDeleteFailed => 0xB9,
+        error.FilesystemMatrixReadbackFailed => 0xBA,
+        error.StorageRegistryReadbackFailed => 0xBB,
+        error.BackendRegistryReadbackFailed => 0xBC,
+        error.PciDiscoveryMismatch => 0xBD,
     };
 }
 
@@ -16567,13 +17348,18 @@ fn virtioBlockMountControlProbeFailureCode(err: VirtioBlockMountControlProbeErro
         error.CapacityTooSmall => 0xC1,
         error.BackendInfoMismatch => 0xC2,
         error.FormatFailed => 0xC3,
-        error.MountBindFailed => 0xC4,
-        error.MountExportMismatch => 0xC5,
-        error.AliasWriteFailed => 0xC6,
-        error.AliasReadbackFailed => 0xC7,
-        error.ReloadFailed => 0xC8,
-        error.MountRemoveFailed => 0xC9,
-        error.PciDiscoveryMismatch => 0xCA,
+        error.StorageBackendsReadFailed => 0xC4,
+        error.StorageFilesystemsReadFailed => 0xC5,
+        error.StorageBackendInfoReadFailed => 0xC6,
+        error.MountBindFailed => 0xC7,
+        error.MountExportMismatch => 0xC8,
+        error.MountListReadFailed => 0xC9,
+        error.MountInfoReadFailed => 0xCA,
+        error.AliasWriteFailed => 0xCB,
+        error.AliasReadbackFailed => 0xCC,
+        error.ReloadFailed => 0xCD,
+        error.MountRemoveFailed => 0xCE,
+        error.PciDiscoveryMismatch => 0xCF,
     };
 }
 
@@ -25317,7 +26103,7 @@ test "baremetal virtio block mount probe persists mounted alias paths" {
     const storage_filesystems = try filesystem.readFileAlloc(std.testing.allocator, "/sys/storage/filesystems", 512);
     defer std.testing.allocator.free(storage_filesystems);
     try std.testing.expect(std.mem.indexOf(u8, storage_filesystems, "filesystem=ext2 detect=1 mount=1 write=0 source=zar_bounded_read_only") != null);
-    try std.testing.expect(std.mem.indexOf(u8, storage_filesystems, "filesystem=fat32 detect=1 mount=1 write=1 source=zar_bounded_writable_root_only") != null);
+    try std.testing.expect(std.mem.indexOf(u8, storage_filesystems, "filesystem=fat32 detect=1 mount=1 write=1 source=zar_bounded_writable_one_level_83") != null);
 
     const storage_registry_text = try filesystem.readFileAlloc(std.testing.allocator, "/sys/storage/registry", 2048);
     defer std.testing.allocator.free(storage_registry_text);
@@ -25352,11 +26138,20 @@ test "baremetal virtio block fat32 mount probe exposes writable external alias" 
 
     const listing = try filesystem.listDirectoryAlloc(std.testing.allocator, "/mnt/external", 256);
     defer std.testing.allocator.free(listing);
-    try std.testing.expectEqualStrings("file HELLO.TXT 16\n", listing);
+    try std.testing.expect(std.mem.indexOf(u8, listing, "file HELLO.TXT 16\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, listing, "dir DATA\n") != null);
 
     const payload = try filesystem.readFileAlloc(std.testing.allocator, "/mnt/external/HELLO.TXT", 64);
     defer std.testing.allocator.free(payload);
     try std.testing.expectEqualStrings(fat32_ro.test_file_payload, payload);
+
+    const nested_listing = try filesystem.listDirectoryAlloc(std.testing.allocator, "/mnt/external/DATA", 256);
+    defer std.testing.allocator.free(nested_listing);
+    try std.testing.expect(std.mem.indexOf(u8, nested_listing, "file NOTE.TXT 23\n") != null);
+
+    const nested_payload = try filesystem.readFileAlloc(std.testing.allocator, "/mnt/external/DATA/NOTE.TXT", 64);
+    defer std.testing.allocator.free(nested_payload);
+    try std.testing.expectEqualStrings(fat32_ro.test_nested_file_payload, nested_payload);
 
     try filesystem.writeFile("/mnt/external/WRITE.TXT", "host-fat32-write", 70);
     const written = try filesystem.readFileAlloc(std.testing.allocator, "/mnt/external/WRITE.TXT", 64);
@@ -25364,6 +26159,43 @@ test "baremetal virtio block fat32 mount probe exposes writable external alias" 
     try std.testing.expectEqualStrings("host-fat32-write", written);
     try filesystem.deleteFile("/mnt/external/WRITE.TXT", 71);
     try std.testing.expectEqual(error.FileNotFound, filesystem.readFileAlloc(std.testing.allocator, "/mnt/external/WRITE.TXT", 64));
+
+    try filesystem.writeFile("/mnt/external/DATA/WRITE.TXT", "host-fat32-nested", 72);
+    const nested_written = try filesystem.readFileAlloc(std.testing.allocator, "/mnt/external/DATA/WRITE.TXT", 64);
+    defer std.testing.allocator.free(nested_written);
+    try std.testing.expectEqualStrings("host-fat32-nested", nested_written);
+    try filesystem.deleteFile("/mnt/external/DATA/WRITE.TXT", 73);
+    try std.testing.expectEqual(error.FileNotFound, filesystem.readFileAlloc(std.testing.allocator, "/mnt/external/DATA/WRITE.TXT", 64));
+
+    try filesystem.createDirPath("/mnt/external/CACHE");
+    {
+        const root_listing = try filesystem.listDirectoryAlloc(std.testing.allocator, "/mnt/external", 256);
+        defer std.testing.allocator.free(root_listing);
+        try std.testing.expect(std.mem.indexOf(u8, root_listing, "dir CACHE\n") != null);
+    }
+
+    try filesystem.writeFile("/mnt/external/CACHE/LOG.TXT", "host-fat32-dir", 74);
+    const dir_written = try filesystem.readFileAlloc(std.testing.allocator, "/mnt/external/CACHE/LOG.TXT", 64);
+    defer std.testing.allocator.free(dir_written);
+    try std.testing.expectEqualStrings("host-fat32-dir", dir_written);
+
+    try filesystem.createDirPath("/mnt/external/DATA/ARCHIVE");
+    const nested_dir_listing = try filesystem.listDirectoryAlloc(std.testing.allocator, "/mnt/external/DATA", 256);
+    defer std.testing.allocator.free(nested_dir_listing);
+    try std.testing.expect(std.mem.indexOf(u8, nested_dir_listing, "dir ARCHIVE\n") != null);
+
+    try filesystem.deleteTree("/mnt/external/CACHE", 75);
+    try std.testing.expectEqual(error.FileNotFound, filesystem.readFileAlloc(std.testing.allocator, "/mnt/external/CACHE/LOG.TXT", 64));
+    {
+        const root_listing = try filesystem.listDirectoryAlloc(std.testing.allocator, "/mnt/external", 256);
+        defer std.testing.allocator.free(root_listing);
+        try std.testing.expect(std.mem.indexOf(u8, root_listing, "dir CACHE\n") == null);
+    }
+
+    try filesystem.deleteTree("/mnt/external/DATA/ARCHIVE", 76);
+    const nested_dir_listing_after_delete = try filesystem.listDirectoryAlloc(std.testing.allocator, "/mnt/external/DATA", 256);
+    defer std.testing.allocator.free(nested_dir_listing_after_delete);
+    try std.testing.expect(std.mem.indexOf(u8, nested_dir_listing_after_delete, "dir ARCHIVE\n") == null);
 }
 
 test "baremetal storage backend info export mirrors registry state" {

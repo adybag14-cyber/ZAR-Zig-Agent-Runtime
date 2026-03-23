@@ -9,7 +9,7 @@ Current posture:
 - ZigOS upstream is now explicitly `MIT` licensed.
 - ZAR can legally study, adapt, or import ZigOS code when that is the right engineering choice.
 - Current delivered slices remain ZAR-owned implementations with ZAR-native tests, probes, and release gates.
-- Delivered ZigOS-inspired slices now cover NIC breadth, benchmark/stress, introspection overlays, storage breadth, mount layering, a bounded internal VFS router, a bounded storage registry plus ext2/FAT probe seam, and a bounded backend-registry plus mounted-filesystem capability seam.
+- Delivered ZigOS-inspired slices now cover NIC breadth, benchmark/stress, introspection overlays, storage breadth, mount layering, a bounded internal VFS router, a bounded storage registry plus ext2/FAT probe seam, a bounded backend-registry plus mounted-filesystem capability seam, a bounded shell/control layer over the existing builtin/service surface, and a bounded TTY/session input-control layer over that same command/service seam.
 
 ## Source Baseline
 
@@ -68,7 +68,7 @@ The table below is the current strict classification for every realistic ZigOS a
 | `sysfs` | `src/kernel/fs/sysfs.zig` | Medium-high | Adapt now | First bounded read-only `/sys` overlay delivered; broader VFS remains later |
 | `ext2` | `src/kernel/fs/ext2.zig` | Medium | Adapt now, bounded | Raw on-disk detection now; bounded read-only mount plan is defined |
 | `fat32` | `src/kernel/fs/fat32.zig` | Medium | Adapt now, bounded | Raw on-disk detection now; bounded read-only mount plan is defined |
-| `TTY layer` | `src/kernel/fs/tty.zig` | Medium | Adapt later | Only if ZAR shell/interactive console expands |
+| `TTY layer` | `src/kernel/fs/tty.zig` | Medium | Adapt now, bounded | Delivered bounded session/receipt layer; fuller interactive TTY later |
 | `Ethernet/ARP/IPv4/UDP/TCP/DHCP/DNS/HTTP` | `src/kernel/net/*` | High | Mostly already covered | Use as cross-check, not as adoption target |
 | `IPv6/ICMPv6` | `src/kernel/net/ipv6.zig`, `icmpv6.zig` | Medium | Adapt later | New ZAR networking slice after E1000 |
 | `Routing/socket model` | `src/kernel/net/routing.zig`, `socket.zig` | Medium-high | Major redesign | Requires ZAR network/service API decision |
@@ -76,7 +76,7 @@ The table below is the current strict classification for every realistic ZigOS a
 | `Ring3/userspace` | `ring3.zig`, `userspace.zig` | High | Major redesign | Separate future OS-model track |
 | `Scheduler/process/signals/ipc/credentials` | `src/kernel/process/*` | High | Major redesign | Separate future syscall/process track |
 | `Syscall ABI` | `src/kernel/process/syscall.zig` | High | Major redesign | Separate ABI design doc first |
-| `Shell parser/glob/jobs/editor` | `src/kernel/shell/*` | Medium-high | Adapt later | Shell/UI design only after runtime-service decision |
+| `Shell parser/glob/jobs/editor` | `src/kernel/shell/*` | Medium-high | Adapt now, bounded | Delivered bounded shell/control layer first; fuller shell later |
 | `HTTPD shell tool` | `src/kernel/shell/httpd.zig` | Low-medium | Adapt later | Only if ZAR wants shell-side admin/http tooling |
 | `Userland binaries` | `user/bin/*` | Medium-high | Major redesign | Not a drop-in fit; separate userland decision |
 | `Userland helper libs` | `user/lib/*` | Medium | Major redesign | Only relevant if ZAR commits to userland |
@@ -217,7 +217,30 @@ Scope:
 - job-control ideas
 - interactive console/editor concepts
 
-This phase is allowed only after ZAR decides whether the shell is:
+Current delivered scope:
+
+- `src/baremetal/tool_exec.zig` now exposes bounded `shell-run` and `shell-expand` helpers over the existing builtin surface
+- `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `SHELLRUN` plus `SHELLEXPAND` over the framed TCP service
+- `src/baremetal/tool_exec.zig` now also supports bounded metacharacter escaping for separators/redirection including escaped `<`, bounded stdin redirection through `<`, bounded stdout redirection through `>` / `>>`, bounded stderr redirection through `2>` / `2>>`, and `shell-expand` now supports bounded multi-segment glob expansion
+- `src/baremetal_main.zig` now widens the live `E1000` tool-service proof to validate shell help output, bounded command batching, escaped metacharacters, multi-segment glob expansion, redirected stdout/stderr capture, and persisted readback
+- `build.zig` now explicitly wires `scripts/baremetal/pvh_boot.S` plus `scripts/baremetal/pvh_lld.ld` into the bare-metal artifact so the Multiboot2 header remains within the required first `32768` bytes on current Zig `master`
+- `src/baremetal/tty_runtime.zig` now adds a bounded TTY/session receipt layer under `/runtime/tty/<name>/` with persisted state, input, pending, stdout, stderr, events, and transcript logs
+- `src/baremetal/tool_exec.zig` now exposes `tty-list`, `tty-open`, `tty-info`, `tty-read`, `tty-pending`, `tty-events`, `tty-stdout`, `tty-stderr`, `tty-write`, `tty-send`, `tty-clear`, and `tty-close`
+- `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `TTYLIST`, `TTYOPEN`, `TTYINFO`, `TTYREAD`, `TTYPENDING`, `TTYEVENTS`, `TTYSTDOUT`, `TTYSTDERR`, `TTYWRITE`, `TTYSEND`, `TTYCLEAR`, and `TTYCLOSE`
+- `src/baremetal/virtual_fs.zig` now exposes bounded TTY state through `/dev/tty/state`, `/dev/tty/sessions/...`, `/sys/tty/state`, and `/sys/tty/sessions/...`, including `pending` and `events`
+- `src/baremetal_main.zig` now widens the live `E1000` tool-service proof to validate TTY open/write/pending/send/clear/events/read/stdout/stderr/close behavior plus `/dev` and `/sys` TTY state readback
+
+Still intentionally out of scope:
+
+- interactive shell
+- job control
+- pipelines
+- editor/TTY parity
+- terminal emulation
+- userspace-visible TTY ABI
+- userspace-visible shell ABI
+
+This phase still requires a direction choice before widening further, because ZAR must still decide whether the shell is:
 
 - a builtin command/runtime surface over existing services
 - or the start of a future userspace model
@@ -307,3 +330,5 @@ Concrete ZigOS-derived tracking docs now in-tree:
 
 - `docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`
 - `docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md`
+- `docs/zig-port/ZAR_VS_ZIGOS_SHELL_CONTROL_SLICE_PLAN.md`
+- `docs/zig-port/ZAR_VS_ZIGOS_TTY_CONTROL_SLICE_PLAN.md`

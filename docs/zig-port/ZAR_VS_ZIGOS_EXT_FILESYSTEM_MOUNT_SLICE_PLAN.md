@@ -93,7 +93,8 @@ Delivered:
 - short-name directory iteration
 - bounded long-file-name handling only if needed by proofs
 - read-only file data path
-- bounded root-only 8.3 write/overwrite/delete
+- bounded one-level `8.3` file write/overwrite/delete
+- bounded directory create/remove at the same one-level path depth
 - bounded mount proof against a deterministic FAT32 image
 
 Do not deliver yet:
@@ -108,7 +109,7 @@ Delivered on top of A and B:
 
 - extend mount registry records with `filesystem=<kind>`
 - extend VFS router so mounted external roots participate through the same bounded path seam
-- keep mounted `ext2` roots read-only while allowing bounded FAT32 root-only writes
+- keep mounted `ext2` roots read-only while allowing bounded FAT32 one-level file and directory mutation
 
 ### Phase D: mount-control ABI seam
 
@@ -138,7 +139,7 @@ Before the ext2/FAT slice is considered delivered:
 - no general-purpose userland `mount(2)` surface
 - no full devfs/procfs/ext2/fat32 transplant from ZigOS
 - no writable `ext2`
-- no general-purpose FAT32 write surface beyond bounded root-only 8.3 files
+- no general-purpose FAT32 write surface beyond bounded one-level `8.3` files and bounded directory create/remove at that same depth
 
 ## Why this is the right boundary
 

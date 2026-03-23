@@ -11,6 +11,16 @@
 
 .section .text.pvh,"ax"
 .code32
+.balign 8
+multiboot2_header_early:
+    .long 0xE85250D6
+    .long 0
+    .long 24
+    .long 0x17ADAF12
+    .short 0
+    .short 0
+    .long 8
+
 .global pvh_start
 .type pvh_start,@function
 pvh_start:

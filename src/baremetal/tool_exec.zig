@@ -5,6 +5,9 @@ const app_runtime = @import("app_runtime.zig");
 const filesystem = @import("filesystem.zig");
 const package_store = @import("package_store.zig");
 const runtime_bridge = @import("runtime_bridge.zig");
+const storage_backend_registry = @import("storage_backend_registry.zig");
+const storage_registry = @import("storage_registry.zig");
+const tty_runtime = @import("tty_runtime.zig");
 const trust_store = @import("trust_store.zig");
 const workspace_runtime = @import("workspace_runtime.zig");
 const display_profile_store = @import("display_profile_store.zig");
@@ -13,14 +16,19 @@ const framebuffer_console = @import("framebuffer_console.zig");
 const pal_framebuffer = @import("../pal/framebuffer.zig");
 const vga_text_console = @import("vga_text_console.zig");
 const storage_backend = @import("storage_backend.zig");
+const tool_layout = @import("tool_layout.zig");
 const virtio_gpu = @import("virtio_gpu.zig");
 
-pub const Error = filesystem.Error || trust_store.Error || app_runtime.Error || workspace_runtime.Error || display_profile_store.Error || std.mem.Allocator.Error || error{
+pub const Error = filesystem.Error || trust_store.Error || app_runtime.Error || workspace_runtime.Error || display_profile_store.Error || storage_backend.Error || tty_runtime.Error || std.mem.Allocator.Error || error{
     MissingCommand,
     MissingPath,
     StreamTooLong,
     InvalidQuotedArgument,
+    InvalidRedirection,
     ScriptDepthExceeded,
+    ShellCommandLimitExceeded,
+    UnsupportedPattern,
+    NoMatches,
     DisplayConnectorMismatch,
     DisplayInterfaceMismatch,
     DisplayOutputNotFound,
@@ -28,6 +36,8 @@ pub const Error = filesystem.Error || trust_store.Error || app_runtime.Error || 
 };
 
 const max_script_depth: usize = 4;
+const max_shell_command_count: usize = 64;
+const max_shell_glob_segments: usize = 16;
 
 pub const Result = struct {
     exit_code: u8,
@@ -96,6 +106,24 @@ const ParsedArg = struct {
     rest: []const u8,
 };
 
+const ParsedShellLine = struct {
+    command: []const u8,
+    input_path: ?[]const u8 = null,
+    redirect_path: ?[]const u8 = null,
+    redirect_stream: RedirectStream = .stdout,
+    append: bool = false,
+};
+
+const RedirectStream = enum {
+    stdout,
+    stderr,
+};
+
+const ListingChild = struct {
+    name: []const u8,
+    kind: std.Io.File.Kind,
+};
+
 pub fn runCapture(
     allocator: std.mem.Allocator,
     command: []const u8,
@@ -114,9 +142,30 @@ pub fn runCaptureSilent(
     return runCaptureWithMirror(allocator, command, stdout_limit, stderr_limit, false);
 }
 
+pub fn runCaptureSilentWithInput(
+    allocator: std.mem.Allocator,
+    command: []const u8,
+    stdin_content: ?[]const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+) Error!Result {
+    return runCaptureWithMirrorAndInput(allocator, command, stdin_content, stdout_limit, stderr_limit, false);
+}
+
 fn runCaptureWithMirror(
     allocator: std.mem.Allocator,
     command: []const u8,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    mirror: bool,
+) Error!Result {
+    return runCaptureWithMirrorAndInput(allocator, command, null, stdout_limit, stderr_limit, mirror);
+}
+
+fn runCaptureWithMirrorAndInput(
+    allocator: std.mem.Allocator,
+    command: []const u8,
+    stdin_content: ?[]const u8,
     stdout_limit: usize,
     stderr_limit: usize,
     mirror: bool,
@@ -137,7 +186,7 @@ fn runCaptureWithMirror(
             .stderr = try stderr_buffer.toOwnedSlice(),
         };
     };
-    execute(parsed, &stdout_buffer, &stderr_buffer, &exit_code, allocator, 0) catch |err| {
+    execute(parsed, &stdout_buffer, &stderr_buffer, &exit_code, stdin_content, allocator, 0) catch |err| {
         exit_code = 1;
         try stderr_buffer.appendFmt("{s}\n", .{@errorName(err)});
     };
@@ -154,17 +203,23 @@ fn execute(
     stdout_buffer: *OutputBuffer,
     stderr_buffer: *OutputBuffer,
     exit_code: *u8,
+    stdin_content: ?[]const u8,
     allocator: std.mem.Allocator,
     depth: usize,
 ) Error!void {
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-plan-list, workspace-plan-info, workspace-plan-active, workspace-plan-save, workspace-plan-apply, workspace-plan-delete, workspace-plan-release-list, workspace-plan-release-info, workspace-plan-release-save, workspace-plan-release-activate, workspace-plan-release-delete, workspace-plan-release-prune, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-suite-release-channel-list, workspace-suite-release-channel-info, workspace-suite-release-channel-set, workspace-suite-release-channel-activate, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-outputs, display-output, display-output-detail, display-output-capabilities, display-output-modes, display-interface-detail, display-interface-capabilities, display-interface-modes, display-modes, display-set, display-activate, display-activate-preferred, display-activate-interface, display-activate-interface-preferred, display-interface-set, display-interface-activate-mode, display-activate-output, display-activate-output-preferred, display-output-set, display-output-activate-mode, display-profile-list, display-profile-info, display-profile-active, display-profile-save, display-profile-apply, display-profile-delete, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, shell-expand, shell-run, tty-list, tty-open, tty-info, tty-read, tty-pending, tty-events, tty-stdout, tty-stderr, tty-write, tty-send, tty-clear, tty-close, storage-backends, storage-filesystems, storage-backend-info, storage-backend-select, storage-partitions, storage-partition-select, mount-list, mount-info, mount-bind, mount-remove, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-plan-list, workspace-plan-info, workspace-plan-active, workspace-plan-save, workspace-plan-apply, workspace-plan-delete, workspace-plan-release-list, workspace-plan-release-info, workspace-plan-release-save, workspace-plan-release-activate, workspace-plan-release-delete, workspace-plan-release-prune, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-suite-release-channel-list, workspace-suite-release-channel-info, workspace-suite-release-channel-set, workspace-suite-release-channel-activate, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-outputs, display-output, display-output-detail, display-output-capabilities, display-output-modes, display-interface-detail, display-interface-capabilities, display-interface-modes, display-modes, display-set, display-activate, display-activate-preferred, display-activate-interface, display-activate-interface-preferred, display-interface-set, display-interface-activate-mode, display-activate-output, display-activate-output-preferred, display-output-set, display-output-activate-mode, display-profile-list, display-profile-info, display-profile-active, display-profile-save, display-profile-apply, display-profile-delete, run-script, run-package, app-run");
         return;
     }
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "echo")) {
+        if (stdin_content != null) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: echo <content>");
+            return;
+        }
         try stdout_buffer.appendLine(parsed.rest);
         return;
     }
@@ -190,6 +245,15 @@ fn execute(
     }
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "cat")) {
+        if (stdin_content) |bytes| {
+            if (std.mem.trim(u8, parsed.rest, " \t\r\n").len != 0) {
+                exit_code.* = 2;
+                try stderr_buffer.appendLine("usage: cat <path>");
+                return;
+            }
+            try stdout_buffer.appendSlice(bytes);
+            return;
+        }
         const arg = parseFirstArg(parsed.rest) catch |err| {
             exit_code.* = 2;
             try writeCommandError(stderr_buffer, err, "cat <path>");
@@ -216,8 +280,15 @@ fn execute(
             try writeCommandError(stderr_buffer, err, "write-file <path> <content>");
             return;
         };
-        const content = arg.rest;
-        if (content.len == 0) {
+        const content = if (stdin_content) |bytes| blk: {
+            if (arg.rest.len != 0) {
+                exit_code.* = 2;
+                try stderr_buffer.appendLine("usage: write-file <path> <content>");
+                return;
+            }
+            break :blk bytes;
+        } else arg.rest;
+        if (content.len == 0 and stdin_content == null) {
             exit_code.* = 2;
             try stderr_buffer.appendLine("usage: write-file <path> <content>");
             return;
@@ -279,6 +350,511 @@ fn execute(
         };
         defer allocator.free(listing);
         try stdout_buffer.appendSlice(listing);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "shell-expand")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "shell-expand <pattern>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: shell-expand <pattern>");
+            return;
+        }
+        const expanded = expandShellPatternAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("shell-expand failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(expanded);
+        try stdout_buffer.appendSlice(expanded);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "shell-run")) {
+        const trimmed_script = std.mem.trim(u8, parsed.rest, " \t\r\n");
+        if (stdin_content) |bytes| {
+            if (trimmed_script.len != 0) {
+                exit_code.* = 2;
+                try stderr_buffer.appendLine("usage: shell-run <command[;command...]> or shell-run < <path>");
+                return;
+            }
+            try executeScriptContents(bytes, "shell-run", stdout_buffer, stderr_buffer, exit_code, allocator, depth);
+            return;
+        }
+        if (trimmed_script.len == 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: shell-run <command[;command...]>");
+            return;
+        }
+        try executeScriptContents(parsed.rest, "shell-run", stdout_buffer, stderr_buffer, exit_code, allocator, depth);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "tty-list")) {
+        if (std.mem.trim(u8, parsed.rest, " \t\r\n").len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: tty-list");
+            return;
+        }
+        const rendered = tty_runtime.listSessionsAlloc(allocator, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("tty-list failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(rendered);
+        try stdout_buffer.appendSlice(rendered);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "tty-open")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "tty-open <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: tty-open <name>");
+            return;
+        }
+        tty_runtime.openSession(arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("tty-open failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("tty opened {s}\n", .{arg.arg});
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "tty-info")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "tty-info <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: tty-info <name>");
+            return;
+        }
+        const rendered = tty_runtime.infoAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("tty-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(rendered);
+        try stdout_buffer.appendSlice(rendered);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "tty-read")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "tty-read <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: tty-read <name>");
+            return;
+        }
+        const rendered = tty_runtime.transcriptAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("tty-read failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(rendered);
+        try stdout_buffer.appendSlice(rendered);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "tty-pending")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "tty-pending <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: tty-pending <name>");
+            return;
+        }
+        const rendered = tty_runtime.pendingAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("tty-pending failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(rendered);
+        try stdout_buffer.appendSlice(rendered);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "tty-events")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "tty-events <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: tty-events <name>");
+            return;
+        }
+        const rendered = tty_runtime.eventsAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("tty-events failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(rendered);
+        try stdout_buffer.appendSlice(rendered);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "tty-stdout")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "tty-stdout <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: tty-stdout <name>");
+            return;
+        }
+        const rendered = tty_runtime.stdoutAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("tty-stdout failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(rendered);
+        try stdout_buffer.appendSlice(rendered);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "tty-stderr")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "tty-stderr <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: tty-stderr <name>");
+            return;
+        }
+        const rendered = tty_runtime.stderrAlloc(allocator, arg.arg, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("tty-stderr failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(rendered);
+        try stdout_buffer.appendSlice(rendered);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "tty-write")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "tty-write <name> <content>");
+            return;
+        };
+        const content = arg.rest;
+        if (content.len == 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: tty-write <name> <content>");
+            return;
+        }
+        tty_runtime.writePendingInput(allocator, arg.arg, content, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("tty-write failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("tty queued {s} {d} bytes\n", .{ arg.arg, content.len });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "tty-send")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "tty-send <name> <command>");
+            return;
+        };
+        const command = std.mem.trim(u8, arg.rest, " \t\r\n");
+        if (command.len == 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: tty-send <name> <command>");
+            return;
+        }
+        const pending_input = tty_runtime.takePendingInputAlloc(allocator, arg.arg, stdout_buffer.limit, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("tty-send failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(pending_input);
+        const tty_stdin: ?[]const u8 = if (pending_input.len == 0) null else pending_input;
+
+        var result = runCaptureSilentWithInput(allocator, command, tty_stdin, stdout_buffer.limit, stderr_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("tty-send failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer result.deinit(allocator);
+
+        tty_runtime.recordCommand(allocator, arg.arg, command, tty_stdin orelse "", result.exit_code, result.stdout, result.stderr, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("tty-send failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+
+        exit_code.* = result.exit_code;
+        try stdout_buffer.appendSlice(result.stdout);
+        try stderr_buffer.appendSlice(result.stderr);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "tty-clear")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "tty-clear <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: tty-clear <name>");
+            return;
+        }
+        tty_runtime.clearPendingInput(allocator, arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("tty-clear failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("tty cleared {s}\n", .{arg.arg});
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "tty-close")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "tty-close <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: tty-close <name>");
+            return;
+        }
+        tty_runtime.closeSession(arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("tty-close failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("tty closed {s}\n", .{arg.arg});
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "storage-backends")) {
+        if (std.mem.trim(u8, parsed.rest, " \t\r\n").len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: storage-backends");
+            return;
+        }
+        const rendered = storage_backend_registry.renderAlloc(allocator, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("storage-backends failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(rendered);
+        try stdout_buffer.appendSlice(rendered);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "storage-filesystems")) {
+        if (std.mem.trim(u8, parsed.rest, " \t\r\n").len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: storage-filesystems");
+            return;
+        }
+        const rendered = storage_backend_registry.renderFilesystemSupportAlloc(allocator, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("storage-filesystems failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(rendered);
+        try stdout_buffer.appendSlice(rendered);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "storage-backend-info")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "storage-backend-info <backend>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: storage-backend-info <backend>");
+            return;
+        }
+        const backend = parseStorageBackendArg(arg.arg) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: storage-backend-info <backend>");
+            return;
+        };
+        appendStorageBackendInfo(stdout_buffer, backend) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("storage-backend-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "storage-backend-select")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "storage-backend-select <backend>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: storage-backend-select <backend>");
+            return;
+        }
+        const backend = parseStorageBackendArg(arg.arg) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: storage-backend-select <backend>");
+            return;
+        };
+        storage_backend.selectBackendById(backend) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("storage-backend-select failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        tool_layout.invalidateForBackendChange();
+        filesystem.invalidateForBackendChange();
+        try stdout_buffer.appendFmt("storage backend selected {s}\n", .{storage_registry.backendName(backend)});
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "storage-partitions")) {
+        if (std.mem.trim(u8, parsed.rest, " \t\r\n").len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: storage-partitions");
+            return;
+        }
+        appendStoragePartitions(stdout_buffer) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("storage-partitions failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "storage-partition-select")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "storage-partition-select <index>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: storage-partition-select <index>");
+            return;
+        }
+        const index = std.fmt.parseUnsigned(u8, arg.arg, 10) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: storage-partition-select <index>");
+            return;
+        };
+        storage_backend.selectPartition(index) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("storage-partition-select failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        tool_layout.invalidateForBackendChange();
+        filesystem.invalidateForBackendChange();
+        try stdout_buffer.appendFmt("storage partition selected {d}\n", .{index});
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "mount-list")) {
+        if (std.mem.trim(u8, parsed.rest, " \t\r\n").len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: mount-list");
+            return;
+        }
+        appendMountList(stdout_buffer) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("mount-list failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "mount-info")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "mount-info <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: mount-info <name>");
+            return;
+        }
+        appendMountInfo(stdout_buffer, arg.arg) catch |err| {
+            exit_code.* = if (err == error.FileNotFound) 1 else 1;
+            try stderr_buffer.appendFmt("mount-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "mount-bind")) {
+        const name_arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "mount-bind <name> <target>");
+            return;
+        };
+        const target_arg = parseFirstArg(name_arg.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "mount-bind <name> <target>");
+            return;
+        };
+        if (target_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: mount-bind <name> <target>");
+            return;
+        }
+        filesystem.bindMount(name_arg.arg, target_arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("mount-bind failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("mount bound {s} -> {s}\n", .{ name_arg.arg, target_arg.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "mount-remove")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "mount-remove <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: mount-remove <name>");
+            return;
+        }
+        filesystem.removeMount(arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("mount-remove failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("mount removed {s}\n", .{arg.arg});
         return;
     }
 
@@ -4562,6 +5138,24 @@ fn executeScriptPath(
     };
     defer allocator.free(script);
 
+    try executeScriptContents(script, operation, stdout_buffer, stderr_buffer, exit_code, allocator, depth);
+}
+
+fn executeScriptContents(
+    script: []const u8,
+    operation: []const u8,
+    stdout_buffer: *OutputBuffer,
+    stderr_buffer: *OutputBuffer,
+    exit_code: *u8,
+    allocator: std.mem.Allocator,
+    depth: usize,
+) Error!void {
+    if (depth >= max_script_depth) {
+        exit_code.* = 1;
+        try stderr_buffer.appendFmt("{s} failed: ScriptDepthExceeded\n", .{operation});
+        return;
+    }
+
     try filesystem.beginDeferredPersist();
     var finish_deferred_persist = true;
     defer if (finish_deferred_persist) {
@@ -4571,17 +5165,97 @@ fn executeScriptPath(
         };
     };
 
-    var lines = std.mem.splitScalar(u8, script, '\n');
-    while (lines.next()) |raw_line| {
-        const line = std.mem.trim(u8, raw_line, " \t\r");
-        if (line.len == 0 or line[0] == '#') continue;
+    var start: usize = 0;
+    var quote: u8 = 0;
+    var command_count: usize = 0;
+    var idx: usize = 0;
+    while (idx <= script.len) : (idx += 1) {
+        const at_end = idx == script.len;
+        if (!at_end) {
+            const ch = script[idx];
+            if (quote != 0) {
+                if (ch == quote) quote = 0;
+                continue;
+            }
+            if (ch == '\\' and idx + 1 < script.len and isShellEscapable(script[idx + 1])) {
+                idx += 1;
+                continue;
+            }
+            if (ch == '"' or ch == '\'') {
+                quote = ch;
+                continue;
+            }
+            if (ch != ';' and ch != '\n') continue;
+        }
 
-        const nested = parseCommand(line) catch |err| {
+        const line = std.mem.trim(u8, script[start..idx], " \t\r");
+        start = idx + 1;
+        if (line.len == 0 or line[0] == '#') continue;
+        command_count += 1;
+        if (command_count > max_shell_command_count) {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("{s} failed: ShellCommandLimitExceeded\n", .{operation});
+            return;
+        }
+
+        const parsed_line = parseShellLine(line) catch |err| {
             exit_code.* = 2;
             try writeCommandError(stderr_buffer, err, operation);
             return;
         };
-        try execute(nested, stdout_buffer, stderr_buffer, exit_code, allocator, depth + 1);
+        const command_text = unescapeShellTextAlloc(allocator, parsed_line.command) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+            return;
+        };
+        defer allocator.free(command_text);
+
+        const nested = parseCommand(command_text) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, operation);
+            return;
+        };
+        var stdin_content: ?[]u8 = null;
+        defer if (stdin_content) |bytes| allocator.free(bytes);
+        if (parsed_line.input_path) |input_path_raw| {
+            const input_path = unescapeShellTextAlloc(allocator, input_path_raw) catch |err| {
+                exit_code.* = 1;
+                try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+                return;
+            };
+            defer allocator.free(input_path);
+
+            const input_limit = @max(stdout_buffer.limit, stderr_buffer.limit);
+            stdin_content = filesystem.readFileAlloc(allocator, input_path, input_limit) catch |err| {
+                exit_code.* = 1;
+                try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+                return;
+            };
+        }
+        if (parsed_line.redirect_path) |redirect_path_raw| {
+            const redirect_path = unescapeShellTextAlloc(allocator, redirect_path_raw) catch |err| {
+                exit_code.* = 1;
+                try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+                return;
+            };
+            defer allocator.free(redirect_path);
+
+            try executeWithRedirection(
+                nested,
+                parsed_line.redirect_stream,
+                redirect_path,
+                parsed_line.append,
+                operation,
+                stdout_buffer,
+                stderr_buffer,
+                exit_code,
+                stdin_content,
+                allocator,
+                depth + 1,
+            );
+        } else {
+            try execute(nested, stdout_buffer, stderr_buffer, exit_code, stdin_content, allocator, depth + 1);
+        }
         if (exit_code.* != 0) return;
     }
 
@@ -4589,13 +5263,463 @@ fn executeScriptPath(
     finish_deferred_persist = false;
 }
 
+fn executeWithRedirection(
+    parsed: ParsedCommand,
+    redirect_stream: RedirectStream,
+    redirect_path: []const u8,
+    append_mode: bool,
+    operation: []const u8,
+    stdout_buffer: *OutputBuffer,
+    stderr_buffer: *OutputBuffer,
+    exit_code: *u8,
+    stdin_content: ?[]const u8,
+    allocator: std.mem.Allocator,
+    depth: usize,
+) Error!void {
+    const stream_limit = switch (redirect_stream) {
+        .stdout => stdout_buffer.limit,
+        .stderr => stderr_buffer.limit,
+    };
+    var redirected_stream = OutputBuffer.init(allocator, stream_limit, false);
+    defer redirected_stream.deinit();
+
+    switch (redirect_stream) {
+        .stdout => try execute(parsed, &redirected_stream, stderr_buffer, exit_code, stdin_content, allocator, depth),
+        .stderr => try execute(parsed, stdout_buffer, &redirected_stream, exit_code, stdin_content, allocator, depth),
+    }
+    if (redirect_stream == .stdout and exit_code.* != 0) return;
+
+    ensureParentDirectory(redirect_path) catch |err| {
+        exit_code.* = 1;
+        try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+        return;
+    };
+
+    if (append_mode) {
+        const existing = filesystem.readFileAlloc(allocator, redirect_path, stream_limit) catch |err| switch (err) {
+            error.FileNotFound => null,
+            else => {
+                exit_code.* = 1;
+                try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+                return;
+            },
+        };
+        defer if (existing) |bytes| allocator.free(bytes);
+
+        const existing_len: usize = if (existing) |bytes| bytes.len else 0;
+        if (existing_len + redirected_stream.list.items.len > stream_limit) {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("{s} failed: StreamTooLong\n", .{operation});
+            return;
+        }
+
+        var combined = std.ArrayList(u8).empty;
+        defer combined.deinit(allocator);
+        if (existing) |bytes| try combined.appendSlice(allocator, bytes);
+        try combined.appendSlice(allocator, redirected_stream.list.items);
+        filesystem.writeFile(redirect_path, combined.items, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+            return;
+        };
+        return;
+    }
+
+    filesystem.writeFile(redirect_path, redirected_stream.list.items, 0) catch |err| {
+        exit_code.* = 1;
+        try stderr_buffer.appendFmt("{s} failed: {s}\n", .{ operation, @errorName(err) });
+        return;
+    };
+}
+
+fn parseShellLine(line: []const u8) Error!ParsedShellLine {
+    const trimmed = std.mem.trim(u8, line, " \t\r");
+    if (trimmed.len == 0) return error.MissingCommand;
+
+    var quote: u8 = 0;
+    var command_end: usize = trimmed.len;
+    var idx: usize = 0;
+    while (idx < trimmed.len) : (idx += 1) {
+        const ch = trimmed[idx];
+        if (quote != 0) {
+            if (ch == quote) quote = 0;
+            continue;
+        }
+        if (ch == '\\' and idx + 1 < trimmed.len and isShellEscapable(trimmed[idx + 1])) {
+            idx += 1;
+            continue;
+        }
+        if (ch == '"' or ch == '\'') {
+            quote = ch;
+            continue;
+        }
+        if (ch == '<') {
+            command_end = idx;
+            break;
+        }
+        if (ch == '>') {
+            command_end = idx;
+            if (idx > 0 and (trimmed[idx - 1] == '1' or trimmed[idx - 1] == '2') and isRedirectionFdPrefixBoundary(trimmed, idx - 1)) {
+                command_end = idx - 1;
+            }
+            break;
+        }
+    }
+
+    const command = std.mem.trim(u8, trimmed[0..command_end], " \t\r");
+    if (command.len == 0) return error.InvalidRedirection;
+    if (command_end == trimmed.len) return .{ .command = command };
+
+    var parsed = ParsedShellLine{ .command = command };
+    var rest = trimmed[command_end..];
+    while (true) {
+        rest = trimLeftWhitespace(rest);
+        if (rest.len == 0) return parsed;
+
+        if (rest[0] == '<') {
+            if (parsed.input_path != null) return error.InvalidRedirection;
+            const input_arg = parseFirstArg(trimLeftWhitespace(rest[1..])) catch return error.InvalidRedirection;
+            if (input_arg.arg.len == 0) return error.InvalidRedirection;
+            parsed.input_path = input_arg.arg;
+            rest = input_arg.rest;
+            continue;
+        }
+
+        var redirect_stream: RedirectStream = .stdout;
+        var append_mode = false;
+        var operator_len: usize = 0;
+        if (rest[0] == '>') {
+            append_mode = rest.len > 1 and rest[1] == '>';
+            operator_len = if (append_mode) 2 else 1;
+        } else if ((rest[0] == '1' or rest[0] == '2') and rest.len > 1 and rest[1] == '>' and isRedirectionFdPrefixBoundary(rest, 0)) {
+            redirect_stream = if (rest[0] == '2') .stderr else .stdout;
+            append_mode = rest.len > 2 and rest[2] == '>';
+            operator_len = if (append_mode) 3 else 2;
+        } else {
+            return error.InvalidRedirection;
+        }
+
+        if (parsed.redirect_path != null) return error.InvalidRedirection;
+        const redirect_arg = parseFirstArg(trimLeftWhitespace(rest[operator_len..])) catch return error.InvalidRedirection;
+        if (redirect_arg.arg.len == 0) return error.InvalidRedirection;
+        parsed.redirect_path = redirect_arg.arg;
+        parsed.redirect_stream = redirect_stream;
+        parsed.append = append_mode;
+        rest = redirect_arg.rest;
+    }
+}
+
+fn isShellEscapable(byte: u8) bool {
+    return switch (byte) {
+        ';', '<', '>', '\\', '"', '\'', '\n' => true,
+        else => false,
+    };
+}
+
+fn isRedirectionFdPrefixBoundary(text: []const u8, digit_index: usize) bool {
+    if (digit_index == 0) return true;
+    return std.ascii.isWhitespace(text[digit_index - 1]);
+}
+
+fn unescapeShellTextAlloc(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
+    if (std.mem.indexOfScalar(u8, text, '\\') == null) return allocator.dupe(u8, text);
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    var idx: usize = 0;
+    while (idx < text.len) : (idx += 1) {
+        const ch = text[idx];
+        if (ch == '\\' and idx + 1 < text.len and isShellEscapable(text[idx + 1])) {
+            idx += 1;
+            try out.append(allocator, text[idx]);
+            continue;
+        }
+        try out.append(allocator, ch);
+    }
+    return out.toOwnedSlice(allocator);
+}
+
+fn expandShellPatternAlloc(
+    allocator: std.mem.Allocator,
+    pattern: []const u8,
+    max_bytes: usize,
+) Error![]u8 {
+    const trimmed = std.mem.trim(u8, pattern, " \t\r\n");
+    if (trimmed.len == 0) return error.MissingPath;
+    if (trimmed[0] != '/') return error.UnsupportedPattern;
+
+    if (!containsWildcard(trimmed)) {
+        _ = filesystem.statSummary(trimmed) catch return error.NoMatches;
+        return std.fmt.allocPrint(allocator, "{s}\n", .{trimmed});
+    }
+
+    if (std.mem.eql(u8, trimmed, "/")) return error.UnsupportedPattern;
+
+    var segments_storage: [max_shell_glob_segments][]const u8 = undefined;
+    var segment_count: usize = 0;
+    var segments_iter = std.mem.splitScalar(u8, trimmed[1..], '/');
+    while (segments_iter.next()) |segment| {
+        if (segment.len == 0) return error.UnsupportedPattern;
+        if (segment_count >= segments_storage.len) return error.UnsupportedPattern;
+        segments_storage[segment_count] = segment;
+        segment_count += 1;
+    }
+    if (segment_count == 0) return error.UnsupportedPattern;
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+    try expandShellPatternSegments(allocator, &out, max_bytes, "/", segments_storage[0..segment_count], 0);
+    if (out.items.len == 0) return error.NoMatches;
+    return out.toOwnedSlice(allocator);
+}
+
+fn containsWildcard(text: []const u8) bool {
+    return std.mem.indexOfAny(u8, text, "*?") != null;
+}
+
+fn childFromListingLine(line: []const u8) ?ListingChild {
+    if (std.mem.startsWith(u8, line, "dir ")) return .{
+        .name = line[4..],
+        .kind = .directory,
+    };
+    if (std.mem.startsWith(u8, line, "file ")) {
+        const rest = line[5..];
+        const space_index = std.mem.indexOfScalar(u8, rest, ' ') orelse return null;
+        return .{
+            .name = rest[0..space_index],
+            .kind = .file,
+        };
+    }
+    return null;
+}
+
+fn expandShellPatternSegments(
+    allocator: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    max_bytes: usize,
+    parent: []const u8,
+    segments: []const []const u8,
+    segment_index: usize,
+) Error!void {
+    const segment = segments[segment_index];
+    const is_last = segment_index + 1 == segments.len;
+
+    if (containsWildcard(segment)) {
+        const listing = filesystem.listDirectoryAlloc(allocator, parent, max_bytes) catch |err| switch (err) {
+            error.FileNotFound, error.NotDirectory => return,
+            else => return err,
+        };
+        defer allocator.free(listing);
+
+        var lines = std.mem.splitScalar(u8, listing, '\n');
+        while (lines.next()) |line| {
+            if (line.len == 0) continue;
+            const child = childFromListingLine(line) orelse continue;
+            if (!globMatches(segment, child.name)) continue;
+
+            const child_path = try joinShellChildPath(allocator, parent, child.name);
+            defer allocator.free(child_path);
+
+            if (is_last) {
+                try appendExpandedShellPath(allocator, out, max_bytes, child_path);
+                continue;
+            }
+            if (child.kind != .directory) continue;
+            try expandShellPatternSegments(allocator, out, max_bytes, child_path, segments, segment_index + 1);
+        }
+        return;
+    }
+
+    const child_path = try joinShellChildPath(allocator, parent, segment);
+    defer allocator.free(child_path);
+    const stat = filesystem.statSummary(child_path) catch |err| switch (err) {
+        error.FileNotFound, error.NotDirectory => return,
+        else => return err,
+    };
+    if (is_last) {
+        try appendExpandedShellPath(allocator, out, max_bytes, child_path);
+        return;
+    }
+    if (stat.kind != .directory) return;
+    try expandShellPatternSegments(allocator, out, max_bytes, child_path, segments, segment_index + 1);
+}
+
+fn joinShellChildPath(allocator: std.mem.Allocator, parent: []const u8, child_name: []const u8) ![]u8 {
+    if (std.mem.eql(u8, parent, "/")) return std.fmt.allocPrint(allocator, "/{s}", .{child_name});
+    return std.fmt.allocPrint(allocator, "{s}/{s}", .{ parent, child_name });
+}
+
+fn appendExpandedShellPath(allocator: std.mem.Allocator, out: *std.ArrayList(u8), max_bytes: usize, path: []const u8) !void {
+    if (out.items.len + path.len + 1 > max_bytes) return error.StreamTooLong;
+    try out.appendSlice(allocator, path);
+    try out.append(allocator, '\n');
+}
+
+fn globMatches(pattern: []const u8, text: []const u8) bool {
+    return globMatchesInner(pattern, text, 0, 0);
+}
+
+fn globMatchesInner(pattern: []const u8, text: []const u8, pattern_index: usize, text_index: usize) bool {
+    if (pattern_index == pattern.len) return text_index == text.len;
+
+    return switch (pattern[pattern_index]) {
+        '*' => blk: {
+            var idx = text_index;
+            while (idx <= text.len) : (idx += 1) {
+                if (globMatchesInner(pattern, text, pattern_index + 1, idx)) break :blk true;
+            }
+            break :blk false;
+        },
+        '?' => if (text_index < text.len) globMatchesInner(pattern, text, pattern_index + 1, text_index + 1) else false,
+        else => if (text_index < text.len and pattern[pattern_index] == text[text_index])
+            globMatchesInner(pattern, text, pattern_index + 1, text_index + 1)
+        else
+            false,
+    };
+}
+
 fn writeCommandError(stderr_buffer: *OutputBuffer, err: anyerror, usage: []const u8) Error!void {
     switch (err) {
-        error.MissingCommand, error.MissingPath, error.InvalidQuotedArgument => {
+        error.MissingCommand, error.MissingPath, error.InvalidQuotedArgument, error.InvalidRedirection => {
             try stderr_buffer.appendFmt("usage: {s}\n", .{usage});
         },
         else => try stderr_buffer.appendFmt("{s}\n", .{@errorName(err)}),
     }
+}
+
+fn parseStorageBackendArg(text: []const u8) Error!u8 {
+    if (std.fmt.parseUnsigned(u8, text, 10)) |index| {
+        return switch (index) {
+            0 => abi.storage_backend_ram_disk,
+            1 => abi.storage_backend_ata_pio,
+            2 => abi.storage_backend_virtio_block,
+            else => error.OutOfRange,
+        };
+    } else |_| {}
+
+    if (std.ascii.eqlIgnoreCase(text, "ram_disk") or std.ascii.eqlIgnoreCase(text, "ram-disk")) return abi.storage_backend_ram_disk;
+    if (std.ascii.eqlIgnoreCase(text, "ata_pio") or std.ascii.eqlIgnoreCase(text, "ata-pio")) return abi.storage_backend_ata_pio;
+    if (std.ascii.eqlIgnoreCase(text, "virtio_block") or std.ascii.eqlIgnoreCase(text, "virtio-block")) return abi.storage_backend_virtio_block;
+    return error.OutOfRange;
+}
+
+fn appendStorageBackendInfo(stdout_buffer: *OutputBuffer, backend: u8) Error!void {
+    var index: usize = 0;
+    while (index < storage_backend_registry.entryCount()) : (index += 1) {
+        const entry = storage_backend_registry.entry(index) orelse continue;
+        if (entry.backend != backend) continue;
+        try appendStorageBackendEntry(stdout_buffer, index, entry);
+        return;
+    }
+    return error.FileNotFound;
+}
+
+fn appendStorageBackendEntry(stdout_buffer: *OutputBuffer, index: usize, entry: storage_backend_registry.Entry) Error!void {
+    if (entry.selected_partition == std.math.maxInt(u8)) {
+        try stdout_buffer.appendFmt(
+            "backend[{d}]=name={s} backend={s} available={d} selected={d} mounted={d} preferred_order={d} filesystem={s} block_size={d} block_count={d} logical_base_lba={d} partition_count={d} selected_partition=none\n",
+            .{
+                index,
+                entry.nameSlice(),
+                storage_registry.backendName(entry.backend),
+                entry.available,
+                entry.selected,
+                entry.mounted,
+                entry.preferred_order,
+                storage_registry.filesystemKindName(entry.filesystem_kind),
+                entry.block_size,
+                entry.block_count,
+                entry.logical_base_lba,
+                entry.partition_count,
+            },
+        );
+    } else {
+        try stdout_buffer.appendFmt(
+            "backend[{d}]=name={s} backend={s} available={d} selected={d} mounted={d} preferred_order={d} filesystem={s} block_size={d} block_count={d} logical_base_lba={d} partition_count={d} selected_partition={d}\n",
+            .{
+                index,
+                entry.nameSlice(),
+                storage_registry.backendName(entry.backend),
+                entry.available,
+                entry.selected,
+                entry.mounted,
+                entry.preferred_order,
+                storage_registry.filesystemKindName(entry.filesystem_kind),
+                entry.block_size,
+                entry.block_count,
+                entry.logical_base_lba,
+                entry.partition_count,
+                entry.selected_partition,
+            },
+        );
+    }
+}
+
+fn appendStoragePartitions(stdout_buffer: *OutputBuffer) Error!void {
+    const backend = storage_backend.activeBackend();
+    const partition_count = storage_backend.partitionCount();
+    const selected = storage_backend.selectedPartitionIndex();
+    if (selected) |index| {
+        try stdout_buffer.appendFmt(
+            "backend={s} partition_count={d} selected={d} logical_base_lba={d}\n",
+            .{ storage_registry.backendName(backend), partition_count, index, storage_backend.logicalBaseLba() },
+        );
+    } else {
+        try stdout_buffer.appendFmt(
+            "backend={s} partition_count={d} selected=none logical_base_lba={d}\n",
+            .{ storage_registry.backendName(backend), partition_count, storage_backend.logicalBaseLba() },
+        );
+    }
+
+    var index: u8 = 0;
+    while (index < partition_count) : (index += 1) {
+        const info = storage_backend.partitionInfo(index) orelse continue;
+        try stdout_buffer.appendFmt(
+            "partition[{d}] scheme={s} start_lba={d} sector_count={d} selected={d}\n",
+            .{
+                index,
+                switch (info.scheme) {
+                    .mbr => "mbr",
+                    .gpt => "gpt",
+                },
+                info.start_lba,
+                info.sector_count,
+                if (selected != null and selected.? == index) @as(u8, 1) else @as(u8, 0),
+            },
+        );
+    }
+}
+
+fn appendMountList(stdout_buffer: *OutputBuffer) Error!void {
+    var index: usize = 0;
+    while (index < filesystem.mountCount()) : (index += 1) {
+        const entry = filesystem.mountEntry(index) orelse continue;
+        try appendMountEntry(stdout_buffer, entry);
+    }
+}
+
+fn appendMountInfo(stdout_buffer: *OutputBuffer, name: []const u8) Error!void {
+    var index: usize = 0;
+    while (index < filesystem.mountCount()) : (index += 1) {
+        const entry = filesystem.mountEntry(index) orelse continue;
+        if (!std.mem.eql(u8, entry.name[0..entry.name_len], name)) continue;
+        try appendMountEntry(stdout_buffer, entry);
+        return;
+    }
+    return error.FileNotFound;
+}
+
+fn appendMountEntry(stdout_buffer: *OutputBuffer, entry: @TypeOf(filesystem.mountEntry(0).?)) Error!void {
+    try stdout_buffer.appendFmt(
+        "mount name={s} path=/mnt/{s} target={s} modified_tick={d}\n",
+        .{
+            entry.name[0..entry.name_len],
+            entry.name[0..entry.name_len],
+            entry.target[0..entry.target_len],
+            entry.modified_tick,
+        },
+    );
 }
 
 test "baremetal tool exec echoes to stdout and console" {
@@ -5389,6 +6513,267 @@ test "baremetal tool exec exposes virtual proc sys and dev overlays" {
     defer stat_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), stat_result.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, stat_result.stdout, "path=/proc/runtime/snapshot kind=file") != null);
+}
+
+test "baremetal tool exec exposes storage and mount controls" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    vga_text_console.resetForTest();
+
+    var storage_backends = try runCapture(std.testing.allocator, "storage-backends", 1024, 256);
+    defer storage_backends.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), storage_backends.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, storage_backends.stdout, "backend[0]=name=ram_disk backend=ram_disk available=1 selected=1 mounted=1") != null);
+
+    var storage_filesystems = try runCapture(std.testing.allocator, "storage-filesystems", 512, 256);
+    defer storage_filesystems.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), storage_filesystems.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, storage_filesystems.stdout, "filesystem=fat32 detect=1 mount=1 write=1 source=zar_bounded_writable_one_level_83") != null);
+
+    var backend_info = try runCapture(std.testing.allocator, "storage-backend-info ram_disk", 512, 256);
+    defer backend_info.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), backend_info.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, backend_info.stdout, "backend[0]=name=ram_disk backend=ram_disk available=1 selected=1 mounted=1") != null);
+
+    var partitions = try runCapture(std.testing.allocator, "storage-partitions", 256, 256);
+    defer partitions.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), partitions.exit_code);
+    try std.testing.expectEqualStrings("backend=ram_disk partition_count=0 selected=none logical_base_lba=0\n", partitions.stdout);
+
+    var bind = try runCapture(std.testing.allocator, "mount-bind state /runtime/state", 256, 256);
+    defer bind.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), bind.exit_code);
+    try std.testing.expectEqualStrings("mount bound state -> /runtime/state\n", bind.stdout);
+
+    var mount_list = try runCapture(std.testing.allocator, "mount-list", 256, 256);
+    defer mount_list.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), mount_list.exit_code);
+    try std.testing.expectEqualStrings("mount name=state path=/mnt/state target=/runtime/state modified_tick=0\n", mount_list.stdout);
+
+    var mount_info = try runCapture(std.testing.allocator, "mount-info state", 256, 256);
+    defer mount_info.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), mount_info.exit_code);
+    try std.testing.expectEqualStrings("mount name=state path=/mnt/state target=/runtime/state modified_tick=0\n", mount_info.stdout);
+
+    var remove = try runCapture(std.testing.allocator, "mount-remove state", 256, 256);
+    defer remove.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), remove.exit_code);
+    try std.testing.expectEqualStrings("mount removed state\n", remove.stdout);
+
+    var mount_list_after = try runCapture(std.testing.allocator, "mount-list", 256, 256);
+    defer mount_list_after.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), mount_list_after.exit_code);
+    try std.testing.expectEqualStrings("", mount_list_after.stdout);
+}
+
+test "baremetal tool exec exposes bounded shell batch and globbing" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    vga_text_console.resetForTest();
+
+    var shell_run = try runCapture(
+        std.testing.allocator,
+        "shell-run mkdir /tmp/sh; write-file /tmp/sh/A.TXT alpha; write-file /tmp/sh/B.LOG beta; mkdir /tmp/sh/DATA; write-file /tmp/sh/DATA/C.TXT gamma; mkdir /tmp/sh/DATA/DEEP; write-file /tmp/sh/DATA/DEEP/Z.TXT delta; echo alpha > /tmp/sh/OUT.TXT; echo beta >> /tmp/sh/OUT.TXT",
+        1536,
+        256,
+    );
+    defer shell_run.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), shell_run.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, shell_run.stdout, "created /tmp/sh\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, shell_run.stdout, "wrote 5 bytes to /tmp/sh/A.TXT\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, shell_run.stdout, "created /tmp/sh/DATA\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, shell_run.stdout, "created /tmp/sh/DATA/DEEP\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, shell_run.stdout, "alpha\n") == null);
+
+    var expand_root = try runCapture(std.testing.allocator, "shell-expand /tmp/sh/A*.TXT", 256, 256);
+    defer expand_root.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), expand_root.exit_code);
+    try std.testing.expectEqualStrings("/tmp/sh/A.TXT\n", expand_root.stdout);
+
+    var expand_nested = try runCapture(std.testing.allocator, "shell-expand /tmp/sh/DATA/*.TXT", 256, 256);
+    defer expand_nested.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), expand_nested.exit_code);
+    try std.testing.expectEqualStrings("/tmp/sh/DATA/C.TXT\n", expand_nested.stdout);
+
+    var expand_deep = try runCapture(std.testing.allocator, "shell-expand /tmp/sh/*/*/*.TXT", 256, 256);
+    defer expand_deep.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), expand_deep.exit_code);
+    try std.testing.expectEqualStrings("/tmp/sh/DATA/DEEP/Z.TXT\n", expand_deep.stdout);
+
+    var no_match = try runCapture(std.testing.allocator, "shell-expand /tmp/sh/*.BIN", 256, 256);
+    defer no_match.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 1), no_match.exit_code);
+    try std.testing.expectEqualStrings("shell-expand failed: NoMatches\n", no_match.stderr);
+
+    const redirected = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/OUT.TXT", 64);
+    defer std.testing.allocator.free(redirected);
+    try std.testing.expectEqualStrings("alpha\nbeta\n", redirected);
+
+    var shell_escaped = try runCapture(
+        std.testing.allocator,
+        "shell-run echo alpha\\;beta > /tmp/sh/ESC.TXT; echo gt\\>value > /tmp/sh/GT.TXT",
+        512,
+        256,
+    );
+    defer shell_escaped.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), shell_escaped.exit_code);
+    try std.testing.expectEqualStrings("", shell_escaped.stdout);
+    try std.testing.expectEqualStrings("", shell_escaped.stderr);
+
+    const escaped_separator = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/ESC.TXT", 64);
+    defer std.testing.allocator.free(escaped_separator);
+    try std.testing.expectEqualStrings("alpha;beta\n", escaped_separator);
+
+    const escaped_redirect = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/GT.TXT", 64);
+    defer std.testing.allocator.free(escaped_redirect);
+    try std.testing.expectEqualStrings("gt>value\n", escaped_redirect);
+
+    var shell_stderr_redirect = try runCapture(
+        std.testing.allocator,
+        "shell-run cat /tmp/sh/MISSING.TXT 2> /tmp/sh/ERR.TXT",
+        256,
+        256,
+    );
+    defer shell_stderr_redirect.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 1), shell_stderr_redirect.exit_code);
+    try std.testing.expectEqualStrings("", shell_stderr_redirect.stdout);
+    try std.testing.expectEqualStrings("", shell_stderr_redirect.stderr);
+
+    const redirected_stderr = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/ERR.TXT", 64);
+    defer std.testing.allocator.free(redirected_stderr);
+    try std.testing.expectEqualStrings("cat failed: FileNotFound\n", redirected_stderr);
+
+    try filesystem.writeFile("/tmp/sh/SPACE NAME.TXT", "spaced", 0);
+    try filesystem.writeFile("/tmp/sh/STDIN.OC", "echo stdin-shell > /tmp/sh/STDINOUT.TXT", 0);
+
+    var shell_input_redirect = try runCapture(
+        std.testing.allocator,
+        "shell-run cat < /tmp/sh/A.TXT > /tmp/sh/COPY.TXT; write-file /tmp/sh/FROMSTDIN.TXT < /tmp/sh/A.TXT; cat < \"/tmp/sh/SPACE NAME.TXT\" > /tmp/sh/QUOTE.TXT; echo lt\\<value > /tmp/sh/LT.TXT; shell-run < /tmp/sh/STDIN.OC",
+        1024,
+        256,
+    );
+    defer shell_input_redirect.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), shell_input_redirect.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, shell_input_redirect.stdout, "wrote 5 bytes to /tmp/sh/FROMSTDIN.TXT\n") != null);
+    try std.testing.expectEqualStrings("", shell_input_redirect.stderr);
+
+    const copied_input = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/COPY.TXT", 64);
+    defer std.testing.allocator.free(copied_input);
+    try std.testing.expectEqualStrings("alpha", copied_input);
+
+    const stdin_written = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/FROMSTDIN.TXT", 64);
+    defer std.testing.allocator.free(stdin_written);
+    try std.testing.expectEqualStrings("alpha", stdin_written);
+
+    const quoted_copy = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/QUOTE.TXT", 64);
+    defer std.testing.allocator.free(quoted_copy);
+    try std.testing.expectEqualStrings("spaced", quoted_copy);
+
+    const escaped_input_redirect = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/LT.TXT", 64);
+    defer std.testing.allocator.free(escaped_input_redirect);
+    try std.testing.expectEqualStrings("lt<value\n", escaped_input_redirect);
+
+    const nested_shell_input = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/sh/STDINOUT.TXT", 64);
+    defer std.testing.allocator.free(nested_shell_input);
+    try std.testing.expectEqualStrings("stdin-shell\n", nested_shell_input);
+}
+
+test "baremetal tool exec persists bounded tty session receipts" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    vga_text_console.resetForTest();
+
+    var open_result = try runCapture(std.testing.allocator, "tty-open demo", 256, 256);
+    defer open_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), open_result.exit_code);
+    try std.testing.expectEqualStrings("tty opened demo\n", open_result.stdout);
+
+    var write_result = try runCapture(std.testing.allocator, "tty-write demo tty-session-input", 256, 256);
+    defer write_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), write_result.exit_code);
+    try std.testing.expectEqualStrings("tty queued demo 17 bytes\n", write_result.stdout);
+
+    var pending_result = try runCapture(std.testing.allocator, "tty-pending demo", 256, 256);
+    defer pending_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), pending_result.exit_code);
+    try std.testing.expectEqualStrings("tty-session-input", pending_result.stdout);
+
+    var send_result = try runCapture(std.testing.allocator, "tty-send demo cat", 256, 256);
+    defer send_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), send_result.exit_code);
+    try std.testing.expectEqualStrings("tty-session-input", send_result.stdout);
+    try std.testing.expectEqualStrings("", send_result.stderr);
+
+    var drained_pending = try runCapture(std.testing.allocator, "tty-pending demo", 256, 256);
+    defer drained_pending.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), drained_pending.exit_code);
+    try std.testing.expectEqualStrings("", drained_pending.stdout);
+
+    var stale_write = try runCapture(std.testing.allocator, "tty-write demo stale-tty", 256, 256);
+    defer stale_write.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), stale_write.exit_code);
+    try std.testing.expectEqualStrings("tty queued demo 9 bytes\n", stale_write.stdout);
+
+    var clear_result = try runCapture(std.testing.allocator, "tty-clear demo", 256, 256);
+    defer clear_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), clear_result.exit_code);
+    try std.testing.expectEqualStrings("tty cleared demo\n", clear_result.stdout);
+
+    var stderr_send = try runCapture(std.testing.allocator, "tty-send demo cat /tmp/missing-tty.txt", 256, 256);
+    defer stderr_send.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 1), stderr_send.exit_code);
+    try std.testing.expectEqualStrings("", stderr_send.stdout);
+    try std.testing.expectEqualStrings("cat failed: FileNotFound\n", stderr_send.stderr);
+
+    var list_result = try runCapture(std.testing.allocator, "tty-list", 256, 256);
+    defer list_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), list_result.exit_code);
+    try std.testing.expectEqualStrings("demo\n", list_result.stdout);
+
+    var info_result = try runCapture(std.testing.allocator, "tty-info demo", 512, 256);
+    defer info_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), info_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "name=demo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "open=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "command_count=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "pending_input_bytes=0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "event_count=6") != null);
+
+    var read_result = try runCapture(std.testing.allocator, "tty-read demo", 1024, 256);
+    defer read_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), read_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, read_result.stdout, "$ cat\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, read_result.stdout, "stdin:\ntty-session-input\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, read_result.stdout, "$ cat /tmp/missing-tty.txt\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, read_result.stdout, "stderr:\ncat failed: FileNotFound\n") != null);
+
+    var events_result = try runCapture(std.testing.allocator, "tty-events demo", 1024, 256);
+    defer events_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), events_result.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, events_result.stdout, "type=open") != null);
+    try std.testing.expect(std.mem.indexOf(u8, events_result.stdout, "type=write bytes=17") != null);
+    try std.testing.expect(std.mem.indexOf(u8, events_result.stdout, "type=send exit=0 stdin_bytes=17 stdout_bytes=17 stderr_bytes=0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, events_result.stdout, "type=clear bytes=9") != null);
+
+    var stdout_result = try runCapture(std.testing.allocator, "tty-stdout demo", 256, 256);
+    defer stdout_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), stdout_result.exit_code);
+    try std.testing.expectEqualStrings("tty-session-input", stdout_result.stdout);
+
+    var stderr_result = try runCapture(std.testing.allocator, "tty-stderr demo", 256, 256);
+    defer stderr_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), stderr_result.exit_code);
+    try std.testing.expectEqualStrings("cat failed: FileNotFound\n", stderr_result.stdout);
+
+    var close_result = try runCapture(std.testing.allocator, "tty-close demo", 256, 256);
+    defer close_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), close_result.exit_code);
+    try std.testing.expectEqualStrings("tty closed demo\n", close_result.stdout);
+
+    var closed_info = try runCapture(std.testing.allocator, "tty-info demo", 512, 256);
+    defer closed_info.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), closed_info.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, closed_info.stdout, "open=0") != null);
 }
 
 test "baremetal tool exec configures app trust and connector and reports app info" {

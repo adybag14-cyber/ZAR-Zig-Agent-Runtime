@@ -5,6 +5,9 @@ const virtio_block = @import("virtio_block.zig");
 
 pub const test_file_name = "HELLO.TXT";
 pub const test_file_payload = "hello-from-fat32";
+pub const test_subdir_name = "DATA";
+pub const test_nested_file_name = "NOTE.TXT";
+pub const test_nested_file_payload = "hello-from-fat32-subdir";
 
 const sector_size_bytes: u32 = 512;
 const total_sectors: u32 = 32;
@@ -13,6 +16,8 @@ const fat_sector_count: u32 = 1;
 const sectors_per_cluster: u8 = 1;
 const root_cluster: u32 = 2;
 const file_cluster: u32 = 3;
+const subdir_cluster: u32 = 4;
+const nested_file_cluster: u32 = 5;
 const max_root_entries: usize = 16;
 
 pub const Error = std.mem.Allocator.Error || storage_backend.Error || error{
@@ -64,6 +69,16 @@ const RootEntry = struct {
     }
 };
 
+const ParsedPath = struct {
+    kind: enum {
+        root,
+        entry,
+        nested_entry,
+    },
+    entry_name: []const u8 = "",
+    nested_name: []const u8 = "",
+};
+
 pub fn seedTestImage() Error!void {
     storage_backend.init();
     const state = storage_backend.statePtr();
@@ -106,15 +121,25 @@ pub fn seedTestImage() Error!void {
     writeU32(image[fat_offset + 4 .. fat_offset + 8], 0xFFFFFFFF);
     writeU32(image[fat_offset + 8 .. fat_offset + 12], 0x0FFFFFFF);
     writeU32(image[fat_offset + 12 .. fat_offset + 16], 0x0FFFFFFF);
+    writeU32(image[fat_offset + 16 .. fat_offset + 20], 0x0FFFFFFF);
+    writeU32(image[fat_offset + 20 .. fat_offset + 24], 0x0FFFFFFF);
 
     const bpb = try readBpb(image[0..sector_size_bytes]);
     const root_sector = bpb.clusterToSector(root_cluster);
     const file_sector = bpb.clusterToSector(file_cluster);
+    const subdir_sector = bpb.clusterToSector(subdir_cluster);
+    const nested_file_sector = bpb.clusterToSector(nested_file_cluster);
     var root_dir = image[root_sector * sector_size_bytes ..][0..sector_size_bytes];
     writeShortEntry(root_dir[0..32], "HELLO   TXT", 0x20, file_cluster, test_file_payload.len);
-    root_dir[32] = 0x00;
+    writeShortEntry(root_dir[32..64], "DATA       ", 0x10, subdir_cluster, 0);
+    root_dir[64] = 0x00;
+
+    var subdir = image[subdir_sector * sector_size_bytes ..][0..sector_size_bytes];
+    writeShortEntry(subdir[0..32], "NOTE    TXT", 0x20, nested_file_cluster, test_nested_file_payload.len);
+    subdir[32] = 0x00;
 
     @memcpy(image[file_sector * sector_size_bytes ..][0..test_file_payload.len], test_file_payload);
+    @memcpy(image[nested_file_sector * sector_size_bytes ..][0..test_nested_file_payload.len], test_nested_file_payload);
 
     var sector: u32 = 0;
     while (sector < total_sectors) : (sector += 1) {
@@ -125,8 +150,24 @@ pub fn seedTestImage() Error!void {
 }
 
 pub fn listRootAlloc(allocator: std.mem.Allocator, max_bytes: usize) Error![]u8 {
+    return listDirectoryAlloc(allocator, "/", max_bytes);
+}
+
+pub fn listDirectoryAlloc(allocator: std.mem.Allocator, relative_path: []const u8, max_bytes: usize) Error![]u8 {
+    const parsed = parseRelativePath(relative_path) orelse return error.UnsupportedPath;
+    const bpb = try loadBpb();
+    const directory_cluster = switch (parsed.kind) {
+        .root => bpb.root_cluster,
+        .entry => blk: {
+            const entry = try findEntryInDirectory(bpb, bpb.root_cluster, parsed.entry_name);
+            if (entry.kind != .directory) return error.NotDirectory;
+            break :blk entry.cluster;
+        },
+        .nested_entry => return error.NotDirectory,
+    };
+
     var entries: [max_root_entries]RootEntry = undefined;
-    const count = try scanRoot(&entries);
+    const count = try scanDirectory(bpb, directory_cluster, &entries);
 
     var out = std.ArrayList(u8).empty;
     defer out.deinit(allocator);
@@ -150,7 +191,7 @@ pub fn readFileAlloc(allocator: std.mem.Allocator, relative_path: []const u8, ma
 }
 
 pub fn readFile(relative_path: []const u8, buffer: []u8) Error![]const u8 {
-    const entry = try findRootEntry(relative_path);
+    const entry = try findEntry(relative_path);
     if (entry.kind == .directory) return error.IsDirectory;
     if (entry.size > buffer.len) return error.FileTooBig;
 
@@ -159,10 +200,11 @@ pub fn readFile(relative_path: []const u8, buffer: []u8) Error![]const u8 {
 }
 
 pub fn statSummary(relative_path: []const u8) Error!SimpleStat {
-    if (relative_path.len == 0 or std.mem.eql(u8, relative_path, "/")) {
+    const parsed = parseRelativePath(relative_path) orelse return error.UnsupportedPath;
+    if (parsed.kind == .root) {
         return .{ .kind = .directory, .size = 0, .checksum = 0, .modified_tick = 0, .entry_id = 1 };
     }
-    const entry = try findRootEntry(relative_path);
+    const entry = try findEntry(relative_path);
     return .{
         .kind = entry.kind,
         .size = entry.size,
@@ -174,22 +216,23 @@ pub fn statSummary(relative_path: []const u8) Error!SimpleStat {
 
 pub fn writeFile(relative_path: []const u8, data: []const u8, tick: u64) Error!void {
     _ = tick;
-    const component = normalizeRelativePath(relative_path) orelse return error.UnsupportedPath;
+    const parsed = parseFilePath(relative_path) orelse return error.UnsupportedPath;
 
     var raw_name: [11]u8 = undefined;
-    try encodeShortName(component, raw_name[0..]);
+    try encodeShortName(parsed.leaf_name, raw_name[0..]);
 
     const bpb = try loadBpb();
-    var root = [_]u8{0} ** sector_size_bytes;
-    _ = try readClusterChain(bpb, bpb.root_cluster, root[0..]);
+    const directory_cluster = try resolveWritableDirectoryCluster(bpb, parsed.parent_name);
+    var directory = [_]u8{0} ** sector_size_bytes;
+    try readDirectoryCluster(bpb, directory_cluster, directory[0..]);
 
     var entry_offset: ?usize = null;
     var free_offset: ?usize = null;
     var existing: ?RootEntry = null;
 
     var offset: usize = 0;
-    while (offset + 32 <= root.len) : (offset += 32) {
-        const dirent = root[offset..][0..32];
+    while (offset + 32 <= directory.len) : (offset += 32) {
+        const dirent = directory[offset..][0..32];
         const first = dirent[0];
         if (first == 0x00) {
             if (free_offset == null) free_offset = offset;
@@ -226,23 +269,80 @@ pub fn writeFile(relative_path: []const u8, data: []const u8, tick: u64) Error!v
 
     if (data.len != 0) try writeClusterChain(bpb, first_cluster, data);
 
-    writeShortEntry(root[write_offset .. write_offset + 32], raw_name[0..], 0x20, first_cluster, data.len);
-    try writeRootDirectory(bpb, root[0..]);
+    writeShortEntry(directory[write_offset .. write_offset + 32], raw_name[0..], 0x20, first_cluster, data.len);
+    try writeDirectoryCluster(bpb, directory_cluster, directory[0..]);
+}
+
+pub fn createDirPath(relative_path: []const u8) Error!void {
+    const parsed = parseFilePath(relative_path) orelse return error.UnsupportedPath;
+
+    var raw_name: [11]u8 = undefined;
+    try encodeShortName(parsed.leaf_name, raw_name[0..]);
+
+    const bpb = try loadBpb();
+    const directory_cluster = try resolveWritableDirectoryCluster(bpb, parsed.parent_name);
+    var directory = [_]u8{0} ** sector_size_bytes;
+    try readDirectoryCluster(bpb, directory_cluster, directory[0..]);
+
+    var entry_offset: ?usize = null;
+    var free_offset: ?usize = null;
+    var existing: ?RootEntry = null;
+
+    var offset: usize = 0;
+    while (offset + 32 <= directory.len) : (offset += 32) {
+        const dirent = directory[offset..][0..32];
+        const first = dirent[0];
+        if (first == 0x00) {
+            if (free_offset == null) free_offset = offset;
+            break;
+        }
+        if (first == 0xE5) {
+            if (free_offset == null) free_offset = offset;
+            continue;
+        }
+        if (dirent[11] == 0x0F) continue;
+        if (std.mem.eql(u8, dirent[0..11], raw_name[0..])) {
+            entry_offset = offset;
+            existing = .{
+                .cluster = readDirentCluster(dirent),
+                .kind = if ((dirent[11] & 0x10) != 0) .directory else .file,
+                .size = readLeU32(dirent[28..32]),
+                .name_len = 0,
+            };
+            break;
+        }
+    }
+
+    if (existing) |entry| {
+        if (entry.kind != .directory) return error.NotDirectory;
+        return;
+    }
+
+    const write_offset = entry_offset orelse free_offset orelse return error.NoSpace;
+    const first_cluster = try allocateClusterChain(bpb, 1);
+    errdefer if (first_cluster >= 2) freeClusterChain(bpb, first_cluster) catch {};
+
+    const zero_dir = [_]u8{0} ** sector_size_bytes;
+    try writeDirectoryCluster(bpb, first_cluster, zero_dir[0..]);
+
+    writeShortEntry(directory[write_offset .. write_offset + 32], raw_name[0..], 0x10, first_cluster, 0);
+    try writeDirectoryCluster(bpb, directory_cluster, directory[0..]);
 }
 
 pub fn deleteFile(relative_path: []const u8) Error!void {
-    const component = normalizeRelativePath(relative_path) orelse return error.UnsupportedPath;
+    const parsed = parseFilePath(relative_path) orelse return error.UnsupportedPath;
 
     var raw_name: [11]u8 = undefined;
-    try encodeShortName(component, raw_name[0..]);
+    try encodeShortName(parsed.leaf_name, raw_name[0..]);
 
     const bpb = try loadBpb();
-    var root = [_]u8{0} ** sector_size_bytes;
-    _ = try readClusterChain(bpb, bpb.root_cluster, root[0..]);
+    const directory_cluster = try resolveWritableDirectoryCluster(bpb, parsed.parent_name);
+    var directory = [_]u8{0} ** sector_size_bytes;
+    try readDirectoryCluster(bpb, directory_cluster, directory[0..]);
 
     var offset: usize = 0;
-    while (offset + 32 <= root.len) : (offset += 32) {
-        const dirent = root[offset..][0..32];
+    while (offset + 32 <= directory.len) : (offset += 32) {
+        const dirent = directory[offset..][0..32];
         const first = dirent[0];
         if (first == 0x00) break;
         if (first == 0xE5 or dirent[11] == 0x0F) continue;
@@ -253,27 +353,77 @@ pub fn deleteFile(relative_path: []const u8) Error!void {
         if (cluster >= 2) try freeClusterChain(bpb, cluster);
         @memset(dirent, 0);
         dirent[0] = 0xE5;
-        try writeRootDirectory(bpb, root[0..]);
+        try writeDirectoryCluster(bpb, directory_cluster, directory[0..]);
         return;
     }
 
     return error.FileNotFound;
 }
 
-fn findRootEntry(relative_path: []const u8) Error!RootEntry {
-    const component = normalizeRelativePath(relative_path) orelse return error.UnsupportedPath;
+pub fn deleteTree(relative_path: []const u8) Error!void {
+    const parsed = parseFilePath(relative_path) orelse return error.UnsupportedPath;
+
+    var raw_name: [11]u8 = undefined;
+    try encodeShortName(parsed.leaf_name, raw_name[0..]);
+
+    const bpb = try loadBpb();
+    const directory_cluster = try resolveWritableDirectoryCluster(bpb, parsed.parent_name);
+    var directory = [_]u8{0} ** sector_size_bytes;
+    try readDirectoryCluster(bpb, directory_cluster, directory[0..]);
+
+    var offset: usize = 0;
+    while (offset + 32 <= directory.len) : (offset += 32) {
+        const dirent = directory[offset..][0..32];
+        const first = dirent[0];
+        if (first == 0x00) break;
+        if (first == 0xE5 or dirent[11] == 0x0F) continue;
+        if (!std.mem.eql(u8, dirent[0..11], raw_name[0..])) continue;
+
+        const cluster = readDirentCluster(dirent);
+        if ((dirent[11] & 0x10) != 0) {
+            if (cluster >= 2) {
+                try deleteDirectoryClusterTree(bpb, cluster);
+                try freeClusterChain(bpb, cluster);
+            }
+        } else if (cluster >= 2) {
+            try freeClusterChain(bpb, cluster);
+        }
+
+        @memset(dirent, 0);
+        dirent[0] = 0xE5;
+        try writeDirectoryCluster(bpb, directory_cluster, directory[0..]);
+        return;
+    }
+
+    return error.FileNotFound;
+}
+
+fn findEntry(relative_path: []const u8) Error!RootEntry {
+    const parsed = parseRelativePath(relative_path) orelse return error.UnsupportedPath;
+    const bpb = try loadBpb();
+    return switch (parsed.kind) {
+        .root => error.IsDirectory,
+        .entry => try findEntryInDirectory(bpb, bpb.root_cluster, parsed.entry_name),
+        .nested_entry => blk: {
+            const parent = try findEntryInDirectory(bpb, bpb.root_cluster, parsed.entry_name);
+            if (parent.kind != .directory) return error.NotDirectory;
+            break :blk try findEntryInDirectory(bpb, parent.cluster, parsed.nested_name);
+        },
+    };
+}
+
+fn findEntryInDirectory(bpb: BiosParameterBlock, directory_cluster: u32, name: []const u8) Error!RootEntry {
     var entries: [max_root_entries]RootEntry = undefined;
-    const count = try scanRoot(&entries);
+    const count = try scanDirectory(bpb, directory_cluster, &entries);
     for (entries[0..count]) |entry| {
-        if (std.mem.eql(u8, entry.nameSlice(), component)) return entry;
+        if (std.mem.eql(u8, entry.nameSlice(), name)) return entry;
     }
     return error.FileNotFound;
 }
 
-fn scanRoot(entries_out: *[max_root_entries]RootEntry) Error!usize {
-    const bpb = try loadBpb();
+fn scanDirectory(bpb: BiosParameterBlock, directory_cluster: u32, entries_out: *[max_root_entries]RootEntry) Error!usize {
     var root = [_]u8{0} ** sector_size_bytes;
-    _ = try readClusterChain(bpb, bpb.root_cluster, root[0..]);
+    try readDirectoryCluster(bpb, directory_cluster, root[0..]);
 
     var count: usize = 0;
     var offset: usize = 0;
@@ -399,12 +549,78 @@ fn writeBackendBytes(byte_offset: u32, input: []const u8) Error!void {
     }
 }
 
-fn normalizeRelativePath(relative_path: []const u8) ?[]const u8 {
-    if (relative_path.len == 0 or std.mem.eql(u8, relative_path, "/")) return null;
+fn parseRelativePath(relative_path: []const u8) ?ParsedPath {
+    if (relative_path.len == 0 or std.mem.eql(u8, relative_path, "/")) return .{ .kind = .root };
     if (relative_path[0] != '/') return null;
     const tail = relative_path[1..];
-    if (tail.len == 0 or std.mem.indexOfScalar(u8, tail, '/') != null) return null;
-    return tail;
+    if (tail.len == 0) return .{ .kind = .root };
+    const slash_index = std.mem.indexOfScalar(u8, tail, '/') orelse {
+        return .{ .kind = .entry, .entry_name = tail };
+    };
+    const entry_name = tail[0..slash_index];
+    const nested_name = tail[slash_index + 1 ..];
+    if (entry_name.len == 0 or nested_name.len == 0 or std.mem.indexOfScalar(u8, nested_name, '/') != null) return null;
+    return .{ .kind = .nested_entry, .entry_name = entry_name, .nested_name = nested_name };
+}
+
+const ParsedFilePath = struct {
+    parent_name: ?[]const u8,
+    leaf_name: []const u8,
+};
+
+fn parseFilePath(relative_path: []const u8) ?ParsedFilePath {
+    const parsed = parseRelativePath(relative_path) orelse return null;
+    return switch (parsed.kind) {
+        .root => null,
+        .entry => .{ .parent_name = null, .leaf_name = parsed.entry_name },
+        .nested_entry => .{ .parent_name = parsed.entry_name, .leaf_name = parsed.nested_name },
+    };
+}
+
+fn resolveWritableDirectoryCluster(bpb: BiosParameterBlock, parent_name: ?[]const u8) Error!u32 {
+    if (parent_name == null) return bpb.root_cluster;
+    const parent = try findEntryInDirectory(bpb, bpb.root_cluster, parent_name.?);
+    if (parent.kind != .directory) return error.NotDirectory;
+    return parent.cluster;
+}
+
+fn readDirectoryCluster(bpb: BiosParameterBlock, directory_cluster: u32, out: []u8) Error!void {
+    if (out.len != sector_size_bytes) return error.InvalidFilesystem;
+    _ = try readClusterChain(bpb, directory_cluster, out);
+}
+
+fn writeDirectoryCluster(bpb: BiosParameterBlock, directory_cluster: u32, data: []const u8) Error!void {
+    if (data.len != sector_size_bytes) return error.InvalidFilesystem;
+    try storage_backend.writeBlocks(bpb.clusterToSector(directory_cluster), data);
+}
+
+fn deleteDirectoryClusterTree(bpb: BiosParameterBlock, directory_cluster: u32) Error!void {
+    var directory = [_]u8{0} ** sector_size_bytes;
+    try readDirectoryCluster(bpb, directory_cluster, directory[0..]);
+
+    var offset: usize = 0;
+    while (offset + 32 <= directory.len) : (offset += 32) {
+        const dirent = directory[offset..][0..32];
+        const first = dirent[0];
+        if (first == 0x00) break;
+        if (first == 0xE5 or dirent[11] == 0x0F) continue;
+
+        const cluster = readDirentCluster(dirent);
+        if ((dirent[11] & 0x10) != 0) {
+            if (cluster >= 2) {
+                try deleteDirectoryClusterTree(bpb, cluster);
+                try freeClusterChain(bpb, cluster);
+            }
+        } else if (cluster >= 2) {
+            try freeClusterChain(bpb, cluster);
+        }
+
+        @memset(dirent, 0);
+        dirent[0] = 0xE5;
+    }
+
+    const zero_dir = [_]u8{0} ** sector_size_bytes;
+    try writeDirectoryCluster(bpb, directory_cluster, zero_dir[0..]);
 }
 
 fn encodeShortName(component: []const u8, out: []u8) Error!void {
@@ -586,7 +802,8 @@ test "fat32 ro seeds and reads bounded root file" {
 
     const listing = try listRootAlloc(std.testing.allocator, 256);
     defer std.testing.allocator.free(listing);
-    try std.testing.expectEqualStrings("file HELLO.TXT 16\n", listing);
+    try std.testing.expect(std.mem.indexOf(u8, listing, "file HELLO.TXT 16\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, listing, "dir DATA\n") != null);
 
     const file = try readFileAlloc(std.testing.allocator, "/HELLO.TXT", 64);
     defer std.testing.allocator.free(file);
@@ -597,7 +814,7 @@ test "fat32 ro seeds and reads bounded root file" {
     try std.testing.expectEqual(@as(u64, test_file_payload.len), stat.size);
 }
 
-test "fat32 bounded write overwrite and delete stays root-only" {
+test "fat32 bounded write overwrite and delete covers root and one-level subdir" {
     storage_backend.resetForTest();
     virtio_block.testEnableMockDevice(256);
     defer virtio_block.testDisableMockDevice();
@@ -618,8 +835,86 @@ test "fat32 bounded write overwrite and delete stays root-only" {
     const listing = try listRootAlloc(std.testing.allocator, 256);
     defer std.testing.allocator.free(listing);
     try std.testing.expect(std.mem.indexOf(u8, listing, "file WRITE.TXT 15\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, listing, "dir DATA\n") != null);
+
+    const nested_listing = try listDirectoryAlloc(std.testing.allocator, "/DATA", 256);
+    defer std.testing.allocator.free(nested_listing);
+    try std.testing.expect(std.mem.indexOf(u8, nested_listing, "file NOTE.TXT 23\n") != null);
+
+    {
+        const nested = try readFileAlloc(std.testing.allocator, "/DATA/NOTE.TXT", 64);
+        defer std.testing.allocator.free(nested);
+        try std.testing.expectEqualStrings(test_nested_file_payload, nested);
+    }
+
+    try writeFile("/DATA/WRITE.TXT", "fat32-nested", 3);
+    {
+        const nested = try readFileAlloc(std.testing.allocator, "/DATA/WRITE.TXT", 64);
+        defer std.testing.allocator.free(nested);
+        try std.testing.expectEqualStrings("fat32-nested", nested);
+    }
+
+    try writeFile("/DATA/WRITE.TXT", "fat32-nested-overwrite", 4);
+    {
+        const nested = try readFileAlloc(std.testing.allocator, "/DATA/WRITE.TXT", 64);
+        defer std.testing.allocator.free(nested);
+        try std.testing.expectEqualStrings("fat32-nested-overwrite", nested);
+    }
+
+    const nested_stat = try statSummary("/DATA/WRITE.TXT");
+    try std.testing.expectEqual(@as(std.Io.File.Kind, .file), nested_stat.kind);
+    try std.testing.expectEqual(@as(u64, "fat32-nested-overwrite".len), nested_stat.size);
+
+    const nested_listing_after_write = try listDirectoryAlloc(std.testing.allocator, "/DATA", 256);
+    defer std.testing.allocator.free(nested_listing_after_write);
+    try std.testing.expect(std.mem.indexOf(u8, nested_listing_after_write, "file WRITE.TXT 22\n") != null);
 
     try deleteFile("/WRITE.TXT");
     try std.testing.expectEqual(error.FileNotFound, readFileAlloc(std.testing.allocator, "/WRITE.TXT", 64));
-    try std.testing.expectError(error.UnsupportedPath, writeFile("/nested/WRITE.TXT", "x", 3));
+    try deleteFile("/DATA/WRITE.TXT");
+    try std.testing.expectEqual(error.FileNotFound, readFileAlloc(std.testing.allocator, "/DATA/WRITE.TXT", 64));
+    try std.testing.expectError(error.UnsupportedPath, writeFile("/nested/deeper/WRITE.TXT", "x", 5));
+}
+
+test "fat32 bounded directory create and delete covers root and one-level subdir" {
+    storage_backend.resetForTest();
+    virtio_block.testEnableMockDevice(256);
+    defer virtio_block.testDisableMockDevice();
+    storage_backend.init();
+
+    try seedTestImage();
+
+    try createDirPath("/CACHE");
+    {
+        const root_listing = try listRootAlloc(std.testing.allocator, 256);
+        defer std.testing.allocator.free(root_listing);
+        try std.testing.expect(std.mem.indexOf(u8, root_listing, "dir CACHE\n") != null);
+    }
+
+    try writeFile("/CACHE/LOG.TXT", "fat32-dir-write", 6);
+    {
+        const payload = try readFileAlloc(std.testing.allocator, "/CACHE/LOG.TXT", 64);
+        defer std.testing.allocator.free(payload);
+        try std.testing.expectEqualStrings("fat32-dir-write", payload);
+    }
+
+    try createDirPath("/DATA/ARCHIVE");
+    const nested_listing = try listDirectoryAlloc(std.testing.allocator, "/DATA", 256);
+    defer std.testing.allocator.free(nested_listing);
+    try std.testing.expect(std.mem.indexOf(u8, nested_listing, "dir ARCHIVE\n") != null);
+
+    try deleteTree("/CACHE");
+    try std.testing.expectEqual(error.FileNotFound, readFileAlloc(std.testing.allocator, "/CACHE/LOG.TXT", 64));
+    {
+        const root_listing = try listRootAlloc(std.testing.allocator, 256);
+        defer std.testing.allocator.free(root_listing);
+        try std.testing.expect(std.mem.indexOf(u8, root_listing, "dir CACHE\n") == null);
+    }
+
+    try deleteTree("/DATA/ARCHIVE");
+    const nested_listing_after_delete = try listDirectoryAlloc(std.testing.allocator, "/DATA", 256);
+    defer std.testing.allocator.free(nested_listing_after_delete);
+    try std.testing.expect(std.mem.indexOf(u8, nested_listing_after_delete, "dir ARCHIVE\n") == null);
+
+    try std.testing.expectError(error.UnsupportedPath, createDirPath("/DATA/ARCHIVE/DEEP"));
 }
