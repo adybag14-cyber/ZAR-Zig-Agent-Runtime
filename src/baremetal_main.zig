@@ -15662,17 +15662,17 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
         &server,
         source_ip,
         destination_ip,
-        "REQ 77 PUT /tmp/sh/QUO\"TE.TXT 6\nquoted",
+        "REQ 77 CMD write-file \"/tmp/sh/QUO\\\"TE.TXT\" quoted",
         256,
         256,
         256,
     );
     if (!std.mem.startsWith(u8, quoted_path_write_response, "RESP 77 ")) return error.ToolServiceResponseMismatch;
-    if (std.mem.indexOf(u8, quoted_path_write_response, "WROTE 6 bytes to /tmp/sh/QUO\"TE.TXT\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, quoted_path_write_response, "wrote 6 bytes to /tmp/sh/QUO\"TE.TXT\n") == null) return error.ToolServiceResponseMismatch;
     qemuDebugWrite("ETS9AA\n");
 
     const quoted_path_shell_script =
-        "cat < \"/tmp/sh/QUO\\\"TE.TXT\" > /tmp/sh/QUOTED.TXT\n" ++
+        "cat \"/tmp/sh/QUO\\\"TE.TXT\" > /tmp/sh/QUOTED.TXT\n" ++
         "cat /tmp/sh/QUOTED.TXT";
     const quoted_path_shell_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 78 SHELLRUN {d}\n{s}", .{
         quoted_path_shell_script.len,

@@ -40,7 +40,7 @@ This slice explicitly does not claim:
   - bounded stdin redirection through `<`
   - bounded stdout redirection through `>` and `>>`
   - bounded stderr redirection through `2>` and `2>>`
-  - escaped quotes are supported on the redirection-path side of the bounded shell parser; direct quoted-path command tokenization remains intentionally narrow
+  - escaped quotes are supported on the redirection-path side of the bounded shell parser and on the direct quoted-path argument path for path-consuming builtins; the parser remains intentionally bounded and is not a full shell tokenizer
   - hard `64`-command cap via `max_shell_command_count`
 - `src/baremetal/tool_service/codec.zig`
   - typed `SHELLRUN`
@@ -48,7 +48,7 @@ This slice explicitly does not claim:
 - `src/baremetal/tool_service.zig`
   - framed request handling for bounded shell batching and glob expansion
 - `src/baremetal_main.zig`
-  - live `E1000` tool-service proof widened to validate shell help, bounded batch execution, escaped metacharacters, file-fed stdin flows, multi-segment glob expansion, redirected stdin/stdout/stderr behavior, and persisted filesystem readback
+  - live `E1000` tool-service proof widened to validate shell help, bounded batch execution, escaped metacharacters, file-fed stdin flows, multi-segment glob expansion, direct quoted-path read/write behavior for path-consuming builtins, redirected stdin/stdout/stderr behavior, and persisted filesystem readback
 - `build.zig`
   - bare-metal artifact now explicitly includes `scripts/baremetal/pvh_boot.S` and `scripts/baremetal/pvh_lld.ld` so the Multiboot2 header remains within the required first `32768` bytes on current Zig `master`
 
