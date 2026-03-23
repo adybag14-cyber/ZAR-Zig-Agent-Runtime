@@ -5074,7 +5074,13 @@ fn parseFirstArg(text: []const u8) Error!ParsedArg {
     }
 
     var idx: usize = 0;
-    while (idx < trimmed.len and !std.ascii.isWhitespace(trimmed[idx])) : (idx += 1) {}
+    while (idx < trimmed.len) : (idx += 1) {
+        if (trimmed[idx] == '\\' and idx + 1 < trimmed.len and isShellEscapable(trimmed[idx + 1])) {
+            idx += 1;
+            continue;
+        }
+        if (std.ascii.isWhitespace(trimmed[idx])) break;
+    }
     return .{
         .arg = trimmed[0..idx],
         .rest = trimLeftWhitespace(trimmed[idx..]),
@@ -5573,7 +5579,7 @@ fn parseShellLine(line: []const u8) Error!ParsedShellLine {
 
 fn isShellEscapable(byte: u8) bool {
     return switch (byte) {
-        ';', '<', '>', '\\', '"', '\'', '\n' => true,
+        ' ', '\t', ';', '<', '>', '\\', '"', '\'', '\n' => true,
         else => false,
     };
 }
@@ -6908,6 +6914,7 @@ test "baremetal tool exec exposes bounded direct command redirection and input p
     try filesystem.createDirPath("/tmp/direct");
     try filesystem.writeFile("/tmp/direct/A.TXT", "alpha", 0);
     try filesystem.writeFile("/tmp/direct/QUO\"TE.TXT", "quoted", 0);
+    try filesystem.writeFile("/tmp/direct/SPACE NAME.TXT", "spaced-direct", 0);
 
     var direct_output_redirect = try runCapture(std.testing.allocator, "echo direct-alpha > /tmp/direct/OUT.TXT", 256, 256);
     defer direct_output_redirect.deinit(std.testing.allocator);
@@ -6922,6 +6929,11 @@ test "baremetal tool exec exposes bounded direct command redirection and input p
     defer direct_input_redirect.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), direct_input_redirect.exit_code);
     try std.testing.expectEqualStrings("quoted", direct_input_redirect.stdout);
+
+    var direct_escaped_space_redirect = try runCapture(std.testing.allocator, "cat < /tmp/direct/SPACE\\ NAME.TXT", 256, 256);
+    defer direct_escaped_space_redirect.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), direct_escaped_space_redirect.exit_code);
+    try std.testing.expectEqualStrings("spaced-direct", direct_escaped_space_redirect.stdout);
 
     var direct_stdin_only = try runCaptureSilentWithInput(std.testing.allocator, "write-file /tmp/direct/FROMSTDIN.TXT", "stdin-direct", 256, 256);
     defer direct_stdin_only.deinit(std.testing.allocator);
@@ -6971,6 +6983,7 @@ test "baremetal tool exec persists bounded tty session receipts" {
     try std.testing.expectEqualStrings("", send_result.stderr);
 
     try filesystem.writeFile("/tmp/tty-input.txt", "file-input", 0);
+    try filesystem.writeFile("/tmp/tty input.txt", "tty spaced", 0);
     var override_write_result = try runCapture(std.testing.allocator, "tty-write demo queued-tty-data", 256, 256);
     defer override_write_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), override_write_result.exit_code);
@@ -6979,6 +6992,12 @@ test "baremetal tool exec persists bounded tty session receipts" {
     try std.testing.expectEqual(@as(u8, 0), override_send_result.exit_code);
     try std.testing.expectEqualStrings("file-input", override_send_result.stdout);
     try std.testing.expectEqualStrings("", override_send_result.stderr);
+
+    var escaped_space_send_result = try runCapture(std.testing.allocator, "tty-send demo cat < /tmp/tty\\ input.txt", 256, 256);
+    defer escaped_space_send_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), escaped_space_send_result.exit_code);
+    try std.testing.expectEqualStrings("tty spaced", escaped_space_send_result.stdout);
+    try std.testing.expectEqualStrings("", escaped_space_send_result.stderr);
 
     var drained_pending = try runCapture(std.testing.allocator, "tty-pending demo", 256, 256);
     defer drained_pending.deinit(std.testing.allocator);
@@ -7011,9 +7030,9 @@ test "baremetal tool exec persists bounded tty session receipts" {
     try std.testing.expectEqual(@as(u8, 0), info_result.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "name=demo") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "open=1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "command_count=3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "command_count=4") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "pending_input_bytes=0") != null);
-    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "event_count=8") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "event_count=9") != null);
 
     var read_result = try runCapture(std.testing.allocator, "tty-read demo", 1024, 256);
     defer read_result.deinit(std.testing.allocator);
@@ -7034,7 +7053,7 @@ test "baremetal tool exec persists bounded tty session receipts" {
     var stdout_result = try runCapture(std.testing.allocator, "tty-stdout demo", 256, 256);
     defer stdout_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), stdout_result.exit_code);
-    try std.testing.expectEqualStrings("tty-session-inputfile-input", stdout_result.stdout);
+    try std.testing.expectEqualStrings("tty-session-inputfile-inputtty spaced", stdout_result.stdout);
 
     var stderr_result = try runCapture(std.testing.allocator, "tty-stderr demo", 256, 256);
     defer stderr_result.deinit(std.testing.allocator);
@@ -7099,6 +7118,7 @@ test "baremetal tool exec persists bounded tty session receipts" {
     try std.testing.expectEqualStrings("tty closed shell\n", shell_close.stdout);
 
     try filesystem.writeFile("/tmp/tty-shell/INPUT.TXT", "file-input", 0);
+    try filesystem.writeFile("/tmp/tty-shell/SPACE NAME.TXT", "space-file", 0);
 
     var shell_override_open = try runCapture(std.testing.allocator, "tty-open shell-override", 256, 256);
     defer shell_override_open.deinit(std.testing.allocator);
@@ -7118,6 +7138,20 @@ test "baremetal tool exec persists bounded tty session receipts" {
     const shell_override_file = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/tty-shell/OVERRIDE.TXT", 64);
     defer std.testing.allocator.free(shell_override_file);
     try std.testing.expectEqualStrings("file-input", shell_override_file);
+
+    var shell_space_write = try runCapture(std.testing.allocator, "tty-write shell-override queued-space-data", 256, 256);
+    defer shell_space_write.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), shell_space_write.exit_code);
+
+    var shell_space_run = try runCapture(std.testing.allocator, "tty-shell shell-override cat < /tmp/tty-shell/SPACE\\ NAME.TXT > /tmp/tty-shell/SPACEOUT.TXT; cat", 256, 256);
+    defer shell_space_run.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), shell_space_run.exit_code);
+    try std.testing.expectEqualStrings("queued-space-data", shell_space_run.stdout);
+    try std.testing.expectEqualStrings("", shell_space_run.stderr);
+
+    const shell_space_file = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/tty-shell/SPACEOUT.TXT", 64);
+    defer std.testing.allocator.free(shell_space_file);
+    try std.testing.expectEqualStrings("space-file", shell_space_file);
 
     var shell_override_pending = try runCapture(std.testing.allocator, "tty-pending shell-override", 256, 256);
     defer shell_override_pending.deinit(std.testing.allocator);

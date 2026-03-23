@@ -4488,6 +4488,8 @@ test "baremetal tool service persists bounded tty session commands" {
     defer std.testing.allocator.free(tty_override_input);
     try std.testing.expectEqualStrings("RESP 152 37\nWROTE 10 bytes to /tmp/tty-input.txt\n", tty_override_input);
 
+    try filesystem.writeFile("/tmp/tty input.txt", "tty spaced", 0);
+
     const tty_pending = try handleFramedRequest(std.testing.allocator, "REQ 52 TTYPENDING demo", 256, 256, 256);
     defer std.testing.allocator.free(tty_pending);
     try std.testing.expectEqualStrings("RESP 52 17\ntty-service-input", tty_pending);
@@ -4511,6 +4513,12 @@ test "baremetal tool service persists bounded tty session commands" {
     const tty_override_send = try handleFramedRequest(std.testing.allocator, tty_override_send_request, 256, 256, 256);
     defer std.testing.allocator.free(tty_override_send);
     try std.testing.expectEqualStrings("RESP 154 10\nfile-input", tty_override_send);
+
+    const tty_override_send_spaced_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 156 TTYSEND {d}\n{s}", .{ "demo cat < /tmp/tty\\ input.txt".len, "demo cat < /tmp/tty\\ input.txt" });
+    defer std.testing.allocator.free(tty_override_send_spaced_request);
+    const tty_override_send_spaced = try handleFramedRequest(std.testing.allocator, tty_override_send_spaced_request, 256, 256, 256);
+    defer std.testing.allocator.free(tty_override_send_spaced);
+    try std.testing.expectEqualStrings("RESP 156 10\ntty spaced", tty_override_send_spaced);
 
     const tty_pending_after_send = try handleFramedRequest(std.testing.allocator, "REQ 54 TTYPENDING demo", 256, 256, 256);
     defer std.testing.allocator.free(tty_pending_after_send);
@@ -4542,9 +4550,9 @@ test "baremetal tool service persists bounded tty session commands" {
     defer std.testing.allocator.free(tty_info);
     try std.testing.expect(std.mem.startsWith(u8, tty_info, "RESP 59 "));
     try std.testing.expect(std.mem.indexOf(u8, tty_info, "name=demo") != null);
-    try std.testing.expect(std.mem.indexOf(u8, tty_info, "command_count=3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tty_info, "command_count=4") != null);
     try std.testing.expect(std.mem.indexOf(u8, tty_info, "pending_input_bytes=0") != null);
-    try std.testing.expect(std.mem.indexOf(u8, tty_info, "event_count=8") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tty_info, "event_count=9") != null);
 
     const tty_read = try handleFramedRequest(std.testing.allocator, "REQ 60 TTYREAD demo", 1024, 256, 1024);
     defer std.testing.allocator.free(tty_read);
@@ -4562,7 +4570,7 @@ test "baremetal tool service persists bounded tty session commands" {
 
     const tty_stdout = try handleFramedRequest(std.testing.allocator, "REQ 62 TTYSTDOUT demo", 256, 256, 256);
     defer std.testing.allocator.free(tty_stdout);
-    try std.testing.expectEqualStrings("RESP 62 27\ntty-service-inputfile-input", tty_stdout);
+    try std.testing.expectEqualStrings("RESP 62 37\ntty-service-inputfile-inputtty spaced", tty_stdout);
 
     const tty_stderr = try handleFramedRequest(std.testing.allocator, "REQ 63 TTYSTDERR demo", 256, 256, 256);
     defer std.testing.allocator.free(tty_stderr);
@@ -4608,6 +4616,7 @@ test "baremetal tool service persists bounded tty session commands" {
     try std.testing.expectEqualStrings("RESP 70 17\ntty closed shell\n", tty_shell_close);
 
     try filesystem.writeFile("/tmp/tty-shell/INPUT.TXT", "file-input", 0);
+    try filesystem.writeFile("/tmp/tty-shell/SPACE NAME.TXT", "space-file", 0);
 
     const tty_shell_override_open = try handleFramedRequest(std.testing.allocator, "REQ 71 TTYOPEN shell-override", 256, 256, 256);
     defer std.testing.allocator.free(tty_shell_override_open);
@@ -4632,6 +4641,25 @@ test "baremetal tool service persists bounded tty session commands" {
     defer std.testing.allocator.free(tty_shell_override_readback);
     try std.testing.expectEqualStrings("RESP 74 10\nfile-input", tty_shell_override_readback);
 
+    const tty_shell_space_write_body = "shell-override\nqueued-space-data";
+    const tty_shell_space_write_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 174 TTYWRITE {d}\n{s}", .{ tty_shell_space_write_body.len, tty_shell_space_write_body });
+    defer std.testing.allocator.free(tty_shell_space_write_request);
+    const tty_shell_space_write = try handleFramedRequest(std.testing.allocator, tty_shell_space_write_request, 256, 256, 256);
+    defer std.testing.allocator.free(tty_shell_space_write);
+    try std.testing.expectEqualStrings("RESP 174 35\ntty queued shell-override 17 bytes\n", tty_shell_space_write);
+
+    const tty_shell_space_batch = "cat < /tmp/tty-shell/SPACE\\ NAME.TXT > /tmp/tty-shell/SPACEOUT.TXT; cat";
+    const tty_shell_space_script = "shell-override cat < /tmp/tty-shell/SPACE\\ NAME.TXT > /tmp/tty-shell/SPACEOUT.TXT; cat";
+    const tty_shell_space_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 175 TTYSHELL {d}\n{s}", .{ tty_shell_space_script.len, tty_shell_space_script });
+    defer std.testing.allocator.free(tty_shell_space_request);
+    const tty_shell_space_response = try handleFramedRequest(std.testing.allocator, tty_shell_space_request, 256, 256, 256);
+    defer std.testing.allocator.free(tty_shell_space_response);
+    try std.testing.expectEqualStrings("RESP 175 17\nqueued-space-data", tty_shell_space_response);
+
+    const tty_shell_space_readback = try handleFramedRequest(std.testing.allocator, "REQ 176 GET /tmp/tty-shell/SPACEOUT.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(tty_shell_space_readback);
+    try std.testing.expectEqualStrings("RESP 176 10\nspace-file", tty_shell_space_readback);
+
     const tty_shell_override_pending = try handleFramedRequest(std.testing.allocator, "REQ 75 TTYPENDING shell-override", 256, 256, 256);
     defer std.testing.allocator.free(tty_shell_override_pending);
     try std.testing.expectEqualStrings("RESP 75 0\n", tty_shell_override_pending);
@@ -4643,6 +4671,10 @@ test "baremetal tool service persists bounded tty session commands" {
     const tty_shell_override_event = try std.fmt.allocPrint(std.testing.allocator, "type=shell exit=0 script_bytes={d} stdin_bytes=15 stdout_bytes=15 stderr_bytes=0", .{tty_shell_override_batch.len});
     defer std.testing.allocator.free(tty_shell_override_event);
     try std.testing.expect(std.mem.indexOf(u8, tty_shell_override_events, tty_shell_override_event) != null);
+    try std.testing.expect(std.mem.indexOf(u8, tty_shell_override_events, "type=write bytes=17") != null);
+    const tty_shell_space_event = try std.fmt.allocPrint(std.testing.allocator, "type=shell exit=0 script_bytes={d} stdin_bytes=17 stdout_bytes=17 stderr_bytes=0", .{tty_shell_space_batch.len});
+    defer std.testing.allocator.free(tty_shell_space_event);
+    try std.testing.expect(std.mem.indexOf(u8, tty_shell_override_events, tty_shell_space_event) != null);
 
     const tty_shell_override_close = try handleFramedRequest(std.testing.allocator, "REQ 77 TTYCLOSE shell-override", 256, 256, 256);
     defer std.testing.allocator.free(tty_shell_override_close);

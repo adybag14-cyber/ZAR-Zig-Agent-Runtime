@@ -36,7 +36,7 @@ This slice explicitly does not claim:
   - shared bounded script execution through `executeScriptContents(...)`
   - direct wrapper-command bypass of the outer shell-line parser for `shell-run`, `tty-send`, and `tty-shell` so embedded shell text keeps its own redirection semantics
   - bounded glob matching across multiple path segments with `*` and `?`
-  - bounded shell escaping for `\;`, `\<`, `\>`, `\\`, and quoted separators on the parser path
+  - bounded shell escaping for `\;`, `\<`, `\>`, `\\`, escaped whitespace on redirection paths, and quoted separators on the parser path
   - malformed quoted arguments now fail early when a closing quote is not followed by whitespace or end-of-command
   - bounded stdin redirection through `<`
   - bounded stdout redirection through `>` and `>>`
@@ -49,7 +49,7 @@ This slice explicitly does not claim:
 - `src/baremetal/tool_service.zig`
   - framed request handling for bounded shell batching and glob expansion
 - `src/baremetal_main.zig`
-  - live `E1000` tool-service proof widened to validate shell help, bounded batch execution, escaped metacharacters, file-fed stdin flows, multi-segment glob expansion, direct quoted-path read/write behavior for path-consuming builtins, redirected stdin/stdout/stderr behavior, and persisted filesystem readback
+  - live `E1000` tool-service proof widened to validate shell help, bounded batch execution, escaped metacharacters, file-fed stdin flows, escaped-whitespace redirection paths, multi-segment glob expansion, direct quoted-path read/write behavior for path-consuming builtins, redirected stdin/stdout/stderr behavior, and persisted filesystem readback
 - `build.zig`
   - bare-metal artifact now explicitly includes `scripts/baremetal/pvh_boot.S` and `scripts/baremetal/pvh_lld.ld` so the Multiboot2 header remains within the required first `32768` bytes on current Zig `master`
 
