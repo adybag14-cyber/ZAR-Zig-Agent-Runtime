@@ -5,6 +5,8 @@ const app_runtime = @import("app_runtime.zig");
 const filesystem = @import("filesystem.zig");
 const package_store = @import("package_store.zig");
 const runtime_bridge = @import("runtime_bridge.zig");
+const storage_backend_registry = @import("storage_backend_registry.zig");
+const storage_registry = @import("storage_registry.zig");
 const trust_store = @import("trust_store.zig");
 const workspace_runtime = @import("workspace_runtime.zig");
 const display_profile_store = @import("display_profile_store.zig");
@@ -13,9 +15,10 @@ const framebuffer_console = @import("framebuffer_console.zig");
 const pal_framebuffer = @import("../pal/framebuffer.zig");
 const vga_text_console = @import("vga_text_console.zig");
 const storage_backend = @import("storage_backend.zig");
+const tool_layout = @import("tool_layout.zig");
 const virtio_gpu = @import("virtio_gpu.zig");
 
-pub const Error = filesystem.Error || trust_store.Error || app_runtime.Error || workspace_runtime.Error || display_profile_store.Error || std.mem.Allocator.Error || error{
+pub const Error = filesystem.Error || trust_store.Error || app_runtime.Error || workspace_runtime.Error || display_profile_store.Error || storage_backend.Error || std.mem.Allocator.Error || error{
     MissingCommand,
     MissingPath,
     StreamTooLong,
@@ -160,7 +163,7 @@ fn execute(
     if (depth > max_script_depth) return error.ScriptDepthExceeded;
 
     if (std.ascii.eqlIgnoreCase(parsed.name, "help")) {
-        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-plan-list, workspace-plan-info, workspace-plan-active, workspace-plan-save, workspace-plan-apply, workspace-plan-delete, workspace-plan-release-list, workspace-plan-release-info, workspace-plan-release-save, workspace-plan-release-activate, workspace-plan-release-delete, workspace-plan-release-prune, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-suite-release-channel-list, workspace-suite-release-channel-info, workspace-suite-release-channel-set, workspace-suite-release-channel-activate, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-outputs, display-output, display-output-detail, display-output-capabilities, display-output-modes, display-interface-detail, display-interface-capabilities, display-interface-modes, display-modes, display-set, display-activate, display-activate-preferred, display-activate-interface, display-activate-interface-preferred, display-interface-set, display-interface-activate-mode, display-activate-output, display-activate-output-preferred, display-output-set, display-output-activate-mode, display-profile-list, display-profile-info, display-profile-active, display-profile-save, display-profile-apply, display-profile-delete, run-script, run-package, app-run");
+        try stdout_buffer.appendLine("OpenClaw bare-metal builtins: help, echo, cat, write-file, mkdir, stat, ls, storage-backends, storage-filesystems, storage-backend-info, storage-backend-select, storage-partitions, storage-partition-select, mount-list, mount-info, mount-bind, mount-remove, package-info, package-verify, package-app, package-display, package-ls, package-cat, package-delete, package-release-list, package-release-info, package-release-save, package-release-activate, package-release-delete, package-release-prune, package-release-channel-list, package-release-channel-info, package-release-channel-set, package-release-channel-activate, app-list, app-info, app-state, app-history, app-stdout, app-stderr, app-trust, app-connector, app-plan-list, app-plan-info, app-plan-active, app-plan-save, app-plan-apply, app-plan-delete, app-suite-list, app-suite-info, app-suite-save, app-suite-apply, app-suite-run, app-suite-delete, app-suite-release-list, app-suite-release-info, app-suite-release-save, app-suite-release-activate, app-suite-release-delete, app-suite-release-prune, app-suite-release-channel-list, app-suite-release-channel-info, app-suite-release-channel-set, app-suite-release-channel-activate, app-delete, app-autorun-list, app-autorun-add, app-autorun-remove, app-autorun-run, workspace-plan-list, workspace-plan-info, workspace-plan-active, workspace-plan-save, workspace-plan-apply, workspace-plan-delete, workspace-plan-release-list, workspace-plan-release-info, workspace-plan-release-save, workspace-plan-release-activate, workspace-plan-release-delete, workspace-plan-release-prune, workspace-suite-list, workspace-suite-info, workspace-suite-save, workspace-suite-apply, workspace-suite-run, workspace-suite-delete, workspace-suite-release-list, workspace-suite-release-info, workspace-suite-release-save, workspace-suite-release-activate, workspace-suite-release-delete, workspace-suite-release-prune, workspace-suite-release-channel-list, workspace-suite-release-channel-info, workspace-suite-release-channel-set, workspace-suite-release-channel-activate, workspace-list, workspace-info, workspace-save, workspace-apply, workspace-run, workspace-state, workspace-history, workspace-stdout, workspace-stderr, workspace-delete, workspace-release-list, workspace-release-info, workspace-release-save, workspace-release-activate, workspace-release-delete, workspace-release-prune, workspace-release-channel-list, workspace-release-channel-info, workspace-release-channel-set, workspace-release-channel-activate, workspace-autorun-list, workspace-autorun-add, workspace-autorun-remove, workspace-autorun-run, trust-list, trust-info, trust-active, trust-select, trust-delete, runtime-snapshot, runtime-sessions, runtime-session, display-info, display-outputs, display-output, display-output-detail, display-output-capabilities, display-output-modes, display-interface-detail, display-interface-capabilities, display-interface-modes, display-modes, display-set, display-activate, display-activate-preferred, display-activate-interface, display-activate-interface-preferred, display-interface-set, display-interface-activate-mode, display-activate-output, display-activate-output-preferred, display-output-set, display-output-activate-mode, display-profile-list, display-profile-info, display-profile-active, display-profile-save, display-profile-apply, display-profile-delete, run-script, run-package, app-run");
         return;
     }
 
@@ -279,6 +282,208 @@ fn execute(
         };
         defer allocator.free(listing);
         try stdout_buffer.appendSlice(listing);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "storage-backends")) {
+        if (std.mem.trim(u8, parsed.rest, " \t\r\n").len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: storage-backends");
+            return;
+        }
+        const rendered = storage_backend_registry.renderAlloc(allocator, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("storage-backends failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(rendered);
+        try stdout_buffer.appendSlice(rendered);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "storage-filesystems")) {
+        if (std.mem.trim(u8, parsed.rest, " \t\r\n").len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: storage-filesystems");
+            return;
+        }
+        const rendered = storage_backend_registry.renderFilesystemSupportAlloc(allocator, stdout_buffer.limit) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("storage-filesystems failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer allocator.free(rendered);
+        try stdout_buffer.appendSlice(rendered);
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "storage-backend-info")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "storage-backend-info <backend>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: storage-backend-info <backend>");
+            return;
+        }
+        const backend = parseStorageBackendArg(arg.arg) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: storage-backend-info <backend>");
+            return;
+        };
+        appendStorageBackendInfo(stdout_buffer, backend) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("storage-backend-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "storage-backend-select")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "storage-backend-select <backend>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: storage-backend-select <backend>");
+            return;
+        }
+        const backend = parseStorageBackendArg(arg.arg) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: storage-backend-select <backend>");
+            return;
+        };
+        storage_backend.selectBackendById(backend) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("storage-backend-select failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        tool_layout.invalidateForBackendChange();
+        filesystem.invalidateForBackendChange();
+        try stdout_buffer.appendFmt("storage backend selected {s}\n", .{storage_registry.backendName(backend)});
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "storage-partitions")) {
+        if (std.mem.trim(u8, parsed.rest, " \t\r\n").len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: storage-partitions");
+            return;
+        }
+        appendStoragePartitions(stdout_buffer) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("storage-partitions failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "storage-partition-select")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "storage-partition-select <index>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: storage-partition-select <index>");
+            return;
+        }
+        const index = std.fmt.parseUnsigned(u8, arg.arg, 10) catch {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: storage-partition-select <index>");
+            return;
+        };
+        storage_backend.selectPartition(index) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("storage-partition-select failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        tool_layout.invalidateForBackendChange();
+        filesystem.invalidateForBackendChange();
+        try stdout_buffer.appendFmt("storage partition selected {d}\n", .{index});
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "mount-list")) {
+        if (std.mem.trim(u8, parsed.rest, " \t\r\n").len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: mount-list");
+            return;
+        }
+        appendMountList(stdout_buffer) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("mount-list failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "mount-info")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "mount-info <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: mount-info <name>");
+            return;
+        }
+        appendMountInfo(stdout_buffer, arg.arg) catch |err| {
+            exit_code.* = if (err == error.FileNotFound) 1 else 1;
+            try stderr_buffer.appendFmt("mount-info failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "mount-bind")) {
+        const name_arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "mount-bind <name> <target>");
+            return;
+        };
+        const target_arg = parseFirstArg(name_arg.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "mount-bind <name> <target>");
+            return;
+        };
+        if (target_arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: mount-bind <name> <target>");
+            return;
+        }
+        filesystem.bindMount(name_arg.arg, target_arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("mount-bind failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("mount bound {s} -> {s}\n", .{ name_arg.arg, target_arg.arg });
+        return;
+    }
+
+    if (std.ascii.eqlIgnoreCase(parsed.name, "mount-remove")) {
+        const arg = parseFirstArg(parsed.rest) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "mount-remove <name>");
+            return;
+        };
+        if (arg.rest.len != 0) {
+            exit_code.* = 2;
+            try stderr_buffer.appendLine("usage: mount-remove <name>");
+            return;
+        }
+        filesystem.removeMount(arg.arg, 0) catch |err| {
+            exit_code.* = 1;
+            try stderr_buffer.appendFmt("mount-remove failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+        try stdout_buffer.appendFmt("mount removed {s}\n", .{arg.arg});
         return;
     }
 
@@ -4598,6 +4803,140 @@ fn writeCommandError(stderr_buffer: *OutputBuffer, err: anyerror, usage: []const
     }
 }
 
+fn parseStorageBackendArg(text: []const u8) Error!u8 {
+    if (std.fmt.parseUnsigned(u8, text, 10)) |index| {
+        return switch (index) {
+            0 => abi.storage_backend_ram_disk,
+            1 => abi.storage_backend_ata_pio,
+            2 => abi.storage_backend_virtio_block,
+            else => error.OutOfRange,
+        };
+    } else |_| {}
+
+    if (std.ascii.eqlIgnoreCase(text, "ram_disk") or std.ascii.eqlIgnoreCase(text, "ram-disk")) return abi.storage_backend_ram_disk;
+    if (std.ascii.eqlIgnoreCase(text, "ata_pio") or std.ascii.eqlIgnoreCase(text, "ata-pio")) return abi.storage_backend_ata_pio;
+    if (std.ascii.eqlIgnoreCase(text, "virtio_block") or std.ascii.eqlIgnoreCase(text, "virtio-block")) return abi.storage_backend_virtio_block;
+    return error.OutOfRange;
+}
+
+fn appendStorageBackendInfo(stdout_buffer: *OutputBuffer, backend: u8) Error!void {
+    var index: usize = 0;
+    while (index < storage_backend_registry.entryCount()) : (index += 1) {
+        const entry = storage_backend_registry.entry(index) orelse continue;
+        if (entry.backend != backend) continue;
+        try appendStorageBackendEntry(stdout_buffer, index, entry);
+        return;
+    }
+    return error.FileNotFound;
+}
+
+fn appendStorageBackendEntry(stdout_buffer: *OutputBuffer, index: usize, entry: storage_backend_registry.Entry) Error!void {
+    if (entry.selected_partition == std.math.maxInt(u8)) {
+        try stdout_buffer.appendFmt(
+            "backend[{d}]=name={s} backend={s} available={d} selected={d} mounted={d} preferred_order={d} filesystem={s} block_size={d} block_count={d} logical_base_lba={d} partition_count={d} selected_partition=none\n",
+            .{
+                index,
+                entry.nameSlice(),
+                storage_registry.backendName(entry.backend),
+                entry.available,
+                entry.selected,
+                entry.mounted,
+                entry.preferred_order,
+                storage_registry.filesystemKindName(entry.filesystem_kind),
+                entry.block_size,
+                entry.block_count,
+                entry.logical_base_lba,
+                entry.partition_count,
+            },
+        );
+    } else {
+        try stdout_buffer.appendFmt(
+            "backend[{d}]=name={s} backend={s} available={d} selected={d} mounted={d} preferred_order={d} filesystem={s} block_size={d} block_count={d} logical_base_lba={d} partition_count={d} selected_partition={d}\n",
+            .{
+                index,
+                entry.nameSlice(),
+                storage_registry.backendName(entry.backend),
+                entry.available,
+                entry.selected,
+                entry.mounted,
+                entry.preferred_order,
+                storage_registry.filesystemKindName(entry.filesystem_kind),
+                entry.block_size,
+                entry.block_count,
+                entry.logical_base_lba,
+                entry.partition_count,
+                entry.selected_partition,
+            },
+        );
+    }
+}
+
+fn appendStoragePartitions(stdout_buffer: *OutputBuffer) Error!void {
+    const backend = storage_backend.activeBackend();
+    const partition_count = storage_backend.partitionCount();
+    const selected = storage_backend.selectedPartitionIndex();
+    if (selected) |index| {
+        try stdout_buffer.appendFmt(
+            "backend={s} partition_count={d} selected={d} logical_base_lba={d}\n",
+            .{ storage_registry.backendName(backend), partition_count, index, storage_backend.logicalBaseLba() },
+        );
+    } else {
+        try stdout_buffer.appendFmt(
+            "backend={s} partition_count={d} selected=none logical_base_lba={d}\n",
+            .{ storage_registry.backendName(backend), partition_count, storage_backend.logicalBaseLba() },
+        );
+    }
+
+    var index: u8 = 0;
+    while (index < partition_count) : (index += 1) {
+        const info = storage_backend.partitionInfo(index) orelse continue;
+        try stdout_buffer.appendFmt(
+            "partition[{d}] scheme={s} start_lba={d} sector_count={d} selected={d}\n",
+            .{
+                index,
+                switch (info.scheme) {
+                    .mbr => "mbr",
+                    .gpt => "gpt",
+                },
+                info.start_lba,
+                info.sector_count,
+                if (selected != null and selected.? == index) @as(u8, 1) else @as(u8, 0),
+            },
+        );
+    }
+}
+
+fn appendMountList(stdout_buffer: *OutputBuffer) Error!void {
+    var index: usize = 0;
+    while (index < filesystem.mountCount()) : (index += 1) {
+        const entry = filesystem.mountEntry(index) orelse continue;
+        try appendMountEntry(stdout_buffer, entry);
+    }
+}
+
+fn appendMountInfo(stdout_buffer: *OutputBuffer, name: []const u8) Error!void {
+    var index: usize = 0;
+    while (index < filesystem.mountCount()) : (index += 1) {
+        const entry = filesystem.mountEntry(index) orelse continue;
+        if (!std.mem.eql(u8, entry.name[0..entry.name_len], name)) continue;
+        try appendMountEntry(stdout_buffer, entry);
+        return;
+    }
+    return error.FileNotFound;
+}
+
+fn appendMountEntry(stdout_buffer: *OutputBuffer, entry: @TypeOf(filesystem.mountEntry(0).?)) Error!void {
+    try stdout_buffer.appendFmt(
+        "mount name={s} path=/mnt/{s} target={s} modified_tick={d}\n",
+        .{
+            entry.name[0..entry.name_len],
+            entry.name[0..entry.name_len],
+            entry.target[0..entry.target_len],
+            entry.modified_tick,
+        },
+    );
+}
+
 test "baremetal tool exec echoes to stdout and console" {
     storage_backend.resetForTest();
     filesystem.resetForTest();
@@ -5389,6 +5728,57 @@ test "baremetal tool exec exposes virtual proc sys and dev overlays" {
     defer stat_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), stat_result.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, stat_result.stdout, "path=/proc/runtime/snapshot kind=file") != null);
+}
+
+test "baremetal tool exec exposes storage and mount controls" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    vga_text_console.resetForTest();
+
+    var storage_backends = try runCapture(std.testing.allocator, "storage-backends", 1024, 256);
+    defer storage_backends.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), storage_backends.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, storage_backends.stdout, "backend[0]=name=ram_disk backend=ram_disk available=1 selected=1 mounted=1") != null);
+
+    var storage_filesystems = try runCapture(std.testing.allocator, "storage-filesystems", 512, 256);
+    defer storage_filesystems.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), storage_filesystems.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, storage_filesystems.stdout, "filesystem=fat32 detect=1 mount=1 write=1 source=zar_bounded_writable_one_level_83") != null);
+
+    var backend_info = try runCapture(std.testing.allocator, "storage-backend-info ram_disk", 512, 256);
+    defer backend_info.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), backend_info.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, backend_info.stdout, "backend[0]=name=ram_disk backend=ram_disk available=1 selected=1 mounted=1") != null);
+
+    var partitions = try runCapture(std.testing.allocator, "storage-partitions", 256, 256);
+    defer partitions.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), partitions.exit_code);
+    try std.testing.expectEqualStrings("backend=ram_disk partition_count=0 selected=none logical_base_lba=0\n", partitions.stdout);
+
+    var bind = try runCapture(std.testing.allocator, "mount-bind state /runtime/state", 256, 256);
+    defer bind.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), bind.exit_code);
+    try std.testing.expectEqualStrings("mount bound state -> /runtime/state\n", bind.stdout);
+
+    var mount_list = try runCapture(std.testing.allocator, "mount-list", 256, 256);
+    defer mount_list.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), mount_list.exit_code);
+    try std.testing.expectEqualStrings("mount name=state path=/mnt/state target=/runtime/state modified_tick=0\n", mount_list.stdout);
+
+    var mount_info = try runCapture(std.testing.allocator, "mount-info state", 256, 256);
+    defer mount_info.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), mount_info.exit_code);
+    try std.testing.expectEqualStrings("mount name=state path=/mnt/state target=/runtime/state modified_tick=0\n", mount_info.stdout);
+
+    var remove = try runCapture(std.testing.allocator, "mount-remove state", 256, 256);
+    defer remove.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), remove.exit_code);
+    try std.testing.expectEqualStrings("mount removed state\n", remove.stdout);
+
+    var mount_list_after = try runCapture(std.testing.allocator, "mount-list", 256, 256);
+    defer mount_list_after.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), mount_list_after.exit_code);
+    try std.testing.expectEqualStrings("", mount_list_after.stdout);
 }
 
 test "baremetal tool exec configures app trust and connector and reports app info" {

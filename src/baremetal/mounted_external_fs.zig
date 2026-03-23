@@ -71,13 +71,15 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     const parsed = parsePath(path) orelse return error.FileNotFound;
     if (parsed.kind == .root) return listRouterRootAlloc(allocator, max_bytes);
     const kind = try resolveKind(parsed.kind);
-    if (!(parsed.relative.len == 0 or std.mem.eql(u8, parsed.relative, "/"))) {
-        const stat = try statSummary(path);
-        if (stat.kind != .directory) return error.NotDirectory;
-    }
     return switch (kind) {
-        .ext2 => ext2_ro.listRootAlloc(allocator, max_bytes),
-        .fat32 => fat32_ro.listRootAlloc(allocator, max_bytes),
+        .ext2 => blk: {
+            if (!(parsed.relative.len == 0 or std.mem.eql(u8, parsed.relative, "/"))) {
+                const stat = try statSummary(path);
+                if (stat.kind != .directory) return error.NotDirectory;
+            }
+            break :blk ext2_ro.listRootAlloc(allocator, max_bytes);
+        },
+        .fat32 => fat32_ro.listDirectoryAlloc(allocator, parsed.relative, max_bytes),
         else => error.FileNotFound,
     };
 }
@@ -198,7 +200,8 @@ test "mounted external fs routes fat32 reads through active root" {
 
     const listing = try listDirectoryAlloc(std.testing.allocator, active_root, 256);
     defer std.testing.allocator.free(listing);
-    try std.testing.expectEqualStrings("file HELLO.TXT 16\n", listing);
+    try std.testing.expect(std.mem.indexOf(u8, listing, "file HELLO.TXT 16\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, listing, "dir DATA\n") != null);
 
     const file = try readFileAlloc(std.testing.allocator, active_root ++ "/HELLO.TXT", 64);
     defer std.testing.allocator.free(file);
@@ -219,4 +222,28 @@ test "mounted external fs routes bounded fat32 writes through active root" {
 
     try deleteFile(active_root ++ "/WRITE.TXT");
     try std.testing.expectEqual(error.FileNotFound, readFileAlloc(std.testing.allocator, active_root ++ "/WRITE.TXT", 64));
+}
+
+test "mounted external fs routes bounded nested fat32 operations through active root" {
+    storage_backend.resetForTest();
+    virtio_block.testEnableMockDevice(256);
+    defer virtio_block.testDisableMockDevice();
+    storage_backend.init();
+    try fat32_ro.seedTestImage();
+
+    const listing = try listDirectoryAlloc(std.testing.allocator, active_root ++ "/DATA", 256);
+    defer std.testing.allocator.free(listing);
+    try std.testing.expect(std.mem.indexOf(u8, listing, "file NOTE.TXT 23\n") != null);
+
+    const nested = try readFileAlloc(std.testing.allocator, active_root ++ "/DATA/NOTE.TXT", 64);
+    defer std.testing.allocator.free(nested);
+    try std.testing.expectEqualStrings(fat32_ro.test_nested_file_payload, nested);
+
+    try writeFile(active_root ++ "/DATA/WRITE.TXT", "mounted-fat32-nested", 9);
+    const created = try readFileAlloc(std.testing.allocator, active_root ++ "/DATA/WRITE.TXT", 64);
+    defer std.testing.allocator.free(created);
+    try std.testing.expectEqualStrings("mounted-fat32-nested", created);
+
+    try deleteFile(active_root ++ "/DATA/WRITE.TXT");
+    try std.testing.expectEqual(error.FileNotFound, readFileAlloc(std.testing.allocator, active_root ++ "/DATA/WRITE.TXT", 64));
 }

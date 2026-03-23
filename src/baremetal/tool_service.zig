@@ -11,6 +11,8 @@ const pal_framebuffer = @import("../pal/framebuffer.zig");
 const package_store = @import("package_store.zig");
 const runtime_bridge = @import("runtime_bridge.zig");
 const storage_backend = @import("storage_backend.zig");
+const storage_backend_registry = @import("storage_backend_registry.zig");
+const storage_registry = @import("storage_registry.zig");
 const trust_store = @import("trust_store.zig");
 const tool_exec = @import("tool_exec.zig");
 const tool_layout = @import("tool_layout.zig");
@@ -194,6 +196,16 @@ fn handleFramedPayload(
         .put => |put_request| try handlePutRequest(allocator, put_request.path, put_request.body, payload_limit),
         .stat => |path| try handleStatRequest(allocator, path, payload_limit),
         .list => |path| try handleListRequest(allocator, path, payload_limit),
+        .storage_backends => try handleStorageBackendsRequest(allocator, payload_limit),
+        .storage_filesystems => try handleStorageFilesystemsRequest(allocator, payload_limit),
+        .storage_backend_info => |backend_name| try handleStorageBackendInfoRequest(allocator, backend_name, payload_limit),
+        .storage_backend_select => |backend_name| try handleStorageBackendSelectRequest(allocator, backend_name, payload_limit),
+        .storage_partitions => try handleStoragePartitionsRequest(allocator, payload_limit),
+        .storage_partition_select => |index_text| try handleStoragePartitionSelectRequest(allocator, index_text, payload_limit),
+        .mount_list => try handleMountListRequest(allocator, payload_limit),
+        .mount_info => |mount_name| try handleMountInfoRequest(allocator, mount_name, payload_limit),
+        .mount_bind => |request| try handleMountBindRequest(allocator, request.package_name, request.value, payload_limit),
+        .mount_remove => |mount_name| try handleMountRemoveRequest(allocator, mount_name, payload_limit),
         .install => try handleInstallRequest(allocator, payload_limit),
         .manifest => try handleManifestRequest(allocator, payload_limit),
         .package_install => |package_request| try handlePackageInstallRequest(allocator, package_request.path, package_request.body, payload_limit),
@@ -452,6 +464,270 @@ fn handleListRequest(allocator: std.mem.Allocator, path: []const u8, payload_lim
     return filesystem.listDirectoryAlloc(allocator, path, payload_limit) catch |err| {
         return formatOperationError(allocator, "LIST", err, payload_limit);
     };
+}
+
+fn handleStorageBackendsRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    return storage_backend_registry.renderAlloc(allocator, payload_limit) catch |err| {
+        return formatOperationError(allocator, "STORAGEBACKENDS", err, payload_limit);
+    };
+}
+
+fn handleStorageFilesystemsRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    return storage_backend_registry.renderFilesystemSupportAlloc(allocator, payload_limit) catch |err| {
+        return formatOperationError(allocator, "STORAGEFILESYSTEMS", err, payload_limit);
+    };
+}
+
+fn handleStorageBackendInfoRequest(
+    allocator: std.mem.Allocator,
+    backend_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    const backend = parseStorageBackendName(backend_name) catch |err| {
+        return formatOperationError(allocator, "STORAGEBACKENDINFO", err, payload_limit);
+    };
+
+    var index: usize = 0;
+    while (index < storage_backend_registry.entryCount()) : (index += 1) {
+        const entry = storage_backend_registry.entry(index) orelse continue;
+        if (entry.backend != backend) continue;
+        return formatStorageBackendEntry(allocator, index, entry, payload_limit);
+    }
+    return formatOperationError(allocator, "STORAGEBACKENDINFO", error.FileNotFound, payload_limit);
+}
+
+fn handleStorageBackendSelectRequest(
+    allocator: std.mem.Allocator,
+    backend_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    const backend = parseStorageBackendName(backend_name) catch |err| {
+        return formatOperationError(allocator, "STORAGEBACKENDSELECT", err, payload_limit);
+    };
+    storage_backend.selectBackendById(backend) catch |err| {
+        return formatOperationError(allocator, "STORAGEBACKENDSELECT", err, payload_limit);
+    };
+    tool_layout.invalidateForBackendChange();
+    filesystem.invalidateForBackendChange();
+
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "STORAGEBACKENDSELECT {s}\n",
+        .{storage_registry.backendName(backend)},
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleStoragePartitionsRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    const backend = storage_backend.activeBackend();
+    const partition_count = storage_backend.partitionCount();
+    const selected = storage_backend.selectedPartitionIndex();
+    const header = if (selected) |index|
+        try std.fmt.allocPrint(
+            allocator,
+            "backend={s} partition_count={d} selected={d} logical_base_lba={d}\n",
+            .{ storage_registry.backendName(backend), partition_count, index, storage_backend.logicalBaseLba() },
+        )
+    else
+        try std.fmt.allocPrint(
+            allocator,
+            "backend={s} partition_count={d} selected=none logical_base_lba={d}\n",
+            .{ storage_registry.backendName(backend), partition_count, storage_backend.logicalBaseLba() },
+        );
+    defer allocator.free(header);
+    if (header.len > payload_limit) return error.ResponseTooLarge;
+    try out.appendSlice(allocator, header);
+
+    var index: u8 = 0;
+    while (index < partition_count) : (index += 1) {
+        const info = storage_backend.partitionInfo(index) orelse continue;
+        const line = try std.fmt.allocPrint(
+            allocator,
+            "partition[{d}] scheme={s} start_lba={d} sector_count={d} selected={d}\n",
+            .{
+                index,
+                switch (info.scheme) {
+                    .mbr => "mbr",
+                    .gpt => "gpt",
+                },
+                info.start_lba,
+                info.sector_count,
+                if (selected != null and selected.? == index) @as(u8, 1) else @as(u8, 0),
+            },
+        );
+        defer allocator.free(line);
+        if (out.items.len + line.len > payload_limit) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, line);
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+fn handleStoragePartitionSelectRequest(
+    allocator: std.mem.Allocator,
+    index_text: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    const index = std.fmt.parseUnsigned(u8, index_text, 10) catch |err| {
+        return formatOperationError(allocator, "STORAGEPARTITIONSELECT", err, payload_limit);
+    };
+    storage_backend.selectPartition(index) catch |err| {
+        return formatOperationError(allocator, "STORAGEPARTITIONSELECT", err, payload_limit);
+    };
+    tool_layout.invalidateForBackendChange();
+    filesystem.invalidateForBackendChange();
+
+    const response = try std.fmt.allocPrint(allocator, "STORAGEPARTITIONSELECT {d}\n", .{index});
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleMountListRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+
+    var index: usize = 0;
+    while (index < filesystem.mountCount()) : (index += 1) {
+        const entry = filesystem.mountEntry(index) orelse continue;
+        const line = try formatMountEntry(allocator, entry, payload_limit -| out.items.len);
+        defer allocator.free(line);
+        if (out.items.len + line.len > payload_limit) return error.ResponseTooLarge;
+        try out.appendSlice(allocator, line);
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+fn handleMountInfoRequest(
+    allocator: std.mem.Allocator,
+    mount_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    var index: usize = 0;
+    while (index < filesystem.mountCount()) : (index += 1) {
+        const entry = filesystem.mountEntry(index) orelse continue;
+        if (!std.mem.eql(u8, entry.name[0..entry.name_len], mount_name)) continue;
+        return formatMountEntry(allocator, entry, payload_limit);
+    }
+    return formatOperationError(allocator, "MOUNTINFO", error.FileNotFound, payload_limit);
+}
+
+fn handleMountBindRequest(
+    allocator: std.mem.Allocator,
+    mount_name: []const u8,
+    target: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    filesystem.bindMount(mount_name, target, 0) catch |err| {
+        return formatOperationError(allocator, "MOUNTBIND", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "MOUNTBIND {s} {s}\n", .{ mount_name, target });
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn handleMountRemoveRequest(
+    allocator: std.mem.Allocator,
+    mount_name: []const u8,
+    payload_limit: usize,
+) Error![]u8 {
+    filesystem.removeMount(mount_name, 0) catch |err| {
+        return formatOperationError(allocator, "MOUNTREMOVE", err, payload_limit);
+    };
+    const response = try std.fmt.allocPrint(allocator, "MOUNTREMOVE {s}\n", .{mount_name});
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn parseStorageBackendName(text: []const u8) error{InvalidFrame}!u8 {
+    if (std.ascii.eqlIgnoreCase(text, "ram_disk") or std.ascii.eqlIgnoreCase(text, "ram-disk")) {
+        return abi.storage_backend_ram_disk;
+    }
+    if (std.ascii.eqlIgnoreCase(text, "ata_pio") or std.ascii.eqlIgnoreCase(text, "ata-pio")) {
+        return abi.storage_backend_ata_pio;
+    }
+    if (std.ascii.eqlIgnoreCase(text, "virtio_block") or std.ascii.eqlIgnoreCase(text, "virtio-block")) {
+        return abi.storage_backend_virtio_block;
+    }
+    return error.InvalidFrame;
+}
+
+fn formatStorageBackendEntry(
+    allocator: std.mem.Allocator,
+    index: usize,
+    entry: storage_backend_registry.Entry,
+    payload_limit: usize,
+) Error![]u8 {
+    const response = if (entry.selected_partition == std.math.maxInt(u8))
+        try std.fmt.allocPrint(
+            allocator,
+            "backend[{d}]=name={s} backend={s} available={d} selected={d} mounted={d} preferred_order={d} filesystem={s} block_size={d} block_count={d} logical_base_lba={d} partition_count={d} selected_partition=none\n",
+            .{
+                index,
+                entry.nameSlice(),
+                storage_registry.backendName(entry.backend),
+                entry.available,
+                entry.selected,
+                entry.mounted,
+                entry.preferred_order,
+                storage_registry.filesystemKindName(entry.filesystem_kind),
+                entry.block_size,
+                entry.block_count,
+                entry.logical_base_lba,
+                entry.partition_count,
+            },
+        )
+    else
+        try std.fmt.allocPrint(
+            allocator,
+            "backend[{d}]=name={s} backend={s} available={d} selected={d} mounted={d} preferred_order={d} filesystem={s} block_size={d} block_count={d} logical_base_lba={d} partition_count={d} selected_partition={d}\n",
+            .{
+                index,
+                entry.nameSlice(),
+                storage_registry.backendName(entry.backend),
+                entry.available,
+                entry.selected,
+                entry.mounted,
+                entry.preferred_order,
+                storage_registry.filesystemKindName(entry.filesystem_kind),
+                entry.block_size,
+                entry.block_count,
+                entry.logical_base_lba,
+                entry.partition_count,
+                entry.selected_partition,
+            },
+        );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
+}
+
+fn formatMountEntry(
+    allocator: std.mem.Allocator,
+    entry: @TypeOf(filesystem.mountEntry(0).?),
+    payload_limit: usize,
+) Error![]u8 {
+    const response = try std.fmt.allocPrint(
+        allocator,
+        "mount name={s} path=/mnt/{s} target={s} modified_tick={d}\n",
+        .{
+            entry.name[0..entry.name_len],
+            entry.name[0..entry.name_len],
+            entry.target[0..entry.target_len],
+            entry.modified_tick,
+        },
+    );
+    errdefer allocator.free(response);
+    if (response.len > payload_limit) return error.ResponseTooLarge;
+    return response;
 }
 
 fn handleInstallRequest(allocator: std.mem.Allocator, payload_limit: usize) Error![]u8 {
@@ -2644,6 +2920,21 @@ test "baremetal tool service parses typed framed requests" {
         else => return error.InvalidFrame,
     }
 
+    const storage_backend_info = try parseFramedRequest("REQ 14 STORAGEBACKENDINFO virtio_block");
+    switch (storage_backend_info.operation) {
+        .storage_backend_info => |backend_name| try std.testing.expectEqualStrings("virtio_block", backend_name),
+        else => return error.InvalidFrame,
+    }
+
+    const mount_bind = try parseFramedRequest("REQ 14 MOUNTBIND state /runtime/state");
+    switch (mount_bind.operation) {
+        .mount_bind => |request| {
+            try std.testing.expectEqualStrings("state", request.package_name);
+            try std.testing.expectEqualStrings("/runtime/state", request.value);
+        },
+        else => return error.InvalidFrame,
+    }
+
     const pkg = try parseFramedRequest("REQ 15 PKG demo 4\nedge");
     switch (pkg.operation) {
         .package_install => |payload| {
@@ -3738,6 +4029,49 @@ test "baremetal tool service exposes virtual proc sys and dev overlays" {
     defer std.testing.allocator.free(stat_snapshot);
     try std.testing.expect(std.mem.startsWith(u8, stat_snapshot, "RESP 19 "));
     try std.testing.expect(std.mem.indexOf(u8, stat_snapshot, "path=/proc/runtime/snapshot kind=file size=") != null);
+}
+
+test "baremetal tool service exposes storage and mount controls" {
+    resetPersistentStateForTest();
+
+    const storage_backends = try handleFramedRequest(std.testing.allocator, "REQ 21 STORAGEBACKENDS", 512, 256, 1024);
+    defer std.testing.allocator.free(storage_backends);
+    try std.testing.expect(std.mem.startsWith(u8, storage_backends, "RESP 21 "));
+    try std.testing.expect(std.mem.indexOf(u8, storage_backends, "backend[0]=name=ram_disk backend=ram_disk available=1 selected=1 mounted=1") != null);
+
+    const storage_filesystems = try handleFramedRequest(std.testing.allocator, "REQ 22 STORAGEFILESYSTEMS", 512, 256, 512);
+    defer std.testing.allocator.free(storage_filesystems);
+    try std.testing.expect(std.mem.startsWith(u8, storage_filesystems, "RESP 22 "));
+    try std.testing.expect(std.mem.indexOf(u8, storage_filesystems, "filesystem=fat32 detect=1 mount=1 write=1 source=zar_bounded_writable_one_level_83") != null);
+
+    const backend_info = try handleFramedRequest(std.testing.allocator, "REQ 23 STORAGEBACKENDINFO ram_disk", 512, 256, 512);
+    defer std.testing.allocator.free(backend_info);
+    try std.testing.expect(std.mem.startsWith(u8, backend_info, "RESP 23 "));
+    try std.testing.expect(std.mem.indexOf(u8, backend_info, "backend[0]=name=ram_disk backend=ram_disk available=1 selected=1 mounted=1") != null);
+
+    const partitions = try handleFramedRequest(std.testing.allocator, "REQ 24 STORAGEPARTITIONS", 512, 256, 512);
+    defer std.testing.allocator.free(partitions);
+    try std.testing.expectEqualStrings("RESP 24 68\nbackend=ram_disk partition_count=0 selected=none logical_base_lba=0\n", partitions);
+
+    const bind = try handleFramedRequest(std.testing.allocator, "REQ 25 MOUNTBIND state /runtime/state", 512, 256, 512);
+    defer std.testing.allocator.free(bind);
+    try std.testing.expectEqualStrings("RESP 25 31\nMOUNTBIND state /runtime/state\n", bind);
+
+    const mount_list = try handleFramedRequest(std.testing.allocator, "REQ 26 MOUNTLIST", 512, 256, 512);
+    defer std.testing.allocator.free(mount_list);
+    try std.testing.expectEqualStrings("RESP 26 71\nmount name=state path=/mnt/state target=/runtime/state modified_tick=0\n", mount_list);
+
+    const mount_info = try handleFramedRequest(std.testing.allocator, "REQ 27 MOUNTINFO state", 512, 256, 512);
+    defer std.testing.allocator.free(mount_info);
+    try std.testing.expectEqualStrings("RESP 27 71\nmount name=state path=/mnt/state target=/runtime/state modified_tick=0\n", mount_info);
+
+    const remove = try handleFramedRequest(std.testing.allocator, "REQ 28 MOUNTREMOVE state", 512, 256, 512);
+    defer std.testing.allocator.free(remove);
+    try std.testing.expectEqualStrings("RESP 28 18\nMOUNTREMOVE state\n", remove);
+
+    const mount_list_after_remove = try handleFramedRequest(std.testing.allocator, "REQ 29 MOUNTLIST", 512, 256, 512);
+    defer std.testing.allocator.free(mount_list_after_remove);
+    try std.testing.expectEqualStrings("RESP 29 0\n", mount_list_after_remove);
 }
 
 test "baremetal tool service uploads and runs persisted scripts" {

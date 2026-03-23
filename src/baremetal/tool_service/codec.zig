@@ -20,6 +20,16 @@ pub const RequestOp = enum {
     put,
     stat,
     list,
+    storage_backends,
+    storage_filesystems,
+    storage_backend_info,
+    storage_backend_select,
+    storage_partitions,
+    storage_partition_select,
+    mount_list,
+    mount_info,
+    mount_bind,
+    mount_remove,
     install,
     manifest,
     package_install,
@@ -364,6 +374,16 @@ pub const FramedRequest = struct {
         put: PutRequest,
         stat: []const u8,
         list: []const u8,
+        storage_backends: void,
+        storage_filesystems: void,
+        storage_backend_info: []const u8,
+        storage_backend_select: []const u8,
+        storage_partitions: void,
+        storage_partition_select: []const u8,
+        mount_list: void,
+        mount_info: []const u8,
+        mount_bind: NamedValueRequest,
+        mount_remove: []const u8,
         install: void,
         manifest: void,
         package_install: PutRequest,
@@ -645,6 +665,91 @@ pub fn parseFramedRequestPrefix(request: []const u8) Error!ConsumedRequest {
         return .{
             .framed = .{ .request_id = request_id, .operation = .{ .list = op_part.rest } },
             .consumed_len = request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "STORAGEBACKENDS")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .storage_backends = {} } },
+            .consumed_len = if (newline_index != null) prefix_len + newline_index.? + 1 else request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "STORAGEFILESYSTEMS")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .storage_filesystems = {} } },
+            .consumed_len = if (newline_index != null) prefix_len + newline_index.? + 1 else request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "STORAGEBACKENDINFO")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .storage_backend_info = op_part.rest } },
+            .consumed_len = if (newline_index != null) prefix_len + newline_index.? + 1 else request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "STORAGEBACKENDSELECT")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .storage_backend_select = op_part.rest } },
+            .consumed_len = if (newline_index != null) prefix_len + newline_index.? + 1 else request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "STORAGEPARTITIONS")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .storage_partitions = {} } },
+            .consumed_len = if (newline_index != null) prefix_len + newline_index.? + 1 else request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "STORAGEPARTITIONSELECT")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .storage_partition_select = op_part.rest } },
+            .consumed_len = if (newline_index != null) prefix_len + newline_index.? + 1 else request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "MOUNTLIST")) {
+        if (op_part.rest.len != 0) return error.InvalidFrame;
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .mount_list = {} } },
+            .consumed_len = if (newline_index != null) prefix_len + newline_index.? + 1 else request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "MOUNTINFO")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .mount_info = op_part.rest } },
+            .consumed_len = if (newline_index != null) prefix_len + newline_index.? + 1 else request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "MOUNTBIND")) {
+        const name_part = try splitFirstToken(op_part.rest);
+        const target_part = try splitFirstToken(name_part.rest);
+        if (target_part.rest.len != 0) return error.InvalidFrame;
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .mount_bind = .{
+                .package_name = name_part.token,
+                .value = target_part.token,
+            } } },
+            .consumed_len = if (newline_index != null) prefix_len + newline_index.? + 1 else request.len,
+        };
+    }
+
+    if (std.ascii.eqlIgnoreCase(op_part.token, "MOUNTREMOVE")) {
+        if (op_part.rest.len == 0) return error.InvalidFrame;
+        return .{
+            .framed = .{ .request_id = request_id, .operation = .{ .mount_remove = op_part.rest } },
+            .consumed_len = if (newline_index != null) prefix_len + newline_index.? + 1 else request.len,
         };
     }
 

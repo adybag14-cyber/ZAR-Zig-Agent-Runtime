@@ -12,7 +12,7 @@ $releaseDir = Join-Path $repo 'release'
 $expectedProbeCode = 0x5C
 $expectedExitCode = ($expectedProbeCode * 2) + 1
 $expectedPayloadMarker = 'hello-from-fat32'
-$expectedWriteMarker = 'fat32-overwrite'
+$expectedNestedPayloadMarker = 'hello-from-fat32-subdir'
 $fat32TypeOffset = 82
 $bootSignatureOffset = 510
 
@@ -217,8 +217,8 @@ if ($fat32Type -ne 'FAT32   ') {
 if (-not $imageText.Contains($expectedPayloadMarker)) {
     throw "Virtio-block fat32 mount image does not contain expected payload marker '$expectedPayloadMarker'."
 }
-if (-not $imageText.Contains($expectedWriteMarker)) {
-    throw "Virtio-block fat32 mount image does not contain expected write marker '$expectedWriteMarker'."
+if (-not $imageText.Contains($expectedNestedPayloadMarker)) {
+    throw "Virtio-block fat32 mount image does not contain expected nested payload marker '$expectedNestedPayloadMarker'."
 }
 
 Write-Output 'BAREMETAL_QEMU_AVAILABLE=True'
@@ -228,4 +228,4 @@ Write-Output "BAREMETAL_QEMU_VIRTIO_BLOCK_FAT32_MOUNT_IMAGE=$diskImage"
 Write-Output ('BAREMETAL_VIRTIO_BLOCK_FAT32_BOOT_SIG=0x{0:X4}' -f $bootSig)
 Write-Output "BAREMETAL_VIRTIO_BLOCK_FAT32_TYPE=$fat32Type"
 Write-Output "BAREMETAL_VIRTIO_BLOCK_FAT32_PAYLOAD_MARKER=$expectedPayloadMarker"
-Write-Output "BAREMETAL_VIRTIO_BLOCK_FAT32_WRITE_MARKER=$expectedWriteMarker"
+Write-Output "BAREMETAL_VIRTIO_BLOCK_FAT32_NESTED_PAYLOAD_MARKER=$expectedNestedPayloadMarker"

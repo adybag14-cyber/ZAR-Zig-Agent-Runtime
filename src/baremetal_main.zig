@@ -28,6 +28,7 @@ const package_store = @import("baremetal/package_store.zig");
 const app_runtime = @import("baremetal/app_runtime.zig");
 const ps2_input = @import("baremetal/ps2_input.zig");
 const tool_layout = @import("baremetal/tool_layout.zig");
+const tool_exec = @import("baremetal/tool_exec.zig");
 const tool_service = @import("baremetal/tool_service.zig");
 const trust_store = @import("baremetal/trust_store.zig");
 const tool_runtime = @import("runtime/tool_runtime.zig");
@@ -407,6 +408,11 @@ const VirtioBlockFat32MountProbeError = error{
     ExternalAliasWriteFailed,
     ExternalAliasOverwriteFailed,
     ExternalAliasDeleteFailed,
+    NestedAliasListingFailed,
+    NestedAliasReadbackFailed,
+    NestedAliasWriteFailed,
+    NestedAliasOverwriteFailed,
+    NestedAliasDeleteFailed,
     FilesystemMatrixReadbackFailed,
     StorageRegistryReadbackFailed,
     BackendRegistryReadbackFailed,
@@ -418,8 +424,13 @@ const VirtioBlockMountControlProbeError = error{
     CapacityTooSmall,
     BackendInfoMismatch,
     FormatFailed,
+    StorageBackendsReadFailed,
+    StorageFilesystemsReadFailed,
+    StorageBackendInfoReadFailed,
     MountBindFailed,
     MountExportMismatch,
+    MountListReadFailed,
+    MountInfoReadFailed,
     AliasWriteFailed,
     AliasReadbackFailed,
     ReloadFailed,
@@ -3590,7 +3601,7 @@ fn runVirtioBlockMountProbe() VirtioBlockMountProbeError!void {
     defer probe_allocator.free(storage_filesystems);
     if (std.mem.indexOf(u8, storage_filesystems, "filesystem=zarfs detect=1 mount=1 write=1 source=zar_native") == null or
         std.mem.indexOf(u8, storage_filesystems, "filesystem=ext2 detect=1 mount=1 write=0 source=zar_bounded_read_only") == null or
-        std.mem.indexOf(u8, storage_filesystems, "filesystem=fat32 detect=1 mount=1 write=1 source=zar_bounded_writable_root_only") == null)
+        std.mem.indexOf(u8, storage_filesystems, "filesystem=fat32 detect=1 mount=1 write=1 source=zar_bounded_writable_one_level_83") == null)
     {
         return error.StorageFilesystemMatrixReadbackFailed;
     }
@@ -3639,7 +3650,7 @@ fn runVirtioBlockMountProbe() VirtioBlockMountProbeError!void {
 }
 
 fn runVirtioBlockMountControlProbe() VirtioBlockMountControlProbeError!void {
-    var probe_allocator_backing = [_]u8{0} ** 256;
+    var probe_allocator_backing = [_]u8{0} ** 4096;
     var probe_fba = std.heap.FixedBufferAllocator.init(&probe_allocator_backing);
     const probe_allocator = if (builtin.is_test) std.testing.allocator else probe_fba.allocator();
 
@@ -3658,15 +3669,75 @@ fn runVirtioBlockMountControlProbe() VirtioBlockMountControlProbeError!void {
     }
 
     if (oc_filesystem_format() != abi.result_ok) return error.FormatFailed;
-    if (oc_filesystem_bind_mount("state".ptr, 5, "/runtime/state".ptr, 14, status.ticks + 1) != abi.result_ok) return error.MountBindFailed;
+
+    var storage_backends_result = tool_exec.runCaptureSilent(probe_allocator, "storage-backends", 1024, 256) catch return error.StorageBackendsReadFailed;
+    defer storage_backends_result.deinit(probe_allocator);
+    if (storage_backends_result.exit_code != 0 or
+        std.mem.indexOf(u8, storage_backends_result.stdout, "backend[2]=name=virtio_block backend=virtio_block available=1 selected=1 mounted=1") == null)
+    {
+        return error.StorageBackendsReadFailed;
+    }
+
+    var storage_filesystems_result = tool_exec.runCaptureSilent(probe_allocator, "storage-filesystems", 512, 256) catch return error.StorageFilesystemsReadFailed;
+    defer storage_filesystems_result.deinit(probe_allocator);
+    if (storage_filesystems_result.exit_code != 0 or
+        std.mem.indexOf(u8, storage_filesystems_result.stdout, "filesystem=fat32 detect=1 mount=1 write=1 source=zar_bounded_writable_one_level_83") == null)
+    {
+        return error.StorageFilesystemsReadFailed;
+    }
+
+    const backend_info_response = tool_service.handleFramedRequest(
+        probe_allocator,
+        "REQ 41 STORAGEBACKENDINFO virtio_block",
+        1024,
+        256,
+        1024,
+    ) catch return error.StorageBackendInfoReadFailed;
+    defer probe_allocator.free(backend_info_response);
+    if (!std.mem.startsWith(u8, backend_info_response, "RESP 41 ") or
+        std.mem.indexOf(u8, backend_info_response, "backend[2]=name=virtio_block backend=virtio_block available=1 selected=1 mounted=1") == null)
+    {
+        return error.StorageBackendInfoReadFailed;
+    }
+
+    const mount_bind_response = tool_service.handleFramedRequest(
+        probe_allocator,
+        "REQ 42 MOUNTBIND state /runtime/state",
+        1024,
+        256,
+        512,
+    ) catch return error.MountBindFailed;
+    defer probe_allocator.free(mount_bind_response);
+    if (!std.mem.eql(u8, mount_bind_response, "RESP 42 31\nMOUNTBIND state /runtime/state\n")) return error.MountBindFailed;
+
     if (oc_filesystem_mount_count() != 1) return error.MountExportMismatch;
 
     const mount = oc_filesystem_mount_entry(0);
     if (!std.mem.eql(u8, mount.name[0..mount.name_len], "state") or
         !std.mem.eql(u8, mount.target[0..mount.target_len], "/runtime/state") or
-        mount.modified_tick != status.ticks + 1)
+        mount.modified_tick != 0)
     {
         return error.MountExportMismatch;
+    }
+
+    const mount_list_response = tool_service.handleFramedRequest(
+        probe_allocator,
+        "REQ 43 MOUNTLIST",
+        1024,
+        256,
+        512,
+    ) catch return error.MountListReadFailed;
+    defer probe_allocator.free(mount_list_response);
+    if (!std.mem.eql(u8, mount_list_response, "RESP 43 71\nmount name=state path=/mnt/state target=/runtime/state modified_tick=0\n")) {
+        return error.MountListReadFailed;
+    }
+
+    var mount_info_result = tool_exec.runCaptureSilent(probe_allocator, "mount-info state", 256, 256) catch return error.MountInfoReadFailed;
+    defer mount_info_result.deinit(probe_allocator);
+    if (mount_info_result.exit_code != 0 or
+        !std.mem.eql(u8, mount_info_result.stdout, "mount name=state path=/mnt/state target=/runtime/state modified_tick=0\n"))
+    {
+        return error.MountInfoReadFailed;
     }
 
     filesystem.createDirPath("/mnt/state") catch return error.AliasWriteFailed;
@@ -3685,7 +3756,15 @@ fn runVirtioBlockMountControlProbe() VirtioBlockMountControlProbeError!void {
     }
     if (!probeFilesystemContent("/mnt/state/control.txt", "virtio-block-mount-control")) return error.ReloadFailed;
 
-    if (oc_filesystem_remove_mount("state".ptr, 5, status.ticks + 3) != abi.result_ok) return error.MountRemoveFailed;
+    const mount_remove_response = tool_service.handleFramedRequest(
+        probe_allocator,
+        "REQ 44 MOUNTREMOVE state",
+        1024,
+        256,
+        512,
+    ) catch return error.MountRemoveFailed;
+    defer probe_allocator.free(mount_remove_response);
+    if (!std.mem.eql(u8, mount_remove_response, "RESP 44 18\nMOUNTREMOVE state\n")) return error.MountRemoveFailed;
     if (oc_filesystem_mount_count() != 0) return error.MountRemoveFailed;
     const registry_read = filesystem.readFileAlloc(probe_allocator, "/runtime/mounts/state.txt", 64) catch |err| switch (err) {
         error.FileNotFound => null,
@@ -3764,7 +3843,15 @@ fn runVirtioBlockExternalFsProbe(
 
     const listing = filesystem.listDirectoryAlloc(probe_allocator, "/mnt/external", 256) catch return error.ExternalAliasListingFailed;
     defer probe_allocator.free(listing);
-    const expected_listing = std.fmt.allocPrint(probe_allocator, "file {s} {d}\n", .{ file_name, expected_payload.len }) catch return error.ExternalAliasListingFailed;
+    const expected_listing = switch (filesystem_kind) {
+        .ext2 => std.fmt.allocPrint(probe_allocator, "file {s} {d}\n", .{ file_name, expected_payload.len }) catch return error.ExternalAliasListingFailed,
+        .fat32 => std.fmt.allocPrint(
+            probe_allocator,
+            "file {s} {d}\ndir {s}\n",
+            .{ file_name, expected_payload.len, fat32_ro.test_subdir_name },
+        ) catch return error.ExternalAliasListingFailed,
+        else => return error.ExternalAliasListingFailed,
+    };
     defer probe_allocator.free(expected_listing);
     if (!std.mem.eql(u8, listing, expected_listing)) return error.ExternalAliasListingFailed;
 
@@ -3795,6 +3882,24 @@ fn runVirtioBlockExternalFsProbe(
             filesystem.deleteFile("/mnt/external/WRITE.TXT", status.ticks + 4) catch return error.ExternalAliasDeleteFailed;
             const deleted = filesystem.readFileAlloc(probe_allocator, "/mnt/external/WRITE.TXT", 64);
             if (deleted != error.FileNotFound) return error.ExternalAliasDeleteFailed;
+
+            const nested_listing = filesystem.listDirectoryAlloc(probe_allocator, "/mnt/external/DATA", 256) catch return error.NestedAliasListingFailed;
+            defer probe_allocator.free(nested_listing);
+            if (std.mem.indexOf(u8, nested_listing, "file NOTE.TXT 23\n") == null) return error.NestedAliasListingFailed;
+
+            const nested_payload = filesystem.readFileAlloc(probe_allocator, "/mnt/external/DATA/NOTE.TXT", 64) catch return error.NestedAliasReadbackFailed;
+            defer probe_allocator.free(nested_payload);
+            if (!std.mem.eql(u8, nested_payload, fat32_ro.test_nested_file_payload)) return error.NestedAliasReadbackFailed;
+
+            filesystem.writeFile("/mnt/external/DATA/WRITE.TXT", "fat32-nested-write", status.ticks + 5) catch return error.NestedAliasWriteFailed;
+            if (!probeFilesystemContent("/mnt/external/DATA/WRITE.TXT", "fat32-nested-write")) return error.NestedAliasWriteFailed;
+
+            filesystem.writeFile("/mnt/external/DATA/WRITE.TXT", "fat32-nested-overwrite", status.ticks + 6) catch return error.NestedAliasOverwriteFailed;
+            if (!probeFilesystemContent("/mnt/external/DATA/WRITE.TXT", "fat32-nested-overwrite")) return error.NestedAliasOverwriteFailed;
+
+            filesystem.deleteFile("/mnt/external/DATA/WRITE.TXT", status.ticks + 7) catch return error.NestedAliasDeleteFailed;
+            const nested_deleted = filesystem.readFileAlloc(probe_allocator, "/mnt/external/DATA/WRITE.TXT", 64);
+            if (nested_deleted != error.FileNotFound) return error.NestedAliasDeleteFailed;
         },
         else => {},
     }
@@ -3803,7 +3908,7 @@ fn runVirtioBlockExternalFsProbe(
     defer probe_allocator.free(storage_filesystems);
     const expected_filesystem_row = switch (filesystem_kind) {
         .ext2 => "filesystem=ext2 detect=1 mount=1 write=0 source=zar_bounded_read_only",
-        .fat32 => "filesystem=fat32 detect=1 mount=1 write=1 source=zar_bounded_writable_root_only",
+        .fat32 => "filesystem=fat32 detect=1 mount=1 write=1 source=zar_bounded_writable_one_level_83",
         else => return error.FilesystemMatrixReadbackFailed,
     };
     if (std.mem.indexOf(u8, storage_filesystems, expected_filesystem_row) == null) return error.FilesystemMatrixReadbackFailed;
@@ -16554,10 +16659,15 @@ fn virtioBlockFat32MountProbeFailureCode(err: VirtioBlockFat32MountProbeError) u
         error.ExternalAliasWriteFailed => 0xAC,
         error.ExternalAliasOverwriteFailed => 0xAD,
         error.ExternalAliasDeleteFailed => 0xAE,
-        error.FilesystemMatrixReadbackFailed => 0xAF,
-        error.StorageRegistryReadbackFailed => 0xB0,
-        error.BackendRegistryReadbackFailed => 0xB1,
-        error.PciDiscoveryMismatch => 0xB2,
+        error.NestedAliasListingFailed => 0xAF,
+        error.NestedAliasReadbackFailed => 0xB0,
+        error.NestedAliasWriteFailed => 0xB1,
+        error.NestedAliasOverwriteFailed => 0xB2,
+        error.NestedAliasDeleteFailed => 0xB3,
+        error.FilesystemMatrixReadbackFailed => 0xB4,
+        error.StorageRegistryReadbackFailed => 0xB5,
+        error.BackendRegistryReadbackFailed => 0xB6,
+        error.PciDiscoveryMismatch => 0xB7,
     };
 }
 
@@ -16567,13 +16677,18 @@ fn virtioBlockMountControlProbeFailureCode(err: VirtioBlockMountControlProbeErro
         error.CapacityTooSmall => 0xC1,
         error.BackendInfoMismatch => 0xC2,
         error.FormatFailed => 0xC3,
-        error.MountBindFailed => 0xC4,
-        error.MountExportMismatch => 0xC5,
-        error.AliasWriteFailed => 0xC6,
-        error.AliasReadbackFailed => 0xC7,
-        error.ReloadFailed => 0xC8,
-        error.MountRemoveFailed => 0xC9,
-        error.PciDiscoveryMismatch => 0xCA,
+        error.StorageBackendsReadFailed => 0xC4,
+        error.StorageFilesystemsReadFailed => 0xC5,
+        error.StorageBackendInfoReadFailed => 0xC6,
+        error.MountBindFailed => 0xC7,
+        error.MountExportMismatch => 0xC8,
+        error.MountListReadFailed => 0xC9,
+        error.MountInfoReadFailed => 0xCA,
+        error.AliasWriteFailed => 0xCB,
+        error.AliasReadbackFailed => 0xCC,
+        error.ReloadFailed => 0xCD,
+        error.MountRemoveFailed => 0xCE,
+        error.PciDiscoveryMismatch => 0xCF,
     };
 }
 
@@ -25317,7 +25432,7 @@ test "baremetal virtio block mount probe persists mounted alias paths" {
     const storage_filesystems = try filesystem.readFileAlloc(std.testing.allocator, "/sys/storage/filesystems", 512);
     defer std.testing.allocator.free(storage_filesystems);
     try std.testing.expect(std.mem.indexOf(u8, storage_filesystems, "filesystem=ext2 detect=1 mount=1 write=0 source=zar_bounded_read_only") != null);
-    try std.testing.expect(std.mem.indexOf(u8, storage_filesystems, "filesystem=fat32 detect=1 mount=1 write=1 source=zar_bounded_writable_root_only") != null);
+    try std.testing.expect(std.mem.indexOf(u8, storage_filesystems, "filesystem=fat32 detect=1 mount=1 write=1 source=zar_bounded_writable_one_level_83") != null);
 
     const storage_registry_text = try filesystem.readFileAlloc(std.testing.allocator, "/sys/storage/registry", 2048);
     defer std.testing.allocator.free(storage_registry_text);
@@ -25352,11 +25467,20 @@ test "baremetal virtio block fat32 mount probe exposes writable external alias" 
 
     const listing = try filesystem.listDirectoryAlloc(std.testing.allocator, "/mnt/external", 256);
     defer std.testing.allocator.free(listing);
-    try std.testing.expectEqualStrings("file HELLO.TXT 16\n", listing);
+    try std.testing.expect(std.mem.indexOf(u8, listing, "file HELLO.TXT 16\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, listing, "dir DATA\n") != null);
 
     const payload = try filesystem.readFileAlloc(std.testing.allocator, "/mnt/external/HELLO.TXT", 64);
     defer std.testing.allocator.free(payload);
     try std.testing.expectEqualStrings(fat32_ro.test_file_payload, payload);
+
+    const nested_listing = try filesystem.listDirectoryAlloc(std.testing.allocator, "/mnt/external/DATA", 256);
+    defer std.testing.allocator.free(nested_listing);
+    try std.testing.expect(std.mem.indexOf(u8, nested_listing, "file NOTE.TXT 23\n") != null);
+
+    const nested_payload = try filesystem.readFileAlloc(std.testing.allocator, "/mnt/external/DATA/NOTE.TXT", 64);
+    defer std.testing.allocator.free(nested_payload);
+    try std.testing.expectEqualStrings(fat32_ro.test_nested_file_payload, nested_payload);
 
     try filesystem.writeFile("/mnt/external/WRITE.TXT", "host-fat32-write", 70);
     const written = try filesystem.readFileAlloc(std.testing.allocator, "/mnt/external/WRITE.TXT", 64);
@@ -25364,6 +25488,13 @@ test "baremetal virtio block fat32 mount probe exposes writable external alias" 
     try std.testing.expectEqualStrings("host-fat32-write", written);
     try filesystem.deleteFile("/mnt/external/WRITE.TXT", 71);
     try std.testing.expectEqual(error.FileNotFound, filesystem.readFileAlloc(std.testing.allocator, "/mnt/external/WRITE.TXT", 64));
+
+    try filesystem.writeFile("/mnt/external/DATA/WRITE.TXT", "host-fat32-nested", 72);
+    const nested_written = try filesystem.readFileAlloc(std.testing.allocator, "/mnt/external/DATA/WRITE.TXT", 64);
+    defer std.testing.allocator.free(nested_written);
+    try std.testing.expectEqualStrings("host-fat32-nested", nested_written);
+    try filesystem.deleteFile("/mnt/external/DATA/WRITE.TXT", 73);
+    try std.testing.expectEqual(error.FileNotFound, filesystem.readFileAlloc(std.testing.allocator, "/mnt/external/DATA/WRITE.TXT", 64));
 }
 
 test "baremetal storage backend info export mirrors registry state" {
