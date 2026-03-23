@@ -4167,6 +4167,48 @@ test "baremetal tool service exposes bounded shell batch and globbing" {
     const redirected_stderr = try handleFramedRequest(std.testing.allocator, "REQ 39 GET /tmp/sh/ERR.TXT", 256, 256, 256);
     defer std.testing.allocator.free(redirected_stderr);
     try std.testing.expectEqualStrings("RESP 39 25\ncat failed: FileNotFound\n", redirected_stderr);
+
+    const stdin_script = "echo stdin-shell > /tmp/sh/STDINOUT.TXT";
+    const stdin_put_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 40 PUT /tmp/sh/STDIN.OC {d}\n{s}", .{ stdin_script.len, stdin_script });
+    defer std.testing.allocator.free(stdin_put_request);
+    const stdin_put_response = try handleFramedRequest(std.testing.allocator, stdin_put_request, 256, 256, 256);
+    defer std.testing.allocator.free(stdin_put_response);
+    try std.testing.expectEqualStrings("RESP 40 35\nWROTE 39 bytes to /tmp/sh/STDIN.OC\n", stdin_put_response);
+
+    const shell_input_script =
+        "cat < /tmp/sh/A.TXT > /tmp/sh/COPY.TXT\n" ++
+        "write-file /tmp/sh/FROMSTDIN.TXT < /tmp/sh/A.TXT\n" ++
+        "write-file \"/tmp/sh/SPACE NAME.TXT\" spaced\n" ++
+        "cat < \"/tmp/sh/SPACE NAME.TXT\" > /tmp/sh/QUOTE.TXT\n" ++
+        "echo lt\\<value > /tmp/sh/LT.TXT\n" ++
+        "shell-run < /tmp/sh/STDIN.OC";
+    const shell_input_request = try std.fmt.allocPrint(std.testing.allocator, "REQ 41 SHELLRUN {d}\n{s}", .{ shell_input_script.len, shell_input_script });
+    defer std.testing.allocator.free(shell_input_request);
+    const shell_input_response = try handleFramedRequest(std.testing.allocator, shell_input_request, 1024, 256, 1024);
+    defer std.testing.allocator.free(shell_input_response);
+    try std.testing.expect(std.mem.startsWith(u8, shell_input_response, "RESP 41 "));
+    try std.testing.expect(std.mem.indexOf(u8, shell_input_response, "wrote 5 bytes to /tmp/sh/FROMSTDIN.TXT\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, shell_input_response, "wrote 6 bytes to /tmp/sh/SPACE NAME.TXT\n") != null);
+
+    const copied_input = try handleFramedRequest(std.testing.allocator, "REQ 42 GET /tmp/sh/COPY.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(copied_input);
+    try std.testing.expectEqualStrings("RESP 42 5\nalpha", copied_input);
+
+    const stdin_written = try handleFramedRequest(std.testing.allocator, "REQ 43 GET /tmp/sh/FROMSTDIN.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(stdin_written);
+    try std.testing.expectEqualStrings("RESP 43 5\nalpha", stdin_written);
+
+    const quoted_copy = try handleFramedRequest(std.testing.allocator, "REQ 44 GET /tmp/sh/QUOTE.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(quoted_copy);
+    try std.testing.expectEqualStrings("RESP 44 6\nspaced", quoted_copy);
+
+    const escaped_input_redirect = try handleFramedRequest(std.testing.allocator, "REQ 45 GET /tmp/sh/LT.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(escaped_input_redirect);
+    try std.testing.expectEqualStrings("RESP 45 9\nlt<value\n", escaped_input_redirect);
+
+    const nested_shell_input = try handleFramedRequest(std.testing.allocator, "REQ 46 GET /tmp/sh/STDINOUT.TXT", 256, 256, 256);
+    defer std.testing.allocator.free(nested_shell_input);
+    try std.testing.expectEqualStrings("RESP 46 12\nstdin-shell\n", nested_shell_input);
 }
 
 test "baremetal tool service uploads and runs persisted scripts" {

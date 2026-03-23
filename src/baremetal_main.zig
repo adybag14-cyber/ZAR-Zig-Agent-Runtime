@@ -15082,6 +15082,129 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
     if (!std.mem.eql(u8, redirected_stderr_response, "RESP 43 25\ncat failed: FileNotFound\n")) return error.ToolServiceResponseMismatch;
     qemuDebugWrite("ETS9A8H\n");
 
+    const stdin_script = "echo stdin-shell > /tmp/sh/STDINOUT.TXT";
+    const stdin_put_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 44 PUT /tmp/sh/STDIN.OC {d}\n{s}", .{
+        stdin_script.len,
+        stdin_script,
+    }) catch return error.ToolServiceFailed;
+    const stdin_put_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        stdin_put_request,
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, stdin_put_response, "RESP 44 35\nWROTE 39 bytes to /tmp/sh/STDIN.OC\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8I\n");
+
+    const shell_input_script =
+        "cat < /tmp/sh/A.TXT > /tmp/sh/COPY.TXT\n" ++
+        "write-file /tmp/sh/FROMSTDIN.TXT < /tmp/sh/A.TXT\n" ++
+        "write-file \"/tmp/sh/SPACE NAME.TXT\" spaced\n" ++
+        "cat < \"/tmp/sh/SPACE NAME.TXT\" > /tmp/sh/QUOTE.TXT\n" ++
+        "echo lt\\<value > /tmp/sh/LT.TXT\n" ++
+        "shell-run < /tmp/sh/STDIN.OC";
+    const shell_input_request = std.fmt.bufPrint(&rtl8139_tcp_probe_scratch.service_request_put_buffer, "REQ 45 SHELLRUN {d}\n{s}", .{
+        shell_input_script.len,
+        shell_input_script,
+    }) catch return error.ToolServiceFailed;
+    const shell_input_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        shell_input_request,
+        1024,
+        256,
+        1024,
+    );
+    if (!std.mem.startsWith(u8, shell_input_response, "RESP 45 ")) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, shell_input_response, "wrote 5 bytes to /tmp/sh/FROMSTDIN.TXT\n") == null) return error.ToolServiceResponseMismatch;
+    if (std.mem.indexOf(u8, shell_input_response, "wrote 6 bytes to /tmp/sh/SPACE NAME.TXT\n") == null) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8J\n");
+
+    const copied_input_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 46 GET /tmp/sh/COPY.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, copied_input_response, "RESP 46 5\nalpha")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8K\n");
+
+    const stdin_written_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 47 GET /tmp/sh/FROMSTDIN.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, stdin_written_response, "RESP 47 5\nalpha")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8L\n");
+
+    const quoted_copy_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 48 GET /tmp/sh/QUOTE.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, quoted_copy_response, "RESP 48 6\nspaced")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8M\n");
+
+    const escaped_input_redirect_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 49 GET /tmp/sh/LT.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, escaped_input_redirect_response, "RESP 49 9\nlt<value\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8N\n");
+
+    const nested_shell_input_response = try exchangeE1000TcpProbeServiceRequest(
+        eth,
+        scratch,
+        &client,
+        &server,
+        source_ip,
+        destination_ip,
+        "REQ 50 GET /tmp/sh/STDINOUT.TXT",
+        256,
+        256,
+        256,
+    );
+    if (!std.mem.eql(u8, nested_shell_input_response, "RESP 50 12\nstdin-shell\n")) return error.ToolServiceResponseMismatch;
+    qemuDebugWrite("ETS9A8O\n");
+
     service_fba = std.heap.FixedBufferAllocator.init(&scratch.service_scratch);
     const shell_nested_readback = filesystem.readFileAlloc(service_fba.allocator(), "/tmp/sh/DATA/C.TXT", 64) catch return error.ToolServiceFailed;
     if (!std.mem.eql(u8, shell_nested_readback, "gamma")) return error.ToolServiceResponseMismatch;
