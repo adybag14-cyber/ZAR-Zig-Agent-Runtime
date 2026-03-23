@@ -1024,12 +1024,18 @@ fn execute(
             try stderr_buffer.appendLine("usage: mount-bind <name> <target>");
             return;
         }
-        filesystem.bindMount(name_arg.arg, target_arg.arg, 0) catch |err| {
+        const target_path = unescapeShellTextAlloc(allocator, target_arg.arg) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "mount-bind <name> <target>");
+            return;
+        };
+        defer allocator.free(target_path);
+        filesystem.bindMount(name_arg.arg, target_path, 0) catch |err| {
             exit_code.* = 1;
             try stderr_buffer.appendFmt("mount-bind failed: {s}\n", .{@errorName(err)});
             return;
         };
-        try stdout_buffer.appendFmt("mount bound {s} -> {s}\n", .{ name_arg.arg, target_arg.arg });
+        try stdout_buffer.appendFmt("mount bound {s} -> {s}\n", .{ name_arg.arg, target_path });
         return;
     }
 
@@ -4603,7 +4609,13 @@ fn execute(
             try stderr_buffer.appendLine("usage: run-script <path>");
             return;
         }
-        try executeScriptPath(arg.arg, "run-script", stdout_buffer, stderr_buffer, exit_code, allocator, depth);
+        const path = unescapeShellTextAlloc(allocator, arg.arg) catch |err| {
+            exit_code.* = 2;
+            try writeCommandError(stderr_buffer, err, "run-script <path>");
+            return;
+        };
+        defer allocator.free(path);
+        try executeScriptPath(path, "run-script", stdout_buffer, stderr_buffer, exit_code, allocator, depth);
         return;
     }
 
@@ -5074,7 +5086,13 @@ fn parseFirstArg(text: []const u8) Error!ParsedArg {
     }
 
     var idx: usize = 0;
-    while (idx < trimmed.len and !std.ascii.isWhitespace(trimmed[idx])) : (idx += 1) {}
+    while (idx < trimmed.len) : (idx += 1) {
+        if (trimmed[idx] == '\\' and idx + 1 < trimmed.len and isShellEscapable(trimmed[idx + 1])) {
+            idx += 1;
+            continue;
+        }
+        if (std.ascii.isWhitespace(trimmed[idx])) break;
+    }
     return .{
         .arg = trimmed[0..idx],
         .rest = trimLeftWhitespace(trimmed[idx..]),
@@ -5573,7 +5591,7 @@ fn parseShellLine(line: []const u8) Error!ParsedShellLine {
 
 fn isShellEscapable(byte: u8) bool {
     return switch (byte) {
-        ';', '<', '>', '\\', '"', '\'', '\n' => true,
+        ' ', '\t', ';', '<', '>', '\\', '"', '\'', '\n' => true,
         else => false,
     };
 }
@@ -5615,6 +5633,12 @@ fn normalizeShellCommandTextAlloc(allocator: std.mem.Allocator, text: []const u8
         if (ch == '\\' and idx + 1 < text.len and isShellEscapable(text[idx + 1])) {
             const next = text[idx + 1];
             if (quote != 0 and (next == quote or next == '\\')) {
+                try out.append(allocator, ch);
+                idx += 1;
+                try out.append(allocator, next);
+                continue;
+            }
+            if (next == ' ' or next == '\t') {
                 try out.append(allocator, ch);
                 idx += 1;
                 try out.append(allocator, next);
@@ -5998,6 +6022,44 @@ test "baremetal tool exec runs persisted scripts through the baremetal filesyste
     const content = try filesystem.readFileAlloc(std.testing.allocator, "/tools/out/data.txt", 64);
     defer std.testing.allocator.free(content);
     try std.testing.expectEqualStrings("script-data", content);
+}
+
+test "baremetal tool exec runs escaped direct script paths and mount targets" {
+    storage_backend.resetForTest();
+    filesystem.resetForTest();
+    vga_text_console.resetForTest();
+
+    try filesystem.init();
+    try filesystem.createDirPath("/tools/scripts");
+    try filesystem.writeFile(
+        "/tools/scripts/SPACE NAME.oc",
+        "mkdir /tools/space-out\nwrite-file /tools/space-out/data.txt spaced-script\n",
+        0,
+    );
+    try filesystem.createDirPath("/tmp/direct/CACHE DIR");
+    try filesystem.writeFile("/tmp/direct/CACHE DIR/ITEM.TXT", "cache-item", 0);
+
+    var run_script_result = try runCapture(std.testing.allocator, "run-script /tools/scripts/SPACE\\ NAME.oc", 512, 256);
+    defer run_script_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), run_script_result.exit_code);
+    try std.testing.expectEqualStrings("created /tools/space-out\nwrote 13 bytes to /tools/space-out/data.txt\n", run_script_result.stdout);
+    try std.testing.expectEqualStrings("", run_script_result.stderr);
+
+    const script_output = try filesystem.readFileAlloc(std.testing.allocator, "/tools/space-out/data.txt", 64);
+    defer std.testing.allocator.free(script_output);
+    try std.testing.expectEqualStrings("spaced-script", script_output);
+
+    var bind_result = try runCapture(std.testing.allocator, "mount-bind cache /tmp/direct/CACHE\\ DIR", 256, 256);
+    defer bind_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), bind_result.exit_code);
+    try std.testing.expectEqualStrings("mount bound cache -> /tmp/direct/CACHE DIR\n", bind_result.stdout);
+    try std.testing.expectEqualStrings("", bind_result.stderr);
+
+    var cache_read_result = try runCapture(std.testing.allocator, "cat /mnt/cache/ITEM.TXT", 256, 256);
+    defer cache_read_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), cache_read_result.exit_code);
+    try std.testing.expectEqualStrings("cache-item", cache_read_result.stdout);
+    try std.testing.expectEqualStrings("", cache_read_result.stderr);
 }
 
 test "baremetal tool exec runs packages from the canonical package layout" {
@@ -6908,6 +6970,15 @@ test "baremetal tool exec exposes bounded direct command redirection and input p
     try filesystem.createDirPath("/tmp/direct");
     try filesystem.writeFile("/tmp/direct/A.TXT", "alpha", 0);
     try filesystem.writeFile("/tmp/direct/QUO\"TE.TXT", "quoted", 0);
+    try filesystem.writeFile("/tmp/direct/SPACE NAME.TXT", "spaced-direct", 0);
+    try filesystem.createDirPath("/tmp/direct/CACHE DIR");
+    try filesystem.writeFile("/tmp/direct/CACHE DIR/ITEM.TXT", "cache-item", 0);
+    try filesystem.createDirPath("/tools/scripts");
+    try filesystem.writeFile(
+        "/tools/scripts/SPACE NAME.oc",
+        "mkdir /tmp/direct/SCRIPT\nwrite-file /tmp/direct/SCRIPT/OUT.TXT script-space\n",
+        0,
+    );
 
     var direct_output_redirect = try runCapture(std.testing.allocator, "echo direct-alpha > /tmp/direct/OUT.TXT", 256, 256);
     defer direct_output_redirect.deinit(std.testing.allocator);
@@ -6922,6 +6993,42 @@ test "baremetal tool exec exposes bounded direct command redirection and input p
     defer direct_input_redirect.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), direct_input_redirect.exit_code);
     try std.testing.expectEqualStrings("quoted", direct_input_redirect.stdout);
+
+    var direct_escaped_space_redirect = try runCapture(std.testing.allocator, "cat < /tmp/direct/SPACE\\ NAME.TXT", 256, 256);
+    defer direct_escaped_space_redirect.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), direct_escaped_space_redirect.exit_code);
+    try std.testing.expectEqualStrings("spaced-direct", direct_escaped_space_redirect.stdout);
+
+    var direct_escaped_space_cat = try runCapture(std.testing.allocator, "cat /tmp/direct/SPACE\\ NAME.TXT", 256, 256);
+    defer direct_escaped_space_cat.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), direct_escaped_space_cat.exit_code);
+    try std.testing.expectEqualStrings("spaced-direct", direct_escaped_space_cat.stdout);
+
+    var direct_escaped_space_write = try runCapture(std.testing.allocator, "write-file /tmp/direct/SPACE\\ OUT.TXT direct-space", 256, 256);
+    defer direct_escaped_space_write.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), direct_escaped_space_write.exit_code);
+    try std.testing.expectEqualStrings("wrote 12 bytes to /tmp/direct/SPACE OUT.TXT\n", direct_escaped_space_write.stdout);
+    const direct_escaped_space_writeback = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/direct/SPACE OUT.TXT", 64);
+    defer std.testing.allocator.free(direct_escaped_space_writeback);
+    try std.testing.expectEqualStrings("direct-space", direct_escaped_space_writeback);
+
+    var direct_mount_bind = try runCapture(std.testing.allocator, "mount-bind cache /tmp/direct/CACHE\\ DIR", 256, 256);
+    defer direct_mount_bind.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), direct_mount_bind.exit_code);
+    try std.testing.expectEqualStrings("mount bound cache -> /tmp/direct/CACHE DIR\n", direct_mount_bind.stdout);
+
+    var direct_mount_readback = try runCapture(std.testing.allocator, "cat /mnt/cache/ITEM.TXT", 256, 256);
+    defer direct_mount_readback.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), direct_mount_readback.exit_code);
+    try std.testing.expectEqualStrings("cache-item", direct_mount_readback.stdout);
+
+    var direct_run_script = try runCapture(std.testing.allocator, "run-script /tools/scripts/SPACE\\ NAME.oc", 512, 256);
+    defer direct_run_script.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), direct_run_script.exit_code);
+    try std.testing.expect(std.mem.indexOf(u8, direct_run_script.stdout, "wrote 12 bytes to /tmp/direct/SCRIPT/OUT.TXT\n") != null);
+    const direct_run_script_output = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/direct/SCRIPT/OUT.TXT", 64);
+    defer std.testing.allocator.free(direct_run_script_output);
+    try std.testing.expectEqualStrings("script-space", direct_run_script_output);
 
     var direct_stdin_only = try runCaptureSilentWithInput(std.testing.allocator, "write-file /tmp/direct/FROMSTDIN.TXT", "stdin-direct", 256, 256);
     defer direct_stdin_only.deinit(std.testing.allocator);
@@ -6971,6 +7078,7 @@ test "baremetal tool exec persists bounded tty session receipts" {
     try std.testing.expectEqualStrings("", send_result.stderr);
 
     try filesystem.writeFile("/tmp/tty-input.txt", "file-input", 0);
+    try filesystem.writeFile("/tmp/tty input.txt", "tty spaced", 0);
     var override_write_result = try runCapture(std.testing.allocator, "tty-write demo queued-tty-data", 256, 256);
     defer override_write_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), override_write_result.exit_code);
@@ -6979,6 +7087,12 @@ test "baremetal tool exec persists bounded tty session receipts" {
     try std.testing.expectEqual(@as(u8, 0), override_send_result.exit_code);
     try std.testing.expectEqualStrings("file-input", override_send_result.stdout);
     try std.testing.expectEqualStrings("", override_send_result.stderr);
+
+    var escaped_space_send_result = try runCapture(std.testing.allocator, "tty-send demo cat < /tmp/tty\\ input.txt", 256, 256);
+    defer escaped_space_send_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), escaped_space_send_result.exit_code);
+    try std.testing.expectEqualStrings("tty spaced", escaped_space_send_result.stdout);
+    try std.testing.expectEqualStrings("", escaped_space_send_result.stderr);
 
     var drained_pending = try runCapture(std.testing.allocator, "tty-pending demo", 256, 256);
     defer drained_pending.deinit(std.testing.allocator);
@@ -7011,9 +7125,9 @@ test "baremetal tool exec persists bounded tty session receipts" {
     try std.testing.expectEqual(@as(u8, 0), info_result.exit_code);
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "name=demo") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "open=1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "command_count=3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "command_count=4") != null);
     try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "pending_input_bytes=0") != null);
-    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "event_count=8") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info_result.stdout, "event_count=9") != null);
 
     var read_result = try runCapture(std.testing.allocator, "tty-read demo", 1024, 256);
     defer read_result.deinit(std.testing.allocator);
@@ -7034,7 +7148,7 @@ test "baremetal tool exec persists bounded tty session receipts" {
     var stdout_result = try runCapture(std.testing.allocator, "tty-stdout demo", 256, 256);
     defer stdout_result.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u8, 0), stdout_result.exit_code);
-    try std.testing.expectEqualStrings("tty-session-inputfile-input", stdout_result.stdout);
+    try std.testing.expectEqualStrings("tty-session-inputfile-inputtty spaced", stdout_result.stdout);
 
     var stderr_result = try runCapture(std.testing.allocator, "tty-stderr demo", 256, 256);
     defer stderr_result.deinit(std.testing.allocator);
@@ -7099,6 +7213,7 @@ test "baremetal tool exec persists bounded tty session receipts" {
     try std.testing.expectEqualStrings("tty closed shell\n", shell_close.stdout);
 
     try filesystem.writeFile("/tmp/tty-shell/INPUT.TXT", "file-input", 0);
+    try filesystem.writeFile("/tmp/tty-shell/SPACE NAME.TXT", "space-file", 0);
 
     var shell_override_open = try runCapture(std.testing.allocator, "tty-open shell-override", 256, 256);
     defer shell_override_open.deinit(std.testing.allocator);
@@ -7118,6 +7233,20 @@ test "baremetal tool exec persists bounded tty session receipts" {
     const shell_override_file = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/tty-shell/OVERRIDE.TXT", 64);
     defer std.testing.allocator.free(shell_override_file);
     try std.testing.expectEqualStrings("file-input", shell_override_file);
+
+    var shell_space_write = try runCapture(std.testing.allocator, "tty-write shell-override queued-space-data", 256, 256);
+    defer shell_space_write.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), shell_space_write.exit_code);
+
+    var shell_space_run = try runCapture(std.testing.allocator, "tty-shell shell-override cat < /tmp/tty-shell/SPACE\\ NAME.TXT > /tmp/tty-shell/SPACEOUT.TXT; cat", 256, 256);
+    defer shell_space_run.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u8, 0), shell_space_run.exit_code);
+    try std.testing.expectEqualStrings("queued-space-data", shell_space_run.stdout);
+    try std.testing.expectEqualStrings("", shell_space_run.stderr);
+
+    const shell_space_file = try filesystem.readFileAlloc(std.testing.allocator, "/tmp/tty-shell/SPACEOUT.TXT", 64);
+    defer std.testing.allocator.free(shell_space_file);
+    try std.testing.expectEqualStrings("space-file", shell_space_file);
 
     var shell_override_pending = try runCapture(std.testing.allocator, "tty-pending shell-override", 256, 256);
     defer shell_override_pending.deinit(std.testing.allocator);
