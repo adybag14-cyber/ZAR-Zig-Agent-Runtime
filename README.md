@@ -131,8 +131,14 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
       - `src/baremetal/storage_backend_registry.zig` now exports bounded backend entries for `ram_disk`, `ata_pio`, and `virtio_block`
       - `src/baremetal/virtual_fs.zig` now exposes `/dev/storage/backends`, `/dev/storage/filesystems`, `/sys/storage/backends`, and `/sys/storage/filesystems`
       - the backend registry now reports availability, active-selection state, preferred-order, logical-base-LBA, partition metadata, and detected filesystem kind per backend
-      - the filesystem capability matrix now makes the mounted-filesystem posture explicit at runtime: `zarfs` mounted+writable, `ext2` detect-only planned read-only, and `fat32` detect-only planned read-only
+      - the filesystem capability matrix now makes the mounted-filesystem posture explicit at runtime: `zarfs` mounted+writable, `ext2` mounted read-only, and `fat32` mounted read-only
       - `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1` now also proves the live backend registry and mounted-filesystem capability seam on `virtio-blk-pci`
+    - eleventh delivered adoption slice is bounded read-only external-filesystem mounting:
+      - `src/baremetal/ext2_ro.zig` and `src/baremetal/fat32_ro.zig` now provide bounded root listing, file read, and stat over deterministic `ext2` and `fat32` images seeded onto the active backend
+      - `src/baremetal/mounted_external_fs.zig` and `src/baremetal/vfs.zig` now expose those external filesystems through `/__storagefs/{active,ext2,fat32}` and mounted aliases like `/mnt/external/...`
+      - `src/baremetal/storage_backend.zig` plus `src/baremetal_main.zig` now expose bounded backend count, availability, and explicit selection so the external mount seam can retarget from RAM-disk back to `virtio-block`
+      - host regressions now prove backend retargeting, mounted `/mnt/external` listing/read/stat, read-only write rejection, and `/sys/storage/{backends,filesystems,registry}` readback on both bounded `ext2` and bounded `fat32`
+      - `scripts/baremetal-qemu-virtio-block-ext2-mount-probe-check.ps1` and `scripts/baremetal-qemu-virtio-block-fat32-mount-probe-check.ps1` now prove live QEMU bounded read-only `ext2` and `fat32` mounting on `virtio-blk-pci`, including on-disk signature validation and payload readback
   - keyboard/mouse is now strict-closed in [`docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md`](docs/zig-port/FS5_5_HARDWARE_DRIVERS_SYSTEMS.md)
   - `src/baremetal/ps2_input.zig` now contains a real x86 port-I/O backed PS/2 controller path
   - `scripts/baremetal-qemu-ps2-input-probe-check.ps1` proves IRQ-driven keyboard/mouse state updates against the freestanding PVH artifact

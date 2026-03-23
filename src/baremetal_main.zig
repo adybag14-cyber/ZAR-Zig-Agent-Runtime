@@ -10,6 +10,8 @@ const display_output = @import("baremetal/display_output.zig");
 const display_profile_store = @import("baremetal/display_profile_store.zig");
 const virtio_gpu = @import("baremetal/virtio_gpu.zig");
 const virtio_block = @import("baremetal/virtio_block.zig");
+const ext2_ro = @import("baremetal/ext2_ro.zig");
+const fat32_ro = @import("baremetal/fat32_ro.zig");
 const framebuffer_console = @import("baremetal/framebuffer_console.zig");
 const pal_framebuffer = @import("pal/framebuffer.zig");
 const vga_text_console = @import("baremetal/vga_text_console.zig");
@@ -17,7 +19,11 @@ const e1000 = @import("baremetal/e1000.zig");
 const rtl8139 = @import("baremetal/rtl8139.zig");
 const virtio_net = @import("baremetal/virtio_net.zig");
 const storage_backend = @import("baremetal/storage_backend.zig");
+const storage_backend_registry = @import("baremetal/storage_backend_registry.zig");
+const storage_registry = @import("baremetal/storage_registry.zig");
 const filesystem = @import("baremetal/filesystem.zig");
+const mounted_external_fs = @import("baremetal/mounted_external_fs.zig");
+const mount_table = @import("baremetal/mount_table.zig");
 const package_store = @import("baremetal/package_store.zig");
 const app_runtime = @import("baremetal/app_runtime.zig");
 const ps2_input = @import("baremetal/ps2_input.zig");
@@ -127,6 +133,8 @@ const qemu_virtio_net_tool_service_probe_ok_code: u8 = 0x58;
 const qemu_virtio_block_probe_ok_code: u8 = 0x4F;
 const qemu_virtio_block_installer_probe_ok_code: u8 = 0x59;
 const qemu_virtio_block_mount_probe_ok_code: u8 = 0x5A;
+const qemu_virtio_block_ext2_mount_probe_ok_code: u8 = 0x5B;
+const qemu_virtio_block_fat32_mount_probe_ok_code: u8 = 0x5C;
 const build_options = if (builtin.is_test)
     struct {
         pub const qemu_smoke: bool = false;
@@ -173,6 +181,8 @@ const build_options = if (builtin.is_test)
         pub const virtio_block_probe: bool = false;
         pub const virtio_block_installer_probe: bool = false;
         pub const virtio_block_mount_probe: bool = false;
+        pub const virtio_block_ext2_mount_probe: bool = false;
+        pub const virtio_block_fat32_mount_probe: bool = false;
     }
 else
     @import("build_options");
@@ -220,6 +230,8 @@ const virtio_gpu_display_probe_enabled: bool = if (@hasDecl(build_options, "virt
 const virtio_block_probe_enabled: bool = if (@hasDecl(build_options, "virtio_block_probe")) build_options.virtio_block_probe else false;
 const virtio_block_installer_probe_enabled: bool = if (@hasDecl(build_options, "virtio_block_installer_probe")) build_options.virtio_block_installer_probe else false;
 const virtio_block_mount_probe_enabled: bool = if (@hasDecl(build_options, "virtio_block_mount_probe")) build_options.virtio_block_mount_probe else false;
+const virtio_block_ext2_mount_probe_enabled: bool = if (@hasDecl(build_options, "virtio_block_ext2_mount_probe")) build_options.virtio_block_ext2_mount_probe else false;
+const virtio_block_fat32_mount_probe_enabled: bool = if (@hasDecl(build_options, "virtio_block_fat32_mount_probe")) build_options.virtio_block_fat32_mount_probe else false;
 
 const ata_probe_raw_lba: u32 = 300;
 const ata_probe_raw_block_count: u32 = 2;
@@ -352,6 +364,40 @@ const VirtioBlockMountProbeError = error{
     StorageRegistryReadbackFailed,
     RuntimeAliasReloadFailed,
     TmpfsAliasVolatilityMismatch,
+    PciDiscoveryMismatch,
+};
+
+const VirtioBlockExt2MountProbeError = error{
+    BackendUnavailable,
+    CapacityTooSmall,
+    SeedFailed,
+    BackendSelectFailed,
+    BackendSelectionMismatch,
+    ExternalAliasBindFailed,
+    ExternalAliasListingFailed,
+    ExternalAliasReadbackFailed,
+    ExternalAliasStatFailed,
+    ReadOnlyWriteMismatch,
+    FilesystemMatrixReadbackFailed,
+    StorageRegistryReadbackFailed,
+    BackendRegistryReadbackFailed,
+    PciDiscoveryMismatch,
+};
+
+const VirtioBlockFat32MountProbeError = error{
+    BackendUnavailable,
+    CapacityTooSmall,
+    SeedFailed,
+    BackendSelectFailed,
+    BackendSelectionMismatch,
+    ExternalAliasBindFailed,
+    ExternalAliasListingFailed,
+    ExternalAliasReadbackFailed,
+    ExternalAliasStatFailed,
+    ReadOnlyWriteMismatch,
+    FilesystemMatrixReadbackFailed,
+    StorageRegistryReadbackFailed,
+    BackendRegistryReadbackFailed,
     PciDiscoveryMismatch,
 };
 
@@ -1927,6 +1973,16 @@ pub export fn oc_storage_state_ptr() *const BaremetalStorageState {
     return storage_backend.statePtr();
 }
 
+pub export fn oc_storage_backend_count() u32 {
+    storage_backend.init();
+    return storage_backend.backendCount();
+}
+
+pub export fn oc_storage_backend_available(index: u32) u32 {
+    if (index > std.math.maxInt(u8)) return 0;
+    return if (storage_backend.isBackendAvailable(@as(u8, @intCast(index)))) 1 else 0;
+}
+
 pub export fn oc_storage_logical_base_lba() u32 {
     return storage_backend.logicalBaseLba();
 }
@@ -1990,6 +2046,14 @@ pub export fn oc_storage_write_pattern(lba: u32, block_count: u32, seed: u8) i16
 pub export fn oc_storage_select_partition(index: u32) i16 {
     if (index > std.math.maxInt(u8)) return abi.result_invalid_argument;
     storage_backend.selectPartition(@as(u8, @intCast(index))) catch |err| return mapStorageError(err);
+    tool_layout.invalidateForBackendChange();
+    filesystem.invalidateForBackendChange();
+    return abi.result_ok;
+}
+
+pub export fn oc_storage_select_backend(index: u32) i16 {
+    if (index > std.math.maxInt(u8)) return abi.result_invalid_argument;
+    storage_backend.selectBackendById(@as(u8, @intCast(index))) catch |err| return mapStorageError(err);
     tool_layout.invalidateForBackendChange();
     filesystem.invalidateForBackendChange();
     return abi.result_ok;
@@ -2739,6 +2803,14 @@ fn baremetalStart() callconv(.c) noreturn {
         runVirtioBlockMountProbe() catch |err| qemuExit(virtioBlockMountProbeFailureCode(err));
         qemuExit(qemu_virtio_block_mount_probe_ok_code);
     }
+    if (virtio_block_ext2_mount_probe_enabled) {
+        runVirtioBlockExt2MountProbe() catch |err| qemuExit(virtioBlockExt2MountProbeFailureCode(err));
+        qemuExit(qemu_virtio_block_ext2_mount_probe_ok_code);
+    }
+    if (virtio_block_fat32_mount_probe_enabled) {
+        runVirtioBlockFat32MountProbe() catch |err| qemuExit(virtioBlockFat32MountProbeFailureCode(err));
+        qemuExit(qemu_virtio_block_fat32_mount_probe_ok_code);
+    }
     if (virtio_net_probe_enabled) {
         runVirtioNetProbe() catch |err| qemuExit(virtioNetProbeFailureCode(err));
         qemuExit(qemu_virtio_net_probe_ok_code);
@@ -3423,18 +3495,18 @@ fn runVirtioBlockMountProbe() VirtioBlockMountProbeError!void {
     const storage_filesystems = filesystem.readFileAlloc(probe_allocator, "/sys/storage/filesystems", 512) catch return error.StorageFilesystemMatrixReadbackFailed;
     defer probe_allocator.free(storage_filesystems);
     if (std.mem.indexOf(u8, storage_filesystems, "filesystem=zarfs detect=1 mount=1 write=1 source=zar_native") == null or
-        std.mem.indexOf(u8, storage_filesystems, "filesystem=ext2 detect=1 mount=0 write=0 source=planned_bounded_read_only") == null or
-        std.mem.indexOf(u8, storage_filesystems, "filesystem=fat32 detect=1 mount=0 write=0 source=planned_bounded_read_only") == null)
+        std.mem.indexOf(u8, storage_filesystems, "filesystem=ext2 detect=1 mount=1 write=0 source=zar_bounded_read_only") == null or
+        std.mem.indexOf(u8, storage_filesystems, "filesystem=fat32 detect=1 mount=1 write=0 source=zar_bounded_read_only") == null)
     {
         return error.StorageFilesystemMatrixReadbackFailed;
     }
 
-    const storage_registry = filesystem.readFileAlloc(probe_allocator, "/sys/storage/registry", 2048) catch return error.StorageRegistryReadbackFailed;
-    defer probe_allocator.free(storage_registry);
-    if (std.mem.indexOf(u8, storage_registry, "name=root path=/ target=/ layer=persistent backend=virtio_block filesystem=zarfs") == null or
-        std.mem.indexOf(u8, storage_registry, "name=boot path=/mnt/boot target=/boot layer=persistent backend=virtio_block filesystem=zarfs") == null or
-        std.mem.indexOf(u8, storage_registry, "name=runtime path=/mnt/runtime target=/runtime layer=persistent backend=virtio_block filesystem=zarfs") == null or
-        std.mem.indexOf(u8, storage_registry, "name=cache path=/mnt/cache target=/tmp/cache layer=tmpfs backend=none filesystem=tmpfs") == null)
+    const storage_registry_text = filesystem.readFileAlloc(probe_allocator, "/sys/storage/registry", 2048) catch return error.StorageRegistryReadbackFailed;
+    defer probe_allocator.free(storage_registry_text);
+    if (std.mem.indexOf(u8, storage_registry_text, "name=root path=/ target=/ layer=persistent backend=virtio_block filesystem=zarfs") == null or
+        std.mem.indexOf(u8, storage_registry_text, "name=boot path=/mnt/boot target=/boot layer=persistent backend=virtio_block filesystem=zarfs") == null or
+        std.mem.indexOf(u8, storage_registry_text, "name=runtime path=/mnt/runtime target=/runtime layer=persistent backend=virtio_block filesystem=zarfs") == null or
+        std.mem.indexOf(u8, storage_registry_text, "name=cache path=/mnt/cache target=/tmp/cache layer=tmpfs backend=none filesystem=tmpfs") == null)
     {
         return error.StorageRegistryReadbackFailed;
     }
@@ -3469,6 +3541,111 @@ fn runVirtioBlockMountProbe() VirtioBlockMountProbeError!void {
     const device = pci.discoverVirtioBlockDevice() orelse return error.PciDiscoveryMismatch;
     if (device.vendor_id != 0x1AF4 or device.device_id != 0x1042) {
         return error.PciDiscoveryMismatch;
+    }
+}
+
+fn runVirtioBlockExt2MountProbe() VirtioBlockExt2MountProbeError!void {
+    runVirtioBlockExternalFsProbe(
+        VirtioBlockExt2MountProbeError,
+        .ext2,
+        ext2_ro.test_file_name,
+        ext2_ro.test_file_payload,
+        ext2_ro.seedTestImage,
+    ) catch |err| return err;
+}
+
+fn runVirtioBlockFat32MountProbe() VirtioBlockFat32MountProbeError!void {
+    runVirtioBlockExternalFsProbe(
+        VirtioBlockFat32MountProbeError,
+        .fat32,
+        fat32_ro.test_file_name,
+        fat32_ro.test_file_payload,
+        fat32_ro.seedTestImage,
+    ) catch |err| return err;
+}
+
+fn runVirtioBlockExternalFsProbe(
+    comptime ProbeError: type,
+    comptime filesystem_kind: storage_registry.FilesystemKind,
+    comptime file_name: []const u8,
+    expected_payload: []const u8,
+    seed_fn: fn () anyerror!void,
+) ProbeError!void {
+    var probe_allocator_backing = [_]u8{0} ** 8192;
+    var probe_fba = std.heap.FixedBufferAllocator.init(&probe_allocator_backing);
+    const probe_allocator = if (builtin.is_test) std.testing.allocator else probe_fba.allocator();
+
+    storage_backend.init();
+    const storage = storage_backend.statePtr();
+    if (storage.backend != abi.storage_backend_virtio_block or storage.mounted == 0) return error.BackendUnavailable;
+    if (storage.block_count < 256) return error.CapacityTooSmall;
+
+    seed_fn() catch return error.SeedFailed;
+
+    if (oc_storage_backend_count() != 3 or
+        oc_storage_backend_available(abi.storage_backend_ram_disk) != 1 or
+        oc_storage_backend_available(abi.storage_backend_virtio_block) != 1)
+    {
+        return error.BackendSelectionMismatch;
+    }
+    if (oc_storage_select_backend(abi.storage_backend_ram_disk) != abi.result_ok) return error.BackendSelectFailed;
+    if (oc_storage_state_ptr().backend != abi.storage_backend_ram_disk) return error.BackendSelectionMismatch;
+    if (oc_storage_select_backend(abi.storage_backend_virtio_block) != abi.result_ok) return error.BackendSelectFailed;
+    if (oc_storage_state_ptr().backend != abi.storage_backend_virtio_block) return error.BackendSelectionMismatch;
+
+    filesystem.init() catch return error.ExternalAliasBindFailed;
+    mount_table.set("external", mounted_external_fs.active_root, status.ticks + 1) catch return error.ExternalAliasBindFailed;
+
+    const listing = filesystem.listDirectoryAlloc(probe_allocator, "/mnt/external", 256) catch return error.ExternalAliasListingFailed;
+    defer probe_allocator.free(listing);
+    const expected_listing = std.fmt.allocPrint(probe_allocator, "file {s} {d}\n", .{ file_name, expected_payload.len }) catch return error.ExternalAliasListingFailed;
+    defer probe_allocator.free(expected_listing);
+    if (!std.mem.eql(u8, listing, expected_listing)) return error.ExternalAliasListingFailed;
+
+    var mounted_path_buf: [96]u8 = undefined;
+    const mounted_path = std.fmt.bufPrint(mounted_path_buf[0..], "/mnt/external/{s}", .{file_name}) catch return error.ExternalAliasReadbackFailed;
+    const payload = filesystem.readFileAlloc(probe_allocator, mounted_path, 128) catch return error.ExternalAliasReadbackFailed;
+    defer probe_allocator.free(payload);
+    if (!std.mem.eql(u8, payload, expected_payload)) return error.ExternalAliasReadbackFailed;
+
+    const stat = filesystem.statSummary(mounted_path) catch return error.ExternalAliasStatFailed;
+    if (stat.kind != .file or stat.size != expected_payload.len) return error.ExternalAliasStatFailed;
+
+    if (filesystem.writeFile("/mnt/external/FAIL.TXT", "x", status.ticks + 2)) {
+        return error.ReadOnlyWriteMismatch;
+    } else |err| {
+        if (err != error.ReadOnlyPath) return error.ReadOnlyWriteMismatch;
+    }
+
+    const storage_filesystems = filesystem.readFileAlloc(probe_allocator, "/sys/storage/filesystems", 512) catch return error.FilesystemMatrixReadbackFailed;
+    defer probe_allocator.free(storage_filesystems);
+    const expected_filesystem_row = switch (filesystem_kind) {
+        .ext2 => "filesystem=ext2 detect=1 mount=1 write=0 source=zar_bounded_read_only",
+        .fat32 => "filesystem=fat32 detect=1 mount=1 write=0 source=zar_bounded_read_only",
+        else => return error.FilesystemMatrixReadbackFailed,
+    };
+    if (std.mem.indexOf(u8, storage_filesystems, expected_filesystem_row) == null) return error.FilesystemMatrixReadbackFailed;
+
+    const storage_registry_text = filesystem.readFileAlloc(probe_allocator, "/sys/storage/registry", 2048) catch return error.StorageRegistryReadbackFailed;
+    defer probe_allocator.free(storage_registry_text);
+    const expected_registry_row = switch (filesystem_kind) {
+        .ext2 => "name=external path=/mnt/external target=/__storagefs/active layer=persistent backend=virtio_block filesystem=ext2",
+        .fat32 => "name=external path=/mnt/external target=/__storagefs/active layer=persistent backend=virtio_block filesystem=fat32",
+        else => return error.StorageRegistryReadbackFailed,
+    };
+    if (std.mem.indexOf(u8, storage_registry_text, expected_registry_row) == null) return error.StorageRegistryReadbackFailed;
+
+    const storage_backends = filesystem.readFileAlloc(probe_allocator, "/sys/storage/backends", 1024) catch return error.BackendRegistryReadbackFailed;
+    defer probe_allocator.free(storage_backends);
+    if (std.mem.indexOf(u8, storage_backends, "backend[0]=name=ram_disk backend=ram_disk available=1 selected=0 mounted=1") == null or
+        std.mem.indexOf(u8, storage_backends, "backend[2]=name=virtio_block backend=virtio_block available=1 selected=1 mounted=1") == null)
+    {
+        return error.BackendRegistryReadbackFailed;
+    }
+
+    if (!builtin.is_test) {
+        const device = pci.discoverVirtioBlockDevice() orelse return error.PciDiscoveryMismatch;
+        if (device.vendor_id != 0x1AF4 or device.device_id != 0x1042) return error.PciDiscoveryMismatch;
     }
 }
 
@@ -16157,6 +16334,44 @@ fn virtioBlockMountProbeFailureCode(err: VirtioBlockMountProbeError) u8 {
     };
 }
 
+fn virtioBlockExt2MountProbeFailureCode(err: VirtioBlockExt2MountProbeError) u8 {
+    return switch (err) {
+        error.BackendUnavailable => 0x94,
+        error.CapacityTooSmall => 0x95,
+        error.SeedFailed => 0x96,
+        error.BackendSelectFailed => 0x97,
+        error.BackendSelectionMismatch => 0x98,
+        error.ExternalAliasBindFailed => 0x99,
+        error.ExternalAliasListingFailed => 0x9A,
+        error.ExternalAliasReadbackFailed => 0x9B,
+        error.ExternalAliasStatFailed => 0x9C,
+        error.ReadOnlyWriteMismatch => 0x9D,
+        error.FilesystemMatrixReadbackFailed => 0x9E,
+        error.StorageRegistryReadbackFailed => 0x9F,
+        error.BackendRegistryReadbackFailed => 0xA0,
+        error.PciDiscoveryMismatch => 0xA1,
+    };
+}
+
+fn virtioBlockFat32MountProbeFailureCode(err: VirtioBlockFat32MountProbeError) u8 {
+    return switch (err) {
+        error.BackendUnavailable => 0xA2,
+        error.CapacityTooSmall => 0xA3,
+        error.SeedFailed => 0xA4,
+        error.BackendSelectFailed => 0xA5,
+        error.BackendSelectionMismatch => 0xA6,
+        error.ExternalAliasBindFailed => 0xA7,
+        error.ExternalAliasListingFailed => 0xA8,
+        error.ExternalAliasReadbackFailed => 0xA9,
+        error.ExternalAliasStatFailed => 0xAA,
+        error.ReadOnlyWriteMismatch => 0xAB,
+        error.FilesystemMatrixReadbackFailed => 0xAC,
+        error.StorageRegistryReadbackFailed => 0xAD,
+        error.BackendRegistryReadbackFailed => 0xAE,
+        error.PciDiscoveryMismatch => 0xAF,
+    };
+}
+
 comptime {
     if (!builtin.is_test) {
         @export(&baremetalStart, .{ .name = "_start" });
@@ -16587,7 +16802,7 @@ fn executeCommand(opcode: u16, arg0: u64, arg1: u64) i16 {
 
 fn mapStorageError(err: anyerror) i16 {
     return switch (err) {
-        error.OutOfRange, error.UnalignedLength, error.InvalidSlot, error.CorruptLayout, error.InvalidPath, error.NotDirectory, error.IsDirectory, error.CorruptFilesystem, error.FileTooBig => abi.result_invalid_argument,
+        error.OutOfRange, error.UnalignedLength, error.InvalidSlot, error.CorruptLayout, error.InvalidPath, error.InvalidFilesystem, error.UnsupportedPath, error.NotDirectory, error.IsDirectory, error.CorruptFilesystem, error.FileTooBig => abi.result_invalid_argument,
         error.FileNotFound => abi.result_not_found,
         error.NoSpace => abi.result_no_space,
         error.NotMounted => abi.result_conflict,
@@ -24858,15 +25073,47 @@ test "baremetal virtio block mount probe persists mounted alias paths" {
 
     const storage_filesystems = try filesystem.readFileAlloc(std.testing.allocator, "/sys/storage/filesystems", 512);
     defer std.testing.allocator.free(storage_filesystems);
-    try std.testing.expect(std.mem.indexOf(u8, storage_filesystems, "filesystem=ext2 detect=1 mount=0 write=0 source=planned_bounded_read_only") != null);
-    try std.testing.expect(std.mem.indexOf(u8, storage_filesystems, "filesystem=fat32 detect=1 mount=0 write=0 source=planned_bounded_read_only") != null);
+    try std.testing.expect(std.mem.indexOf(u8, storage_filesystems, "filesystem=ext2 detect=1 mount=1 write=0 source=zar_bounded_read_only") != null);
+    try std.testing.expect(std.mem.indexOf(u8, storage_filesystems, "filesystem=fat32 detect=1 mount=1 write=0 source=zar_bounded_read_only") != null);
 
-    const storage_registry = try filesystem.readFileAlloc(std.testing.allocator, "/sys/storage/registry", 2048);
-    defer std.testing.allocator.free(storage_registry);
-    try std.testing.expect(std.mem.indexOf(u8, storage_registry, "name=root path=/ target=/ layer=persistent backend=virtio_block filesystem=zarfs") != null);
-    try std.testing.expect(std.mem.indexOf(u8, storage_registry, "name=cache path=/mnt/cache target=/tmp/cache layer=tmpfs backend=none filesystem=tmpfs") != null);
+    const storage_registry_text = try filesystem.readFileAlloc(std.testing.allocator, "/sys/storage/registry", 2048);
+    defer std.testing.allocator.free(storage_registry_text);
+    try std.testing.expect(std.mem.indexOf(u8, storage_registry_text, "name=root path=/ target=/ layer=persistent backend=virtio_block filesystem=zarfs") != null);
+    try std.testing.expect(std.mem.indexOf(u8, storage_registry_text, "name=cache path=/mnt/cache target=/tmp/cache layer=tmpfs backend=none filesystem=tmpfs") != null);
 
     try std.testing.expectEqual(error.FileNotFound, filesystem.readFileAlloc(std.testing.allocator, "/mnt/cache/volatile.txt", 64));
+}
+
+test "baremetal virtio block ext2 mount probe exposes read only external alias" {
+    resetBaremetalRuntimeForTest();
+    virtio_block.testEnableMockDevice(16384);
+    defer virtio_block.testDisableMockDevice();
+
+    try runVirtioBlockExt2MountProbe();
+
+    const listing = try filesystem.listDirectoryAlloc(std.testing.allocator, "/mnt/external", 256);
+    defer std.testing.allocator.free(listing);
+    try std.testing.expectEqualStrings("file HELLO.TXT 15\n", listing);
+
+    const payload = try filesystem.readFileAlloc(std.testing.allocator, "/mnt/external/HELLO.TXT", 64);
+    defer std.testing.allocator.free(payload);
+    try std.testing.expectEqualStrings(ext2_ro.test_file_payload, payload);
+}
+
+test "baremetal virtio block fat32 mount probe exposes read only external alias" {
+    resetBaremetalRuntimeForTest();
+    virtio_block.testEnableMockDevice(16384);
+    defer virtio_block.testDisableMockDevice();
+
+    try runVirtioBlockFat32MountProbe();
+
+    const listing = try filesystem.listDirectoryAlloc(std.testing.allocator, "/mnt/external", 256);
+    defer std.testing.allocator.free(listing);
+    try std.testing.expectEqualStrings("file HELLO.TXT 16\n", listing);
+
+    const payload = try filesystem.readFileAlloc(std.testing.allocator, "/mnt/external/HELLO.TXT", 64);
+    defer std.testing.allocator.free(payload);
+    try std.testing.expectEqualStrings(fat32_ro.test_file_payload, payload);
 }
 
 test "baremetal tool layout persists patterned tool slot payloads on ram disk" {

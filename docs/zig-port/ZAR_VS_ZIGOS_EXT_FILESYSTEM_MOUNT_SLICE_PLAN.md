@@ -3,7 +3,7 @@
 
 ## Objective
 
-Move from raw on-disk filesystem detection to bounded mounted external-filesystem support without forcing a full GP-OS VFS/syscall transplant into ZAR.
+Track the delivered bounded mounted external-filesystem seam and the remaining work beyond it without forcing a full GP-OS VFS/syscall transplant into ZAR.
 
 This slice is informed by ZigOS filesystem breadth and may use Linux and ZigOS as references, but the implementation remains ZAR-native.
 
@@ -37,21 +37,29 @@ Current capability posture:
   - write: yes
 - `ext2`
   - detect: yes
-  - mount: not yet
+  - mount: yes
   - write: not yet
 - `fat32`
   - detect: yes
-  - mount: not yet
+  - mount: yes
   - write: not yet
 
-## Deliberate scope for the next external-filesystem step
+## Delivered bounded mount step
 
-First bounded mounted-filesystem phase:
+Delivered:
 
 1. read-only external mount classification
 2. explicit mount target under `/mnt/fs/<name>` or equivalent bounded alias
 3. bounded directory listing
 4. bounded file read
+5. bounded stat
+6. bounded backend retargeting before rebinding the filesystem
+7. live `virtio-block` proof for deterministic ext2/fat32 images
+
+## Deliberate scope for the next external-filesystem step
+
+Still deferred:
+
 5. no write path
 6. no journaling
 7. no userspace syscall ABI
@@ -61,7 +69,7 @@ First bounded mounted-filesystem phase:
 
 ### Phase A: ext2 read-only mount
 
-Deliver:
+Delivered:
 
 - ext2 superblock parse
 - block-group descriptor parse
@@ -78,7 +86,7 @@ Do not deliver yet:
 
 ### Phase B: FAT32 read-only mount
 
-Deliver:
+Delivered:
 
 - BPB + FAT32 info-sector parse
 - cluster-chain walk
@@ -94,7 +102,7 @@ Do not deliver yet:
 
 ### Phase C: mount registry integration
 
-After A and B:
+Delivered on top of A and B:
 
 - extend mount registry records with `filesystem=<kind>`
 - extend VFS router so mounted external roots participate through the same bounded path seam

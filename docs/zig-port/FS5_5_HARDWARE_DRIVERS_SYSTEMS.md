@@ -76,7 +76,7 @@ Delivered fourth adoption slice:
 - `src/baremetal/tool_exec.zig` and `src/baremetal/tool_service.zig` now expose `/dev` through the same builtin and typed `GET` / `LIST` / `STAT` surface
 - host regressions now prove `/dev`, `/dev/storage/state`, `/dev/display/state`, root overlay listing, and read-only path rejection
 - `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1` now proves `/`, `/dev`, `/dev/storage/state`, and virtual `STAT` readback live over the `E1000` tool-service path
-- full ZigOS-style VFS, generalized mount semantics, `ext2`, and `fat32` remain future redesign work; this slice closes the bounded `/dev` overlay only
+- full ZigOS-style VFS, generalized mount semantics, and syscall-visible external filesystems remain future redesign work; this slice closes the bounded `/dev` overlay only
 
 Delivered fifth adoption slice:
 
@@ -99,12 +99,16 @@ Delivered sixth adoption slice:
 - `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1` now proves that same mount-layer behavior live on `virtio-blk-pci`, including persisted registry path markers and reloaded alias payload readback
 - `src/baremetal/vfs.zig` now provides a bounded internal VFS router over the persistent filesystem, `tmpfs`, the read-only `virtual_fs` trees, and the `/mnt` root, while `src/baremetal/filesystem.zig` now delegates public path operations through that router instead of open-coded per-call branching
 - `src/baremetal_main.zig` now widens the same `virtio-block` mount proof to cover merged root listing, `/proc/version` readback, and `/mnt/cache -> /tmp/cache` volatility across reset without regressing the persisted mount-alias contract
-- `src/baremetal/storage_registry.zig` now adds a bounded storage-layer registry over the active persistent backend, `tmpfs`, `virtual_fs`, and persisted mount aliases, plus raw `zarfs` / `ext2` / `fat32` detection on the active backend without claiming mounted external-filesystem support
+- `src/baremetal/storage_registry.zig` now adds a bounded storage-layer registry over the active persistent backend, `tmpfs`, `virtual_fs`, and persisted mount aliases, plus raw `zarfs` / `ext2` / `fat32` detection on the active backend
 - `src/baremetal/virtual_fs.zig` now exposes that registry through `/dev/storage/registry` and `/sys/storage/registry`, while `/sys/storage/state` now also reports `detected_filesystem` plus `supported_filesystem_probes=zarfs,ext2,fat32`
 - `src/baremetal_main.zig` now widens the same `virtio-block` mount proof to validate `/sys/storage/state`, `/sys/storage/registry`, persistent `zarfs` classification on `virtio-block`, and `tmpfs` classification for `/mnt/cache -> /tmp/cache`
 - `src/baremetal/storage_backend_registry.zig` now exports a bounded backend registry over `ram_disk`, `ata_pio`, and `virtio_block`, including availability, active-selection state, preferred-order, logical-base-LBA, partition metadata, and detected filesystem kind per backend
-- `src/baremetal/virtual_fs.zig` now also exposes `/dev/storage/backends`, `/dev/storage/filesystems`, `/sys/storage/backends`, and `/sys/storage/filesystems`, making the mounted-filesystem posture explicit at runtime: `zarfs` mounted+writable, `ext2` detect-only planned read-only, and `fat32` detect-only planned read-only
+- `src/baremetal/virtual_fs.zig` now also exposes `/dev/storage/backends`, `/dev/storage/filesystems`, `/sys/storage/backends`, and `/sys/storage/filesystems`, making the mounted-filesystem posture explicit at runtime: `zarfs` mounted+writable, `ext2` mounted read-only, and `fat32` mounted read-only
 - `src/baremetal_main.zig` now widens the same `virtio-block` mount proof to validate `/sys/storage/backends` plus `/sys/storage/filesystems` on the live `virtio-blk-pci` path
+- `src/baremetal/ext2_ro.zig` and `src/baremetal/fat32_ro.zig` now provide bounded read-only root listing, file read, and stat over deterministic external images seeded onto the active backend
+- `src/baremetal/mounted_external_fs.zig` now exposes those external filesystems under `/__storagefs/{active,ext2,fat32}`, while `src/baremetal/vfs.zig` routes mounted aliases like `/mnt/external/...` through that bounded external-filesystem seam
+- `src/baremetal/storage_backend.zig` plus `src/baremetal_main.zig` now export bounded backend count, availability, and explicit selection so the mounted external-filesystem seam can retarget the active backend before rebinding the filesystem
+- `scripts/baremetal-qemu-virtio-block-ext2-mount-probe-check.ps1` and `scripts/baremetal-qemu-virtio-block-fat32-mount-probe-check.ps1` now prove live bounded read-only `ext2` and `fat32` mounting on `virtio-blk-pci`, including signature validation, mounted `/mnt/external` listing/read/stat, and read-only write rejection
 
 Delivered seventh adoption slice:
 

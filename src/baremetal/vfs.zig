@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
 const mount_table = @import("mount_table.zig");
+const mounted_external_fs = @import("mounted_external_fs.zig");
 const tmpfs = @import("tmpfs.zig");
 const virtual_fs = @import("virtual_fs.zig");
 
@@ -16,6 +17,7 @@ pub const RouteKind = enum {
     persistent,
     tmpfs,
     virtual,
+    external,
     mount_root,
 };
 
@@ -39,6 +41,7 @@ pub fn route(path: []const u8, normalized_buf: []u8, resolved_buf: []u8) !Route 
 
     if (tmpfs.handles(full)) return .{ .kind = .tmpfs, .full = full };
     if (virtual_fs.handles(full)) return .{ .kind = .virtual, .full = full };
+    if (mounted_external_fs.handles(full)) return .{ .kind = .external, .full = full };
     return .{ .kind = .persistent, .full = full };
 }
 
@@ -53,6 +56,7 @@ pub fn createDirPath(persistent: anytype, path: []const u8, normalized_buf: []u8
             else => error.InvalidPath,
         },
         .virtual => return error.ReadOnlyPath,
+        .external => return error.ReadOnlyPath,
         .persistent => return persistent.createDirPath(routed.full),
     }
 }
@@ -70,6 +74,7 @@ pub fn writeFile(persistent: anytype, path: []const u8, data: []const u8, tick: 
             else => error.InvalidPath,
         },
         .virtual => return error.ReadOnlyPath,
+        .external => return error.ReadOnlyPath,
         .persistent => return persistent.writeFile(routed.full, data, tick),
     }
 }
@@ -85,6 +90,7 @@ pub fn deleteFile(persistent: anytype, path: []const u8, tick: u64, normalized_b
             else => error.InvalidPath,
         },
         .virtual => return error.ReadOnlyPath,
+        .external => return error.ReadOnlyPath,
         .persistent => return persistent.deleteFile(routed.full, tick),
     }
 }
@@ -99,6 +105,7 @@ pub fn deleteTree(persistent: anytype, path: []const u8, tick: u64, normalized_b
             else => error.InvalidPath,
         },
         .virtual => return error.ReadOnlyPath,
+        .external => return error.ReadOnlyPath,
         .persistent => return persistent.deleteTree(routed.full, tick),
     }
 }
@@ -115,6 +122,7 @@ pub fn readFileAlloc(persistent: anytype, allocator: std.mem.Allocator, path: []
             else => error.InvalidPath,
         },
         .virtual => return virtual_fs.readFileAlloc(allocator, routed.full, max_bytes),
+        .external => return mounted_external_fs.readFileAlloc(allocator, routed.full, max_bytes),
         .persistent => return persistent.readFileAlloc(allocator, routed.full, max_bytes),
     }
 }
@@ -131,6 +139,7 @@ pub fn readFile(persistent: anytype, path: []const u8, buffer: []u8, normalized_
             else => error.InvalidPath,
         },
         .virtual => return virtual_fs.readFile(routed.full, buffer),
+        .external => return mounted_external_fs.readFile(routed.full, buffer),
         .persistent => return persistent.readFile(routed.full, buffer),
     }
 }
@@ -147,6 +156,7 @@ pub fn listDirectoryAlloc(persistent: anytype, allocator: std.mem.Allocator, pat
             else => error.InvalidPath,
         },
         .virtual => return virtual_fs.listDirectoryAlloc(allocator, routed.full, max_bytes),
+        .external => return mounted_external_fs.listDirectoryAlloc(allocator, routed.full, max_bytes),
         .persistent => {
             if (std.mem.eql(u8, routed.full, "/")) return persistent.listRootDirectoryAlloc(allocator, max_bytes);
             return persistent.listDirectoryAlloc(allocator, routed.full, max_bytes);
@@ -177,6 +187,16 @@ pub fn statSummary(persistent: anytype, path: []const u8, normalized_buf: []u8, 
         },
         .virtual => {
             const summary = try virtual_fs.statSummary(routed.full);
+            return .{
+                .kind = summary.kind,
+                .size = summary.size,
+                .checksum = summary.checksum,
+                .modified_tick = summary.modified_tick,
+                .entry_id = summary.entry_id,
+            };
+        },
+        .external => {
+            const summary = try mounted_external_fs.statSummary(routed.full);
             return .{
                 .kind = summary.kind,
                 .size = summary.size,

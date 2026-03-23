@@ -177,12 +177,12 @@ Current delivered scope:
 - `src/baremetal/virtual_fs.zig` now exposes that storage registry through `/dev/storage/registry` and `/sys/storage/registry`, while `/sys/storage/state` now also reports the detected filesystem kind and supported probe set
 - `src/baremetal/virtual_fs.zig` now also exposes `/dev/storage/backends`, `/dev/storage/filesystems`, `/sys/storage/backends`, and `/sys/storage/filesystems`, making the current mounted-filesystem capability posture explicit at runtime
 - `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1` now also proves the storage registry and detected-filesystem seam live on `virtio-blk-pci`
-- `docs/zig-port/ZAR_VS_ZIGOS_EXT_FILESYSTEM_MOUNT_SLICE_PLAN.md` now defines the next bounded mounted ext2/FAT phase as read-only external mounts, not a GP-OS VFS/syscall transplant
+- `docs/zig-port/ZAR_VS_ZIGOS_EXT_FILESYSTEM_MOUNT_SLICE_PLAN.md` now tracks the delivered bounded mounted ext2/FAT read-only phase, not a GP-OS VFS/syscall transplant
 
 Still intentionally out of scope for this slice:
 
 - full VFS mount model
-- mounted external on-disk filesystems such as `ext2` / `fat32`
+- writable or syscall-visible external on-disk filesystems such as `ext2` / `fat32`
 - userspace-facing path semantics beyond the current read-only introspection tree
 
 ### Z3b. Virtio-Block Storage Breadth
@@ -206,7 +206,7 @@ Current delivered scope:
 - `src/baremetal/vfs.zig` now extends that storage direction into a bounded internal VFS router instead of a direct full ZigOS VFS transplant
 - `src/baremetal/storage_registry.zig` now extends that same storage direction into a bounded registry over RAM-disk / ATA / `virtio-block` with raw `zarfs` / `ext2` / `fat32` detection, without claiming mounted external-filesystem support
 - `src/baremetal/storage_backend_registry.zig` now adds the bounded backend-registry layer so the mount direction can reason about `ram_disk`, `ata_pio`, and `virtio_block` explicitly instead of only the active backend
-- `docs/zig-port/ZAR_VS_ZIGOS_EXT_FILESYSTEM_MOUNT_SLICE_PLAN.md` now defines the next mounted `ext2` / `fat32` phase as bounded read-only external mounts on top of the current registry + VFS seam
+- `docs/zig-port/ZAR_VS_ZIGOS_EXT_FILESYSTEM_MOUNT_SLICE_PLAN.md` now tracks the delivered bounded mounted `ext2` / `fat32` phase on top of the current registry + VFS seam, with writable and GP-OS-style semantics still deferred
 
 ### Z4. Shell And Interactive Control Layer
 
