@@ -111,12 +111,33 @@ pub fn writeFile(path: []const u8, data: []const u8, tick: u64) Error!void {
     };
 }
 
+pub fn createDirPath(path: []const u8) Error!void {
+    const parsed = parsePath(path) orelse return error.FileNotFound;
+    const kind = try resolveKind(parsed.kind);
+    return switch (kind) {
+        .fat32 => fat32_ro.createDirPath(parsed.relative),
+        .ext2 => error.ReadOnlyPath,
+        else => error.FileNotFound,
+    };
+}
+
 pub fn deleteFile(path: []const u8) Error!void {
     const parsed = parsePath(path) orelse return error.FileNotFound;
     const kind = try resolveKind(parsed.kind);
     if (parsed.relative.len == 0 or std.mem.eql(u8, parsed.relative, "/")) return error.IsDirectory;
     return switch (kind) {
         .fat32 => fat32_ro.deleteFile(parsed.relative),
+        .ext2 => error.ReadOnlyPath,
+        else => error.FileNotFound,
+    };
+}
+
+pub fn deleteTree(path: []const u8) Error!void {
+    const parsed = parsePath(path) orelse return error.FileNotFound;
+    if (parsed.relative.len == 0 or std.mem.eql(u8, parsed.relative, "/")) return error.ReadOnlyPath;
+    const kind = try resolveKind(parsed.kind);
+    return switch (kind) {
+        .fat32 => fat32_ro.deleteTree(parsed.relative),
         .ext2 => error.ReadOnlyPath,
         else => error.FileNotFound,
     };
@@ -246,4 +267,46 @@ test "mounted external fs routes bounded nested fat32 operations through active 
 
     try deleteFile(active_root ++ "/DATA/WRITE.TXT");
     try std.testing.expectEqual(error.FileNotFound, readFileAlloc(std.testing.allocator, active_root ++ "/DATA/WRITE.TXT", 64));
+}
+
+test "mounted external fs routes bounded fat32 directory mutation through active root" {
+    storage_backend.resetForTest();
+    virtio_block.testEnableMockDevice(256);
+    defer virtio_block.testDisableMockDevice();
+    storage_backend.init();
+    try fat32_ro.seedTestImage();
+
+    try createDirPath(active_root ++ "/CACHE");
+    {
+        const root_listing = try listDirectoryAlloc(std.testing.allocator, active_root, 256);
+        defer std.testing.allocator.free(root_listing);
+        try std.testing.expect(std.mem.indexOf(u8, root_listing, "dir CACHE\n") != null);
+    }
+
+    try writeFile(active_root ++ "/CACHE/LOG.TXT", "mounted-fat32-dir", 10);
+    const payload = try readFileAlloc(std.testing.allocator, active_root ++ "/CACHE/LOG.TXT", 64);
+    defer std.testing.allocator.free(payload);
+    try std.testing.expectEqualStrings("mounted-fat32-dir", payload);
+
+    try createDirPath(active_root ++ "/DATA/ARCHIVE");
+    const nested_listing = try listDirectoryAlloc(std.testing.allocator, active_root ++ "/DATA", 256);
+    defer std.testing.allocator.free(nested_listing);
+    try std.testing.expect(std.mem.indexOf(u8, nested_listing, "dir ARCHIVE\n") != null);
+
+    try deleteTree(active_root ++ "/CACHE");
+    try std.testing.expectEqual(error.FileNotFound, readFileAlloc(std.testing.allocator, active_root ++ "/CACHE/LOG.TXT", 64));
+
+    {
+        const root_listing = try listDirectoryAlloc(std.testing.allocator, active_root, 256);
+        defer std.testing.allocator.free(root_listing);
+        try std.testing.expect(std.mem.indexOf(u8, root_listing, "dir CACHE\n") == null);
+    }
+
+    try deleteTree(active_root ++ "/DATA/ARCHIVE");
+    const nested_listing_after_delete = try listDirectoryAlloc(std.testing.allocator, active_root ++ "/DATA", 256);
+    defer std.testing.allocator.free(nested_listing_after_delete);
+    try std.testing.expect(std.mem.indexOf(u8, nested_listing_after_delete, "dir ARCHIVE\n") == null);
+
+    try std.testing.expectError(error.FileNotFound, createDirPath(ext2_root ++ "/CACHE"));
+    try std.testing.expectError(error.ReadOnlyPath, deleteTree(active_root));
 }

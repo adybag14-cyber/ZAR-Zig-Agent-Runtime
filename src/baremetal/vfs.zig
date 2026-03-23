@@ -56,7 +56,14 @@ pub fn createDirPath(persistent: anytype, path: []const u8, normalized_buf: []u8
             else => error.InvalidPath,
         },
         .virtual => return error.ReadOnlyPath,
-        .external => return error.ReadOnlyPath,
+        .external => return mounted_external_fs.createDirPath(routed.full) catch |err| switch (err) {
+            error.FileNotFound => error.FileNotFound,
+            error.NotDirectory => error.NotDirectory,
+            error.UnsupportedPath => error.InvalidPath,
+            error.NoSpace => error.NoSpace,
+            error.ReadOnlyPath => error.ReadOnlyPath,
+            else => error.InvalidPath,
+        },
         .persistent => return persistent.createDirPath(routed.full),
     }
 }
@@ -119,7 +126,12 @@ pub fn deleteTree(persistent: anytype, path: []const u8, tick: u64, normalized_b
             else => error.InvalidPath,
         },
         .virtual => return error.ReadOnlyPath,
-        .external => return error.ReadOnlyPath,
+        .external => return mounted_external_fs.deleteTree(routed.full) catch |err| switch (err) {
+            error.FileNotFound => error.FileNotFound,
+            error.ReadOnlyPath => error.ReadOnlyPath,
+            error.UnsupportedPath => error.InvalidPath,
+            else => error.InvalidPath,
+        },
         .persistent => return persistent.deleteTree(routed.full, tick),
     }
 }

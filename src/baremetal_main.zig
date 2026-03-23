@@ -413,6 +413,12 @@ const VirtioBlockFat32MountProbeError = error{
     NestedAliasWriteFailed,
     NestedAliasOverwriteFailed,
     NestedAliasDeleteFailed,
+    DirectoryAliasCreateFailed,
+    DirectoryAliasReadbackFailed,
+    DirectoryAliasWriteFailed,
+    DirectoryAliasDeleteFailed,
+    NestedDirectoryAliasCreateFailed,
+    NestedDirectoryAliasDeleteFailed,
     FilesystemMatrixReadbackFailed,
     StorageRegistryReadbackFailed,
     BackendRegistryReadbackFailed,
@@ -3900,6 +3906,30 @@ fn runVirtioBlockExternalFsProbe(
             filesystem.deleteFile("/mnt/external/DATA/WRITE.TXT", status.ticks + 7) catch return error.NestedAliasDeleteFailed;
             const nested_deleted = filesystem.readFileAlloc(probe_allocator, "/mnt/external/DATA/WRITE.TXT", 64);
             if (nested_deleted != error.FileNotFound) return error.NestedAliasDeleteFailed;
+
+            filesystem.createDirPath("/mnt/external/CACHE") catch return error.DirectoryAliasCreateFailed;
+            const root_listing_after_dir = filesystem.listDirectoryAlloc(probe_allocator, "/mnt/external", 256) catch return error.DirectoryAliasReadbackFailed;
+            defer probe_allocator.free(root_listing_after_dir);
+            if (std.mem.indexOf(u8, root_listing_after_dir, "dir CACHE\n") == null) return error.DirectoryAliasReadbackFailed;
+
+            filesystem.writeFile("/mnt/external/CACHE/LOG.TXT", "fat32-dir-write", status.ticks + 8) catch return error.DirectoryAliasWriteFailed;
+            if (!probeFilesystemContent("/mnt/external/CACHE/LOG.TXT", "fat32-dir-write")) return error.DirectoryAliasWriteFailed;
+
+            filesystem.createDirPath("/mnt/external/DATA/ARCHIVE") catch return error.NestedDirectoryAliasCreateFailed;
+            const nested_listing_after_dir = filesystem.listDirectoryAlloc(probe_allocator, "/mnt/external/DATA", 256) catch return error.NestedDirectoryAliasCreateFailed;
+            defer probe_allocator.free(nested_listing_after_dir);
+            if (std.mem.indexOf(u8, nested_listing_after_dir, "dir ARCHIVE\n") == null) return error.NestedDirectoryAliasCreateFailed;
+
+            filesystem.deleteTree("/mnt/external/CACHE", status.ticks + 9) catch return error.DirectoryAliasDeleteFailed;
+            if (filesystem.readFileAlloc(probe_allocator, "/mnt/external/CACHE/LOG.TXT", 64) != error.FileNotFound) return error.DirectoryAliasDeleteFailed;
+            const root_listing_after_delete = filesystem.listDirectoryAlloc(probe_allocator, "/mnt/external", 256) catch return error.DirectoryAliasDeleteFailed;
+            defer probe_allocator.free(root_listing_after_delete);
+            if (std.mem.indexOf(u8, root_listing_after_delete, "dir CACHE\n") != null) return error.DirectoryAliasDeleteFailed;
+
+            filesystem.deleteTree("/mnt/external/DATA/ARCHIVE", status.ticks + 10) catch return error.NestedDirectoryAliasDeleteFailed;
+            const nested_listing_after_delete = filesystem.listDirectoryAlloc(probe_allocator, "/mnt/external/DATA", 256) catch return error.NestedDirectoryAliasDeleteFailed;
+            defer probe_allocator.free(nested_listing_after_delete);
+            if (std.mem.indexOf(u8, nested_listing_after_delete, "dir ARCHIVE\n") != null) return error.NestedDirectoryAliasDeleteFailed;
         },
         else => {},
     }
@@ -16664,10 +16694,16 @@ fn virtioBlockFat32MountProbeFailureCode(err: VirtioBlockFat32MountProbeError) u
         error.NestedAliasWriteFailed => 0xB1,
         error.NestedAliasOverwriteFailed => 0xB2,
         error.NestedAliasDeleteFailed => 0xB3,
-        error.FilesystemMatrixReadbackFailed => 0xB4,
-        error.StorageRegistryReadbackFailed => 0xB5,
-        error.BackendRegistryReadbackFailed => 0xB6,
-        error.PciDiscoveryMismatch => 0xB7,
+        error.DirectoryAliasCreateFailed => 0xB4,
+        error.DirectoryAliasReadbackFailed => 0xB5,
+        error.DirectoryAliasWriteFailed => 0xB6,
+        error.DirectoryAliasDeleteFailed => 0xB7,
+        error.NestedDirectoryAliasCreateFailed => 0xB8,
+        error.NestedDirectoryAliasDeleteFailed => 0xB9,
+        error.FilesystemMatrixReadbackFailed => 0xBA,
+        error.StorageRegistryReadbackFailed => 0xBB,
+        error.BackendRegistryReadbackFailed => 0xBC,
+        error.PciDiscoveryMismatch => 0xBD,
     };
 }
 
@@ -25495,6 +25531,36 @@ test "baremetal virtio block fat32 mount probe exposes writable external alias" 
     try std.testing.expectEqualStrings("host-fat32-nested", nested_written);
     try filesystem.deleteFile("/mnt/external/DATA/WRITE.TXT", 73);
     try std.testing.expectEqual(error.FileNotFound, filesystem.readFileAlloc(std.testing.allocator, "/mnt/external/DATA/WRITE.TXT", 64));
+
+    try filesystem.createDirPath("/mnt/external/CACHE");
+    {
+        const root_listing = try filesystem.listDirectoryAlloc(std.testing.allocator, "/mnt/external", 256);
+        defer std.testing.allocator.free(root_listing);
+        try std.testing.expect(std.mem.indexOf(u8, root_listing, "dir CACHE\n") != null);
+    }
+
+    try filesystem.writeFile("/mnt/external/CACHE/LOG.TXT", "host-fat32-dir", 74);
+    const dir_written = try filesystem.readFileAlloc(std.testing.allocator, "/mnt/external/CACHE/LOG.TXT", 64);
+    defer std.testing.allocator.free(dir_written);
+    try std.testing.expectEqualStrings("host-fat32-dir", dir_written);
+
+    try filesystem.createDirPath("/mnt/external/DATA/ARCHIVE");
+    const nested_dir_listing = try filesystem.listDirectoryAlloc(std.testing.allocator, "/mnt/external/DATA", 256);
+    defer std.testing.allocator.free(nested_dir_listing);
+    try std.testing.expect(std.mem.indexOf(u8, nested_dir_listing, "dir ARCHIVE\n") != null);
+
+    try filesystem.deleteTree("/mnt/external/CACHE", 75);
+    try std.testing.expectEqual(error.FileNotFound, filesystem.readFileAlloc(std.testing.allocator, "/mnt/external/CACHE/LOG.TXT", 64));
+    {
+        const root_listing = try filesystem.listDirectoryAlloc(std.testing.allocator, "/mnt/external", 256);
+        defer std.testing.allocator.free(root_listing);
+        try std.testing.expect(std.mem.indexOf(u8, root_listing, "dir CACHE\n") == null);
+    }
+
+    try filesystem.deleteTree("/mnt/external/DATA/ARCHIVE", 76);
+    const nested_dir_listing_after_delete = try filesystem.listDirectoryAlloc(std.testing.allocator, "/mnt/external/DATA", 256);
+    defer std.testing.allocator.free(nested_dir_listing_after_delete);
+    try std.testing.expect(std.mem.indexOf(u8, nested_dir_listing_after_delete, "dir ARCHIVE\n") == null);
 }
 
 test "baremetal storage backend info export mirrors registry state" {
