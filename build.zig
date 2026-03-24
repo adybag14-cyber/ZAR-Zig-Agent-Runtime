@@ -154,16 +154,6 @@ pub fn build(b: *std.Build) void {
     } else b.addRunArtifact(benchmark_tests);
     test_step.dependOn(&run_benchmark_tests.step);
 
-    const baremetal_target = b.resolveTargetQuery(.{
-        .cpu_arch = .x86_64,
-        .os_tag = .freestanding,
-        .abi = .none,
-    });
-    const baremetal_module = b.createModule(.{
-        .root_source_file = b.path("src/baremetal_main.zig"),
-        .target = baremetal_target,
-        .optimize = optimize,
-    });
     const baremetal_options = b.addOptions();
     baremetal_options.addOption(bool, "qemu_smoke", baremetal_qemu_smoke);
     baremetal_options.addOption(bool, "console_probe_banner", baremetal_console_probe_banner);
@@ -210,6 +200,16 @@ pub fn build(b: *std.Build) void {
     baremetal_options.addOption(bool, "rtl8139_runtime_service_probe", baremetal_rtl8139_runtime_service_probe);
     baremetal_options.addOption(bool, "tool_exec_probe", baremetal_tool_exec_probe);
     baremetal_options.addOption(bool, "tool_runtime_probe", baremetal_tool_runtime_probe);
+    const baremetal_target = b.resolveTargetQuery(.{
+        .cpu_arch = .x86_64,
+        .os_tag = .freestanding,
+        .abi = .none,
+    });
+    const baremetal_module = b.createModule(.{
+        .root_source_file = b.path("src/baremetal_main.zig"),
+        .target = baremetal_target,
+        .optimize = optimize,
+    });
     baremetal_module.addOptions("build_options", baremetal_options);
     baremetal_module.single_threaded = true;
     baremetal_module.strip = false;
@@ -229,4 +229,31 @@ pub fn build(b: *std.Build) void {
     });
     const baremetal_step = b.step("baremetal", "Build freestanding bare-metal runtime image");
     baremetal_step.dependOn(&install_baremetal.step);
+
+    const baremetal_i386_target = b.resolveTargetQuery(.{
+        .cpu_arch = .x86,
+        .os_tag = .freestanding,
+        .abi = .none,
+    });
+    const baremetal_i386_module = b.createModule(.{
+        .root_source_file = b.path("src/baremetal_main.zig"),
+        .target = baremetal_i386_target,
+        .optimize = optimize,
+    });
+    baremetal_i386_module.addOptions("build_options", baremetal_options);
+    baremetal_i386_module.single_threaded = true;
+    baremetal_i386_module.strip = false;
+    baremetal_i386_module.addAssemblyFile(b.path("scripts/baremetal/i386_boot.S"));
+
+    const baremetal_i386_exe = b.addExecutable(.{
+        .name = "openclaw-zig-baremetal-i386",
+        .root_module = baremetal_i386_module,
+    });
+    baremetal_i386_exe.link_gc_sections = false;
+    baremetal_i386_exe.setLinkerScript(b.path("scripts/baremetal/i386_lld.ld"));
+    const install_baremetal_i386 = b.addInstallArtifact(baremetal_i386_exe, .{
+        .dest_sub_path = "openclaw-zig-baremetal-i386.elf",
+    });
+    const baremetal_i386_step = b.step("baremetal-i386", "Build freestanding i386 bare-metal runtime image");
+    baremetal_i386_step.dependOn(&install_baremetal_i386.step);
 }

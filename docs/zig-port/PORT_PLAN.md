@@ -10,6 +10,11 @@ Track and achieve OpenClaw Zig parity against upstream stable + beta baselines:
 while maintaining parity-first validation and release gating.
 
 Full-stack replacement execution reference:
+- `FS5.7` i386 CPU-architecture support is now tracked in:
+  - `docs/zig-port/FS5_7_I386_CPU_ARCHITECTURE.md`
+  - first delivered slice emits a real `zig build baremetal-i386` freestanding `x86-freestanding-none` artifact through `scripts/baremetal/i386_boot.S` + `scripts/baremetal/i386_lld.ld`
+  - validation now includes `scripts/baremetal-i386-smoke-check.ps1` and `scripts/baremetal-qemu-i386-smoke-check.ps1`
+  - current boundary is explicit: this is boot/build smoke plus direct-QEMU entry proof, not full 32-bit driver/runtime parity
 - ZigOS integration planning is now tracked in:
   - `docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md`
   - `docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`
