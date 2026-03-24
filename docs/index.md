@@ -4,7 +4,7 @@ Full documentation for ZAR-Zig-Agent-Runtime, the Zig runtime port of OpenClaw.
 
 ## Status Snapshot
 
-- RPC surface in Zig: `175` methods
+- RPC surface in Zig: `187` methods
 - Pinned tri-baseline parity gate:
   - Go baseline (`v2.14.0-go`): `134/134`
   - Original OpenClaw baseline (`v2026.3.13-1`): `100/100`
@@ -15,7 +15,7 @@ Full documentation for ZAR-Zig-Agent-Runtime, the Zig runtime port of OpenClaw.
   - Original OpenClaw baseline (`v2026.3.13-1`): `100/100`
   - Original OpenClaw beta baseline (`v2026.3.13-beta.1`): `100/100`
   - Union baseline: `141/141` (`MISSING_IN_ZIG=0`)
-- Latest local validation: `352/352` main tests + `298 passed / 1 skipped` bare-metal host tests
+- Latest local validation: `zig build test --summary all` -> `486 passed; 3 skipped; 0 failed`
 - Current edge release target tag: `v0.2.0-zig-edge.31`
 - License posture: repo-wide `GPL-2.0-only` with Linux-style SPDX headers on repo-owned source and script files
 - Toolchain lane: Codeberg `master` is canonical; `adybag14-cyber/zig` provides rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.

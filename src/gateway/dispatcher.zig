@@ -6494,11 +6494,25 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             .{ .tool = "browser.request", .provider = "lightpanda", .description = "Send browser bridge request or completion payload" },
             .{ .tool = "exec", .provider = "builtin-runtime", .description = "Exec tool family alias for command execution" },
             .{ .tool = "exec.run", .provider = "builtin-runtime", .description = "Execute local process command with timeout" },
+            .{ .tool = "execute_code", .provider = "builtin-runtime", .description = "Run short code snippets through local interpreters or compilers" },
             .{ .tool = "file.read", .provider = "builtin-runtime", .description = "Read local file content" },
             .{ .tool = "file.write", .provider = "builtin-runtime", .description = "Write local file content" },
+            .{ .tool = "file.search", .provider = "builtin-runtime", .description = "Recursively search local files for matching text" },
+            .{ .tool = "file.patch", .provider = "builtin-runtime", .description = "Apply bounded text replacement patch to a local file" },
+            .{ .tool = "web", .provider = "builtin-runtime", .description = "Web research tool family (search/extract)" },
+            .{ .tool = "web.search", .provider = "builtin-runtime", .description = "Search the web and return titles, URLs, and descriptions" },
+            .{ .tool = "web.extract", .provider = "builtin-runtime", .description = "Fetch web page URLs and extract readable content" },
+            .{ .tool = "process", .provider = "builtin-runtime", .description = "Background process lifecycle tool family" },
+            .{ .tool = "process.start", .provider = "builtin-runtime", .description = "Start a background process and capture stdout/stderr to logs" },
+            .{ .tool = "process.list", .provider = "builtin-runtime", .description = "List tracked background processes" },
+            .{ .tool = "process.poll", .provider = "builtin-runtime", .description = "Poll tracked background process state and recent logs" },
+            .{ .tool = "process.read", .provider = "builtin-runtime", .description = "Read tracked background process logs and state" },
+            .{ .tool = "process.wait", .provider = "builtin-runtime", .description = "Wait for a tracked background process to finish" },
+            .{ .tool = "process.kill", .provider = "builtin-runtime", .description = "Terminate a tracked background process" },
             .{ .tool = "message", .provider = "telegram-runtime", .description = "Message tool family (send/poll)" },
             .{ .tool = "message.send", .provider = "telegram-runtime", .description = "Send message through runtime bridge" },
-            .{ .tool = "sessions", .provider = "builtin-runtime", .description = "Sessions tool family (history/status)" },
+            .{ .tool = "sessions", .provider = "builtin-runtime", .description = "Sessions tool family (history/search/status)" },
+            .{ .tool = "sessions.search", .provider = "memory-store", .description = "Search prior session history with semantic recall" },
             .{ .tool = "wasm", .provider = "builtin-runtime", .description = "WASM tool family (inspect/list/execute)" },
         };
         return protocol.encodeResult(allocator, req.id, .{
@@ -7319,6 +7333,33 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             .sessionId = params.scope,
             .count = history.count,
             .items = history.items,
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "sessions.search")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const query = std.mem.trim(u8, firstParamString(params, "query", firstParamString(params, "text", "")), " \t\r\n");
+        if (query.len == 0) {
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = "sessions.search requires query",
+            });
+        }
+        var limit_i64 = firstParamInt(params, "limit", 5);
+        if (limit_i64 <= 0) limit_i64 = 5;
+        const limit: usize = @intCast(limit_i64);
+
+        const memory = try getMemoryStore();
+        var recall = try memory.recallSynthesis(allocator, query, limit);
+        defer recall.deinit(allocator);
+        return protocol.encodeResult(allocator, req.id, .{
+            .query = recall.query,
+            .count = recall.semantic.count,
+            .items = recall.semantic.items,
+            .neighborCount = recall.neighbors.count,
+            .neighbors = recall.neighbors.items,
         });
     }
 
@@ -9117,6 +9158,15 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         return protocol.encodeResult(allocator, req.id, exec_result);
     }
 
+    if (std.ascii.eqlIgnoreCase(req.method, "execute_code")) {
+        const runtime = getRuntime();
+        var execute_code_result = runtime.executeCodeFromFrame(allocator, frame_json) catch |err| {
+            return encodeRuntimeError(allocator, req.id, err);
+        };
+        defer execute_code_result.deinit(allocator);
+        return protocol.encodeResult(allocator, req.id, execute_code_result);
+    }
+
     if (std.ascii.eqlIgnoreCase(req.method, "file.read")) {
         const runtime = getRuntime();
         var read_result = runtime.fileReadFromFrame(allocator, frame_json) catch |err| {
@@ -9133,6 +9183,96 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         };
         defer write_result.deinit(allocator);
         return protocol.encodeResult(allocator, req.id, write_result);
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "file.search")) {
+        const runtime = getRuntime();
+        var search_result = runtime.fileSearchFromFrame(allocator, frame_json) catch |err| {
+            return encodeRuntimeError(allocator, req.id, err);
+        };
+        defer search_result.deinit(allocator);
+        return protocol.encodeResult(allocator, req.id, search_result);
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "file.patch")) {
+        const runtime = getRuntime();
+        var patch_result = runtime.filePatchFromFrame(allocator, frame_json) catch |err| {
+            return encodeRuntimeError(allocator, req.id, err);
+        };
+        defer patch_result.deinit(allocator);
+        return protocol.encodeResult(allocator, req.id, patch_result);
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "web.search")) {
+        const runtime = getRuntime();
+        var search_result = runtime.webSearchFromFrame(allocator, frame_json) catch |err| {
+            return encodeRuntimeError(allocator, req.id, err);
+        };
+        defer search_result.deinit(allocator);
+        return protocol.encodeResult(allocator, req.id, search_result);
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "web.extract")) {
+        const runtime = getRuntime();
+        var extract_result = runtime.webExtractFromFrame(allocator, frame_json) catch |err| {
+            return encodeRuntimeError(allocator, req.id, err);
+        };
+        defer extract_result.deinit(allocator);
+        return protocol.encodeResult(allocator, req.id, extract_result);
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "process.start")) {
+        const runtime = getRuntime();
+        var start_result = runtime.processStartFromFrame(allocator, frame_json) catch |err| {
+            return encodeRuntimeError(allocator, req.id, err);
+        };
+        defer start_result.deinit(allocator);
+        return protocol.encodeResult(allocator, req.id, start_result);
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "process.list")) {
+        const runtime = getRuntime();
+        var list_result = runtime.processListFromFrame(allocator, frame_json) catch |err| {
+            return encodeRuntimeError(allocator, req.id, err);
+        };
+        defer list_result.deinit(allocator);
+        return protocol.encodeResult(allocator, req.id, list_result);
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "process.poll")) {
+        const runtime = getRuntime();
+        var poll_result = runtime.processPollFromFrame(allocator, frame_json) catch |err| {
+            return encodeRuntimeError(allocator, req.id, err);
+        };
+        defer poll_result.deinit(allocator);
+        return protocol.encodeResult(allocator, req.id, poll_result);
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "process.read")) {
+        const runtime = getRuntime();
+        var read_result = runtime.processReadFromFrame(allocator, frame_json) catch |err| {
+            return encodeRuntimeError(allocator, req.id, err);
+        };
+        defer read_result.deinit(allocator);
+        return protocol.encodeResult(allocator, req.id, read_result);
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "process.wait")) {
+        const runtime = getRuntime();
+        var wait_result = runtime.processWaitFromFrame(allocator, frame_json) catch |err| {
+            return encodeRuntimeError(allocator, req.id, err);
+        };
+        defer wait_result.deinit(allocator);
+        return protocol.encodeResult(allocator, req.id, wait_result);
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "process.kill")) {
+        const runtime = getRuntime();
+        var kill_result = runtime.processKillFromFrame(allocator, frame_json) catch |err| {
+            return encodeRuntimeError(allocator, req.id, err);
+        };
+        defer kill_result.deinit(allocator);
+        return protocol.encodeResult(allocator, req.id, kill_result);
     }
 
     return protocol.encodeError(allocator, req.id, .{
@@ -10066,6 +10206,13 @@ fn encodeRuntimeError(
         error.MissingCommand,
         error.MissingPath,
         error.MissingContent,
+        error.MissingQuery,
+        error.MissingOldText,
+        error.MissingProcessId,
+        error.MissingUrl,
+        error.MissingLanguage,
+        error.MissingCode,
+        error.UnsupportedLanguage,
         => true,
         else => false,
     };
@@ -10073,9 +10220,16 @@ fn encodeRuntimeError(
     if (is_param_error) {
         const message = switch (err) {
             error.InvalidParamsFrame => "invalid params frame",
-            error.MissingCommand => "exec.run requires command",
+            error.MissingCommand => "exec.run or process.start requires command",
             error.MissingPath => "file operation requires path",
             error.MissingContent => "file.write requires content",
+            error.MissingQuery => "file.search requires query",
+            error.MissingOldText => "file.patch requires oldText",
+            error.MissingProcessId => "process operation requires processId",
+            error.MissingUrl => "web.extract requires url or urls",
+            error.MissingLanguage => "execute_code requires language",
+            error.MissingCode => "execute_code requires code",
+            error.UnsupportedLanguage => "unsupported execute_code language",
             else => "invalid runtime params",
         };
         return protocol.encodeError(allocator, id, .{
@@ -10095,7 +10249,7 @@ fn encodeRuntimeError(
 
     if (is_policy_error) {
         const message = switch (err) {
-            error.CommandDenied => "exec.run denied by runtime policy",
+            error.CommandDenied => "exec.run or execute_code denied by runtime policy",
             error.PathAccessDenied => "file access denied by sandbox policy",
             error.PathTraversalDetected => "path traversal denied by sandbox policy",
             error.PathSymlinkDisallowed => "symlink path denied by sandbox policy",
@@ -10104,6 +10258,27 @@ fn encodeRuntimeError(
         return protocol.encodeError(allocator, id, .{
             .code = -32001,
             .message = message,
+        });
+    }
+
+    if (err == error.ProcessManagementUnsupported) {
+        return protocol.encodeError(allocator, id, .{
+            .code = -32012,
+            .message = "background process management is unsupported on this runtime",
+        });
+    }
+
+    if (err == error.WebFetchUnsupported) {
+        return protocol.encodeError(allocator, id, .{
+            .code = -32013,
+            .message = "web search/extract is unsupported on this runtime",
+        });
+    }
+
+    if (err == error.ProcessNotFound) {
+        return protocol.encodeError(allocator, id, .{
+            .code = -32045,
+            .message = "tracked background process not found",
         });
     }
 
@@ -13267,7 +13442,7 @@ fn appendSystemCompletionMessage(
 fn buildBrowserToolContextMessage(allocator: std.mem.Allocator) ![]u8 {
     return allocator.dupe(
         u8,
-        "OpenClaw Zig runtime tool capabilities are available via RPC methods: tools.catalog, exec.run, file.read, file.write, send, poll, sessions.history, chat.history, doctor.memory.status, tts.convert, web.login.start, web.login.wait, web.login.complete, web.login.status. Do not claim there are no tools or no memory when these RPC surfaces are available.",
+        "OpenClaw Zig runtime tool capabilities are available via RPC methods: tools.catalog, exec.run, execute_code, file.read, file.write, file.search, file.patch, web.search, web.extract, process.start, process.list, process.poll, process.read, process.wait, process.kill, send, poll, sessions.history, sessions.search, chat.history, doctor.memory.status, tts.convert, web.login.start, web.login.wait, web.login.complete, web.login.status. Do not claim there are no tools or no memory when these RPC surfaces are available.",
     );
 }
 
@@ -13681,6 +13856,14 @@ test "dispatch config.get and tools.catalog expose runtime + wasm contracts" {
     try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"tools\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"wasm\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"browser.open\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"execute_code\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"file.search\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"file.patch\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"web.search\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"web.extract\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"process.start\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"process.wait\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"sessions.search\"") != null);
 }
 
 test "dispatch config.get authMode reflects non-loopback bind token policy" {
@@ -13951,6 +14134,123 @@ test "dispatch file.write and file.read lifecycle updates status counters" {
     try std.testing.expect(std.mem.indexOf(u8, status_out, "\"runtime_sessions\":") != null);
     try std.testing.expect(std.mem.indexOf(u8, status_out, "\"runtime\":{\"statePath\":") != null);
     try std.testing.expect(std.mem.indexOf(u8, status_out, "\"security\":") != null);
+}
+
+test "dispatch execute_code runs shell snippets through runtime" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi or builtin.os.tag == .freestanding) {
+        return error.SkipZigTest;
+    }
+
+    const allocator = std.testing.allocator;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var cfg = config.defaults();
+    cfg.state_path = "memory://dispatcher-execute-code";
+    setConfig(cfg);
+    defer setConfig(config.defaults());
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const root = try tmp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+
+    const frame = try encodeFrame(
+        allocator,
+        "exec-code-1",
+        "execute_code",
+        .{
+            .sessionId = "sess-exec-code",
+            .language = "shell",
+            .cwd = root,
+            .code = "printf dispatcher-exec:$PWD",
+            .timeoutMs = 20_000,
+        },
+    );
+    defer allocator.free(frame);
+
+    const out = try dispatch(allocator, frame);
+    defer allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"language\":\"shell\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "dispatcher-exec:") != null);
+}
+
+test "dispatch file.search and file.patch expose coding-agent flows" {
+    const allocator = std.testing.allocator;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var cfg = config.defaults();
+    cfg.state_path = "memory://dispatcher-file-search";
+    setConfig(cfg);
+    defer setConfig(config.defaults());
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const base_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(base_path);
+    const file_path = try std.fs.path.join(allocator, &.{ base_path, "coding.txt" });
+    defer allocator.free(file_path);
+
+    const write_frame = try encodeFrame(
+        allocator,
+        "coding-write",
+        "file.write",
+        .{
+            .sessionId = "sess-coding",
+            .path = file_path,
+            .content = "needle before patch",
+        },
+    );
+    defer allocator.free(write_frame);
+    const write_out = try dispatch(allocator, write_frame);
+    defer allocator.free(write_out);
+    try std.testing.expect(std.mem.indexOf(u8, write_out, "\"ok\":true") != null);
+
+    const search_frame = try encodeFrame(
+        allocator,
+        "coding-search",
+        "file.search",
+        .{
+            .sessionId = "sess-coding",
+            .path = base_path,
+            .query = "needle",
+            .maxResults = 5,
+        },
+    );
+    defer allocator.free(search_frame);
+    const search_out = try dispatch(allocator, search_frame);
+    defer allocator.free(search_out);
+    try std.testing.expect(std.mem.indexOf(u8, search_out, "\"count\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, search_out, "needle before patch") != null);
+
+    const patch_frame = try encodeFrame(
+        allocator,
+        "coding-patch",
+        "file.patch",
+        .{
+            .sessionId = "sess-coding",
+            .path = file_path,
+            .oldText = "before patch",
+            .newText = "after patch",
+        },
+    );
+    defer allocator.free(patch_frame);
+    const patch_out = try dispatch(allocator, patch_frame);
+    defer allocator.free(patch_out);
+    try std.testing.expect(std.mem.indexOf(u8, patch_out, "\"applied\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, patch_out, "\"replacements\":1") != null);
+
+    const read_frame = try encodeFrame(
+        allocator,
+        "coding-read",
+        "file.read",
+        .{
+            .sessionId = "sess-coding",
+            .path = file_path,
+        },
+    );
+    defer allocator.free(read_frame);
+    const read_out = try dispatch(allocator, read_frame);
+    defer allocator.free(read_out);
+    try std.testing.expect(std.mem.indexOf(u8, read_out, "needle after patch") != null);
 }
 
 test "dispatch blocks high-risk prompt via guard" {
@@ -15107,6 +15407,12 @@ test "dispatch memory history handlers return persisted send activity" {
     try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"entries\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"statePath\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"runtime\":{\"statePath\":") != null);
+
+    const session_search = try dispatch(allocator, "{\"id\":\"mem-search\",\"method\":\"sessions.search\",\"params\":{\"query\":\"memory test message\",\"limit\":5}}");
+    defer allocator.free(session_search);
+    try std.testing.expect(std.mem.indexOf(u8, session_search, "\"query\":\"memory test message\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, session_search, "\"sessionId\":\"mem-s1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, session_search, "\"neighborCount\":") != null);
 }
 
 test "dispatch compat usage and session lifecycle methods return contracts" {

@@ -941,7 +941,13 @@ Phase 6 progress notes:
   - new runtime tests:
     - `runtime.tool_runtime.test.tool runtime file sandbox blocks traversal and out-of-root writes`
     - `runtime.tool_runtime.test.tool runtime exec policy denies non-allowlisted commands`
-- [x] `scripts/generate-rpc-reference.ps1` (regenerates `docs/rpc-reference.md` from `src/gateway/registry.zig`, currently `169` methods)
+- [x] `scripts/generate-rpc-reference.ps1` (regenerates `docs/rpc-reference.md` from `src/gateway/registry.zig`, currently `187` methods)
+- [x] Hosted coding-agent runtime slice shipped:
+  - `src/runtime/tool_runtime.zig` now adds bounded `execute_code`, `file.search`, `file.patch`, `web.search`, `web.extract`, `process.start`, `process.list`, `process.poll`, `process.read`, `process.wait`, and `process.kill` on top of the existing runtime-state/session seam.
+  - `src/runtime/process_registry.zig` adds bounded hosted background-process tracking with persisted stdout/stderr log paths and lifecycle snapshots.
+  - `src/runtime/web_tools.zig` adds bounded hosted web search/extract helpers for HTML/JSON payloads.
+  - `src/gateway/registry.zig` and `src/gateway/dispatcher.zig` now expose `execute_code`, file/web/process methods, and `sessions.search` over `/rpc`, and `tools.catalog` plus browser tool-context messaging now advertise the expanded coding-agent surface.
+  - `scripts/hermes-port-rpc-smoke.mjs` is now the bounded hosted helper for end-to-end coding-agent verification against `/rpc`.
 - [x] `scripts/npm-pack-check.ps1` (validates npm package dry-run for `npm/openclaw-zig-rpc-client`)
 - [x] `scripts/python-pack-check.ps1` (validates python client package tests + wheel/sdist + twine checks for `python/openclaw-zig-rpc-client`)
 - [x] `scripts/generate-release-evidence.ps1` (generates release trust artifacts from packaged assets: `release-manifest.json`, `sbom.spdx.json`, `provenance.intoto.json`)

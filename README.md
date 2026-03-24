@@ -4,7 +4,7 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
 
 ## Current Status
 
-- RPC method surface in Zig: `175`
+- RPC method surface in Zig: `187`
 - Pinned parity gate (tri-baseline, CI/docs):
   - Go baseline (`v2.14.0-go`): `134/134` covered
   - Original OpenClaw baseline (`v2026.3.13-1`): `100/100` covered
@@ -588,12 +588,19 @@ All major runtime feature domains are implemented and dispatchable. Representati
 
 - Tool execution and filesystem actions:
   - `exec.run`
+  - `execute_code`
   - `file.read`
   - `file.write`
+  - `file.search`
+  - `file.patch`
+  - `web.search`
+  - `web.extract`
+  - `process.start`, `process.list`, `process.poll`, `process.read`, `process.wait`, `process.kill`
+  - hosted coding-agent smoke helper: `scripts/hermes-port-rpc-smoke.mjs`
 - Runtime and session surfaces:
   - `sessions.list`, `sessions.preview`, `session.status`
   - `sessions.patch`, `sessions.resolve`
-  - `sessions.history`, `chat.history`
+  - `sessions.history`, `sessions.search`, `chat.history`
   - `sessions.reset`, `sessions.delete`, `sessions.compact`
   - `sessions.usage`, `sessions.usage.timeseries`, `sessions.usage.logs`
 - Queue/runtime telemetry:
@@ -662,6 +669,7 @@ All major runtime feature domains are implemented and dispatchable. Representati
   - session delete + trim + compact semantics
 - Memory-backed runtime methods:
   - `sessions.history`
+  - `sessions.search`
   - `chat.history`
   - `doctor.memory.status`
 - Safety/perf:
