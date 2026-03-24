@@ -6509,6 +6509,10 @@ fn runRtl8139GatewayProbe() Rtl8139GatewayProbeError!void {
     if (!builtin.is_test and eth.hardware_backed == 0) return error.HardwareBackedMismatch;
     if (eth.io_base == 0) return error.IoBaseMismatch;
 
+    if (!builtin.is_test and eth.hardware_backed != 0) {
+        if (!rtl8139.enableHardwareLoopbackForProbe()) return error.DataPathEnableFailed;
+    }
+
     pal_net.clearRouteState();
     const local_ip = [4]u8{ 192, 168, 56, 10 };
     const gateway_ip = [4]u8{ 192, 168, 56, 1 };

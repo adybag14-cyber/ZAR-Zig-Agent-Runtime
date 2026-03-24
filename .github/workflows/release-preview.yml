@@ -291,6 +291,14 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-rtl8139-https-post-probe-check.ps1
 
+      - name: Bare-metal QEMU i386 RTL8139 gateway probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-gateway-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 full-stack probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-full-stack-probe-check.ps1
+
       - name: Bare-metal QEMU i386 virtio-net probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-virtio-net-probe-check.ps1
