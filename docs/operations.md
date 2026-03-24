@@ -111,6 +111,7 @@ Recommended sequence:
 ./scripts/docs-status-check.ps1 -RefreshParity
 ./scripts/docker-smoke-check.ps1
 ./scripts/runtime-smoke-check.ps1
+./scripts/hermes-port-runtime-smoke-check.ps1
 ./scripts/baremetal-smoke-check.ps1
 ./scripts/baremetal-qemu-smoke-check.ps1
 ./scripts/baremetal-qemu-runtime-oc-tick-check.ps1

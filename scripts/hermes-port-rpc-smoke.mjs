@@ -13,6 +13,9 @@ const filePath = path.join(workRoot, "coding-agent.txt");
 const jsArtifactPath = path.join(workRoot, "execute-code-js.txt");
 const zigBinary = process.env.ZAR_ZIG_BIN ?? "";
 const nodeBinary = process.execPath;
+const requireHostedProcessSupport =
+  process.env.ZAR_HERMES_REQUIRE_PROCESS === "1" ||
+  (process.env.ZAR_HERMES_REQUIRE_PROCESS !== "0" && process.platform !== "win32");
 
 
 function startMockWebServer() {
@@ -191,166 +194,175 @@ assert.equal(webExtractResult.count, 2);
 assert.match(JSON.stringify(webExtractResult.results), /Web Extract Sentinel One/);
 assert.match(JSON.stringify(webExtractResult.results), /Web extract sentinel two/);
 
-assert.ok(zigBinary, "ZAR_ZIG_BIN is required for execute_code zig smoke");
+let executeCodeJsResult = null;
+let executeCodeJsArtifactRead = null;
+let executeCodeZigResult = null;
+let processListResult = null;
+let processWaitResult = null;
+let processKillWaitResult = null;
 
-const executeCodeJsResult = await rpc(
-  "execute_code",
-  {
-    sessionId,
-    language: "javascript",
-    runtimePath: nodeBinary,
-    cwd: workRoot,
-    keepFiles: true,
-    args: ["delta"],
-    code: [
-      'const fs = require("node:fs");',
-      'fs.writeFileSync("execute-code-js.txt", "js-created");',
-      'console.log(JSON.stringify({ kind: "execute-code-js", cwd: process.cwd(), arg: process.argv[2] ?? "" }));',
-      '',
-    ].join("\n"),
-  },
-  "execute-code-js",
-);
-assert.equal(executeCodeJsResult.ok, true);
-assert.equal(executeCodeJsResult.language, "javascript");
-assert.equal(executeCodeJsResult.keptFiles, true);
-assert.match(executeCodeJsResult.stdout, /execute-code-js/);
-assert.match(executeCodeJsResult.stdout, /delta/);
-assert.match(executeCodeJsResult.command, /node/);
+if (requireHostedProcessSupport) {
+  assert.ok(zigBinary, "ZAR_ZIG_BIN is required for execute_code zig smoke");
 
-const executeCodeJsArtifactRead = await rpc(
-  "file.read",
-  {
-    sessionId,
-    path: jsArtifactPath,
-  },
-  "execute-code-js-artifact",
-);
-assert.match(executeCodeJsArtifactRead.content, /js-created/);
+  executeCodeJsResult = await rpc(
+    "execute_code",
+    {
+      sessionId,
+      language: "javascript",
+      runtimePath: nodeBinary,
+      cwd: workRoot,
+      keepFiles: true,
+      args: ["delta"],
+      code: [
+        'const fs = require("node:fs");',
+        'fs.writeFileSync("execute-code-js.txt", "js-created");',
+        'console.log(JSON.stringify({ kind: "execute-code-js", cwd: process.cwd(), arg: process.argv[2] ?? "" }));',
+        '',
+      ].join("\n"),
+    },
+    "execute-code-js",
+  );
+  assert.equal(executeCodeJsResult.ok, true);
+  assert.equal(executeCodeJsResult.language, "javascript");
+  assert.equal(executeCodeJsResult.keptFiles, true);
+  assert.match(executeCodeJsResult.stdout, /execute-code-js/);
+  assert.match(executeCodeJsResult.stdout, /delta/);
+  assert.match(executeCodeJsResult.command, /node/);
 
-const executeCodeJsScriptRead = await rpc(
-  "file.read",
-  {
-    sessionId,
-    path: executeCodeJsResult.scriptPath,
-  },
-  "execute-code-js-script",
-);
-assert.match(executeCodeJsScriptRead.content, /execute-code-js/);
+  executeCodeJsArtifactRead = await rpc(
+    "file.read",
+    {
+      sessionId,
+      path: jsArtifactPath,
+    },
+    "execute-code-js-artifact",
+  );
+  assert.match(executeCodeJsArtifactRead.content, /js-created/);
 
-const executeCodeZigResult = await rpc(
-  "execute_code",
-  {
-    sessionId,
-    language: "zig",
-    runtimePath: zigBinary,
-    cwd: workRoot,
-    timeoutMs: 120000,
-    code: [
-      'const std = @import("std");',
-      'pub fn main() !void {',
-      '    std.debug.print("execute-code-zig\\n", .{});',
-      '}',
-      '',
-    ].join("\n"),
-  },
-  "execute-code-zig",
-);
-assert.equal(executeCodeZigResult.ok, true);
-assert.equal(executeCodeZigResult.language, "zig");
-assert.match(`${executeCodeZigResult.stdout}\n${executeCodeZigResult.stderr}`, /execute-code-zig/);
+  const executeCodeJsScriptRead = await rpc(
+    "file.read",
+    {
+      sessionId,
+      path: executeCodeJsResult.scriptPath,
+    },
+    "execute-code-js-script",
+  );
+  assert.match(executeCodeJsScriptRead.content, /execute-code-js/);
 
-const processStartResult = await rpc(
-  "process.start",
-  {
-    sessionId,
-    cwd: workRoot,
-    command: "printf process-stdout; printf process-stderr >&2",
-  },
-  "process-start",
-);
-assert.equal(processStartResult.ok, true);
-assert.match(processStartResult.processId, /^proc-/);
+  executeCodeZigResult = await rpc(
+    "execute_code",
+    {
+      sessionId,
+      language: "zig",
+      runtimePath: zigBinary,
+      cwd: workRoot,
+      timeoutMs: 120000,
+      code: [
+        'const std = @import("std");',
+        'pub fn main() !void {',
+        '    std.debug.print("execute-code-zig\\n", .{});',
+        '}',
+        '',
+      ].join("\n"),
+    },
+    "execute-code-zig",
+  );
+  assert.equal(executeCodeZigResult.ok, true);
+  assert.equal(executeCodeZigResult.language, "zig");
+  assert.match(`${executeCodeZigResult.stdout}\n${executeCodeZigResult.stderr}`, /execute-code-zig/);
 
-const processListResult = await rpc(
-  "process.list",
-  {
-    sessionId,
-  },
-  "process-list",
-);
-assert.equal(processListResult.ok, true);
-assert.ok(processListResult.count >= 1);
-assert.match(JSON.stringify(processListResult.items), new RegExp(processStartResult.processId));
+  const processStartResult = await rpc(
+    "process.start",
+    {
+      sessionId,
+      cwd: workRoot,
+      command: "printf process-stdout; printf process-stderr >&2",
+    },
+    "process-start",
+  );
+  assert.equal(processStartResult.ok, true);
+  assert.match(processStartResult.processId, /^proc-/);
 
-const processWaitResult = await rpc(
-  "process.wait",
-  {
-    processId: processStartResult.processId,
-    timeoutMs: 5000,
-  },
-  "process-wait",
-);
-assert.equal(processWaitResult.running, false);
-assert.equal(processWaitResult.processState, "exited");
-assert.equal(processWaitResult.exitCode, 0);
-assert.match(processWaitResult.stdout, /process-stdout/);
-assert.match(processWaitResult.stderr, /process-stderr/);
+  processListResult = await rpc(
+    "process.list",
+    {
+      sessionId,
+    },
+    "process-list",
+  );
+  assert.equal(processListResult.ok, true);
+  assert.ok(processListResult.count >= 1);
+  assert.match(JSON.stringify(processListResult.items), new RegExp(processStartResult.processId));
 
-const processReadResult = await rpc(
-  "process.read",
-  {
-    processId: processStartResult.processId,
-  },
-  "process-read",
-);
-assert.match(processReadResult.stdout, /process-stdout/);
-assert.match(processReadResult.stderr, /process-stderr/);
+  processWaitResult = await rpc(
+    "process.wait",
+    {
+      processId: processStartResult.processId,
+      timeoutMs: 5000,
+    },
+    "process-wait",
+  );
+  assert.equal(processWaitResult.running, false);
+  assert.equal(processWaitResult.processState, "exited");
+  assert.equal(processWaitResult.exitCode, 0);
+  assert.match(processWaitResult.stdout, /process-stdout/);
+  assert.match(processWaitResult.stderr, /process-stderr/);
 
-const processKillStartResult = await rpc(
-  "process.start",
-  {
-    sessionId,
-    cwd: workRoot,
-    command: "exec sleep 5",
-  },
-  "process-kill-start",
-);
-assert.equal(processKillStartResult.ok, true);
+  const processReadResult = await rpc(
+    "process.read",
+    {
+      processId: processStartResult.processId,
+    },
+    "process-read",
+  );
+  assert.match(processReadResult.stdout, /process-stdout/);
+  assert.match(processReadResult.stderr, /process-stderr/);
 
-const processPollResult = await rpc(
-  "process.poll",
-  {
-    processId: processKillStartResult.processId,
-  },
-  "process-poll",
-);
-assert.equal(processPollResult.running, true);
+  const processKillStartResult = await rpc(
+    "process.start",
+    {
+      sessionId,
+      cwd: workRoot,
+      command: "exec sleep 5",
+    },
+    "process-kill-start",
+  );
+  assert.equal(processKillStartResult.ok, true);
 
-const processKillResult = await rpc(
-  "process.kill",
-  {
-    processId: processKillStartResult.processId,
-  },
-  "process-kill",
-);
-assert.equal(processKillResult.requested, true);
-assert.match(processKillResult.signal, /TERM/);
+  const processPollResult = await rpc(
+    "process.poll",
+    {
+      processId: processKillStartResult.processId,
+    },
+    "process-poll",
+  );
+  assert.equal(processPollResult.running, true);
 
-const processKillWaitResult = await rpc(
-  "process.wait",
-  {
-    processId: processKillStartResult.processId,
-    timeoutMs: 5000,
-  },
-  "process-kill-wait",
-);
-assert.equal(processKillWaitResult.ok, true);
-assert.equal(processKillWaitResult.running, false);
-assert.match(processKillWaitResult.processState, /killed|exited|failed/);
-assert.equal(processKillWaitResult.status, 200);
-assert.equal(processKillWaitResult.signal, "TERM");
-assert.ok(processKillWaitResult.exitCode <= 0);
+  const processKillResult = await rpc(
+    "process.kill",
+    {
+      processId: processKillStartResult.processId,
+    },
+    "process-kill",
+  );
+  assert.equal(processKillResult.requested, true);
+  assert.match(processKillResult.signal, /TERM/);
+
+  processKillWaitResult = await rpc(
+    "process.wait",
+    {
+      processId: processKillStartResult.processId,
+      timeoutMs: 5000,
+    },
+    "process-kill-wait",
+  );
+  assert.equal(processKillWaitResult.ok, true);
+  assert.equal(processKillWaitResult.running, false);
+  assert.match(processKillWaitResult.processState, /killed|exited|failed/);
+  assert.equal(processKillWaitResult.status, 200);
+  assert.equal(processKillWaitResult.signal, "TERM");
+  assert.ok(processKillWaitResult.exitCode <= 0);
+}
 
 const sendResult = await rpc(
   "send",
@@ -409,17 +421,18 @@ console.log(JSON.stringify({
       "process.kill",
       "sessions.search",
     ],
-    executeCodeJsOk: executeCodeJsResult.ok,
-    executeCodeZigOk: executeCodeZigResult.ok,
-    executeCodeJsArtifact: executeCodeJsArtifactRead.content,
+    hostedProcessSupportRequired: requireHostedProcessSupport,
+    executeCodeJsOk: executeCodeJsResult?.ok ?? null,
+    executeCodeZigOk: executeCodeZigResult?.ok ?? null,
+    executeCodeJsArtifact: executeCodeJsArtifactRead?.content ?? null,
     fileWrite: writeResult.ok,
     fileSearchCount: searchResult.count,
     filePatchApplied: patchResult.applied,
     webSearchCount: webSearchResult.count,
     webExtractCount: webExtractResult.count,
-    processListCount: processListResult.count,
-    processExitCode: processWaitResult.exitCode,
-    processKillExitCode: processKillWaitResult.exitCode,
+    processListCount: processListResult?.count ?? null,
+    processExitCode: processWaitResult?.exitCode ?? null,
+    processKillExitCode: processKillWaitResult?.exitCode ?? null,
     sessionHistoryCount: historyResult.count,
     sessionSearchCount: sessionSearchResult.count,
   },

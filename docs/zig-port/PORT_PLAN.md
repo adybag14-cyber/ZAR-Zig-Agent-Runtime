@@ -856,6 +856,7 @@ Full-stack replacement execution reference:
     - `src/runtime/web_tools.zig` adds bounded hosted web search/extract helpers for HTML and JSON payloads.
     - `src/gateway/registry.zig` and `src/gateway/dispatcher.zig` now expose `execute_code`, the file/web/process tool family, and `sessions.search`, and `tools.catalog` plus browser tool-context messaging now advertise the expanded hosted coding-agent surface.
     - `scripts/hermes-port-rpc-smoke.mjs` is now tracked as the hosted `/rpc` coding-agent smoke helper for the combined execute/file/web/process/session path.
+    - `scripts/hermes-port-runtime-smoke-check.ps1` now promotes that helper into a first-class hosted smoke gate and both `zig-ci` and `release-preview` execute it after the baseline runtime smoke; the wrapper keeps full `execute_code` + process coverage on POSIX and automatically falls back to the bounded file/web/session subset on Windows where hosted process management remains unsupported.
   - FS1 runtime recovery slice shipped:
     - runtime state persistence/replay added for tool runtime sessions + pending queue (`src/runtime/state.zig`).
     - persisted at `<state_path>/runtime-state.json` (or explicit JSON path override) and restored during runtime bootstrap.
