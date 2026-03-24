@@ -14,6 +14,8 @@ const cursor_data_port: u16 = 0x3D5;
 var state: abi.BaremetalConsoleState = undefined;
 var host_cells: [cell_count]u16 = [_]u16{0} ** cell_count;
 var initialized: bool = false;
+pub export var oc_console_probe_cell0_data: u16 = 0;
+pub export var oc_console_probe_cell1_data: u16 = 0;
 
 fn isHardwareBacked() bool {
     return builtin.os.tag == .freestanding and (builtin.cpu.arch == .x86 or builtin.cpu.arch == .x86_64);
@@ -131,6 +133,8 @@ fn lineFeed() void {
 pub fn init() void {
     resetState();
     fillScreen(blankCell());
+    oc_console_probe_cell0_data = 0;
+    oc_console_probe_cell1_data = 0;
     initialized = true;
     writeCursor();
 }
@@ -141,6 +145,8 @@ pub fn clear() void {
     state.cursor_row = 0;
     state.cursor_col = 0;
     state.clear_count +%= 1;
+    oc_console_probe_cell0_data = 0;
+    oc_console_probe_cell1_data = 0;
     writeCursor();
 }
 
@@ -186,6 +192,12 @@ pub fn statePtr() *const abi.BaremetalConsoleState {
     return &state;
 }
 
+pub fn snapshotProbeCells() void {
+    ensureInitialized();
+    oc_console_probe_cell0_data = cell(0);
+    oc_console_probe_cell1_data = cell(1);
+}
+
 pub fn cell(index: u32) u16 {
     ensureInitialized();
     const idx: usize = @intCast(index);
@@ -228,4 +240,14 @@ test "vga text console scroll keeps newest content" {
     try std.testing.expect(state.scroll_count >= 1);
     try std.testing.expectEqual((@as(u16, default_attribute) << 8) | @as(u16, 'C'), cell(0));
     try std.testing.expectEqual((@as(u16, default_attribute) << 8) | @as(u16, 'Z'), cell((rows - 2) * cols));
+}
+
+test "vga text console probe snapshot mirrors rendered cells" {
+    init();
+    clear();
+    write("OK");
+    snapshotProbeCells();
+
+    try std.testing.expectEqual((@as(u16, default_attribute) << 8) | @as(u16, 'O'), oc_console_probe_cell0_data);
+    try std.testing.expectEqual((@as(u16, default_attribute) << 8) | @as(u16, 'K'), oc_console_probe_cell1_data);
 }
