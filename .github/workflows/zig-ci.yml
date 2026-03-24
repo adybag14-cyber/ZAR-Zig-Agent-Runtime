@@ -201,6 +201,54 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-e1000-tcp-probe-check.ps1
 
+      - name: Bare-metal QEMU i386 framebuffer console probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-framebuffer-console-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-gpu display probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-gpu-display-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 DHCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-dhcp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 DNS probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-dns-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 HTTP POST probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-http-post-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 HTTPS POST probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-https-post-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 tool-service probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-tool-service-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 ARP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-arp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 IPv4 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-ipv4-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 UDP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-udp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 TCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-tcp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 runtime-service probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-runtime-service-probe-check.ps1
+
       - name: Bare-metal QEMU runtime probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-runtime-oc-tick-check.ps1
