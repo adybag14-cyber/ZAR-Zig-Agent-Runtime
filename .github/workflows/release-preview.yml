@@ -183,9 +183,17 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-smoke-check.ps1
 
+      - name: Bare-metal i386 smoke check (freestanding build)
+        shell: pwsh
+        run: ./scripts/baremetal-i386-smoke-check.ps1
+
       - name: Bare-metal QEMU smoke check (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-smoke-check.ps1 -SkipBuild
+
+      - name: Bare-metal QEMU i386 smoke check (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-smoke-check.ps1
 
       - name: Bare-metal QEMU runtime probe (optional)
         shell: pwsh
