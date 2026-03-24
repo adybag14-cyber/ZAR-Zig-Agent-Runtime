@@ -14,6 +14,11 @@ pub const LifecycleState = enum {
     failed,
 };
 
+const WaitStatus = switch (builtin.os.tag) {
+    .macos, .ios, .tvos, .watchos, .visionos => c_int,
+    else => u32,
+};
+
 pub fn lifecycleStateText(state: LifecycleState) []const u8 {
     return switch (state) {
         .running => "running",
@@ -98,7 +103,7 @@ pub const ProcessRegistry = struct {
                 if (entry.lifecycle_state != .running or entry.pid <= 0) continue;
                 const pid: std.posix.pid_t = @intCast(entry.pid);
                 std.posix.kill(pid, .KILL) catch {};
-                var status: c_int = 0;
+                var status: WaitStatus = 0;
                 _ = std.posix.system.waitpid(pid, &status, 0);
             }
         }
@@ -274,7 +279,7 @@ pub const ProcessRegistry = struct {
         if (entry.pid <= 0) return;
         if (builtin.os.tag == .windows or builtin.os.tag == .wasi or builtin.os.tag == .freestanding) return;
 
-        var status: c_int = 0;
+        var status: WaitStatus = 0;
         const pid: std.posix.pid_t = @intCast(entry.pid);
         const rc = std.posix.system.waitpid(pid, &status, std.posix.W.NOHANG);
         if (rc == 0) return;
@@ -321,8 +326,8 @@ pub const ProcessRegistry = struct {
         }
     }
 
-    fn termFromWaitStatus(status: c_int) std.process.Child.Term {
-        const WaitStatusInt = std.meta.Int(.unsigned, @bitSizeOf(c_int));
+    fn termFromWaitStatus(status: WaitStatus) std.process.Child.Term {
+        const WaitStatusInt = std.meta.Int(.unsigned, @bitSizeOf(WaitStatus));
         const raw: WaitStatusInt = @bitCast(status);
         return if (std.posix.W.IFEXITED(raw))
             .{ .exited = std.posix.W.EXITSTATUS(raw) }
