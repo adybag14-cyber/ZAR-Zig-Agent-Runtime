@@ -55,6 +55,25 @@ function Find-BytePatternIndex {
     return -1
 }
 
+function Read-CString {
+    param(
+        [byte[]] $Table,
+        [int] $Offset
+    )
+    if ($Offset -lt 0 -or $Offset -ge $Table.Length) {
+        return ""
+    }
+    $builder = [System.Text.StringBuilder]::new()
+    for ($idx = $Offset; $idx -lt $Table.Length; $idx++) {
+        $value = $Table[$idx]
+        if ($value -eq 0) {
+            break
+        }
+        [void]$builder.Append([char]$value)
+    }
+    return $builder.ToString()
+}
+
 Set-Location $repo
 $zig = Resolve-ZigExecutable
 
@@ -113,7 +132,87 @@ if ($architecture -ne 0) {
     throw "unsupported multiboot2 architecture value: $architecture (expected 0)"
 }
 
+$elfHeaderOffset = [int][System.BitConverter]::ToUInt32($bytes, 32)
+$sectionHeaderEntrySize = [int][System.BitConverter]::ToUInt16($bytes, 46)
+$sectionHeaderCount = [int][System.BitConverter]::ToUInt16($bytes, 48)
+$sectionNameIndex = [int][System.BitConverter]::ToUInt16($bytes, 50)
+if ($sectionHeaderEntrySize -le 0 -or $sectionHeaderCount -le 0) {
+    throw "ELF section header table missing from i386 artifact"
+}
+
+$sections = @()
+for ($i = 0; $i -lt $sectionHeaderCount; $i++) {
+    $entryBase = $elfHeaderOffset + ($i * $sectionHeaderEntrySize)
+    $nameIndex = [int][System.BitConverter]::ToUInt32($bytes, $entryBase)
+    $type = [int][System.BitConverter]::ToUInt32($bytes, $entryBase + 4)
+    $offset = [int][System.BitConverter]::ToUInt32($bytes, $entryBase + 16)
+    $size = [int][System.BitConverter]::ToUInt32($bytes, $entryBase + 20)
+    $link = [int][System.BitConverter]::ToUInt32($bytes, $entryBase + 24)
+    $entrySize = [int][System.BitConverter]::ToUInt32($bytes, $entryBase + 36)
+    $sections += [pscustomobject]@{
+        NameIndex = $nameIndex
+        Type = $type
+        Offset = $offset
+        Size = $size
+        Link = $link
+        EntrySize = $entrySize
+    }
+}
+
+if ($sectionNameIndex -lt 0 -or $sectionNameIndex -ge $sections.Count) {
+    throw "ELF section-name string table index is invalid"
+}
+
+$shstr = $sections[$sectionNameIndex]
+$shstrBytes = New-Object byte[] $shstr.Size
+[Array]::Copy($bytes, $shstr.Offset, $shstrBytes, 0, $shstr.Size)
+foreach ($section in $sections) {
+    $section | Add-Member -NotePropertyName Name -NotePropertyValue (Read-CString -Table $shstrBytes -Offset $section.NameIndex)
+}
+
+$symtab = $sections | Where-Object { $_.Type -eq 2 } | Select-Object -First 1
+if ($null -eq $symtab -or $symtab.EntrySize -le 0) {
+    throw "ELF symbol table missing from i386 artifact"
+}
+
+$strtab = $sections[$symtab.Link]
+$symbolStringTable = New-Object byte[] $strtab.Size
+[Array]::Copy($bytes, $strtab.Offset, $symbolStringTable, 0, $strtab.Size)
+
+$symbolCount = [int]($symtab.Size / $symtab.EntrySize)
+$symbols = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+for ($i = 0; $i -lt $symbolCount; $i++) {
+    $entryBase = $symtab.Offset + ($i * $symtab.EntrySize)
+    $nameOffset = [int](Read-UInt32LE -Bytes $bytes -Offset $entryBase)
+    if ($nameOffset -le 0) {
+        continue
+    }
+    $name = Read-CString -Table $symbolStringTable -Offset $nameOffset
+    if (-not [string]::IsNullOrWhiteSpace($name)) {
+        [void]$symbols.Add($name)
+    }
+}
+
+$requiredSymbols = @(
+    "_start",
+    "oc_gdtr_ptr",
+    "oc_idtr_ptr",
+    "oc_gdt_ptr",
+    "oc_idt_ptr",
+    "oc_descriptor_tables_ready",
+    "oc_descriptor_tables_loaded",
+    "oc_descriptor_load_attempt_count",
+    "oc_descriptor_load_success_count",
+    "oc_try_load_descriptor_tables"
+)
+foreach ($required in $requiredSymbols) {
+    if (-not $symbols.Contains($required)) {
+        throw "required symbol not found in i386 ELF symtab: $required"
+    }
+}
+
 Write-Output "BAREMETAL_I386_ARTIFACT=$artifact"
 Write-Output "BAREMETAL_I386_ELF32=True"
 Write-Output "BAREMETAL_I386_MULTIBOOT2=True"
+Write-Output "BAREMETAL_I386_DESCRIPTOR_EXPORTS=True"
 Write-Output "BAREMETAL_I386_SMOKE=pass"

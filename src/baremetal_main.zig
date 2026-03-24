@@ -19449,7 +19449,7 @@ fn captureStackPointer() u64 {
 fn spinPause(iterations: usize) void {
     var idx: usize = 0;
     while (idx < iterations) : (idx += 1) {
-        if (@import("builtin").cpu.arch == .x86_64) {
+        if (@import("builtin").cpu.arch == .x86 or @import("builtin").cpu.arch == .x86_64) {
             asm volatile ("pause" ::: .{ .memory = true });
         } else if (@import("builtin").cpu.arch == .aarch64) {
             asm volatile ("yield" ::: .{ .memory = true });
@@ -19460,7 +19460,7 @@ fn spinPause(iterations: usize) void {
 }
 
 fn setProbeInterruptsEnabled(enabled: bool) void {
-    if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86_64) return;
+    if (builtin.os.tag != .freestanding or (builtin.cpu.arch != .x86 and builtin.cpu.arch != .x86_64)) return;
     if (enabled) {
         asm volatile ("sti" ::: .{ .memory = true });
     } else {
@@ -19477,12 +19477,12 @@ fn qemuExit(code: u8) noreturn {
 }
 
 fn qemuDebugWriteByte(byte: u8) void {
-    if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86_64) return;
+    if (builtin.os.tag != .freestanding or (builtin.cpu.arch != .x86 and builtin.cpu.arch != .x86_64)) return;
     out8(qemu_debug_console_port, byte);
 }
 
 fn qemuDebugWrite(bytes: []const u8) void {
-    if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86_64) return;
+    if (builtin.os.tag != .freestanding or (builtin.cpu.arch != .x86 and builtin.cpu.arch != .x86_64)) return;
     for (bytes) |byte| {
         qemuDebugWriteByte(byte);
     }
