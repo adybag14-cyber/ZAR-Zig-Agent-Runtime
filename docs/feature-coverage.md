@@ -33,6 +33,7 @@ This page summarizes functional coverage across all major OpenClaw Zig runtime d
   - web discovery and extraction: `web.search`, `web.extract`
   - background process lifecycle: `process.start`, `process.list`, `process.poll`, `process.read`, `process.wait`, `process.kill`
   - Hermes-style hosted coding-agent smoke proof exists via `scripts/hermes-port-rpc-smoke.mjs`
+  - hosted gateway smoke wrapper exists via `scripts/hermes-port-runtime-smoke-check.ps1` (full process/execute path on POSIX, bounded fallback on Windows)
 - session and history lifecycle:
   - list/preview/status
   - patch/resolve/reset/delete/compact

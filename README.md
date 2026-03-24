@@ -597,6 +597,7 @@ All major runtime feature domains are implemented and dispatchable. Representati
   - `web.extract`
   - `process.start`, `process.list`, `process.poll`, `process.read`, `process.wait`, `process.kill`
   - hosted coding-agent smoke helper: `scripts/hermes-port-rpc-smoke.mjs`
+  - hosted coding-agent smoke gate: `scripts/hermes-port-runtime-smoke-check.ps1` (full `execute_code` + process path on POSIX; bounded file/web/session path on Windows)
 - Runtime and session surfaces:
   - `sessions.list`, `sessions.preview`, `session.status`
   - `sessions.patch`, `sessions.resolve`
@@ -839,6 +840,7 @@ Run smoke checks:
 ./scripts/baremetal-qemu-runtime-oc-tick-check.ps1
 ./scripts/baremetal-qemu-command-loop-check.ps1
 ./scripts/runtime-smoke-check.ps1
+./scripts/hermes-port-runtime-smoke-check.ps1
 ./scripts/appliance-control-plane-smoke-check.ps1
 ./scripts/appliance-restart-recovery-smoke-check.ps1
 ./scripts/gateway-auth-smoke-check.ps1

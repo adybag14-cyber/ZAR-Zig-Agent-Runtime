@@ -874,6 +874,10 @@ jobs:
         shell: pwsh
         run: ./scripts/runtime-smoke-check.ps1 -SkipBuild
 
+      - name: Hermes hosted coding-agent smoke check (serve + rpc)
+        shell: pwsh
+        run: ./scripts/hermes-port-runtime-smoke-check.ps1 -SkipBuild
+
       - name: Gateway auth smoke check (token gate for rpc + websocket)
         shell: pwsh
         run: ./scripts/gateway-auth-smoke-check.ps1 -SkipBuild

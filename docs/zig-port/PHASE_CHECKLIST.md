@@ -948,6 +948,7 @@ Phase 6 progress notes:
   - `src/runtime/web_tools.zig` adds bounded hosted web search/extract helpers for HTML/JSON payloads.
   - `src/gateway/registry.zig` and `src/gateway/dispatcher.zig` now expose `execute_code`, file/web/process methods, and `sessions.search` over `/rpc`, and `tools.catalog` plus browser tool-context messaging now advertise the expanded coding-agent surface.
   - `scripts/hermes-port-rpc-smoke.mjs` is now the bounded hosted helper for end-to-end coding-agent verification against `/rpc`.
+  - `scripts/hermes-port-runtime-smoke-check.ps1` now wraps that helper into a hosted smoke gate and both `zig-ci` and `release-preview` execute it after the baseline runtime smoke; the wrapper runs the full `execute_code` + process lifecycle path on POSIX and automatically falls back to the bounded file/web/session subset on Windows where hosted process management remains unsupported.
 - [x] `scripts/npm-pack-check.ps1` (validates npm package dry-run for `npm/openclaw-zig-rpc-client`)
 - [x] `scripts/python-pack-check.ps1` (validates python client package tests + wheel/sdist + twine checks for `python/openclaw-zig-rpc-client`)
 - [x] `scripts/generate-release-evidence.ps1` (generates release trust artifacts from packaged assets: `release-manifest.json`, `sbom.spdx.json`, `provenance.intoto.json`)
