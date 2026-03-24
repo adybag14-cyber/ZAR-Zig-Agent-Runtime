@@ -177,6 +177,30 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-e1000-probe-check.ps1
 
+      - name: Bare-metal QEMU i386 RTL8139 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 VGA console probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-vga-console-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 ARP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-arp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 IPv4 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-ipv4-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 UDP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-udp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 TCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-tcp-probe-check.ps1
+
       - name: Bare-metal QEMU runtime probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-runtime-oc-tick-check.ps1

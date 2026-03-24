@@ -63,6 +63,7 @@ const tsd_carrier_lost: u32 = 0x8000_0000;
 
 const tcr_mxdma_unlimited: u32 = 7 << 8;
 const tcr_ifg96: u32 = 3 << 24;
+const tcr_loopback_test: u32 = (1 << 18) | (1 << 17);
 
 const rcr_aap: u32 = 1 << 0;
 const rcr_apm: u32 = 1 << 1;
@@ -400,6 +401,23 @@ pub fn debugLastTxStatus() u32 {
     const io_base: u16 = @intCast(state.io_base & 0xFFFF);
     const slot = if (state.tx_index == 0) tx_descriptor_count - 1 else @as(usize, state.tx_index) - 1;
     return read32(io_base + reg_tsd0 + (@as(u16, @intCast(slot)) * 4));
+}
+
+pub fn enableHardwareLoopbackForProbe() bool {
+    if (state.initialized == 0 and !init()) return false;
+    if (mockAvailable()) {
+        state.loopback_enabled = 1;
+        return true;
+    }
+    if (!hardwareBacked() or state.io_base == 0) return false;
+    const io_base: u16 = @intCast(state.io_base & 0xFFFF);
+    const current_tcr = read32(io_base + reg_tcr);
+    write32(io_base + reg_tcr, current_tcr | tcr_loopback_test);
+    const updated_tcr = read32(io_base + reg_tcr);
+    if ((updated_tcr & tcr_loopback_test) != tcr_loopback_test) return false;
+    state.loopback_enabled = 1;
+    state.link_up = 1;
+    return true;
 }
 
 fn resetState() void {

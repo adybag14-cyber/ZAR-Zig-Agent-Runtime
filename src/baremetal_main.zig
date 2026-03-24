@@ -3031,6 +3031,7 @@ fn baremetalStart() callconv(.c) noreturn {
     if (console_probe_banner_enabled) {
         vga_text_console.clear();
         vga_text_console.write("OK");
+        vga_text_console.snapshotProbeCells();
     }
     if (framebuffer_probe_banner_enabled) {
         framebuffer_console.write("OK");
@@ -5961,6 +5962,10 @@ fn runRtl8139Probe() Rtl8139ProbeError!void {
     if (!builtin.is_test and eth.hardware_backed == 0) return error.HardwareBackedMismatch;
     if (eth.io_base == 0) return error.IoBaseMismatch;
     if (macBytesAreZero()) return error.MacReadFailed;
+
+    if (!builtin.is_test and eth.hardware_backed != 0) {
+        if (!rtl8139.enableHardwareLoopbackForProbe()) return error.DataPathEnableFailed;
+    }
 
     const expected_len: u32 = 96;
     if (oc_ethernet_send_pattern(expected_len, 0x41) != abi.result_ok) return error.TxFailed;
