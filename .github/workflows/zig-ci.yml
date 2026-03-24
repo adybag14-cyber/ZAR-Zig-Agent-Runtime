@@ -229,6 +229,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-e1000-tool-service-probe-check.ps1
 
+      - name: Bare-metal QEMU i386 E1000 full-stack probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-full-stack-probe-check.ps1
+
       - name: Bare-metal QEMU i386 RTL8139 ARP probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-rtl8139-arp-probe-check.ps1

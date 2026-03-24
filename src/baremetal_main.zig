@@ -123,6 +123,7 @@ const qemu_e1000_https_post_probe_ok_code: u8 = 0x4B;
 const qemu_e1000_tool_service_probe_ok_code: u8 = 0x4C;
 const qemu_e1000_dhcp_probe_ok_code: u8 = 0x4D;
 const qemu_e1000_dns_probe_ok_code: u8 = 0x4E;
+const qemu_e1000_full_stack_probe_ok_code: u8 = 0x5E;
 const qemu_virtio_net_probe_ok_code: u8 = 0x4F;
 const qemu_virtio_net_arp_probe_ok_code: u8 = 0x50;
 const qemu_virtio_net_ipv4_probe_ok_code: u8 = 0x51;
@@ -207,6 +208,7 @@ const e1000_dns_probe_enabled: bool = if (@hasDecl(build_options, "e1000_dns_pro
 const e1000_http_post_probe_enabled: bool = if (@hasDecl(build_options, "e1000_http_post_probe")) build_options.e1000_http_post_probe else false;
 const e1000_https_post_probe_enabled: bool = if (@hasDecl(build_options, "e1000_https_post_probe")) build_options.e1000_https_post_probe else false;
 const e1000_tool_service_probe_enabled: bool = if (@hasDecl(build_options, "e1000_tool_service_probe")) build_options.e1000_tool_service_probe else false;
+const e1000_full_stack_probe_enabled: bool = if (@hasDecl(build_options, "e1000_full_stack_probe")) build_options.e1000_full_stack_probe else false;
 const virtio_net_probe_enabled: bool = if (@hasDecl(build_options, "virtio_net_probe")) build_options.virtio_net_probe else false;
 const virtio_net_arp_probe_enabled: bool = if (@hasDecl(build_options, "virtio_net_arp_probe")) build_options.virtio_net_arp_probe else false;
 const virtio_net_ipv4_probe_enabled: bool = if (@hasDecl(build_options, "virtio_net_ipv4_probe")) build_options.virtio_net_ipv4_probe else false;
@@ -2973,6 +2975,10 @@ fn baremetalStart() callconv(.c) noreturn {
     if (e1000_tool_service_probe_enabled) {
         runE1000ToolServiceProbe() catch |err| qemuExit(e1000ToolServiceProbeFailureCode(err));
         qemuExit(qemu_e1000_tool_service_probe_ok_code);
+    }
+    if (e1000_full_stack_probe_enabled) {
+        runE1000FullStackProbe() catch |err| qemuExit(e1000FullStackProbeFailureCode(err));
+        qemuExit(qemu_e1000_full_stack_probe_ok_code);
     }
     if (rtl8139_probe_enabled) {
         runRtl8139Probe() catch |err| qemuExit(rtl8139ProbeFailureCode(err));
@@ -5875,6 +5881,10 @@ fn e1000ToolServiceProbeFailureCode(err: E1000ToolServiceProbeError) u8 {
         error.ToolServiceResponseMismatch => 0x98,
         else => e1000TcpProbeFailureCode(@errorCast(err)),
     };
+}
+
+fn e1000FullStackProbeFailureCode(err: E1000ToolServiceProbeError) u8 {
+    return e1000ToolServiceProbeFailureCode(err);
 }
 
 fn e1000HttpPostFailureCode(err: E1000HttpPostProbeError) u8 {
@@ -16257,6 +16267,10 @@ fn runE1000ToolServiceProbe() E1000ToolServiceProbeError!void {
     if (eth.tx_packets <= tx_packets_before or eth.rx_packets <= rx_packets_before) return error.CounterMismatch;
 }
 
+fn runE1000FullStackProbe() E1000ToolServiceProbeError!void {
+    try runE1000ToolServiceProbe();
+}
+
 fn runRtl8139HttpsPostProbe() Rtl8139TcpProbeError!void {
     setProbeInterruptsEnabled(false);
 
@@ -26388,6 +26402,14 @@ test "baremetal e1000 tool service probe succeeds through mock device" {
     defer e1000.testDisableMockDevice();
 
     try runE1000ToolServiceProbe();
+}
+
+test "baremetal e1000 full stack probe succeeds through mock device" {
+    resetBaremetalRuntimeForTest();
+    e1000.testEnableMockDevice();
+    defer e1000.testDisableMockDevice();
+
+    try runE1000FullStackProbe();
 }
 
 test "baremetal ethernet arp request loops through mock rtl8139 and parses request" {
