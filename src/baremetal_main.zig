@@ -16522,6 +16522,8 @@ fn rtl8139TcpProbeFailureCode(err: Rtl8139TcpProbeError) u8 {
 }
 
 fn runRtl8139DhcpProbe() Rtl8139DhcpProbeError!void {
+    setProbeInterruptsEnabled(false);
+
     rtl8139.initDetailed() catch |err| return switch (err) {
         error.UnsupportedPlatform => error.UnsupportedPlatform,
         error.DeviceNotFound => error.DeviceNotFound,
@@ -16537,6 +16539,9 @@ fn runRtl8139DhcpProbe() Rtl8139DhcpProbeError!void {
     if (eth.initialized == 0) return error.InitFlagMismatch;
     if (!builtin.is_test and eth.hardware_backed == 0) return error.HardwareBackedMismatch;
     if (eth.io_base == 0) return error.IoBaseMismatch;
+
+    rtl8139.installProbeSendHook(rtl8139TcpProbeLoopbackHook);
+    defer rtl8139.installProbeSendHook(null);
 
     const source_ip = if (builtin.is_test)
         [4]u8{ 0, 0, 0, 0 }
@@ -16662,6 +16667,8 @@ fn rtl8139DhcpProbeFailureCode(err: Rtl8139DhcpProbeError) u8 {
 }
 
 fn runRtl8139DnsProbe() Rtl8139DnsProbeError!void {
+    setProbeInterruptsEnabled(false);
+
     rtl8139.initDetailed() catch |err| return switch (err) {
         error.UnsupportedPlatform => error.UnsupportedPlatform,
         error.DeviceNotFound => error.DeviceNotFound,
@@ -16677,6 +16684,9 @@ fn runRtl8139DnsProbe() Rtl8139DnsProbeError!void {
     if (eth.initialized == 0) return error.InitFlagMismatch;
     if (!builtin.is_test and eth.hardware_backed == 0) return error.HardwareBackedMismatch;
     if (eth.io_base == 0) return error.IoBaseMismatch;
+
+    rtl8139.installProbeSendHook(rtl8139TcpProbeLoopbackHook);
+    defer rtl8139.installProbeSendHook(null);
 
     const source_ip = [4]u8{ 192, 168, 56, 10 };
     const server_ip = [4]u8{ 192, 168, 56, 1 };

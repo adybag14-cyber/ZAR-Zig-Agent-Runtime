@@ -24,7 +24,11 @@ if (($UseDgramEcho -and $UseUserNet) -or (-not $UseDgramEcho -and -not $UseUserN
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $releaseDir = Join-Path $repo 'release'
 $expectedExitCode = ($ExpectedProbeCode * 2) + 1
-$echoScript = Join-Path $repo 'scripts\qemu-e1000-dgram-echo.ps1'
+$echoScript = if ($DeviceModel -like 'virtio-net*') {
+    Join-Path $repo 'scripts\qemu-virtio-net-dgram-echo.ps1'
+} else {
+    Join-Path $repo 'scripts\qemu-e1000-dgram-echo.ps1'
+}
 $probeKey = ($ProbeTag.ToUpperInvariant() -replace '[^A-Z0-9]+', '_')
 
 function Resolve-ZigExecutable {
