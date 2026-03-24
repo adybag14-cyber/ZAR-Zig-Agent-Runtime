@@ -1607,6 +1607,9 @@ pub const ToolRuntime = struct {
         allocator: std.mem.Allocator,
         session_id: []const u8,
     ) !ProcessListResult {
+        if (builtin.os.tag == .windows or builtin.os.tag == .wasi or builtin.os.tag == .freestanding) {
+            return error.ProcessManagementUnsupported;
+        }
         const session_filter = blk: {
             const trimmed = std.mem.trim(u8, session_id, " \t\r\n");
             if (trimmed.len == 0) break :blk null;
@@ -1651,6 +1654,9 @@ pub const ToolRuntime = struct {
         allocator: std.mem.Allocator,
         process_id: []const u8,
     ) !ProcessStatusResult {
+        if (builtin.os.tag == .windows or builtin.os.tag == .wasi or builtin.os.tag == .freestanding) {
+            return error.ProcessManagementUnsupported;
+        }
         const job_id = try self.runtime_state.enqueueJob(.file_read, process_id);
         const queued = self.runtime_state.dequeueJob() orelse return error.JobQueueInvariant;
         defer self.runtime_state.releaseJob(queued);
@@ -1669,6 +1675,9 @@ pub const ToolRuntime = struct {
         allocator: std.mem.Allocator,
         process_id: []const u8,
     ) !ProcessStatusResult {
+        if (builtin.os.tag == .windows or builtin.os.tag == .wasi or builtin.os.tag == .freestanding) {
+            return error.ProcessManagementUnsupported;
+        }
         const job_id = try self.runtime_state.enqueueJob(.file_read, process_id);
         const queued = self.runtime_state.dequeueJob() orelse return error.JobQueueInvariant;
         defer self.runtime_state.releaseJob(queued);
@@ -1688,6 +1697,9 @@ pub const ToolRuntime = struct {
         process_id: []const u8,
         timeout_ms: u32,
     ) !ProcessStatusResult {
+        if (builtin.os.tag == .windows or builtin.os.tag == .wasi or builtin.os.tag == .freestanding) {
+            return error.ProcessManagementUnsupported;
+        }
         const job_id = try self.runtime_state.enqueueJob(.exec, process_id);
         const queued = self.runtime_state.dequeueJob() orelse return error.JobQueueInvariant;
         defer self.runtime_state.releaseJob(queued);
@@ -1718,6 +1730,9 @@ pub const ToolRuntime = struct {
         allocator: std.mem.Allocator,
         process_id: []const u8,
     ) !ProcessStatusResult {
+        if (builtin.os.tag == .windows or builtin.os.tag == .wasi or builtin.os.tag == .freestanding) {
+            return error.ProcessManagementUnsupported;
+        }
         const job_id = try self.runtime_state.enqueueJob(.exec, process_id);
         const queued = self.runtime_state.dequeueJob() orelse return error.JobQueueInvariant;
         defer self.runtime_state.releaseJob(queued);

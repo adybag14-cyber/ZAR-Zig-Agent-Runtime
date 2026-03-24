@@ -227,6 +227,134 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-e1000-tcp-probe-check.ps1
 
+      - name: Bare-metal QEMU i386 framebuffer console probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-framebuffer-console-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-gpu display probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-gpu-display-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 DHCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-dhcp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 DNS probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-dns-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 HTTP POST probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-http-post-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 HTTPS POST probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-https-post-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 tool-service probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-tool-service-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 ARP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-arp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 IPv4 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-ipv4-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 UDP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-udp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 TCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-tcp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 runtime-service probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-runtime-service-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 DHCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-dhcp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 DNS probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-dns-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 HTTP POST probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-http-post-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 HTTPS POST probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-https-post-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-net probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-net-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-net ARP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-net-arp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-net IPv4 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-net-ipv4-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-net UDP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-net-udp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-net TCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-net-tcp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-net DHCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-net-dhcp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-net DNS probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-net-dns-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-net HTTP POST probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-net-http-post-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-net HTTPS POST probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-net-https-post-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-net tool-service probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-net-tool-service-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-block probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-block-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-block installer probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-block-installer-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-block mount probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-block-mount-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-block ext2 mount probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-block-ext2-mount-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-block fat32 mount probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-block-fat32-mount-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-block mount control probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-block-mount-control-probe-check.ps1
+
       - name: Bare-metal QEMU runtime probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-runtime-oc-tick-check.ps1

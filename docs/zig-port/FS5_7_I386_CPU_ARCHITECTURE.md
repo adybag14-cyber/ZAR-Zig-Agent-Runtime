@@ -105,6 +105,90 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - bounded `TCP`
 - hosted CI and `release-preview` now execute all six new i386 probe scripts as part of the existing i386 optional QEMU lane
 
+### Slice 6: i386 Higher Protocol, Service, and Display Lanes
+
+- new live i386 QEMU probes:
+  - `scripts/baremetal-qemu-i386-framebuffer-console-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-virtio-gpu-display-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-e1000-dhcp-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-e1000-dns-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-e1000-http-post-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-e1000-https-post-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-e1000-tool-service-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-rtl8139-arp-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-rtl8139-ipv4-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-rtl8139-udp-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-rtl8139-tcp-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-rtl8139-runtime-service-probe-check.ps1`
+- `src/runtime/tool_runtime.zig` now explicitly fences hosted process-management methods off on `windows`, `wasi`, and `freestanding`, so the i386 freestanding display and service builds no longer instantiate unsupported hosted process code
+- `src/baremetal_main.zig` now uses the same bounded internal loopback hook for the raw `RTL8139` `IPv4` and `UDP` probes that the later `TCP` and runtime-service lanes already used, removing fragile dependence on external receive progress for non-ARP protocol proofs
+- the i386 display lane now also proves on a real guest:
+  - bounded linear framebuffer console state at `640x400`
+  - first i386 `virtio-gpu` EDID/output inventory proof on the live controller path
+- the i386 E1000 lane now also proves on a real guest:
+  - `DHCP`
+  - `DNS`
+  - `HTTP`
+  - `HTTPS`
+  - bounded framed tool-service reuse
+- the i386 RTL8139 lane now also proves on a real guest:
+  - `ARP`
+  - `IPv4`
+  - `UDP`
+  - bounded `TCP`
+  - bounded runtime-service reuse
+- hosted CI and `release-preview` now execute those additional i386 probe scripts as part of the optional QEMU lane
+
+### Slice 7: i386 RTL8139 Higher Protocols, virtio-net, and virtio-block
+
+- new live i386 QEMU probes:
+  - `scripts/baremetal-qemu-i386-rtl8139-dhcp-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-rtl8139-dns-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-rtl8139-http-post-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-rtl8139-https-post-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-virtio-net-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-virtio-net-arp-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-virtio-net-ipv4-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-virtio-net-udp-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-virtio-net-tcp-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-virtio-net-dhcp-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-virtio-net-dns-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-virtio-net-http-post-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-virtio-net-https-post-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-virtio-net-tool-service-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-virtio-block-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-virtio-block-installer-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-virtio-block-mount-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-virtio-block-ext2-mount-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-virtio-block-fat32-mount-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-virtio-block-mount-control-probe-check.ps1`
+- `src/baremetal_main.zig` now makes the i386 `RTL8139` `DHCP` and `DNS` probes deterministic through the same bounded internal loopback hook already used by the later `TCP` and runtime-service lanes, removing the i386-only `TxCompletedNoRxInterrupt` failure mode on those higher protocol checks
+- `scripts/baremetal-qemu-i386-ethernet-probe-common.ps1` now selects the correct datagram echo helper for `virtio-net`, so the i386 `virtio-net` raw/ARP/IPv4/UDP/TCP lane validates against the right remote MAC instead of the stale `E1000` helper identity
+- the i386 RTL8139 lane now also proves on a real guest:
+  - `DHCP`
+  - `DNS`
+  - `HTTP`
+  - `HTTPS`
+- the i386 virtio-net lane now proves on a real guest:
+  - raw frame TX/RX
+  - `ARP`
+  - `IPv4`
+  - `UDP`
+  - bounded `TCP`
+  - `DHCP`
+  - `DNS`
+  - `HTTP`
+  - `HTTPS`
+  - bounded framed tool-service reuse
+- the i386 virtio-block lane now proves on a real guest:
+  - raw block IO
+  - installer/runtime layout persistence
+  - bounded mount registry reload
+  - bounded read-only `ext2` mount
+  - bounded writable `fat32` mount
+  - bounded mount-control reload
+- hosted CI and `release-preview` now execute those additional i386 probe scripts as part of the optional QEMU lane
+
 ## ZigOS Follow-On Work
 
 - next adoption analysis is stored in:
@@ -134,29 +218,28 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the i386 freestanding runtime now has live RTL8139 raw-frame NIC proof
 - the i386 freestanding runtime now has the first live display proof through bounded VGA console-state inspection
 - the i386 freestanding runtime now has live E1000 `ARP` / `IPv4` / `UDP` / bounded `TCP` proof
+- the i386 freestanding runtime now has live E1000 `DHCP` / `DNS` / `HTTP` / `HTTPS` / bounded tool-service proof
+- the i386 freestanding runtime now has live RTL8139 `ARP` / `IPv4` / `UDP` / bounded `TCP` / bounded runtime-service proof
+- the i386 freestanding runtime now has live RTL8139 `DHCP` / `DNS` / `HTTP` / `HTTPS` proof
+- the i386 freestanding runtime now has live virtio-net raw-frame plus `ARP` / `IPv4` / `UDP` / bounded `TCP` / `DHCP` / `DNS` / `HTTP` / `HTTPS` / bounded tool-service proof
+- the i386 freestanding runtime now has live virtio-block raw IO plus installer/runtime, mount, `ext2`, `fat32`, and mount-control proof
+- the i386 freestanding runtime now has live linear-framebuffer console proof
+- the i386 freestanding runtime now has the first live `virtio-gpu` display proof on the i386 controller path
 
 ## Current Boundary
 
-- this is build/boot smoke plus additive descriptor/bootstrap/runtime parity and the first real i386 storage/NIC/display lanes
+- this is build/boot smoke plus additive descriptor/bootstrap/runtime parity and the first broad real i386 storage/NIC/display/service lanes
 - it is not yet full 32-bit driver/runtime parity
 - descriptor telemetry is now dual-arch, but the broader descriptor/mailbox live proof lane is still only claimed on the existing `x86_64` PVH artifact
-- higher protocol reuse on i386 beyond bounded `E1000` transport is still open:
-  - `DHCP`
-  - `DNS`
-  - `HTTP`
-  - `HTTPS`
-  - service framing
-- the first display proof is bounded VGA console state, not framebuffer or `virtio-gpu`
+- i386 `RTL8139` gateway-routing proof is still open
+- i386 package/workspace/app/trust/service depth is still not separately proven on the i386 NIC/storage controller lanes
+- i386 display coverage is now bounded VGA + framebuffer + `virtio-gpu`, not the full display/profile/output matrix already proven on `x86_64`
 
 ## Next Steps
 
-1. widen the i386 NIC matrix beyond bounded `E1000` transport:
-   - `DHCP`
-   - `DNS`
-   - `HTTP`
-   - `HTTPS`
-   - bounded service reuse
-2. ship the second live i386 display proof:
-   - framebuffer first
-   - then `virtio-gpu`
-3. widen i386 storage from raw ATA to broader mounted/runtime proof lanes
+1. widen the i386 `RTL8139` matrix through routed/gateway proof:
+   - ARP-cache learning
+   - routed UDP
+   - direct-subnet bypass
+2. widen i386 storage from bounded `virtio-block` proof into higher-level runtime/package/workspace surfaces
+3. widen i386 display from bounded VGA + framebuffer + `virtio-gpu` into more of the output/profile matrix already proven on `x86_64`
