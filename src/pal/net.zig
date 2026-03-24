@@ -1009,7 +1009,7 @@ fn fillWriteChunk(
 }
 
 fn fillTlsEntropy(entropy: *[tls_client_light.Client.Options.entropy_len]u8) !void {
-    if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86_64) return error.UnsupportedPlatform;
+    if (builtin.os.tag != .freestanding or (builtin.cpu.arch != .x86 and builtin.cpu.arch != .x86_64)) return error.UnsupportedPlatform;
 
     var route_seed_bytes = [_]u8{
         route_state.local_ip[0],
@@ -1056,7 +1056,7 @@ fn pollIdlePause() void {
     if (builtin.os.tag != .freestanding) return;
     var iterations: usize = 0;
     while (iterations < freestanding_poll_pause_iterations) : (iterations += 1) {
-        if (builtin.cpu.arch == .x86_64) {
+        if (builtin.cpu.arch == .x86 or builtin.cpu.arch == .x86_64) {
             asm volatile ("pause" ::: .{ .memory = true });
         } else if (builtin.cpu.arch == .aarch64) {
             asm volatile ("yield" ::: .{ .memory = true });

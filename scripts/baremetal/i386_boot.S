@@ -25,6 +25,21 @@ pvh_i386_start:
     cld
     movl $stack32_top, %esp
     andl $-16, %esp
+
+    # Enable x87/SSE before entering Zig runtime.
+    # Clear CR0.EM/CR0.TS and set CR0.MP/CR0.NE.
+    movl %cr0, %eax
+    andl $~(0x00000004), %eax
+    andl $~(0x00000008), %eax
+    orl  $0x00000022, %eax
+    movl %eax, %cr0
+
+    # Set CR4.OSFXSR and CR4.OSXMMEXCPT for XMM instructions.
+    movl %cr4, %eax
+    orl  $0x00000600, %eax
+    movl %eax, %cr4
+
+    fninit
     call _start
 
 1:

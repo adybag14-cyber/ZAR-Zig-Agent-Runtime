@@ -17,7 +17,7 @@ const hmacExpandLabel = tls.hmacExpandLabel;
 const hkdfExpandLabel = tls.hkdfExpandLabel;
 const int = tls.int;
 const array = tls.array;
-const lightweight_freestanding_keyshare_profile = builtin.os.tag == .freestanding and builtin.cpu.arch == .x86_64;
+const lightweight_freestanding_keyshare_profile = builtin.os.tag == .freestanding and (builtin.cpu.arch == .x86 or builtin.cpu.arch == .x86_64);
 
 /// The encrypted stream from the server to the client. Bytes are pulled from
 /// here via `reader`.

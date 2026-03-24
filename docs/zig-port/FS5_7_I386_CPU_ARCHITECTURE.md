@@ -35,6 +35,61 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - `oc_descriptor_tables_loaded`
   - `oc_try_load_descriptor_tables`
 
+### Slice 3: i386 Hardware Guard Widening and Bootstrap SSE Fix
+
+- `scripts/baremetal/i386_boot.S` now enables x87/SSE before entering Zig runtime:
+  - clears `CR0.EM`
+  - clears `CR0.TS`
+  - sets `CR0.MP`
+  - sets `CR0.NE`
+  - sets `CR4.OSFXSR`
+  - sets `CR4.OSXMMEXCPT`
+  - runs `fninit`
+- hardware-backed freestanding `x86` guards are now widened in:
+  - `src/baremetal/pci.zig`
+  - `src/baremetal/ata_pio_disk.zig`
+  - `src/baremetal/rtl8139.zig`
+  - `src/baremetal/e1000.zig`
+  - `src/baremetal/framebuffer_console.zig`
+  - `src/baremetal/ps2_input.zig`
+  - `src/baremetal/virtio_block.zig`
+  - `src/baremetal/virtio_gpu.zig`
+  - `src/baremetal/virtio_net.zig`
+  - `src/pal/net.zig`
+  - `src/pal/tls_client_light.zig`
+
+### Slice 4: i386 Live Storage and NIC Proofs
+
+- new live QEMU probes:
+  - `scripts/baremetal-qemu-i386-ata-storage-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-e1000-probe-check.ps1`
+- the ATA lane now proves on a real i386 guest:
+  - partition-mounted ATA PIO access
+  - raw block mutation + readback
+  - tool-layout persistence
+  - filesystem persistence
+- the E1000 lane now proves on a real i386 guest:
+  - PCI bind
+  - raw frame TX/RX
+  - MAC readout
+  - bounded counter advance
+- hosted CI and `release-preview` now execute:
+  - `scripts/baremetal-qemu-i386-ata-storage-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-e1000-probe-check.ps1`
+
+## ZigOS Follow-On Work
+
+- next adoption analysis is stored in:
+  - `docs/zig-port/ZAR_VS_ZIGOS_NEXT_ADOPTION_OPPORTUNITIES.md`
+- highest-value next ZigOS-derived upgrades after the current i386 slice are:
+  - `ACPI`
+  - `timer` / `interrupt` hardening
+  - `SMP`
+  - bounded `USB/UHCI`
+  - bounded `AC97`
+  - richer `tmpfs/devfs/procfs/sysfs`
+  - deeper mounted `ext2/fat32`
+
 ## What This Proves
 
 - the freestanding runtime builds for `x86-freestanding-none`
@@ -45,24 +100,28 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the x86 bootstrap/descriptor export seam is no longer implicitly hard-coded to `x86_64`
 - the i386 artifact exports the descriptor telemetry/control symbols required by the existing bare-metal ABI surface
 - the i386 freestanding runtime now has additive support for QEMU debug-console writes, interrupt enable/disable toggles, and VGA text console hardware access
+- the i386 bootstrap is now safe for Zig-generated SSE/x87 runtime instructions
+- the i386 freestanding runtime now has live ATA-backed storage proof
+- the i386 freestanding runtime now has live E1000 raw-frame NIC proof
 
 ## Current Boundary
 
-- this is build/boot smoke plus additive descriptor/bootstrap/runtime parity
+- this is build/boot smoke plus additive descriptor/bootstrap/runtime parity and the first real i386 hardware lanes
 - it is not yet full 32-bit driver/runtime parity
-- no live `i386` NIC/storage/display probe lanes are claimed yet
+- no live `i386` display probe lane is claimed yet
+- the raw `RTL8139` i386 lane is not claimed yet; the current i386 guest still returns probe code `0x71` on that path
 - descriptor telemetry is now dual-arch, but the broader descriptor/mailbox live proof lane is still only claimed on the existing `x86_64` PVH artifact
-- most freestanding drivers and subsystem probes are still intentionally gated to `x86_64`
+- higher protocol reuse on i386 (`ARP` / `IPv4` / `UDP` / `TCP` / service framing) is still only claimed on `x86_64`
 
 ## Next Steps
 
-1. classify each freestanding subsystem into:
-   - already 32-bit-safe
-   - safe after guard widening
-   - still blocked on `x86_64` assumptions
-2. ship the first bounded live `i386` subsystem proof beyond smoke
-3. decide the first real `i386` hardware proof lane in order:
-   - serial / QEMU debug
-   - VGA / framebuffer
-   - storage
-   - NIC
+1. close the remaining raw `RTL8139` i386 lane
+2. ship the first live i386 display proof:
+   - VGA first
+   - then framebuffer
+3. widen the i386 NIC/storage matrix beyond raw proof:
+   - `ARP`
+   - `IPv4`
+   - `UDP`
+   - `TCP`
+   - bounded service reuse

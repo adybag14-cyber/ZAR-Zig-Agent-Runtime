@@ -424,7 +424,7 @@ fn mockAvailable() bool {
 }
 
 fn hardwareBacked() bool {
-    return builtin.os.tag == .freestanding and builtin.cpu.arch == .x86_64;
+    return builtin.os.tag == .freestanding and (builtin.cpu.arch == .x86 or builtin.cpu.arch == .x86_64);
 }
 
 fn macIsZero(mac: [6]u8) bool {
