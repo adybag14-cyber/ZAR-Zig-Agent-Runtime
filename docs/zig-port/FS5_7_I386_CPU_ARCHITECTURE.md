@@ -189,6 +189,22 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - bounded mount-control reload
 - hosted CI and `release-preview` now execute those additional i386 probe scripts as part of the optional QEMU lane
 
+### Slice 8: i386 RTL8139 Gateway, Full-Stack Depth, and Display-Matrix Reuse
+
+- new live i386 QEMU probes:
+  - `scripts/baremetal-qemu-i386-rtl8139-gateway-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-rtl8139-full-stack-probe-check.ps1`
+- `src/baremetal_main.zig` now enables the bounded `RTL8139` hardware-loopback datapath inside `runRtl8139GatewayProbe()` for hardware-backed non-test runs, so the i386 guest can deterministically observe its own ARP-learning and routed-UDP traffic instead of stalling on the first ARP miss
+- the i386 RTL8139 lane now also proves on a real guest:
+  - ARP-reply learning into the route cache
+  - routed off-subnet UDP delivery through the learned gateway next hop
+  - direct-subnet gateway bypass
+  - broader full-stack `RTL8139` TCP/service depth through the existing persisted package/workspace/app/trust/runtime surface on the i386 artifact
+- the existing i386 `virtio-gpu` display lane already reuses `runVirtioGpuDisplayProbe()`, so the i386 controller path now benefits from the same output/interface/mode/profile matrix validation already carried by that broad runtime function instead of only the early inventory subset
+- hosted CI and `release-preview` now also execute:
+  - `scripts/baremetal-qemu-i386-rtl8139-gateway-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-rtl8139-full-stack-probe-check.ps1`
+
 ## ZigOS Follow-On Work
 
 - next adoption analysis is stored in:
@@ -221,25 +237,26 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the i386 freestanding runtime now has live E1000 `DHCP` / `DNS` / `HTTP` / `HTTPS` / bounded tool-service proof
 - the i386 freestanding runtime now has live RTL8139 `ARP` / `IPv4` / `UDP` / bounded `TCP` / bounded runtime-service proof
 - the i386 freestanding runtime now has live RTL8139 `DHCP` / `DNS` / `HTTP` / `HTTPS` proof
+- the i386 freestanding runtime now has live RTL8139 gateway-routing proof
+- the i386 freestanding runtime now has live higher-level package/workspace/app/trust/runtime depth on the RTL8139 controller lane
 - the i386 freestanding runtime now has live virtio-net raw-frame plus `ARP` / `IPv4` / `UDP` / bounded `TCP` / `DHCP` / `DNS` / `HTTP` / `HTTPS` / bounded tool-service proof
 - the i386 freestanding runtime now has live virtio-block raw IO plus installer/runtime, mount, `ext2`, `fat32`, and mount-control proof
 - the i386 freestanding runtime now has live linear-framebuffer console proof
-- the i386 freestanding runtime now has the first live `virtio-gpu` display proof on the i386 controller path
+- the i386 freestanding runtime now has live `virtio-gpu` display proof on the i386 controller path with reused output/interface/mode/profile matrix coverage from the shared broad display probe
 
 ## Current Boundary
 
-- this is build/boot smoke plus additive descriptor/bootstrap/runtime parity and the first broad real i386 storage/NIC/display/service lanes
+- this is build/boot smoke plus additive descriptor/bootstrap/runtime parity and broad real i386 storage/NIC/display/service lanes
 - it is not yet full 32-bit driver/runtime parity
 - descriptor telemetry is now dual-arch, but the broader descriptor/mailbox live proof lane is still only claimed on the existing `x86_64` PVH artifact
-- i386 `RTL8139` gateway-routing proof is still open
-- i386 package/workspace/app/trust/service depth is still not separately proven on the i386 NIC/storage controller lanes
-- i386 display coverage is now bounded VGA + framebuffer + `virtio-gpu`, not the full display/profile/output matrix already proven on `x86_64`
+- i386 `E1000` still does not separately claim the broader package/workspace/app/trust/runtime depth already proven on the wider `RTL8139` full-stack lane
+- i386 display coverage now includes bounded VGA + framebuffer + `virtio-gpu` with reused output/interface/mode/profile matrix validation on the current controller path, but it still does not claim physical HDMI/DisplayPort controller-specific scanout or a separate i386-only display-profile wrapper matrix
 
 ## Next Steps
 
-1. widen the i386 `RTL8139` matrix through routed/gateway proof:
-   - ARP-cache learning
-   - routed UDP
-   - direct-subnet bypass
-2. widen i386 storage from bounded `virtio-block` proof into higher-level runtime/package/workspace surfaces
-3. widen i386 display from bounded VGA + framebuffer + `virtio-gpu` into more of the output/profile matrix already proven on `x86_64`
+1. lift i386 `E1000` from bounded tool-service reuse into the broader package/workspace/app/trust/runtime depth already proven on the i386 `RTL8139` full-stack lane
+2. split out dedicated i386 display-profile/output wrappers if we want explicit probe coverage beyond the shared `runVirtioGpuDisplayProbe()` matrix reuse
+3. start the next real i386 architecture-hardening slice after device proof breadth:
+   - `ACPI`
+   - timer / interrupt hardening
+   - early `SMP` groundwork
