@@ -123,7 +123,7 @@ var last_avail_idx: u16 = 0;
 var last_used_idx: u16 = 0;
 
 fn hardwareBacked() bool {
-    return builtin.os.tag == .freestanding and builtin.cpu.arch == .x86_64;
+    return builtin.os.tag == .freestanding and (builtin.cpu.arch == .x86 or builtin.cpu.arch == .x86_64);
 }
 
 pub fn statePtr() *const abi.BaremetalStorageState {

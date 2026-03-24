@@ -15,6 +15,9 @@ Full-stack replacement execution reference:
   - first delivered slice emits a real `zig build baremetal-i386` freestanding `x86-freestanding-none` artifact through `scripts/baremetal/i386_boot.S` + `scripts/baremetal/i386_lld.ld`
   - validation now includes `scripts/baremetal-i386-smoke-check.ps1` and `scripts/baremetal-qemu-i386-smoke-check.ps1`
   - second delivered slice makes `src/baremetal/x86_bootstrap.zig` additive dual-arch for runtime descriptor layout/telemetry, widens freestanding `x86` QEMU debug + interrupt-enable guards in `src/baremetal_main.zig`, widens hardware-backed VGA text console support in `src/baremetal/vga_text_console.zig`, and extends the i386 smoke script to require descriptor exports in the ELF symbol table
+  - third delivered slice enables x87/SSE before entering Zig runtime in `scripts/baremetal/i386_boot.S`, widens the first freestanding `x86` hardware-backed guards through `src/baremetal/pci.zig`, `src/baremetal/ata_pio_disk.zig`, `src/baremetal/rtl8139.zig`, `src/baremetal/e1000.zig`, `src/baremetal/framebuffer_console.zig`, `src/baremetal/ps2_input.zig`, `src/baremetal/virtio_block.zig`, `src/baremetal/virtio_gpu.zig`, `src/baremetal/virtio_net.zig`, `src/pal/net.zig`, and `src/pal/tls_client_light.zig`, and adds live i386 QEMU proof lanes for ATA-backed storage plus E1000 raw-frame NIC bring-up through `scripts/baremetal-qemu-i386-ata-storage-probe-check.ps1` and `scripts/baremetal-qemu-i386-e1000-probe-check.ps1`
+  - the raw i386 RTL8139 probe is still open and currently returns probe code `0x71`, so it is not yet claimed by FS5.7 closure
+  - next ZigOS-derived adoption priorities are now tracked in `docs/zig-port/ZAR_VS_ZIGOS_NEXT_ADOPTION_OPPORTUNITIES.md`
   - current boundary is explicit: this is boot/build smoke plus direct-QEMU entry proof, not full 32-bit driver/runtime parity
 - ZigOS integration planning is now tracked in:
   - `docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md`

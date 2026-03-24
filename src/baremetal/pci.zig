@@ -100,7 +100,7 @@ var mock_entry_count: usize = 0;
 var mock_enabled: bool = false;
 
 fn hardwareBacked() bool {
-    return builtin.os.tag == .freestanding and builtin.cpu.arch == .x86_64;
+    return builtin.os.tag == .freestanding and (builtin.cpu.arch == .x86 or builtin.cpu.arch == .x86_64);
 }
 
 fn readPort32(port: u16) u32 {

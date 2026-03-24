@@ -467,7 +467,7 @@ fn mockAvailable() bool {
 }
 
 fn hardwareBacked() bool {
-    return builtin.os.tag == .freestanding and builtin.cpu.arch == .x86_64;
+    return builtin.os.tag == .freestanding and (builtin.cpu.arch == .x86 or builtin.cpu.arch == .x86_64);
 }
 
 fn commonCfg(device: pci.VirtioNetDevice) *volatile VirtioPciCommonCfg {

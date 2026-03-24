@@ -182,7 +182,7 @@ pub fn injectMousePacket(buttons: u8, dx: i16, dy: i16) void {
 }
 
 fn isHardwareBacked() bool {
-    return builtin.os.tag == .freestanding and builtin.cpu.arch == .x86_64;
+    return builtin.os.tag == .freestanding and (builtin.cpu.arch == .x86 or builtin.cpu.arch == .x86_64);
 }
 
 fn readPort(port: u16) u8 {
