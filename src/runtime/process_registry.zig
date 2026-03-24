@@ -98,7 +98,7 @@ pub const ProcessRegistry = struct {
                 if (entry.lifecycle_state != .running or entry.pid <= 0) continue;
                 const pid: std.posix.pid_t = @intCast(entry.pid);
                 std.posix.kill(pid, .KILL) catch {};
-                var status: u32 = 0;
+                var status: c_int = 0;
                 _ = std.posix.system.waitpid(pid, &status, 0);
             }
         }
@@ -274,7 +274,7 @@ pub const ProcessRegistry = struct {
         if (entry.pid <= 0) return;
         if (builtin.os.tag == .windows or builtin.os.tag == .wasi or builtin.os.tag == .freestanding) return;
 
-        var status: u32 = 0;
+        var status: c_int = 0;
         const pid: std.posix.pid_t = @intCast(entry.pid);
         const rc = std.posix.system.waitpid(pid, &status, std.posix.W.NOHANG);
         if (rc == 0) return;
@@ -321,15 +321,17 @@ pub const ProcessRegistry = struct {
         }
     }
 
-    fn termFromWaitStatus(status: u32) std.process.Child.Term {
-        return if (std.posix.W.IFEXITED(status))
-            .{ .exited = std.posix.W.EXITSTATUS(status) }
-        else if (std.posix.W.IFSIGNALED(status))
-            .{ .signal = std.posix.W.TERMSIG(status) }
-        else if (std.posix.W.IFSTOPPED(status))
-            .{ .stopped = std.posix.W.STOPSIG(status) }
+    fn termFromWaitStatus(status: c_int) std.process.Child.Term {
+        const WaitStatusInt = std.meta.Int(.unsigned, @bitSizeOf(c_int));
+        const raw: WaitStatusInt = @bitCast(status);
+        return if (std.posix.W.IFEXITED(raw))
+            .{ .exited = std.posix.W.EXITSTATUS(raw) }
+        else if (std.posix.W.IFSIGNALED(raw))
+            .{ .signal = std.posix.W.TERMSIG(raw) }
+        else if (std.posix.W.IFSTOPPED(raw))
+            .{ .stopped = std.posix.W.STOPSIG(raw) }
         else
-            .{ .unknown = status };
+            .{ .unknown = @intCast(raw) };
     }
 };
 
