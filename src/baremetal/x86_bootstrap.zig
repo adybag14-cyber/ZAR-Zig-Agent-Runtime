@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
 const abi = @import("abi.zig");
+const builtin = @import("builtin");
 
 pub const gdt_entries_count: usize = 8;
 pub const idt_entries_count: usize = 256;
 pub const interrupt_vector_table_size: usize = 256;
 pub const exception_vector_table_size: usize = 32;
+pub const runtime_is_i386: bool = builtin.cpu.arch == .x86;
+pub const runtime_descriptor_base_type = if (runtime_is_i386) u32 else u64;
 
 pub const GdtEntry = extern struct {
     limit_low: u16,
@@ -16,19 +19,28 @@ pub const GdtEntry = extern struct {
     base_high: u8,
 };
 
-pub const IdtEntry = extern struct {
-    offset_low: u16,
-    selector: u16,
-    ist: u8,
-    type_attr: u8,
-    offset_mid: u16,
-    offset_high: u32,
-    zero: u32,
-};
+pub const IdtEntry = if (runtime_is_i386)
+    extern struct {
+        offset_low: u16,
+        selector: u16,
+        zero: u8,
+        type_attr: u8,
+        offset_high: u16,
+    }
+else
+    extern struct {
+        offset_low: u16,
+        selector: u16,
+        ist: u8,
+        type_attr: u8,
+        offset_mid: u16,
+        offset_high: u32,
+        zero: u32,
+    };
 
 pub const DescriptorPointer = extern struct {
     limit: u16,
-    base: u64,
+    base: runtime_descriptor_base_type,
 };
 
 pub const InterruptState = extern struct {
@@ -150,11 +162,11 @@ pub fn init() void {
 
     gdtr = .{
         .limit = @as(u16, @intCast(@sizeOf(GdtEntry) * gdt_entries_count - 1)),
-        .base = @as(u64, @intFromPtr(&gdt)),
+        .base = @as(runtime_descriptor_base_type, @intCast(@intFromPtr(&gdt))),
     };
     idtr = .{
         .limit = @as(u16, @intCast(@sizeOf(IdtEntry) * idt_entries_count - 1)),
-        .base = @as(u64, @intFromPtr(&idt)),
+        .base = @as(runtime_descriptor_base_type, @intCast(@intFromPtr(&idt))),
     };
 
     descriptor_init_counter +%= 1;
@@ -182,7 +194,16 @@ fn makeGdtEntry(base: u32, limit: u32, access: u8, granularity_high: u8) GdtEntr
     };
 }
 
-fn makeIdtEntry(handler_addr: u64, selector: u16, type_attr: u8) IdtEntry {
+fn makeIdtEntry(handler_addr: usize, selector: u16, type_attr: u8) IdtEntry {
+    if (runtime_is_i386) {
+        return .{
+            .offset_low = @as(u16, @intCast(handler_addr & 0xFFFF)),
+            .selector = selector,
+            .zero = 0,
+            .type_attr = type_attr,
+            .offset_high = @as(u16, @intCast((handler_addr >> 16) & 0xFFFF)),
+        };
+    }
     return .{
         .offset_low = @as(u16, @intCast(handler_addr & 0xFFFF)),
         .selector = selector,
@@ -418,7 +439,7 @@ pub export fn oc_descriptor_load_success_count() u32 {
 pub export fn oc_try_load_descriptor_tables() bool {
     ensureInit();
     descriptor_load_attempts +%= 1;
-    if (@import("builtin").cpu.arch != .x86_64) {
+    if (!supportsDescriptorRuntimeArch(builtin.cpu.arch)) {
         refreshInterruptState();
         return false;
     }
@@ -429,6 +450,22 @@ pub export fn oc_try_load_descriptor_tables() bool {
     descriptor_load_successes +%= 1;
     refreshInterruptState();
     return true;
+}
+
+pub fn supportsDescriptorRuntimeArch(arch: std.Target.Cpu.Arch) bool {
+    return arch == .x86 or arch == .x86_64;
+}
+
+pub fn descriptorPointerSizeForArch(arch: std.Target.Cpu.Arch) usize {
+    return if (arch == .x86) @sizeOf(u16) + @sizeOf(u32) else @sizeOf(u16) + @sizeOf(u64);
+}
+
+pub fn idtEntrySizeForArch(arch: std.Target.Cpu.Arch) usize {
+    return switch (arch) {
+        .x86 => 8,
+        .x86_64 => 16,
+        else => 0,
+    };
 }
 
 pub export fn oc_interrupt_state_ptr() *const InterruptState {
@@ -630,6 +667,16 @@ test "x86 bootstrap descriptor load telemetry updates attempts and successes" {
     try std.testing.expectEqual(attempts_before + 1, oc_descriptor_load_attempt_count());
     try std.testing.expectEqual(success_before + 1, oc_descriptor_load_success_count());
     try std.testing.expectEqual(@as(u8, 1), state.descriptor_tables_loaded);
+}
+
+test "x86 bootstrap descriptor helpers report i386 and x86_64 layouts" {
+    try std.testing.expect(supportsDescriptorRuntimeArch(.x86));
+    try std.testing.expect(supportsDescriptorRuntimeArch(.x86_64));
+    try std.testing.expect(!supportsDescriptorRuntimeArch(.aarch64));
+    try std.testing.expectEqual(@as(usize, 6), descriptorPointerSizeForArch(.x86));
+    try std.testing.expectEqual(@as(usize, 10), descriptorPointerSizeForArch(.x86_64));
+    try std.testing.expectEqual(@as(usize, 8), idtEntrySizeForArch(.x86));
+    try std.testing.expectEqual(@as(usize, 16), idtEntrySizeForArch(.x86_64));
 }
 
 test "x86 bootstrap exception telemetry tracks exception vectors only" {

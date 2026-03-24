@@ -14,6 +14,7 @@ Full-stack replacement execution reference:
   - `docs/zig-port/FS5_7_I386_CPU_ARCHITECTURE.md`
   - first delivered slice emits a real `zig build baremetal-i386` freestanding `x86-freestanding-none` artifact through `scripts/baremetal/i386_boot.S` + `scripts/baremetal/i386_lld.ld`
   - validation now includes `scripts/baremetal-i386-smoke-check.ps1` and `scripts/baremetal-qemu-i386-smoke-check.ps1`
+  - second delivered slice makes `src/baremetal/x86_bootstrap.zig` additive dual-arch for runtime descriptor layout/telemetry, widens freestanding `x86` QEMU debug + interrupt-enable guards in `src/baremetal_main.zig`, widens hardware-backed VGA text console support in `src/baremetal/vga_text_console.zig`, and extends the i386 smoke script to require descriptor exports in the ELF symbol table
   - current boundary is explicit: this is boot/build smoke plus direct-QEMU entry proof, not full 32-bit driver/runtime parity
 - ZigOS integration planning is now tracked in:
   - `docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md`

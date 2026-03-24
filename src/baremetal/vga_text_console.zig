@@ -16,7 +16,7 @@ var host_cells: [cell_count]u16 = [_]u16{0} ** cell_count;
 var initialized: bool = false;
 
 fn isHardwareBacked() bool {
-    return builtin.os.tag == .freestanding and builtin.cpu.arch == .x86_64;
+    return builtin.os.tag == .freestanding and (builtin.cpu.arch == .x86 or builtin.cpu.arch == .x86_64);
 }
 
 fn backendKind() u8 {
@@ -36,7 +36,7 @@ fn vgaCellPtr(index: usize) *volatile u16 {
 }
 
 fn writePort(port: u16, value: u8) void {
-    if (builtin.cpu.arch != .x86_64) return;
+    if (builtin.cpu.arch != .x86 and builtin.cpu.arch != .x86_64) return;
     asm volatile ("outb %[al], %[dx]"
         :
         : [dx] "{dx}" (port),
