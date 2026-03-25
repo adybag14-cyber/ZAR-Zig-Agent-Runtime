@@ -18,6 +18,7 @@ pub fn build(b: *std.Build) void {
     const baremetal_virtio_block_mount_control_probe = b.option(bool, "baremetal-virtio-block-mount-control-probe", "Enable the virtio-block mount control validation path in the freestanding image") orelse false;
     const baremetal_i386_platform_probe = b.option(bool, "baremetal-i386-platform-probe", "Enable the combined i386 ACPI/timer/display platform validation path in the freestanding image") orelse false;
     const baremetal_i386_smp_probe = b.option(bool, "baremetal-i386-smp-probe", "Enable the i386 LAPIC and SMP-readiness validation path in the freestanding image") orelse false;
+    const baremetal_i386_ap_startup_probe = b.option(bool, "baremetal-i386-ap-startup-probe", "Enable the i386 AP startup and bounded SMP execution validation path in the freestanding image") orelse false;
     const baremetal_e1000_probe = b.option(bool, "baremetal-e1000-probe", "Enable the E1000 Ethernet validation path in the freestanding image") orelse false;
     const baremetal_e1000_arp_probe = b.option(bool, "baremetal-e1000-arp-probe", "Enable the E1000 ARP validation path in the freestanding image") orelse false;
     const baremetal_e1000_ipv4_probe = b.option(bool, "baremetal-e1000-ipv4-probe", "Enable the E1000 IPv4 validation path in the freestanding image") orelse false;
@@ -172,6 +173,7 @@ pub fn build(b: *std.Build) void {
     baremetal_options.addOption(bool, "virtio_block_mount_control_probe", baremetal_virtio_block_mount_control_probe);
     baremetal_options.addOption(bool, "i386_platform_probe", baremetal_i386_platform_probe);
     baremetal_options.addOption(bool, "i386_smp_probe", baremetal_i386_smp_probe);
+    baremetal_options.addOption(bool, "i386_ap_startup_probe", baremetal_i386_ap_startup_probe);
     baremetal_options.addOption(bool, "e1000_probe", baremetal_e1000_probe);
     baremetal_options.addOption(bool, "e1000_arp_probe", baremetal_e1000_arp_probe);
     baremetal_options.addOption(bool, "e1000_ipv4_probe", baremetal_e1000_ipv4_probe);
@@ -250,6 +252,7 @@ pub fn build(b: *std.Build) void {
     baremetal_i386_module.single_threaded = true;
     baremetal_i386_module.strip = false;
     baremetal_i386_module.addAssemblyFile(b.path("scripts/baremetal/i386_boot.S"));
+    baremetal_i386_module.addAssemblyFile(b.path("scripts/baremetal/i386_ap_trampoline.S"));
 
     const baremetal_i386_exe = b.addExecutable(.{
         .name = "openclaw-zig-baremetal-i386",
