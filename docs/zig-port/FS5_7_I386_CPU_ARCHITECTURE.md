@@ -205,6 +205,21 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - `scripts/baremetal-qemu-i386-rtl8139-gateway-probe-check.ps1`
   - `scripts/baremetal-qemu-i386-rtl8139-full-stack-probe-check.ps1`
 
+### Slice 9: i386 E1000 Full-Stack Depth
+
+- new live i386 QEMU probe:
+  - `scripts/baremetal-qemu-i386-e1000-full-stack-probe-check.ps1`
+- `build.zig` now exports a dedicated `baremetal-e1000-full-stack-probe` option so the broader E1000 service depth is a first-class lane instead of being implied by the older tool-service wrapper name
+- `src/baremetal_main.zig` now exposes `runE1000FullStackProbe()` as a dedicated alias over the existing broader `E1000` service/runtime probe surface and carries a distinct success code for that lane
+- the i386 E1000 lane now also proves on a real guest:
+  - persisted package install/list/run/info/asset/release/channel depth
+  - trust install/select/rotate/delete depth
+  - app/app-plan/app-suite release and channel depth
+  - workspace/workspace-plan/workspace-suite release and channel depth
+  - bounded shell, TTY, `/proc`, `/dev`, `/sys`, and storage-overlay readback through the same controller path
+- hosted CI and `release-preview` now also execute:
+  - `scripts/baremetal-qemu-i386-e1000-full-stack-probe-check.ps1`
+
 ## ZigOS Follow-On Work
 
 - next adoption analysis is stored in:
@@ -235,6 +250,7 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the i386 freestanding runtime now has the first live display proof through bounded VGA console-state inspection
 - the i386 freestanding runtime now has live E1000 `ARP` / `IPv4` / `UDP` / bounded `TCP` proof
 - the i386 freestanding runtime now has live E1000 `DHCP` / `DNS` / `HTTP` / `HTTPS` / bounded tool-service proof
+- the i386 freestanding runtime now has live higher-level package/workspace/app/trust/runtime depth on the E1000 controller lane
 - the i386 freestanding runtime now has live RTL8139 `ARP` / `IPv4` / `UDP` / bounded `TCP` / bounded runtime-service proof
 - the i386 freestanding runtime now has live RTL8139 `DHCP` / `DNS` / `HTTP` / `HTTPS` proof
 - the i386 freestanding runtime now has live RTL8139 gateway-routing proof
@@ -249,14 +265,13 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - this is build/boot smoke plus additive descriptor/bootstrap/runtime parity and broad real i386 storage/NIC/display/service lanes
 - it is not yet full 32-bit driver/runtime parity
 - descriptor telemetry is now dual-arch, but the broader descriptor/mailbox live proof lane is still only claimed on the existing `x86_64` PVH artifact
-- i386 `E1000` still does not separately claim the broader package/workspace/app/trust/runtime depth already proven on the wider `RTL8139` full-stack lane
 - i386 display coverage now includes bounded VGA + framebuffer + `virtio-gpu` with reused output/interface/mode/profile matrix validation on the current controller path, but it still does not claim physical HDMI/DisplayPort controller-specific scanout or a separate i386-only display-profile wrapper matrix
 
 ## Next Steps
 
-1. lift i386 `E1000` from bounded tool-service reuse into the broader package/workspace/app/trust/runtime depth already proven on the i386 `RTL8139` full-stack lane
-2. split out dedicated i386 display-profile/output wrappers if we want explicit probe coverage beyond the shared `runVirtioGpuDisplayProbe()` matrix reuse
-3. start the next real i386 architecture-hardening slice after device proof breadth:
+1. split out dedicated i386 display-profile/output wrappers if we want explicit probe coverage beyond the shared `runVirtioGpuDisplayProbe()` matrix reuse
+2. start the next real i386 architecture-hardening slice after device proof breadth:
    - `ACPI`
+3. then widen timer / interrupt hardening and early `SMP` groundwork once ACPI enumeration is in place
    - timer / interrupt hardening
    - early `SMP` groundwork

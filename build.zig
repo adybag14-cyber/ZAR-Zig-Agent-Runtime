@@ -26,6 +26,7 @@ pub fn build(b: *std.Build) void {
     const baremetal_e1000_http_post_probe = b.option(bool, "baremetal-e1000-http-post-probe", "Enable the E1000 HTTP POST validation path in the freestanding image") orelse false;
     const baremetal_e1000_https_post_probe = b.option(bool, "baremetal-e1000-https-post-probe", "Enable the E1000 HTTPS POST validation path in the freestanding image") orelse false;
     const baremetal_e1000_tool_service_probe = b.option(bool, "baremetal-e1000-tool-service-probe", "Enable the E1000 tool-service validation path in the freestanding image") orelse false;
+    const baremetal_e1000_full_stack_probe = b.option(bool, "baremetal-e1000-full-stack-probe", "Enable the E1000 broader full-stack validation path in the freestanding image") orelse false;
     const baremetal_virtio_net_probe = b.option(bool, "baremetal-virtio-net-probe", "Enable the virtio-net raw-frame validation path in the freestanding image") orelse false;
     const baremetal_virtio_net_arp_probe = b.option(bool, "baremetal-virtio-net-arp-probe", "Enable the virtio-net ARP validation path in the freestanding image") orelse false;
     const baremetal_virtio_net_ipv4_probe = b.option(bool, "baremetal-virtio-net-ipv4-probe", "Enable the virtio-net IPv4 validation path in the freestanding image") orelse false;
@@ -177,6 +178,7 @@ pub fn build(b: *std.Build) void {
     baremetal_options.addOption(bool, "e1000_http_post_probe", baremetal_e1000_http_post_probe);
     baremetal_options.addOption(bool, "e1000_https_post_probe", baremetal_e1000_https_post_probe);
     baremetal_options.addOption(bool, "e1000_tool_service_probe", baremetal_e1000_tool_service_probe);
+    baremetal_options.addOption(bool, "e1000_full_stack_probe", baremetal_e1000_full_stack_probe);
     baremetal_options.addOption(bool, "virtio_net_probe", baremetal_virtio_net_probe);
     baremetal_options.addOption(bool, "virtio_net_arp_probe", baremetal_virtio_net_arp_probe);
     baremetal_options.addOption(bool, "virtio_net_ipv4_probe", baremetal_virtio_net_ipv4_probe);
