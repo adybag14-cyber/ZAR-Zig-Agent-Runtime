@@ -8,6 +8,7 @@ const disk_installer = @import("baremetal/disk_installer.zig");
 const x86_bootstrap = @import("baremetal/x86_bootstrap.zig");
 const acpi = @import("baremetal/acpi.zig");
 const acpi_pm_timer = @import("baremetal/acpi_pm_timer.zig");
+const boot_memory = @import("baremetal/boot_memory.zig");
 const i386_ap_startup = @import("baremetal/i386_ap_startup.zig");
 const ioapic = @import("baremetal/ioapic.zig");
 const lapic = @import("baremetal/lapic.zig");
@@ -54,6 +55,7 @@ const BaremetalStatus = abi.BaremetalStatus;
 const BaremetalCommand = abi.BaremetalCommand;
 const BaremetalKernelInfo = abi.BaremetalKernelInfo;
 const BaremetalBootDiagnostics = abi.BaremetalBootDiagnostics;
+const BaremetalBootMemoryState = abi.BaremetalBootMemoryState;
 const BaremetalConsoleState = abi.BaremetalConsoleState;
 const BaremetalFramebufferState = abi.BaremetalFramebufferState;
 const BaremetalDisplayOutputState = abi.BaremetalDisplayOutputState;
@@ -478,6 +480,9 @@ const VirtioBlockMountControlProbeError = error{
 
 const I386PlatformProbeError = error{
     UnsupportedPlatform,
+    BootMemoryNotPresent,
+    BootMemoryRenderMismatch,
+    HeapConfigMismatch,
     AcpiProbeFailed,
     AcpiNotPresent,
     AcpiRootMissing,
@@ -1759,28 +1764,58 @@ var scheduler_state: BaremetalSchedulerState = .{
 var scheduler_rr_cursor: u8 = 0;
 var scheduler_policy: u8 = abi.scheduler_policy_round_robin;
 
-const allocator_page_capacity: usize = 256;
+extern var __kernel_image_end: u8;
+
+const allocator_page_capacity: usize = 262144;
 const allocator_record_capacity: usize = 64;
+const allocator_default_total_pages: u32 = 256;
 const allocator_default_page_size: u32 = 4096;
 const allocator_default_heap_base: u64 = 0x0010_0000;
 var allocator_page_bitmap: [allocator_page_capacity]u8 = std.mem.zeroes([allocator_page_capacity]u8);
 var allocator_records: [allocator_record_capacity]BaremetalAllocationRecord = std.mem.zeroes([allocator_record_capacity]BaremetalAllocationRecord);
-var allocator_state: BaremetalAllocatorState = .{
-    .heap_base = allocator_default_heap_base,
-    .heap_size = @as(u64, allocator_page_capacity) * allocator_default_page_size,
-    .page_size = allocator_default_page_size,
-    .total_pages = @as(u32, allocator_page_capacity),
-    .free_pages = @as(u32, allocator_page_capacity),
-    .allocation_count = 0,
-    .alloc_ops = 0,
-    .free_ops = 0,
-    .bytes_in_use = 0,
-    .peak_bytes_in_use = 0,
-    .last_alloc_ptr = 0,
-    .last_alloc_size = 0,
-    .last_free_ptr = 0,
-    .last_free_size = 0,
-};
+var allocator_state: BaremetalAllocatorState = defaultAllocatorState();
+
+fn defaultAllocatorState() BaremetalAllocatorState {
+    return .{
+        .heap_base = allocator_default_heap_base,
+        .heap_size = @as(u64, allocator_default_total_pages) * allocator_default_page_size,
+        .page_size = allocator_default_page_size,
+        .total_pages = allocator_default_total_pages,
+        .free_pages = allocator_default_total_pages,
+        .allocation_count = 0,
+        .alloc_ops = 0,
+        .free_ops = 0,
+        .bytes_in_use = 0,
+        .peak_bytes_in_use = 0,
+        .last_alloc_ptr = 0,
+        .last_alloc_size = 0,
+        .last_free_ptr = 0,
+        .last_free_size = 0,
+    };
+}
+
+fn kernelImageEnd() u64 {
+    if (builtin.os.tag != .freestanding) return allocator_default_heap_base;
+    return @intFromPtr(&__kernel_image_end);
+}
+
+fn allocatorStateFromBootMemory() BaremetalAllocatorState {
+    var state = defaultAllocatorState();
+    const memory_state = boot_memory.statePtr().*;
+    if ((memory_state.flags & abi.boot_memory_flag_heap_configured) == 0) return state;
+    if (memory_state.heap_base == 0 or memory_state.heap_size < allocator_default_page_size) return state;
+
+    const capped_heap_size = @min(memory_state.heap_size, @as(u64, allocator_page_capacity) * allocator_default_page_size);
+    const total_pages = std.math.cast(u32, capped_heap_size / allocator_default_page_size) orelse return state;
+    if (total_pages == 0) return state;
+
+    state.heap_base = memory_state.heap_base;
+    state.heap_size = @as(u64, total_pages) * allocator_default_page_size;
+    state.page_size = allocator_default_page_size;
+    state.total_pages = total_pages;
+    state.free_pages = total_pages;
+    return state;
+}
 
 const syscall_entry_capacity: usize = 64;
 var syscall_entries: [syscall_entry_capacity]BaremetalSyscallEntry = std.mem.zeroes([syscall_entry_capacity]BaremetalSyscallEntry);
@@ -1840,6 +1875,10 @@ pub export fn oc_kernel_info_ptr() *const abi.BaremetalKernelInfo {
 
 pub export fn oc_boot_diag_ptr() *const abi.BaremetalBootDiagnostics {
     return &boot_diagnostics;
+}
+
+pub export fn oc_boot_memory_state_ptr() *const BaremetalBootMemoryState {
+    return boot_memory.statePtr();
 }
 
 pub export fn oc_boot_diag_capture_stack() u64 {
@@ -2645,22 +2684,7 @@ pub export fn oc_allocator_allocations_ptr() *const [allocator_record_capacity]B
 pub export fn oc_allocator_reset() void {
     @memset(&allocator_page_bitmap, 0);
     @memset(&allocator_records, std.mem.zeroes(BaremetalAllocationRecord));
-    allocator_state = .{
-        .heap_base = allocator_default_heap_base,
-        .heap_size = @as(u64, allocator_page_capacity) * allocator_default_page_size,
-        .page_size = allocator_default_page_size,
-        .total_pages = @as(u32, allocator_page_capacity),
-        .free_pages = @as(u32, allocator_page_capacity),
-        .allocation_count = 0,
-        .alloc_ops = 0,
-        .free_ops = 0,
-        .bytes_in_use = 0,
-        .peak_bytes_in_use = 0,
-        .last_alloc_ptr = 0,
-        .last_alloc_size = 0,
-        .last_free_ptr = 0,
-        .last_free_size = 0,
-    };
+    allocator_state = allocatorStateFromBootMemory();
 }
 
 pub export fn oc_syscall_state_ptr() *const BaremetalSyscallState {
@@ -2990,6 +3014,8 @@ fn baremetalStart() callconv(.c) noreturn {
     if (qemu_smoke_enabled) {
         qemuExit(qemu_boot_ok_code);
     }
+    boot_memory.init(kernelImageEnd(), allocator_default_page_size);
+    oc_allocator_reset();
     vga_text_console.init();
     if (framebuffer_probe_banner_enabled) {
         if (framebuffer_probe_width != 0 and framebuffer_probe_height != 0) {
@@ -17358,6 +17384,27 @@ fn runI386PlatformProbeCommon(require_live_acpi: bool) I386PlatformProbeError!vo
     if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86) return error.UnsupportedPlatform;
 
     resetBaremetalRuntimeForTest();
+    const memory_state = oc_boot_memory_state_ptr().*;
+    const allocator_probe_state = oc_allocator_state_ptr().*;
+    if (memory_state.magic != abi.boot_memory_magic or memory_state.api_version != abi.api_version) {
+        return error.BootMemoryNotPresent;
+    }
+    if ((memory_state.flags & abi.boot_memory_flag_heap_configured) == 0 or
+        memory_state.total_bytes == 0 or
+        memory_state.heap_base == 0 or
+        memory_state.heap_size == 0 or
+        memory_state.heap_limit <= memory_state.heap_base)
+    {
+        return error.BootMemoryNotPresent;
+    }
+    if (allocator_probe_state.heap_base != memory_state.heap_base or
+        allocator_probe_state.heap_size != memory_state.heap_size or
+        allocator_probe_state.free_pages != allocator_probe_state.total_pages or
+        allocator_probe_state.total_pages != memory_state.heap_size / allocator_probe_state.page_size)
+    {
+        return error.HeapConfigMismatch;
+    }
+
     acpi.probeLive() catch |err| {
         qemuDebugWrite("QA:");
         qemuDebugWrite(@errorName(err));
@@ -17525,6 +17572,19 @@ fn runI386PlatformProbeCommon(require_live_acpi: bool) I386PlatformProbeError!vo
         !std.mem.containsAtLeast(u8, pm_timer_render, 1, "delta="))
     {
         return error.PmTimerRenderMismatch;
+    }
+
+    var memory_render_buffer: [768]u8 = undefined;
+    var memory_fba = std.heap.FixedBufferAllocator.init(&memory_render_buffer);
+    const memory_render = virtual_fs.readFileAlloc(memory_fba.allocator(), "/sys/memory/state", memory_render_buffer.len) catch {
+        return error.BootMemoryRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, memory_render, 1, "total_bytes=") or
+        !std.mem.containsAtLeast(u8, memory_render, 1, "heap_base=0x") or
+        !std.mem.containsAtLeast(u8, memory_render, 1, "heap_size=") or
+        !std.mem.containsAtLeast(u8, memory_render, 1, "usable_bytes="))
+    {
+        return error.BootMemoryRenderMismatch;
     }
 
     var pic_render_buffer: [1024]u8 = undefined;
@@ -18621,6 +18681,9 @@ fn virtioBlockMountControlProbeFailureCode(err: VirtioBlockMountControlProbeErro
 fn i386PlatformProbeFailureCode(err: I386PlatformProbeError) u8 {
     return switch (err) {
         error.UnsupportedPlatform => 0xD0,
+        error.BootMemoryNotPresent => 0xF8,
+        error.BootMemoryRenderMismatch => 0xF9,
+        error.HeapConfigMismatch => 0xFA,
         error.AcpiProbeFailed => 0xD1,
         error.AcpiNotPresent => 0xD2,
         error.AcpiRootMissing => 0xD3,
@@ -19942,8 +20005,9 @@ fn allocatorAlloc(size_bytes: u64, alignment: u64, tick: u64) ?u64 {
     if (required_pages > allocator_state.free_pages) return null;
 
     const required_len: usize = @as(usize, @intCast(required_pages));
+    const total_pages: usize = @as(usize, @intCast(allocator_state.total_pages));
     var start: usize = 0;
-    while (start + required_len <= allocator_page_capacity) : (start += 1) {
+    while (start + required_len <= total_pages) : (start += 1) {
         const ptr = allocator_state.heap_base + @as(u64, start) * allocator_state.page_size;
         if ((ptr & (alignment - 1)) != 0) continue;
 

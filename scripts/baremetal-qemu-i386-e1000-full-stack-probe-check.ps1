@@ -2,7 +2,8 @@
 param(
     [switch] $SkipBuild,
     [int] $TimeoutSeconds = 180,
-    [int] $DiskSizeMiB = 8
+    [int] $DiskSizeMiB = 8,
+    [int] $MemoryMiB = 128
 )
 
 $ErrorActionPreference = 'Stop'
@@ -85,6 +86,7 @@ foreach ($path in @($stdoutPath, $stderrPath, $debugLogPath)) {
 
 $qemuArgs = @(
     '-kernel', $artifact,
+    '-m', ("{0}M" -f $MemoryMiB),
     '-drive', "file=$diskImage,if=ide,format=raw,index=0,media=disk",
     '-nographic',
     '-no-reboot',

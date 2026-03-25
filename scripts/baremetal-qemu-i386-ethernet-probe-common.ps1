@@ -12,7 +12,8 @@ param(
     [switch] $UseUserNet,
     [switch] $UseDebugLog,
     [switch] $SkipBuild,
-    [int] $TimeoutSeconds = 30
+    [int] $TimeoutSeconds = 30,
+    [int] $MemoryMiB = 128
 )
 
 $ErrorActionPreference = 'Stop'
@@ -152,6 +153,7 @@ if ($UseDgramEcho) {
 
 $qemuArgs = @(
     '-kernel', $artifact,
+    '-m', ("{0}M" -f $MemoryMiB),
     '-nographic',
     '-no-reboot',
     '-no-shutdown',

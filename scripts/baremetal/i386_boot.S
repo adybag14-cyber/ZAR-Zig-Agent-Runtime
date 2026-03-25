@@ -23,6 +23,8 @@ multiboot32_start:
 pvh_i386_start:
     cli
     cld
+    movl %eax, oc_i386_boot_magic_raw
+    movl %ebx, oc_i386_boot_info_ptr_raw
     movl $stack32_top, %esp
     andl $-16, %esp
 
@@ -51,3 +53,6 @@ pvh_i386_start:
 stack32:
     .skip 131072
 stack32_top:
+
+.extern oc_i386_boot_magic_raw
+.extern oc_i386_boot_info_ptr_raw

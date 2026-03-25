@@ -13,8 +13,19 @@
 %define HEADER_BUFFER_ADDR    0x00000600
 %define CHUNK_BUFFER_ADDR     0x00010000
 %define CHUNK_BUFFER_SECTORS  32
+%define MULTIBOOT_INFO_ADDR   0x00000500
 %define STACK_TOP_REAL        0x7C00
 %define STACK_TOP_PROTECTED   0x00070000
+
+%define MULTIBOOT2_BOOT_MAGIC         0x36D76289
+%define MULTIBOOT2_TAG_TYPE_END       0
+%define MULTIBOOT2_TAG_TYPE_BASIC_MEM 4
+%define CMOS_ADDR_PORT                0x70
+%define CMOS_DATA_PORT                0x71
+%define CMOS_EXT_LOW_LOW              0x30
+%define CMOS_EXT_LOW_HIGH             0x31
+%define CMOS_EXT_HIGH_LOW             0x34
+%define CMOS_EXT_HIGH_HIGH            0x35
 
 %define DESC_DEST_ADDR        0
 %define DESC_LBA              4
@@ -145,6 +156,7 @@ next_segment:
     jmp segment_loop
 
 enter_kernel_mode:
+    call build_multiboot_info
     call enter_unreal_mode
     call debug_mark_j
     cli
@@ -217,6 +229,73 @@ restore_real_segments:
     mov ss, ax
     ret
 
+build_multiboot_info:
+    push ax
+    push bx
+    push dx
+    push di
+
+    mov di, MULTIBOOT_INFO_ADDR
+    mov dword [di + 0], 32
+    mov dword [di + 4], 0
+    mov dword [di + 8], MULTIBOOT2_TAG_TYPE_BASIC_MEM
+    mov dword [di + 12], 16
+
+    int 0x12
+    movzx edx, ax
+    mov dword [di + 16], edx
+
+    call read_extended_memory_kib
+    mov dword [di + 20], eax
+    mov dword [di + 24], MULTIBOOT2_TAG_TYPE_END
+    mov dword [di + 28], 8
+
+    pop di
+    pop dx
+    pop bx
+    pop ax
+    ret
+
+read_extended_memory_kib:
+    push bx
+
+    mov al, CMOS_EXT_HIGH_HIGH
+    call read_cmos_byte
+    movzx eax, al
+    shl eax, 8
+    mov al, CMOS_EXT_HIGH_LOW
+    call read_cmos_byte
+    movzx ebx, al
+    or eax, ebx
+    test eax, eax
+    jz .legacy
+    shl eax, 6
+    add eax, 15 * 1024
+    pop bx
+    ret
+
+.legacy:
+    mov al, CMOS_EXT_LOW_HIGH
+    call read_cmos_byte
+    movzx eax, al
+    shl eax, 8
+    mov al, CMOS_EXT_LOW_LOW
+    call read_cmos_byte
+    movzx ebx, al
+    or eax, ebx
+    pop bx
+    ret
+
+read_cmos_byte:
+    push dx
+    or al, 0x80
+    mov dx, CMOS_ADDR_PORT
+    out dx, al
+    mov dx, CMOS_DATA_PORT
+    in al, dx
+    pop dx
+    ret
+
 [bits 32]
 protected_mode_start:
     mov ax, 0x10
@@ -226,8 +305,10 @@ protected_mode_start:
     mov gs, ax
     mov ss, ax
     mov esp, STACK_TOP_PROTECTED
-    mov eax, [HEADER_BUFFER_ADDR + 8]
-    jmp eax
+    mov eax, MULTIBOOT2_BOOT_MAGIC
+    mov ebx, MULTIBOOT_INFO_ADDR
+    mov edx, [HEADER_BUFFER_ADDR + 8]
+    jmp edx
 
 [bits 16]
 enable_a20:

@@ -2,7 +2,8 @@
 param(
     [switch] $SkipBuild,
     [int] $TimeoutSeconds = 30,
-    [int] $DiskSizeMiB = 8
+    [int] $DiskSizeMiB = 8,
+    [int] $MemoryMiB = 128
 )
 
 $ErrorActionPreference = 'Stop'
@@ -137,6 +138,7 @@ if (Test-Path $stderrPath) { Remove-Item -Force $stderrPath }
 
 $qemuArgs = @(
     '-kernel', $artifact,
+    '-m', ("{0}M" -f $MemoryMiB),
     '-nographic',
     '-no-reboot',
     '-no-shutdown',

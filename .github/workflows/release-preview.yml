@@ -199,9 +199,17 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-platform-probe-check.ps1
 
+      - name: Bare-metal QEMU i386 platform probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-platform-probe-check.ps1 -MemoryMiB 1024
+
       - name: Bare-metal QEMU i386 firmware platform probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-firmware-platform-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware platform probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-platform-probe-check.ps1 -MemoryMiB 1024
 
       - name: Bare-metal QEMU i386 SMP probe (optional)
         shell: pwsh
@@ -210,6 +218,10 @@ jobs:
       - name: Bare-metal QEMU i386 ATA storage probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-ata-storage-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 ATA storage probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-ata-storage-probe-check.ps1 -MemoryMiB 1024
 
       - name: Bare-metal QEMU i386 E1000 probe (optional)
         shell: pwsh
@@ -270,6 +282,10 @@ jobs:
       - name: Bare-metal QEMU i386 E1000 full-stack probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-e1000-full-stack-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 full-stack probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-full-stack-probe-check.ps1 -MemoryMiB 1024
 
       - name: Bare-metal QEMU i386 RTL8139 ARP probe (optional)
         shell: pwsh
