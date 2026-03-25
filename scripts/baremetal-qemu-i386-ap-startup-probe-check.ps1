@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
 param(
     [switch] $SkipBuild,
-    [int] $TimeoutSeconds = 60
+    [int] $TimeoutSeconds = 60,
+    [int] $MemoryMiB = 128
 )
 
 $ErrorActionPreference = "Stop"
@@ -105,7 +106,7 @@ if (Test-Path $debugLogPath) { Remove-Item -Force $debugLogPath }
 
 $qemuArgs = @(
     "-M", "q35,accel=tcg",
-    "-m", "128M",
+    "-m", ("{0}M" -f $MemoryMiB),
     "-smp", "2",
     "-kernel", $artifact,
     "-display", "none",

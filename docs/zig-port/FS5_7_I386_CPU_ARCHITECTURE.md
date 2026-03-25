@@ -491,6 +491,59 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - `ACPI_RSDP_ADDR=0x000F52A0`
   - `ACPI_RSDT_ADDR=0x07FE1C67`
 
+### Slice 20: i386 Real Boot-Memory Map and 1 GiB RAM Proof
+
+- new bounded boot-memory + physical-memory seams:
+  - `src/baremetal/boot_memory.zig`
+  - `src/baremetal/physical_memory.zig`
+  - `oc_boot_memory_state_ptr()`
+  - `oc_boot_memory_region_count()`
+  - `oc_boot_memory_region(index)`
+  - `/dev/memory/state`
+  - `/dev/memory/map`
+  - `/sys/memory/state`
+  - `/sys/memory/map`
+- the old fixed i386 `1 MiB` heap is gone; allocator reset now derives heap base, limit, total span, reserved pages, and usable pages from exported boot-memory regions instead of assuming a contiguous allocatable window
+- the direct-loader i386 path now records raw boot magic and boot-info pointers from `scripts/baremetal/i386_boot.S`, consumes a Multiboot2 memory map when it exists, and otherwise falls back honestly to bounded CMOS extended-memory sizing plus one synthesized upper-memory region
+- the BIOS firmware path now emits a bounded Multiboot2 memory-map tag from live BIOS `E820` data in `scripts/baremetal/i386_bios_stage2.asm`, while preserving the basic-meminfo tag, so the firmware-boot lane now carries a real region table into Zig instead of only aggregate meminfo
+- the bounded boot-memory state now exports:
+  - `source`
+  - `flags`
+  - `mem_lower_kib`
+  - `mem_upper_kib`
+  - `total_bytes`
+  - `usable_bytes`
+  - `heap_base`
+  - `heap_limit`
+  - `heap_size`
+  - `mmap_entry_count`
+  - `usable_region_count`
+  - `largest_usable_base`
+  - `largest_usable_size`
+  - `region_entry_count`
+- the new `/sys/memory/map` render now proves the concrete exported region table:
+  - `region[i].base`
+  - `region[i].size`
+  - `region[i].type`
+  - `region[i].flags`
+- `src/baremetal_main.zig` now routes allocator reset through the region-aware physical-memory seam and explicitly skips non-usable holes, with a regression test that allocates across separated usable windows and proves the hole pages remain unallocated
+- when no live memory map is available, the boot-memory seam now synthesizes exactly one bounded upper-memory usable region rooted at `0x00100000`, sets explicit synthesized-region flags, and keeps the exported region telemetry internally consistent on the direct-loader fallback path without falsely claiming a real memory map
+- live `1024M` validation now covers:
+  - `scripts/baremetal-qemu-i386-platform-probe-check.ps1 -MemoryMiB 1024`
+  - `scripts/baremetal-qemu-i386-firmware-platform-probe-check.ps1 -MemoryMiB 1024`
+  - `scripts/baremetal-qemu-i386-smp-probe-check.ps1 -MemoryMiB 1024`
+  - `scripts/baremetal-qemu-i386-ap-startup-probe-check.ps1 -MemoryMiB 1024`
+  - `scripts/baremetal-qemu-i386-ata-storage-probe-check.ps1 -MemoryMiB 1024`
+  - `scripts/baremetal-qemu-i386-e1000-full-stack-probe-check.ps1 -MemoryMiB 1024`
+- hosted `zig-ci` and `release-preview` now also execute the key `1 GiB` regression lanes:
+  - direct-loader platform
+  - firmware platform
+  - ATA storage
+  - E1000 full-stack
+- current live result at `1024M` is explicit:
+  - direct-loader platform still uses the bounded synthesized-region fallback when no live Multiboot2 map is present
+  - firmware-boot platform uses the real BIOS `E820`-derived Multiboot2 memory map with multiple exported regions
+
 ## ZigOS Follow-On Work
 
 - next adoption analysis is stored in:
@@ -532,6 +585,8 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the i386 freestanding runtime now has bounded PIT export plus live latch/readback proof with `/dev/cpu/pit` and `/sys/cpu/pit` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded ACPI PM-timer export plus live monotonic readback proof through `/sys/acpi/pm-timer` on the i386 platform lane
 - the i386 freestanding runtime now has a real BIOS firmware-boot ACPI proof with no synthetic fallback, using a custom bounded BIOS disk image + stage2 loader and a dedicated firmware platform probe lane
+- the i386 freestanding runtime now has bounded boot-memory discovery plus `/dev/memory` + `/sys/memory` telemetry, with dynamic heap sizing validated up to `1 GiB`
+- the i386 freestanding runtime now has live `1024 MiB` proof on direct-loader platform, firmware platform, SMP/AP-startup control, ATA storage, and E1000 full-stack lanes
 - the i386 freestanding runtime now has live RTL8139 `ARP` / `IPv4` / `UDP` / bounded `TCP` / bounded runtime-service proof
 - the i386 freestanding runtime now has live RTL8139 `DHCP` / `DNS` / `HTTP` / `HTTPS` proof
 - the i386 freestanding runtime now has live RTL8139 gateway-routing proof
@@ -553,6 +608,7 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - descriptor telemetry is now dual-arch, but the broader descriptor/mailbox live proof lane is still only claimed on the existing `x86_64` PVH artifact
 - i386 display coverage now includes bounded VGA + framebuffer + `virtio-gpu` with reused output/interface/mode/profile matrix validation on the current controller path, but it still does not claim physical HDMI/DisplayPort controller-specific scanout or a separate i386-only display-profile wrapper matrix
 - i386 platform coverage now includes bounded ACPI plus exported CPU topology, IOAPIC state, PIC state, LAPIC state, PIT state, ACPI PM-timer state, SMP-readiness, AP-startup execution telemetry, explicit live AP-execution observation reporting on the current direct-loader path, and a separate real firmware-boot ACPI proof with no synthetic fallback
+- i386 memory coverage now includes bounded boot-memory discovery and dynamic heap sizing up to `1 GiB`, but it is still not a full E820-driven general physical-memory manager
 - the remaining i386 AP/SMP gap is now narrower and explicit:
   - warm-reset programming is present
   - INIT + SIPI delivery completes cleanly

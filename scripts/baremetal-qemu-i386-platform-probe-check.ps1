@@ -2,7 +2,8 @@
 param(
     [switch] $SkipBuild,
     [int] $TimeoutSeconds = 60,
-    [int] $GdbPort = 0
+    [int] $GdbPort = 0,
+    [int] $MemoryMiB = 128
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,10 +13,28 @@ $releaseDir = Join-Path $repo "release"
 $runStamp = [DateTime]::UtcNow.ToString("yyyyMMddHHmmssfff")
 
 $acpiMagic = 0x4f434150
+$bootMemoryMagic = 0x4D454D42
 $apiVersion = 2
 $expectedExitCode = 0x7C
 $expectedMaskedVector = 200
+$expectedTotalBytes = [int64]$MemoryMiB * 1MB
 
+$bootMemoryMagicOffset = 0
+$bootMemoryApiVersionOffset = 4
+$bootMemorySourceOffset = 6
+$bootMemoryFlagsOffset = 8
+$bootMemoryMemLowerKibOffset = 12
+$bootMemoryMemUpperKibOffset = 16
+$bootMemoryTotalBytesOffset = 20
+$bootMemoryUsableBytesOffset = 28
+$bootMemoryHeapBaseOffset = 36
+$bootMemoryHeapLimitOffset = 44
+$bootMemoryHeapSizeOffset = 52
+$bootMemoryMmapEntryCountOffset = 60
+$bootMemoryUsableRegionCountOffset = 64
+$bootMemoryLargestUsableBaseOffset = 68
+$bootMemoryLargestUsableSizeOffset = 76
+$bootMemoryRegionEntryCountOffset = 84
 $acpiMagicOffset = 0
 $acpiApiVersionOffset = 4
 $acpiPresentOffset = 6
@@ -173,6 +192,7 @@ if ($LASTEXITCODE -ne 0 -or $null -eq $symbolOutput -or $symbolOutput.Count -eq 
 }
 
 $qemuExitAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[tT]\sbaremetal_main\.qemuExit$' -SymbolName "baremetal_main.qemuExit"
+$bootMemoryStateAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal\.boot_memory\.state$' -SymbolName "baremetal.boot_memory.state"
 $acpiStateAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal\.acpi\.state$' -SymbolName "baremetal.acpi.state"
 $timerStateAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal_main\.timer_state$' -SymbolName "baremetal_main.timer_state"
 $interruptStateAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal\.x86_bootstrap\.interrupt_state$' -SymbolName "baremetal.x86_bootstrap.interrupt_state"
@@ -199,6 +219,22 @@ commands
   printf "QEMU_EXIT_CODE_STACK=%u\n", *(unsigned int*)($esp + 4)
   printf "QEMU_EXIT_CODE_EAX=%u\n", (unsigned int)($eax & 0xff)
   printf "QEMU_EXIT_CODE_ECX=%u\n", (unsigned int)($ecx & 0xff)
+  printf "BOOT_MEMORY_MAGIC=%u\n", *(unsigned int*)(__BOOT_MEMORY_STATE_ADDR__ + __BOOT_MEMORY_MAGIC_OFFSET__)
+  printf "BOOT_MEMORY_API_VERSION=%u\n", *(unsigned short*)(__BOOT_MEMORY_STATE_ADDR__ + __BOOT_MEMORY_API_VERSION_OFFSET__)
+  printf "BOOT_MEMORY_SOURCE=%u\n", *(unsigned char*)(__BOOT_MEMORY_STATE_ADDR__ + __BOOT_MEMORY_SOURCE_OFFSET__)
+  printf "BOOT_MEMORY_FLAGS=%u\n", *(unsigned int*)(__BOOT_MEMORY_STATE_ADDR__ + __BOOT_MEMORY_FLAGS_OFFSET__)
+  printf "BOOT_MEMORY_MEM_LOWER_KIB=%u\n", *(unsigned int*)(__BOOT_MEMORY_STATE_ADDR__ + __BOOT_MEMORY_MEM_LOWER_KIB_OFFSET__)
+  printf "BOOT_MEMORY_MEM_UPPER_KIB=%u\n", *(unsigned int*)(__BOOT_MEMORY_STATE_ADDR__ + __BOOT_MEMORY_MEM_UPPER_KIB_OFFSET__)
+  printf "BOOT_MEMORY_TOTAL_BYTES=%llu\n", *(unsigned long long*)(__BOOT_MEMORY_STATE_ADDR__ + __BOOT_MEMORY_TOTAL_BYTES_OFFSET__)
+  printf "BOOT_MEMORY_USABLE_BYTES=%llu\n", *(unsigned long long*)(__BOOT_MEMORY_STATE_ADDR__ + __BOOT_MEMORY_USABLE_BYTES_OFFSET__)
+  printf "BOOT_MEMORY_HEAP_BASE=%llu\n", *(unsigned long long*)(__BOOT_MEMORY_STATE_ADDR__ + __BOOT_MEMORY_HEAP_BASE_OFFSET__)
+  printf "BOOT_MEMORY_HEAP_LIMIT=%llu\n", *(unsigned long long*)(__BOOT_MEMORY_STATE_ADDR__ + __BOOT_MEMORY_HEAP_LIMIT_OFFSET__)
+  printf "BOOT_MEMORY_HEAP_SIZE=%llu\n", *(unsigned long long*)(__BOOT_MEMORY_STATE_ADDR__ + __BOOT_MEMORY_HEAP_SIZE_OFFSET__)
+  printf "BOOT_MEMORY_MMAP_ENTRY_COUNT=%u\n", *(unsigned int*)(__BOOT_MEMORY_STATE_ADDR__ + __BOOT_MEMORY_MMAP_ENTRY_COUNT_OFFSET__)
+  printf "BOOT_MEMORY_USABLE_REGION_COUNT=%u\n", *(unsigned int*)(__BOOT_MEMORY_STATE_ADDR__ + __BOOT_MEMORY_USABLE_REGION_COUNT_OFFSET__)
+  printf "BOOT_MEMORY_LARGEST_USABLE_BASE=%llu\n", *(unsigned long long*)(__BOOT_MEMORY_STATE_ADDR__ + __BOOT_MEMORY_LARGEST_USABLE_BASE_OFFSET__)
+  printf "BOOT_MEMORY_LARGEST_USABLE_SIZE=%llu\n", *(unsigned long long*)(__BOOT_MEMORY_STATE_ADDR__ + __BOOT_MEMORY_LARGEST_USABLE_SIZE_OFFSET__)
+  printf "BOOT_MEMORY_REGION_ENTRY_COUNT=%u\n", *(unsigned int*)(__BOOT_MEMORY_STATE_ADDR__ + __BOOT_MEMORY_REGION_ENTRY_COUNT_OFFSET__)
   printf "ACPI_MAGIC=%u\n", *(unsigned int*)(__ACPI_STATE_ADDR__ + __ACPI_MAGIC_OFFSET__)
   printf "ACPI_API_VERSION=%u\n", *(unsigned short*)(__ACPI_STATE_ADDR__ + __ACPI_API_VERSION_OFFSET__)
   printf "ACPI_PRESENT=%u\n", *(unsigned char*)(__ACPI_STATE_ADDR__ + __ACPI_PRESENT_OFFSET__)
@@ -244,6 +280,23 @@ $gdbScriptContent = $gdbTemplate `
     -replace '__ARTIFACT__', $artifactForGdb `
     -replace '__GDBPORT__', $GdbPort `
     -replace '__QEMU_EXIT__', $qemuExitAddress `
+    -replace '__BOOT_MEMORY_STATE_ADDR__', ('0x' + $bootMemoryStateAddress) `
+    -replace '__BOOT_MEMORY_MAGIC_OFFSET__', $bootMemoryMagicOffset `
+    -replace '__BOOT_MEMORY_API_VERSION_OFFSET__', $bootMemoryApiVersionOffset `
+    -replace '__BOOT_MEMORY_SOURCE_OFFSET__', $bootMemorySourceOffset `
+    -replace '__BOOT_MEMORY_FLAGS_OFFSET__', $bootMemoryFlagsOffset `
+    -replace '__BOOT_MEMORY_MEM_LOWER_KIB_OFFSET__', $bootMemoryMemLowerKibOffset `
+    -replace '__BOOT_MEMORY_MEM_UPPER_KIB_OFFSET__', $bootMemoryMemUpperKibOffset `
+    -replace '__BOOT_MEMORY_TOTAL_BYTES_OFFSET__', $bootMemoryTotalBytesOffset `
+    -replace '__BOOT_MEMORY_USABLE_BYTES_OFFSET__', $bootMemoryUsableBytesOffset `
+    -replace '__BOOT_MEMORY_HEAP_BASE_OFFSET__', $bootMemoryHeapBaseOffset `
+    -replace '__BOOT_MEMORY_HEAP_LIMIT_OFFSET__', $bootMemoryHeapLimitOffset `
+    -replace '__BOOT_MEMORY_HEAP_SIZE_OFFSET__', $bootMemoryHeapSizeOffset `
+    -replace '__BOOT_MEMORY_MMAP_ENTRY_COUNT_OFFSET__', $bootMemoryMmapEntryCountOffset `
+    -replace '__BOOT_MEMORY_USABLE_REGION_COUNT_OFFSET__', $bootMemoryUsableRegionCountOffset `
+    -replace '__BOOT_MEMORY_LARGEST_USABLE_BASE_OFFSET__', $bootMemoryLargestUsableBaseOffset `
+    -replace '__BOOT_MEMORY_LARGEST_USABLE_SIZE_OFFSET__', $bootMemoryLargestUsableSizeOffset `
+    -replace '__BOOT_MEMORY_REGION_ENTRY_COUNT_OFFSET__', $bootMemoryRegionEntryCountOffset `
     -replace '__ACPI_STATE_ADDR__', ('0x' + $acpiStateAddress) `
     -replace '__IOAPIC_STATE_ADDR__', ('0x' + $ioApicStateAddress) `
     -replace '__TIMER_STATE_ADDR__', ('0x' + $timerStateAddress) `
@@ -291,7 +344,7 @@ $gdbTimedOut = $false
 try {
     $qemuArgs = @(
         "-M", "q35,accel=tcg",
-        "-m", "128M",
+        "-m", ("{0}M" -f $MemoryMiB),
         "-kernel", $artifact,
         "-display", "none",
         "-serial", "none",
@@ -330,6 +383,22 @@ $out = Get-Content -Path $gdbStdout -Raw
 $exitCodeStack = Extract-IntValue -Text $out -Name 'QEMU_EXIT_CODE_STACK'
 $exitCodeEax = Extract-IntValue -Text $out -Name 'QEMU_EXIT_CODE_EAX'
 $exitCodeEcx = Extract-IntValue -Text $out -Name 'QEMU_EXIT_CODE_ECX'
+$bootMemoryMagicValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_MAGIC'
+$bootMemoryApiVersionValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_API_VERSION'
+$bootMemorySourceValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_SOURCE'
+$bootMemoryFlagsValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_FLAGS'
+$bootMemoryMemLowerKibValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_MEM_LOWER_KIB'
+$bootMemoryMemUpperKibValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_MEM_UPPER_KIB'
+$bootMemoryTotalBytesValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_TOTAL_BYTES'
+$bootMemoryUsableBytesValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_USABLE_BYTES'
+$bootMemoryHeapBaseValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_HEAP_BASE'
+$bootMemoryHeapLimitValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_HEAP_LIMIT'
+$bootMemoryHeapSizeValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_HEAP_SIZE'
+$bootMemoryMmapEntryCountValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_MMAP_ENTRY_COUNT'
+$bootMemoryUsableRegionCountValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_USABLE_REGION_COUNT'
+$bootMemoryLargestUsableBaseValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_LARGEST_USABLE_BASE'
+$bootMemoryLargestUsableSizeValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_LARGEST_USABLE_SIZE'
+$bootMemoryRegionEntryCountValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_REGION_ENTRY_COUNT'
 $acpiMagicValue = Extract-IntValue -Text $out -Name 'ACPI_MAGIC'
 $acpiApiVersionValue = Extract-IntValue -Text $out -Name 'ACPI_API_VERSION'
 $acpiPresentValue = Extract-IntValue -Text $out -Name 'ACPI_PRESENT'
@@ -374,9 +443,24 @@ Write-Output "BAREMETAL_I386_QEMU_BINARY=$qemu"
 Write-Output "BAREMETAL_I386_GDB_BINARY=$gdb"
 Write-Output "BAREMETAL_I386_NM_BINARY=$nm"
 Write-Output "BAREMETAL_I386_QEMU_ARTIFACT=$artifact"
+Write-Output "BAREMETAL_I386_PLATFORM_PROBE_MEMORY_MIB=$MemoryMiB"
 Write-Output "BAREMETAL_I386_PLATFORM_PROBE_EXIT_CODE_STACK=$exitCodeStack"
 Write-Output "BAREMETAL_I386_PLATFORM_PROBE_EXIT_CODE_EAX=$exitCodeEax"
 Write-Output "BAREMETAL_I386_PLATFORM_PROBE_EXIT_CODE_ECX=$exitCodeEcx"
+Write-Output "BAREMETAL_I386_PLATFORM_PROBE_BOOT_MEMORY_SOURCE=$bootMemorySourceValue"
+Write-Output "BAREMETAL_I386_PLATFORM_PROBE_BOOT_MEMORY_FLAGS=$bootMemoryFlagsValue"
+Write-Output "BAREMETAL_I386_PLATFORM_PROBE_BOOT_MEMORY_MEM_LOWER_KIB=$bootMemoryMemLowerKibValue"
+Write-Output "BAREMETAL_I386_PLATFORM_PROBE_BOOT_MEMORY_MEM_UPPER_KIB=$bootMemoryMemUpperKibValue"
+Write-Output "BAREMETAL_I386_PLATFORM_PROBE_BOOT_MEMORY_TOTAL_BYTES=$bootMemoryTotalBytesValue"
+Write-Output "BAREMETAL_I386_PLATFORM_PROBE_BOOT_MEMORY_USABLE_BYTES=$bootMemoryUsableBytesValue"
+Write-Output "BAREMETAL_I386_PLATFORM_PROBE_BOOT_MEMORY_HEAP_BASE=$bootMemoryHeapBaseValue"
+Write-Output "BAREMETAL_I386_PLATFORM_PROBE_BOOT_MEMORY_HEAP_LIMIT=$bootMemoryHeapLimitValue"
+Write-Output "BAREMETAL_I386_PLATFORM_PROBE_BOOT_MEMORY_HEAP_SIZE=$bootMemoryHeapSizeValue"
+Write-Output "BAREMETAL_I386_PLATFORM_PROBE_BOOT_MEMORY_MMAP_ENTRY_COUNT=$bootMemoryMmapEntryCountValue"
+Write-Output "BAREMETAL_I386_PLATFORM_PROBE_BOOT_MEMORY_USABLE_REGION_COUNT=$bootMemoryUsableRegionCountValue"
+Write-Output "BAREMETAL_I386_PLATFORM_PROBE_BOOT_MEMORY_LARGEST_USABLE_BASE=$bootMemoryLargestUsableBaseValue"
+Write-Output "BAREMETAL_I386_PLATFORM_PROBE_BOOT_MEMORY_LARGEST_USABLE_SIZE=$bootMemoryLargestUsableSizeValue"
+Write-Output "BAREMETAL_I386_PLATFORM_PROBE_BOOT_MEMORY_REGION_ENTRY_COUNT=$bootMemoryRegionEntryCountValue"
 Write-Output "BAREMETAL_I386_PLATFORM_PROBE_ACPI_PRESENT=$acpiPresentValue"
 Write-Output "BAREMETAL_I386_PLATFORM_PROBE_ACPI_TABLE_COUNT=$acpiTableCountValue"
 Write-Output "BAREMETAL_I386_PLATFORM_PROBE_ACPI_LAPIC_COUNT=$acpiLapicCountValue"
@@ -392,6 +476,25 @@ Write-Output "BAREMETAL_I386_PLATFORM_PROBE_INTERRUPT_MASK_IGNORED_COUNT=$interr
 Write-Output "BAREMETAL_I386_PLATFORM_PROBE_INTERRUPT_LAST_MASKED_VECTOR=$interruptLastMaskedVectorValue"
 
 $pass = (
+    $bootMemoryMagicValue -eq $bootMemoryMagic -and
+    $bootMemoryApiVersionValue -eq $apiVersion -and
+    $bootMemorySourceValue -ge 1 -and
+    (($bootMemoryFlagsValue -band 0x8) -eq 0x8) -and
+    $bootMemoryMemLowerKibValue -ge 640 -and
+    $bootMemoryMemUpperKibValue -gt 0 -and
+    $bootMemoryTotalBytesValue -ge $expectedTotalBytes -and
+    $bootMemoryUsableBytesValue -gt 0 -and
+    $bootMemoryUsableBytesValue -le $bootMemoryTotalBytesValue -and
+    $bootMemoryHeapBaseValue -ge 0x00100000 -and
+    $bootMemoryHeapLimitValue -gt $bootMemoryHeapBaseValue -and
+    $bootMemoryHeapSizeValue -gt 0 -and
+    $bootMemoryHeapLimitValue -le $bootMemoryTotalBytesValue -and
+    $bootMemoryMmapEntryCountValue -ge 0 -and
+    $bootMemoryUsableRegionCountValue -ge 0 -and
+    $bootMemoryLargestUsableBaseValue -ge 0 -and
+    $bootMemoryLargestUsableSizeValue -gt 0 -and
+    $bootMemoryRegionEntryCountValue -ge 1 -and
+    (($bootMemoryFlagsValue -band 0x80) -eq 0x80) -and
     $acpiMagicValue -eq $acpiMagic -and
     $acpiApiVersionValue -eq $apiVersion -and
     $acpiPresentValue -eq 1 -and

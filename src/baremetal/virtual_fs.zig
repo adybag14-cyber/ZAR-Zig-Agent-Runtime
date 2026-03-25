@@ -4,6 +4,8 @@ const std = @import("std");
 const abi = @import("abi.zig");
 const acpi = @import("acpi.zig");
 const acpi_pm_timer = @import("acpi_pm_timer.zig");
+const boot_memory = @import("boot_memory.zig");
+const physical_memory = @import("physical_memory.zig");
 const i386_ap_startup = @import("i386_ap_startup.zig");
 const ioapic = @import("ioapic.zig");
 const lapic = @import("lapic.zig");
@@ -51,6 +53,9 @@ const dev_tty_sessions_path = "/dev/tty/sessions";
 const dev_display_path = "/dev/display";
 const dev_display_state_path = "/dev/display/state";
 const dev_display_outputs_path = "/dev/display/outputs";
+const dev_memory_path = "/dev/memory";
+const dev_memory_state_path = "/dev/memory/state";
+const dev_memory_map_path = "/dev/memory/map";
 const dev_cpu_path = "/dev/cpu";
 const dev_cpu_state_path = "/dev/cpu/state";
 const dev_cpu_topology_path = "/dev/cpu/topology";
@@ -68,6 +73,9 @@ const sys_kernel_machine_path = "/sys/kernel/machine";
 const sys_acpi_path = "/sys/acpi";
 const sys_acpi_state_path = "/sys/acpi/state";
 const sys_acpi_pm_timer_path = "/sys/acpi/pm-timer";
+const sys_memory_path = "/sys/memory";
+const sys_memory_state_path = "/sys/memory/state";
+const sys_memory_map_path = "/sys/memory/map";
 const sys_cpu_path = "/sys/cpu";
 const sys_cpu_state_path = "/sys/cpu/state";
 const sys_cpu_topology_path = "/sys/cpu/topology";
@@ -147,6 +155,7 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
         try appendDirectoryLine(allocator, &out, "storage", max_bytes);
         try appendDirectoryLine(allocator, &out, "tty", max_bytes);
         try appendDirectoryLine(allocator, &out, "display", max_bytes);
+        try appendDirectoryLine(allocator, &out, "memory", max_bytes);
         try appendDirectoryLine(allocator, &out, "cpu", max_bytes);
         try appendDirectoryLine(allocator, &out, "net", max_bytes);
         try appendFileLine(allocator, &out, "null", dev_null_path, max_bytes);
@@ -181,6 +190,11 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     if (std.mem.eql(u8, path, dev_display_path)) {
         try appendFileLine(allocator, &out, "state", dev_display_state_path, max_bytes);
         try appendDirectoryLine(allocator, &out, "outputs", max_bytes);
+        return out.toOwnedSlice(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_memory_path)) {
+        try appendFileLine(allocator, &out, "state", dev_memory_state_path, max_bytes);
+        try appendFileLine(allocator, &out, "map", dev_memory_map_path, max_bytes);
         return out.toOwnedSlice(allocator);
     }
     if (std.mem.eql(u8, path, dev_cpu_path)) {
@@ -218,6 +232,7 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     if (std.mem.eql(u8, path, "/sys")) {
         try appendDirectoryLine(allocator, &out, "kernel", max_bytes);
         try appendDirectoryLine(allocator, &out, "acpi", max_bytes);
+        try appendDirectoryLine(allocator, &out, "memory", max_bytes);
         try appendDirectoryLine(allocator, &out, "cpu", max_bytes);
         try appendDirectoryLine(allocator, &out, "storage", max_bytes);
         try appendDirectoryLine(allocator, &out, "tty", max_bytes);
@@ -233,6 +248,11 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     if (std.mem.eql(u8, path, sys_acpi_path)) {
         try appendFileLine(allocator, &out, "state", sys_acpi_state_path, max_bytes);
         try appendFileLine(allocator, &out, "pm-timer", sys_acpi_pm_timer_path, max_bytes);
+        return out.toOwnedSlice(allocator);
+    }
+    if (std.mem.eql(u8, path, sys_memory_path)) {
+        try appendFileLine(allocator, &out, "state", sys_memory_state_path, max_bytes);
+        try appendFileLine(allocator, &out, "map", sys_memory_map_path, max_bytes);
         return out.toOwnedSlice(allocator);
     }
     if (std.mem.eql(u8, path, sys_cpu_path)) {
@@ -336,12 +356,14 @@ fn isDirectoryPath(path: []const u8) bool {
     if (std.mem.eql(u8, path, dev_tty_path)) return true;
     if (std.mem.eql(u8, path, dev_tty_sessions_path)) return true;
     if (std.mem.eql(u8, path, dev_display_path)) return true;
+    if (std.mem.eql(u8, path, dev_memory_path)) return true;
     if (std.mem.eql(u8, path, dev_cpu_path)) return true;
     if (std.mem.eql(u8, path, dev_display_outputs_path)) return true;
     if (std.mem.eql(u8, path, dev_net_path)) return true;
     if (std.mem.eql(u8, path, "/sys")) return true;
     if (std.mem.eql(u8, path, "/sys/kernel")) return true;
     if (std.mem.eql(u8, path, sys_acpi_path)) return true;
+    if (std.mem.eql(u8, path, sys_memory_path)) return true;
     if (std.mem.eql(u8, path, sys_cpu_path)) return true;
     if (std.mem.eql(u8, path, "/sys/storage")) return true;
     if (std.mem.eql(u8, path, sys_tty_path)) return true;
@@ -366,6 +388,8 @@ fn isFilePath(path: []const u8) bool {
     if (std.mem.eql(u8, path, dev_storage_registry_path)) return true;
     if (std.mem.eql(u8, path, dev_tty_state_path)) return true;
     if (std.mem.eql(u8, path, dev_display_state_path)) return true;
+    if (std.mem.eql(u8, path, dev_memory_state_path)) return true;
+    if (std.mem.eql(u8, path, dev_memory_map_path)) return true;
     if (std.mem.eql(u8, path, dev_cpu_state_path)) return true;
     if (std.mem.eql(u8, path, dev_cpu_topology_path)) return true;
     if (std.mem.eql(u8, path, dev_cpu_lapic_path)) return true;
@@ -380,6 +404,8 @@ fn isFilePath(path: []const u8) bool {
     if (std.mem.eql(u8, path, sys_kernel_machine_path)) return true;
     if (std.mem.eql(u8, path, sys_acpi_state_path)) return true;
     if (std.mem.eql(u8, path, sys_acpi_pm_timer_path)) return true;
+    if (std.mem.eql(u8, path, sys_memory_state_path)) return true;
+    if (std.mem.eql(u8, path, sys_memory_map_path)) return true;
     if (std.mem.eql(u8, path, sys_cpu_state_path)) return true;
     if (std.mem.eql(u8, path, sys_cpu_topology_path)) return true;
     if (std.mem.eql(u8, path, sys_cpu_lapic_path)) return true;
@@ -433,6 +459,12 @@ fn renderFileAlloc(allocator: std.mem.Allocator, path: []const u8) Error![]u8 {
     }
     if (std.mem.eql(u8, path, dev_storage_registry_path)) {
         return storage_registry.renderAlloc(allocator, max_stat_render_bytes);
+    }
+    if (std.mem.eql(u8, path, dev_memory_state_path) or std.mem.eql(u8, path, sys_memory_state_path)) {
+        return renderMemoryStateAlloc(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_memory_map_path) or std.mem.eql(u8, path, sys_memory_map_path)) {
+        return boot_memory.renderMapAlloc(allocator);
     }
     if (std.mem.eql(u8, path, dev_tty_state_path) or std.mem.eql(u8, path, sys_tty_state_path)) {
         return renderTtyStateAlloc(allocator);
@@ -535,6 +567,14 @@ fn renderFileAlloc(allocator: std.mem.Allocator, path: []const u8) Error![]u8 {
         };
     }
     return error.FileNotFound;
+}
+
+fn renderMemoryStateAlloc(allocator: std.mem.Allocator) Error![]u8 {
+    const boot_render = try boot_memory.renderAlloc(allocator);
+    defer allocator.free(boot_render);
+    const physical_render = try physical_memory.renderAlloc(allocator);
+    defer allocator.free(physical_render);
+    return std.fmt.allocPrint(allocator, "{s}{s}", .{ boot_render, physical_render });
 }
 
 fn appendDirectoryLine(allocator: std.mem.Allocator, out: *std.ArrayList(u8), name: []const u8, max_bytes: usize) Error!void {

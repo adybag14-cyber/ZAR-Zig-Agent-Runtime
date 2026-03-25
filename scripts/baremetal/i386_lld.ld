@@ -50,6 +50,8 @@ SECTIONS
     *(.bss .bss.* COMMON)
   } :data
 
+  PROVIDE(__kernel_image_end = .);
+
   /DISCARD/ : {
     *(.debug*)
     *(.comment)

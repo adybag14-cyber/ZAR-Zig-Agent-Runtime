@@ -2,6 +2,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const abi = @import("abi.zig");
+const boot_memory = @import("boot_memory.zig");
 
 const rsdp_signature = "RSD PTR ";
 const rsdt_signature = "RSDT";
@@ -9,7 +10,6 @@ const xsdt_signature = "XSDT";
 const fadt_signature = "FACP";
 const madt_signature = "APIC";
 const low_memory_scan_limit: usize = 0x100000;
-const live_physical_table_limit: u64 = 0x08000000;
 const rsdp_v1_length: usize = 20;
 const rsdp_v2_length: usize = 36;
 const sdt_header_length: usize = 36;
@@ -330,7 +330,7 @@ fn livePhysicalSlice(base_phys: u64, phys: u64, len: usize) ?[]const u8 {
     if (builtin.cpu.arch != .x86 and builtin.cpu.arch != .x86_64) return null;
     const len64 = std.math.cast(u64, len) orelse return null;
     const end_phys = std.math.add(u64, phys, len64) catch return null;
-    if (end_phys > live_physical_table_limit) return null;
+    if (end_phys > boot_memory.livePhysicalLimit()) return null;
     const phys_addr = std.math.cast(usize, phys) orelse return null;
     if (phys_addr == 0) return null;
     const ptr = @as([*]const u8, @ptrFromInt(phys_addr));

@@ -10,11 +10,25 @@
 %define HEADER_VERSION        1
 %define HEADER_DESC_SIZE      20
 %define HEADER_DESC_OFFSET    16
-%define HEADER_BUFFER_ADDR    0x00000600
+%define MULTIBOOT_INFO_ADDR   0x00000800
+%define HEADER_BUFFER_ADDR    0x00001000
 %define CHUNK_BUFFER_ADDR     0x00010000
 %define CHUNK_BUFFER_SECTORS  32
 %define STACK_TOP_REAL        0x7C00
 %define STACK_TOP_PROTECTED   0x00070000
+
+%define MULTIBOOT2_BOOT_MAGIC         0x36D76289
+%define MULTIBOOT2_TAG_TYPE_END       0
+%define MULTIBOOT2_TAG_TYPE_BASIC_MEM 4
+%define MULTIBOOT2_TAG_TYPE_MEMORY_MAP 6
+%define MULTIBOOT2_MEMORY_MAP_ENTRY_SIZE 24
+%define E820_SIGNATURE                0x534D4150
+%define CMOS_ADDR_PORT                0x70
+%define CMOS_DATA_PORT                0x71
+%define CMOS_EXT_LOW_LOW              0x30
+%define CMOS_EXT_LOW_HIGH             0x31
+%define CMOS_EXT_HIGH_LOW             0x34
+%define CMOS_EXT_HIGH_HIGH            0x35
 
 %define DESC_DEST_ADDR        0
 %define DESC_LBA              4
@@ -45,6 +59,8 @@ stage2_start:
     jne bad_header
     cmp word [HEADER_BUFFER_ADDR + 4], HEADER_VERSION
     jne bad_header
+    mov eax, [HEADER_BUFFER_ADDR + 8]
+    mov [kernel_entry_addr], eax
 
     call debug_mark_p
     mov cx, [HEADER_BUFFER_ADDR + 6]
@@ -145,6 +161,7 @@ next_segment:
     jmp segment_loop
 
 enter_kernel_mode:
+    call build_multiboot_info
     call enter_unreal_mode
     call debug_mark_j
     cli
@@ -217,6 +234,157 @@ restore_real_segments:
     mov ss, ax
     ret
 
+build_multiboot_info:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push es
+
+    mov di, MULTIBOOT_INFO_ADDR
+    mov dword [di + 0], 0
+    mov dword [di + 4], 0
+    mov dword [di + 8], MULTIBOOT2_TAG_TYPE_BASIC_MEM
+    mov dword [di + 12], 16
+
+    int 0x12
+    movzx edx, ax
+    mov dword [di + 16], edx
+
+    call read_extended_memory_kib
+    mov dword [di + 20], eax
+
+    mov si, MULTIBOOT_INFO_ADDR + 24
+    call build_multiboot_memory_map_tag
+    add si, 7
+    and si, 0xFFF8
+    mov dword [si + 0], MULTIBOOT2_TAG_TYPE_END
+    mov dword [si + 4], 8
+    add si, 8
+    xor eax, eax
+    mov ax, si
+    sub eax, MULTIBOOT_INFO_ADDR
+    mov dword [MULTIBOOT_INFO_ADDR + 0], eax
+
+    pop es
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+build_multiboot_memory_map_tag:
+    mov word [e820_entry_count], 0
+    mov word [e820_tag_addr], si
+
+    mov dword [si + 0], MULTIBOOT2_TAG_TYPE_MEMORY_MAP
+    mov dword [si + 4], 16
+    mov dword [si + 8], MULTIBOOT2_MEMORY_MAP_ENTRY_SIZE
+    mov dword [si + 12], 0
+    add si, 16
+    xor eax, eax
+    mov dword [e820_continuation], eax
+
+.loop:
+    mov ax, si
+    add ax, MULTIBOOT2_MEMORY_MAP_ENTRY_SIZE + 8
+    cmp ax, HEADER_BUFFER_ADDR
+    jae .omit
+
+    xor eax, eax
+    mov dword [si + 0], eax
+    mov dword [si + 4], eax
+    mov dword [si + 8], eax
+    mov dword [si + 12], eax
+    mov dword [si + 16], eax
+    mov dword [si + 20], 1
+
+    xor ax, ax
+    mov es, ax
+    mov di, si
+    mov eax, 0xE820
+    mov edx, E820_SIGNATURE
+    mov ecx, MULTIBOOT2_MEMORY_MAP_ENTRY_SIZE
+    mov ebx, [e820_continuation]
+    int 0x15
+    jc .done
+    cmp eax, E820_SIGNATURE
+    jne .done
+    mov [e820_continuation], ebx
+    cmp ecx, 20
+    jb .next
+    mov eax, [si + 8]
+    or eax, [si + 12]
+    jz .next
+    inc word [e820_entry_count]
+    add si, MULTIBOOT2_MEMORY_MAP_ENTRY_SIZE
+
+.next:
+    mov eax, [e820_continuation]
+    test eax, eax
+    jnz .loop
+
+.done:
+    cmp word [e820_entry_count], 0
+    je .omit
+    mov bx, [e820_tag_addr]
+    mov ax, [e820_entry_count]
+    mov cx, MULTIBOOT2_MEMORY_MAP_ENTRY_SIZE
+    mul cx
+    add ax, 16
+    adc dx, 0
+    mov word [bx + 4], ax
+    mov word [bx + 6], dx
+    ret
+
+.omit:
+    mov si, [e820_tag_addr]
+    ret
+
+read_extended_memory_kib:
+    push bx
+
+    mov al, CMOS_EXT_HIGH_HIGH
+    call read_cmos_byte
+    movzx eax, al
+    shl eax, 8
+    mov al, CMOS_EXT_HIGH_LOW
+    call read_cmos_byte
+    movzx ebx, al
+    or eax, ebx
+    test eax, eax
+    jz .legacy
+    shl eax, 6
+    add eax, 15 * 1024
+    pop bx
+    ret
+
+.legacy:
+    mov al, CMOS_EXT_LOW_HIGH
+    call read_cmos_byte
+    movzx eax, al
+    shl eax, 8
+    mov al, CMOS_EXT_LOW_LOW
+    call read_cmos_byte
+    movzx ebx, al
+    or eax, ebx
+    pop bx
+    ret
+
+read_cmos_byte:
+    push dx
+    or al, 0x80
+    mov dx, CMOS_ADDR_PORT
+    out dx, al
+    mov dx, CMOS_DATA_PORT
+    in al, dx
+    pop dx
+    ret
+
 [bits 32]
 protected_mode_start:
     mov ax, 0x10
@@ -226,8 +394,10 @@ protected_mode_start:
     mov gs, ax
     mov ss, ax
     mov esp, STACK_TOP_PROTECTED
-    mov eax, [HEADER_BUFFER_ADDR + 8]
-    jmp eax
+    mov eax, MULTIBOOT2_BOOT_MAGIC
+    mov ebx, MULTIBOOT_INFO_ADDR
+    mov edx, [kernel_entry_addr]
+    jmp edx
 
 [bits 16]
 enable_a20:
@@ -320,6 +490,14 @@ current_mem_size:
     dd 0
 current_chunk_bytes:
     dd 0
+kernel_entry_addr:
+    dd 0
+e820_continuation:
+    dd 0
+e820_tag_addr:
+    dw 0
+e820_entry_count:
+    dw 0
 
 disk_packet:
     db 0x10
