@@ -7,10 +7,12 @@ const pci = @import("baremetal/pci.zig");
 const disk_installer = @import("baremetal/disk_installer.zig");
 const x86_bootstrap = @import("baremetal/x86_bootstrap.zig");
 const acpi = @import("baremetal/acpi.zig");
+const acpi_pm_timer = @import("baremetal/acpi_pm_timer.zig");
 const i386_ap_startup = @import("baremetal/i386_ap_startup.zig");
 const ioapic = @import("baremetal/ioapic.zig");
 const lapic = @import("baremetal/lapic.zig");
 const pic = @import("baremetal/pic.zig");
+const pit = @import("baremetal/pit.zig");
 const display_output = @import("baremetal/display_output.zig");
 const display_profile_store = @import("baremetal/display_profile_store.zig");
 const virtio_gpu = @import("baremetal/virtio_gpu.zig");
@@ -62,6 +64,8 @@ const BaremetalApStartupState = abi.BaremetalApStartupState;
 const BaremetalLapicState = abi.BaremetalLapicState;
 const BaremetalIoApicState = abi.BaremetalIoApicState;
 const BaremetalPicState = abi.BaremetalPicState;
+const BaremetalPitState = abi.BaremetalPitState;
+const BaremetalPmTimerState = abi.BaremetalPmTimerState;
 const BaremetalEthernetState = abi.BaremetalEthernetState;
 const BaremetalStorageState = abi.BaremetalStorageState;
 const BaremetalStoragePartitionInfo = abi.BaremetalStoragePartitionInfo;
@@ -492,6 +496,14 @@ const I386PlatformProbeError = error{
     PicRemapMismatch,
     PicRenderMismatch,
     PicControlPlaneMismatch,
+    PitProbeFailed,
+    PitNotPresent,
+    PitCounterMismatch,
+    PitRenderMismatch,
+    PmTimerProbeFailed,
+    PmTimerNotPresent,
+    PmTimerMonotonicMismatch,
+    PmTimerRenderMismatch,
     InterruptWakeMismatch,
     InterruptVectorMismatch,
     InterruptCountMismatch,
@@ -1921,6 +1933,14 @@ pub export fn oc_pic_state_ptr() *const BaremetalPicState {
     return pic.statePtr();
 }
 
+pub export fn oc_pit_state_ptr() *const BaremetalPitState {
+    return pit.statePtr();
+}
+
+pub export fn oc_pm_timer_state_ptr() *const BaremetalPmTimerState {
+    return acpi_pm_timer.statePtr();
+}
+
 pub export fn oc_i386_ap_startup_state_ptr() *const BaremetalApStartupState {
     return i386_ap_startup.statePtr();
 }
@@ -2983,9 +3003,11 @@ fn baremetalStart() callconv(.c) noreturn {
     _ = x86_bootstrap.oc_try_load_descriptor_tables();
     pic.init();
     acpi.init();
+    acpi_pm_timer.init();
     i386_ap_startup.init();
     ioapic.init();
     lapic.init();
+    pit.init();
     if (ata_storage_probe_enabled) {
         runAtaStorageProbe() catch |err| qemuExit(ataStorageProbeFailureCode(err));
         qemuExit(qemu_ata_storage_probe_ok_code);
@@ -17340,6 +17362,13 @@ fn runI386PlatformProbe() I386PlatformProbeError!void {
         error.IoApicMissing => return error.IoApicProbeFailed,
         error.MmioUnavailable => return error.IoApicProbeFailed,
     };
+    pit.probe() catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+    };
+    acpi_pm_timer.probe() catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.TimerUnavailable => return error.PmTimerProbeFailed,
+    };
 
     const acpi_state = oc_acpi_state_ptr().*;
     if (acpi_state.present != 1) return error.AcpiNotPresent;
@@ -17367,6 +17396,26 @@ fn runI386PlatformProbe() I386PlatformProbeError!void {
     const acpi_ioapic = acpi.ioApicEntry(0) orelse return error.IoApicEntryMismatch;
     if (ioapic_state.mmio_addr != acpi_ioapic.mmio_addr or ioapic_state.gsi_base != acpi_ioapic.gsi_base) {
         return error.IoApicEntryMismatch;
+    }
+
+    const pit_state = oc_pit_state_ptr().*;
+    if (pit_state.present != 1) return error.PitNotPresent;
+    if (pit_state.first_count == 0 or
+        pit_state.second_count == 0 or
+        pit_state.counter_changed != 1 or
+        pit_state.delta == 0)
+    {
+        return error.PitCounterMismatch;
+    }
+    if (pit_state.data_port != 0x40 or pit_state.command_port != 0x43) return error.PitCounterMismatch;
+
+    const pm_timer_state = oc_pm_timer_state_ptr().*;
+    if (pm_timer_state.present != 1 or pm_timer_state.port == 0) return error.PmTimerNotPresent;
+    if (pm_timer_state.port != acpi_state.pm_timer_block or
+        pm_timer_state.monotonic != 1 or
+        pm_timer_state.delta == 0)
+    {
+        return error.PmTimerMonotonicMismatch;
     }
 
     const pic_state = oc_pic_state_ptr().*;
@@ -17427,6 +17476,32 @@ fn runI386PlatformProbe() I386PlatformProbeError!void {
         !std.mem.containsAtLeast(u8, ioapic_render, 1, "mmio_addr="))
     {
         return error.IoApicRenderMismatch;
+    }
+
+    var pit_render_buffer: [512]u8 = undefined;
+    var pit_fba = std.heap.FixedBufferAllocator.init(&pit_render_buffer);
+    const pit_render = virtual_fs.readFileAlloc(pit_fba.allocator(), "/sys/cpu/pit", pit_render_buffer.len) catch {
+        return error.PitRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, pit_render, 1, "present=1") or
+        !std.mem.containsAtLeast(u8, pit_render, 1, "counter_changed=1") or
+        !std.mem.containsAtLeast(u8, pit_render, 1, "data_port=0x40") or
+        !std.mem.containsAtLeast(u8, pit_render, 1, "command_port=0x43"))
+    {
+        return error.PitRenderMismatch;
+    }
+
+    var pm_timer_render_buffer: [512]u8 = undefined;
+    var pm_timer_fba = std.heap.FixedBufferAllocator.init(&pm_timer_render_buffer);
+    const pm_timer_render = virtual_fs.readFileAlloc(pm_timer_fba.allocator(), "/sys/acpi/pm-timer", pm_timer_render_buffer.len) catch {
+        return error.PmTimerRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, pm_timer_render, 1, "present=1") or
+        !std.mem.containsAtLeast(u8, pm_timer_render, 1, "monotonic=1") or
+        !std.mem.containsAtLeast(u8, pm_timer_render, 1, "port=0x") or
+        !std.mem.containsAtLeast(u8, pm_timer_render, 1, "delta="))
+    {
+        return error.PmTimerRenderMismatch;
     }
 
     var pic_render_buffer: [1024]u8 = undefined;
@@ -18536,15 +18611,23 @@ fn i386PlatformProbeFailureCode(err: I386PlatformProbeError) u8 {
         error.PicRemapMismatch => 0xE3,
         error.PicRenderMismatch => 0xE4,
         error.PicControlPlaneMismatch => 0xE5,
-        error.InterruptWakeMismatch => 0xE6,
-        error.InterruptVectorMismatch => 0xE7,
-        error.InterruptCountMismatch => 0xE8,
-        error.InterruptHistoryMismatch => 0xE9,
-        error.TimerWakeMismatch => 0xEA,
-        error.TimerDispatchMismatch => 0xEB,
-        error.TimerPendingMismatch => 0xEC,
-        error.TimerLastInterruptMismatch => 0xED,
-        error.InterruptMaskIgnoredMismatch => 0xEE,
+        error.PitProbeFailed => 0xE6,
+        error.PitNotPresent => 0xE7,
+        error.PitCounterMismatch => 0xE8,
+        error.PitRenderMismatch => 0xE9,
+        error.PmTimerProbeFailed => 0xEA,
+        error.PmTimerNotPresent => 0xEB,
+        error.PmTimerMonotonicMismatch => 0xEC,
+        error.PmTimerRenderMismatch => 0xED,
+        error.InterruptWakeMismatch => 0xEE,
+        error.InterruptVectorMismatch => 0xEF,
+        error.InterruptCountMismatch => 0xF0,
+        error.InterruptHistoryMismatch => 0xF1,
+        error.TimerWakeMismatch => 0xF2,
+        error.TimerDispatchMismatch => 0xF3,
+        error.TimerPendingMismatch => 0xF4,
+        error.TimerLastInterruptMismatch => 0xF5,
+        error.InterruptMaskIgnoredMismatch => 0xF6,
     };
 }
 
@@ -20072,10 +20155,12 @@ fn resetBaremetalRuntimeForTest() void {
     oc_timer_reset();
     oc_wake_queue_clear();
     acpi.resetForTest();
+    acpi_pm_timer.resetForTest();
     i386_ap_startup.resetForTest();
     ioapic.resetForTest();
     lapic.resetForTest();
     pic.resetForTest();
+    pit.resetForTest();
     display_output.resetForTest();
     framebuffer_console.resetForTest();
     vga_text_console.resetForTest();

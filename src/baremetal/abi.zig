@@ -19,6 +19,8 @@ pub const cpu_magic: u32 = 0x4f434350; // "OCCP"
 pub const lapic_magic: u32 = 0x4f434c50; // "OCLP"
 pub const ioapic_magic: u32 = 0x4f434950; // "OCIP"
 pub const pic_magic: u32 = 0x4f435043; // "OCPC"
+pub const pit_magic: u32 = 0x4f435054; // "OCPT"
+pub const pm_timer_magic: u32 = 0x4f43504d; // "OCPM"
 pub const ap_startup_magic: u32 = 0x4f434153; // "OCAS"
 
 pub const api_version: u16 = 2;
@@ -505,6 +507,39 @@ pub const BaremetalPicState = extern struct {
     reserved1: u16,
     control_masked_count: u32,
     control_ignored_count: u64,
+};
+
+pub const BaremetalPitState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    counter_changed: u8,
+    channel: u8,
+    reserved0: [3]u8,
+    data_port: u16,
+    command_port: u16,
+    first_count: u16,
+    second_count: u16,
+    delta: u16,
+    sample_attempts: u16,
+    base_frequency_hz: u32,
+    latch_command: u32,
+};
+
+pub const BaremetalPmTimerState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    monotonic: u8,
+    width_bits: u8,
+    reserved0: u8,
+    port: u32,
+    first_tick: u32,
+    second_tick: u32,
+    delta: u32,
+    sample_attempts: u16,
+    reserved1: u16,
+    mask: u32,
 };
 
 pub const BaremetalApStartupState = extern struct {
@@ -1105,6 +1140,8 @@ test "baremetal kernel info size contract stays stable" {
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalWakeEvent));
     try std.testing.expectEqual(@as(usize, 48), @sizeOf(BaremetalWakeQueueSummary));
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalWakeQueueAgeBuckets));
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalPitState));
+    try std.testing.expectEqual(@as(usize, 36), @sizeOf(BaremetalPmTimerState));
 }
 
 test "baremetal mode helper validates supported modes" {

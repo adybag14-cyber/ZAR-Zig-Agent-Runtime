@@ -20,6 +20,7 @@ ZAR has already absorbed or independently reached a meaningful subset of the hig
 - bounded ACPI export/render plus live i386 timer/interrupt proof
 - bounded CPU-topology and SMP-readiness export derived from `MADT`
 - bounded IOAPIC state export plus live MMIO proof on the i386 platform lane
+- bounded PIT plus ACPI PM-timer controller visibility on the i386 platform lane
 - bounded LAPIC state export plus live i386 `-smp 2` proof
 - bounded AP-startup control diagnostics with exported INIT / deassert / SIPI / SIPI telemetry
 
@@ -91,6 +92,7 @@ Relevant upstream areas:
 Why it matters:
 - This is still a high-leverage step before deeper SMP or userspace work.
 - It improves debugging, determinism, and future i386/x86 parity.
+- ZAR now has explicit PIT and ACPI PM-timer visibility, so the next timer/interrupt gain is no longer raw controller export. It is firmware-backed delivery, AP wakeup reliability, and multi-core behavior above those controllers.
 
 Adoption fit:
 - `adapt`
