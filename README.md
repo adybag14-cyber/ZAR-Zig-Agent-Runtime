@@ -1,6 +1,8 @@
 # ZAR-Zig-Agent-Runtime
 
-ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first delivery, deterministic validation gates, and a Lightpanda-only browser bridge policy.
+ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, built as an AI-native runtime and operating environment for autonomous agents with a parity-first delivery model, deterministic validation gates, and a Lightpanda-only browser bridge policy.
+
+The project focuses on translating a large, evolving agent/runtime surface into Zig without losing behavioral parity, release discipline, or reproducibility. In practice that means keeping the Zig implementation aligned against multiple upstream baselines, proving changes through hosted and bare-metal validation lanes, and documenting adoption slices so the repo can move from bootstrap work toward a production-grade runtime with clear evidence for every claimed capability.
 
 ## Current Status
 
