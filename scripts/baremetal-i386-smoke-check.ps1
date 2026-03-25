@@ -215,6 +215,7 @@ $requiredSymbols = @(
     "oc_cpu_topology_entry_count",
     "oc_cpu_topology_entry",
     "oc_lapic_state_ptr",
+    "oc_ioapic_state_ptr",
     "oc_i386_ap_startup_state_ptr"
 )
 foreach ($required in $requiredSymbols) {

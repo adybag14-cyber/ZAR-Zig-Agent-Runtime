@@ -20,6 +20,7 @@ const acpi_flag_has_xsdt: u32 = 1 << 0;
 const acpi_flag_has_fadt: u32 = 1 << 1;
 const acpi_flag_has_madt: u32 = 1 << 2;
 const cpu_topology_capacity: usize = 16;
+const ioapic_capacity: usize = 8;
 
 pub const Error = error{
     UnsupportedPlatform,
@@ -36,6 +37,14 @@ pub const Error = error{
 var state: abi.BaremetalAcpiState = zeroState();
 var cpu_topology_state: abi.BaremetalCpuTopologyState = zeroCpuTopologyState();
 var cpu_topology_entries: [cpu_topology_capacity]abi.BaremetalCpuTopologyEntry = std.mem.zeroes([cpu_topology_capacity]abi.BaremetalCpuTopologyEntry);
+pub const IoApicInfo = struct {
+    ioapic_id: u8,
+    reserved0: [3]u8,
+    mmio_addr: u32,
+    gsi_base: u32,
+};
+var ioapic_entries: [ioapic_capacity]IoApicInfo = std.mem.zeroes([ioapic_capacity]IoApicInfo);
+var ioapic_entry_count: u16 = 0;
 var synthetic_image: [low_memory_scan_limit]u8 = undefined;
 
 fn zeroState() abi.BaremetalAcpiState {
@@ -81,6 +90,8 @@ pub fn resetForTest() void {
     state = zeroState();
     cpu_topology_state = zeroCpuTopologyState();
     @memset(&cpu_topology_entries, std.mem.zeroes(abi.BaremetalCpuTopologyEntry));
+    @memset(&ioapic_entries, std.mem.zeroes(IoApicInfo));
+    ioapic_entry_count = 0;
 }
 
 pub fn statePtr() *const abi.BaremetalAcpiState {
@@ -98,6 +109,15 @@ pub fn cpuTopologyEntryCount() u16 {
 pub fn cpuTopologyEntry(index: u16) abi.BaremetalCpuTopologyEntry {
     if (index >= cpu_topology_state.exported_count) return std.mem.zeroes(abi.BaremetalCpuTopologyEntry);
     return cpu_topology_entries[index];
+}
+
+pub fn ioApicEntryCount() u16 {
+    return ioapic_entry_count;
+}
+
+pub fn ioApicEntry(index: u16) ?IoApicInfo {
+    if (index >= ioapic_entry_count) return null;
+    return ioapic_entries[index];
 }
 
 pub fn init() void {
@@ -123,6 +143,8 @@ pub fn probeImage(image: []const u8, base_phys: u64) Error!void {
     state = zeroState();
     cpu_topology_state = zeroCpuTopologyState();
     @memset(&cpu_topology_entries, std.mem.zeroes(abi.BaremetalCpuTopologyEntry));
+    @memset(&ioapic_entries, std.mem.zeroes(IoApicInfo));
+    ioapic_entry_count = 0;
 
     const rsdp_phys = findRsdp(image, base_phys) orelse return error.RsdpNotFound;
     const rsdp_v1 = sliceAt(image, base_phys, rsdp_phys, rsdp_v1_length) orelse return error.RsdpChecksumMismatch;
@@ -376,6 +398,7 @@ fn parseMadt(
     ioapic_count.* = 0;
     enabled_cpu_count.* = 0;
     lapic_addr_override_count.* = 0;
+    ioapic_entry_count = 0;
     if (madt.len < madt_header_length) return;
     var offset: usize = madt_header_length;
     while (offset + 2 <= madt.len) {
@@ -399,7 +422,19 @@ fn parseMadt(
                     };
                 }
             },
-            madt_entry_io_apic => ioapic_count.* +%= 1,
+            madt_entry_io_apic => {
+                ioapic_count.* +%= 1;
+                const export_index = @as(usize, ioapic_entry_count);
+                if (export_index < ioapic_capacity and entry_len >= 12) {
+                    ioapic_entries[export_index] = .{
+                        .ioapic_id = madt[offset + 2],
+                        .reserved0 = .{ 0, 0, 0 },
+                        .mmio_addr = readU32(madt, offset + 4),
+                        .gsi_base = readU32(madt, offset + 8),
+                    };
+                    ioapic_entry_count +%= 1;
+                }
+            },
             madt_entry_local_apic_addr_override => {
                 if (entry_len >= 12) {
                     local_apic_addr.* = readU64(madt, offset + 4);
@@ -573,4 +608,10 @@ test "acpi probe image exports cpu topology from madt" {
     try std.testing.expectEqual(@as(u8, 1), cpu1.processor_uid);
     try std.testing.expectEqual(@as(u8, 1), cpu1.apic_id);
     try std.testing.expectEqual(@as(u8, 1), cpu1.enabled);
+
+    try std.testing.expectEqual(@as(u16, 1), ioApicEntryCount());
+    const ioapic = ioApicEntry(0) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u8, 1), ioapic.ioapic_id);
+    try std.testing.expectEqual(@as(u32, 0xFEC00000), ioapic.mmio_addr);
+    try std.testing.expectEqual(@as(u32, 0), ioapic.gsi_base);
 }

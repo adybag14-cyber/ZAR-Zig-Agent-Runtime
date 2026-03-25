@@ -8,6 +8,7 @@ const disk_installer = @import("baremetal/disk_installer.zig");
 const x86_bootstrap = @import("baremetal/x86_bootstrap.zig");
 const acpi = @import("baremetal/acpi.zig");
 const i386_ap_startup = @import("baremetal/i386_ap_startup.zig");
+const ioapic = @import("baremetal/ioapic.zig");
 const lapic = @import("baremetal/lapic.zig");
 const display_output = @import("baremetal/display_output.zig");
 const display_profile_store = @import("baremetal/display_profile_store.zig");
@@ -58,6 +59,7 @@ const BaremetalCpuTopologyState = abi.BaremetalCpuTopologyState;
 const BaremetalCpuTopologyEntry = abi.BaremetalCpuTopologyEntry;
 const BaremetalApStartupState = abi.BaremetalApStartupState;
 const BaremetalLapicState = abi.BaremetalLapicState;
+const BaremetalIoApicState = abi.BaremetalIoApicState;
 const BaremetalEthernetState = abi.BaremetalEthernetState;
 const BaremetalStorageState = abi.BaremetalStorageState;
 const BaremetalStoragePartitionInfo = abi.BaremetalStoragePartitionInfo;
@@ -478,6 +480,11 @@ const I386PlatformProbeError = error{
     CpuTopologySmpMissing,
     CpuTopologyRenderMismatch,
     CpuTopologyEntryMismatch,
+    IoApicProbeFailed,
+    IoApicNotPresent,
+    IoApicDisabled,
+    IoApicRenderMismatch,
+    IoApicEntryMismatch,
     InterruptWakeMismatch,
     InterruptVectorMismatch,
     InterruptCountMismatch,
@@ -1899,6 +1906,10 @@ pub export fn oc_lapic_state_ptr() *const BaremetalLapicState {
     return lapic.statePtr();
 }
 
+pub export fn oc_ioapic_state_ptr() *const BaremetalIoApicState {
+    return ioapic.statePtr();
+}
+
 pub export fn oc_i386_ap_startup_state_ptr() *const BaremetalApStartupState {
     return i386_ap_startup.statePtr();
 }
@@ -2961,6 +2972,7 @@ fn baremetalStart() callconv(.c) noreturn {
     _ = x86_bootstrap.oc_try_load_descriptor_tables();
     acpi.init();
     i386_ap_startup.init();
+    ioapic.init();
     lapic.init();
     if (ata_storage_probe_enabled) {
         runAtaStorageProbe() catch |err| qemuExit(ataStorageProbeFailureCode(err));
@@ -17308,6 +17320,11 @@ fn runI386PlatformProbe() I386PlatformProbeError!void {
     if (oc_acpi_state_ptr().present == 0) {
         acpi.probeSyntheticImage(true) catch return error.AcpiProbeFailed;
     }
+    ioapic.probe() catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.IoApicMissing => return error.IoApicProbeFailed,
+        error.MmioUnavailable => return error.IoApicProbeFailed,
+    };
 
     const acpi_state = oc_acpi_state_ptr().*;
     if (acpi_state.present != 1) return error.AcpiNotPresent;
@@ -17325,6 +17342,17 @@ fn runI386PlatformProbe() I386PlatformProbeError!void {
     const cpu1 = oc_cpu_topology_entry(1);
     if (cpu0.enabled != 1 or cpu1.enabled != 1) return error.CpuTopologyEntryMismatch;
     if (cpu0.apic_id == cpu1.apic_id) return error.CpuTopologyEntryMismatch;
+
+    const ioapic_state = oc_ioapic_state_ptr().*;
+    if (ioapic_state.present != 1 or ioapic_state.acpi_present != 1) return error.IoApicNotPresent;
+    if (ioapic_state.enabled != 1 or ioapic_state.mmio_addr == 0 or ioapic_state.redirection_entry_count == 0) {
+        return error.IoApicDisabled;
+    }
+    if (ioapic_state.ioapic_count != acpi_state.ioapic_count) return error.IoApicEntryMismatch;
+    const acpi_ioapic = acpi.ioApicEntry(0) orelse return error.IoApicEntryMismatch;
+    if (ioapic_state.mmio_addr != acpi_ioapic.mmio_addr or ioapic_state.gsi_base != acpi_ioapic.gsi_base) {
+        return error.IoApicEntryMismatch;
+    }
 
     var acpi_render_buffer: [1024]u8 = undefined;
     var acpi_fba = std.heap.FixedBufferAllocator.init(&acpi_render_buffer);
@@ -17362,6 +17390,19 @@ fn runI386PlatformProbe() I386PlatformProbeError!void {
         !std.mem.containsAtLeast(u8, cpu_topology_render, 1, "cpu[0].enabled=1"))
     {
         return error.CpuTopologyRenderMismatch;
+    }
+
+    var ioapic_render_buffer: [1024]u8 = undefined;
+    var ioapic_fba = std.heap.FixedBufferAllocator.init(&ioapic_render_buffer);
+    const ioapic_render = virtual_fs.readFileAlloc(ioapic_fba.allocator(), "/sys/cpu/ioapic", ioapic_render_buffer.len) catch {
+        return error.IoApicRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, ioapic_render, 1, "present=1") or
+        !std.mem.containsAtLeast(u8, ioapic_render, 1, "enabled=1") or
+        !std.mem.containsAtLeast(u8, ioapic_render, 1, "redirection_entry_count=") or
+        !std.mem.containsAtLeast(u8, ioapic_render, 1, "mmio_addr="))
+    {
+        return error.IoApicRenderMismatch;
     }
 
     oc_scheduler_reset();
@@ -18401,15 +18442,20 @@ fn i386PlatformProbeFailureCode(err: I386PlatformProbeError) u8 {
         error.CpuTopologySmpMissing => 0xD9,
         error.CpuTopologyRenderMismatch => 0xDA,
         error.CpuTopologyEntryMismatch => 0xDB,
-        error.InterruptWakeMismatch => 0xDC,
-        error.InterruptVectorMismatch => 0xDD,
-        error.InterruptCountMismatch => 0xDE,
-        error.InterruptHistoryMismatch => 0xDF,
-        error.TimerWakeMismatch => 0xE0,
-        error.TimerDispatchMismatch => 0xE1,
-        error.TimerPendingMismatch => 0xE2,
-        error.TimerLastInterruptMismatch => 0xE3,
-        error.InterruptMaskIgnoredMismatch => 0xE4,
+        error.IoApicProbeFailed => 0xDC,
+        error.IoApicNotPresent => 0xDD,
+        error.IoApicDisabled => 0xDE,
+        error.IoApicRenderMismatch => 0xDF,
+        error.IoApicEntryMismatch => 0xE0,
+        error.InterruptWakeMismatch => 0xE1,
+        error.InterruptVectorMismatch => 0xE2,
+        error.InterruptCountMismatch => 0xE3,
+        error.InterruptHistoryMismatch => 0xE4,
+        error.TimerWakeMismatch => 0xE5,
+        error.TimerDispatchMismatch => 0xE6,
+        error.TimerPendingMismatch => 0xE7,
+        error.TimerLastInterruptMismatch => 0xE8,
+        error.InterruptMaskIgnoredMismatch => 0xE9,
     };
 }
 
@@ -19938,6 +19984,7 @@ fn resetBaremetalRuntimeForTest() void {
     oc_wake_queue_clear();
     acpi.resetForTest();
     i386_ap_startup.resetForTest();
+    ioapic.resetForTest();
     lapic.resetForTest();
     display_output.resetForTest();
     framebuffer_console.resetForTest();

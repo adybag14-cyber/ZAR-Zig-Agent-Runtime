@@ -27,6 +27,19 @@ $acpiSciInterruptOffset = 20
 $acpiPmTimerBlockOffset = 24
 $acpiFlagsOffset = 28
 $acpiRsdpAddrOffset = 32
+$ioApicMagicOffset = 0
+$ioApicApiVersionOffset = 4
+$ioApicPresentOffset = 6
+$ioApicAcpiPresentOffset = 7
+$ioApicEnabledOffset = 8
+$ioApicCountOffset = 12
+$ioApicSelectedIndexOffset = 14
+$ioApicRedirectionEntryCountOffset = 16
+$ioApicIdOffset = 20
+$ioApicVersionOffset = 24
+$ioApicArbitrationIdOffset = 28
+$ioApicGsiBaseOffset = 32
+$ioApicMmioAddrOffset = 40
 $timerEnabledOffset = 0
 $timerPendingWakeCountOffset = 2
 $timerDispatchCountOffset = 8
@@ -163,6 +176,7 @@ $qemuExitAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s
 $acpiStateAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal\.acpi\.state$' -SymbolName "baremetal.acpi.state"
 $timerStateAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal_main\.timer_state$' -SymbolName "baremetal_main.timer_state"
 $interruptStateAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal\.x86_bootstrap\.interrupt_state$' -SymbolName "baremetal.x86_bootstrap.interrupt_state"
+$ioApicStateAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal\.ioapic\.state$' -SymbolName "baremetal.ioapic.state"
 $maskedInterruptIgnoredCountAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal\.x86_bootstrap\.masked_interrupt_ignored_count$' -SymbolName "baremetal.x86_bootstrap.masked_interrupt_ignored_count"
 $lastMaskedInterruptVectorAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal\.x86_bootstrap\.last_masked_interrupt_vector$' -SymbolName "baremetal.x86_bootstrap.last_masked_interrupt_vector"
 $artifactForGdb = $artifact.Replace('\', '/')
@@ -196,6 +210,19 @@ commands
   printf "ACPI_PM_TIMER_BLOCK=%u\n", *(unsigned int*)(__ACPI_STATE_ADDR__ + __ACPI_PM_TIMER_BLOCK_OFFSET__)
   printf "ACPI_FLAGS=%u\n", *(unsigned int*)(__ACPI_STATE_ADDR__ + __ACPI_FLAGS_OFFSET__)
   printf "ACPI_RSDP_ADDR=%u\n", *(unsigned int*)(__ACPI_STATE_ADDR__ + __ACPI_RSDP_ADDR_OFFSET__)
+  printf "IOAPIC_MAGIC=%u\n", *(unsigned int*)(__IOAPIC_STATE_ADDR__ + __IOAPIC_MAGIC_OFFSET__)
+  printf "IOAPIC_API_VERSION=%u\n", *(unsigned short*)(__IOAPIC_STATE_ADDR__ + __IOAPIC_API_VERSION_OFFSET__)
+  printf "IOAPIC_PRESENT=%u\n", *(unsigned char*)(__IOAPIC_STATE_ADDR__ + __IOAPIC_PRESENT_OFFSET__)
+  printf "IOAPIC_ACPI_PRESENT=%u\n", *(unsigned char*)(__IOAPIC_STATE_ADDR__ + __IOAPIC_ACPI_PRESENT_OFFSET__)
+  printf "IOAPIC_ENABLED=%u\n", *(unsigned char*)(__IOAPIC_STATE_ADDR__ + __IOAPIC_ENABLED_OFFSET__)
+  printf "IOAPIC_COUNT=%u\n", *(unsigned short*)(__IOAPIC_STATE_ADDR__ + __IOAPIC_COUNT_OFFSET__)
+  printf "IOAPIC_SELECTED_INDEX=%u\n", *(unsigned short*)(__IOAPIC_STATE_ADDR__ + __IOAPIC_SELECTED_INDEX_OFFSET__)
+  printf "IOAPIC_REDIRECTION_ENTRY_COUNT=%u\n", *(unsigned short*)(__IOAPIC_STATE_ADDR__ + __IOAPIC_REDIRECTION_ENTRY_COUNT_OFFSET__)
+  printf "IOAPIC_ID=%u\n", *(unsigned int*)(__IOAPIC_STATE_ADDR__ + __IOAPIC_ID_OFFSET__)
+  printf "IOAPIC_VERSION=%u\n", *(unsigned int*)(__IOAPIC_STATE_ADDR__ + __IOAPIC_VERSION_OFFSET__)
+  printf "IOAPIC_ARBITRATION_ID=%u\n", *(unsigned int*)(__IOAPIC_STATE_ADDR__ + __IOAPIC_ARBITRATION_ID_OFFSET__)
+  printf "IOAPIC_GSI_BASE=%u\n", *(unsigned int*)(__IOAPIC_STATE_ADDR__ + __IOAPIC_GSI_BASE_OFFSET__)
+  printf "IOAPIC_MMIO_ADDR=%u\n", *(unsigned long long*)(__IOAPIC_STATE_ADDR__ + __IOAPIC_MMIO_ADDR_OFFSET__)
   printf "TIMER_ENABLED=%u\n", *(unsigned char*)(__TIMER_STATE_ADDR__ + __TIMER_ENABLED_OFFSET__)
   printf "TIMER_PENDING_WAKE_COUNT=%u\n", *(unsigned short*)(__TIMER_STATE_ADDR__ + __TIMER_PENDING_WAKE_COUNT_OFFSET__)
   printf "TIMER_DISPATCH_COUNT=%u\n", *(unsigned long long*)(__TIMER_STATE_ADDR__ + __TIMER_DISPATCH_COUNT_OFFSET__)
@@ -218,6 +245,7 @@ $gdbScriptContent = $gdbTemplate `
     -replace '__GDBPORT__', $GdbPort `
     -replace '__QEMU_EXIT__', $qemuExitAddress `
     -replace '__ACPI_STATE_ADDR__', ('0x' + $acpiStateAddress) `
+    -replace '__IOAPIC_STATE_ADDR__', ('0x' + $ioApicStateAddress) `
     -replace '__TIMER_STATE_ADDR__', ('0x' + $timerStateAddress) `
     -replace '__INTERRUPT_STATE_ADDR__', ('0x' + $interruptStateAddress) `
     -replace '__INTERRUPT_MASK_IGNORED_COUNT_ADDR__', ('0x' + $maskedInterruptIgnoredCountAddress) `
@@ -233,6 +261,19 @@ $gdbScriptContent = $gdbTemplate `
     -replace '__ACPI_PM_TIMER_BLOCK_OFFSET__', $acpiPmTimerBlockOffset `
     -replace '__ACPI_FLAGS_OFFSET__', $acpiFlagsOffset `
     -replace '__ACPI_RSDP_ADDR_OFFSET__', $acpiRsdpAddrOffset `
+    -replace '__IOAPIC_MAGIC_OFFSET__', $ioApicMagicOffset `
+    -replace '__IOAPIC_API_VERSION_OFFSET__', $ioApicApiVersionOffset `
+    -replace '__IOAPIC_PRESENT_OFFSET__', $ioApicPresentOffset `
+    -replace '__IOAPIC_ACPI_PRESENT_OFFSET__', $ioApicAcpiPresentOffset `
+    -replace '__IOAPIC_ENABLED_OFFSET__', $ioApicEnabledOffset `
+    -replace '__IOAPIC_COUNT_OFFSET__', $ioApicCountOffset `
+    -replace '__IOAPIC_SELECTED_INDEX_OFFSET__', $ioApicSelectedIndexOffset `
+    -replace '__IOAPIC_REDIRECTION_ENTRY_COUNT_OFFSET__', $ioApicRedirectionEntryCountOffset `
+    -replace '__IOAPIC_ID_OFFSET__', $ioApicIdOffset `
+    -replace '__IOAPIC_VERSION_OFFSET__', $ioApicVersionOffset `
+    -replace '__IOAPIC_ARBITRATION_ID_OFFSET__', $ioApicArbitrationIdOffset `
+    -replace '__IOAPIC_GSI_BASE_OFFSET__', $ioApicGsiBaseOffset `
+    -replace '__IOAPIC_MMIO_ADDR_OFFSET__', $ioApicMmioAddrOffset `
     -replace '__TIMER_ENABLED_OFFSET__', $timerEnabledOffset `
     -replace '__TIMER_PENDING_WAKE_COUNT_OFFSET__', $timerPendingWakeCountOffset `
     -replace '__TIMER_DISPATCH_COUNT_OFFSET__', $timerDispatchCountOffset `
@@ -300,6 +341,19 @@ $acpiSciInterruptValue = Extract-IntValue -Text $out -Name 'ACPI_SCI_INTERRUPT'
 $acpiPmTimerBlockValue = Extract-IntValue -Text $out -Name 'ACPI_PM_TIMER_BLOCK'
 $acpiFlagsValue = Extract-IntValue -Text $out -Name 'ACPI_FLAGS'
 $acpiRsdpAddrValue = Extract-IntValue -Text $out -Name 'ACPI_RSDP_ADDR'
+$ioApicMagicValue = Extract-IntValue -Text $out -Name 'IOAPIC_MAGIC'
+$ioApicApiVersionValue = Extract-IntValue -Text $out -Name 'IOAPIC_API_VERSION'
+$ioApicPresentValue = Extract-IntValue -Text $out -Name 'IOAPIC_PRESENT'
+$ioApicAcpiPresentValue = Extract-IntValue -Text $out -Name 'IOAPIC_ACPI_PRESENT'
+$ioApicEnabledValue = Extract-IntValue -Text $out -Name 'IOAPIC_ENABLED'
+$ioApicCountValue = Extract-IntValue -Text $out -Name 'IOAPIC_COUNT'
+$ioApicSelectedIndexValue = Extract-IntValue -Text $out -Name 'IOAPIC_SELECTED_INDEX'
+$ioApicRedirectionEntryCountValue = Extract-IntValue -Text $out -Name 'IOAPIC_REDIRECTION_ENTRY_COUNT'
+$ioApicIdValue = Extract-IntValue -Text $out -Name 'IOAPIC_ID'
+$ioApicVersionValue = Extract-IntValue -Text $out -Name 'IOAPIC_VERSION'
+$ioApicArbitrationIdValue = Extract-IntValue -Text $out -Name 'IOAPIC_ARBITRATION_ID'
+$ioApicGsiBaseValue = Extract-IntValue -Text $out -Name 'IOAPIC_GSI_BASE'
+$ioApicMmioAddrValue = Extract-IntValue -Text $out -Name 'IOAPIC_MMIO_ADDR'
 $timerEnabledValue = Extract-IntValue -Text $out -Name 'TIMER_ENABLED'
 $timerPendingWakeCountValue = Extract-IntValue -Text $out -Name 'TIMER_PENDING_WAKE_COUNT'
 $timerDispatchCountValue = Extract-IntValue -Text $out -Name 'TIMER_DISPATCH_COUNT'
@@ -328,6 +382,10 @@ Write-Output "BAREMETAL_I386_PLATFORM_PROBE_ACPI_TABLE_COUNT=$acpiTableCountValu
 Write-Output "BAREMETAL_I386_PLATFORM_PROBE_ACPI_LAPIC_COUNT=$acpiLapicCountValue"
 Write-Output "BAREMETAL_I386_PLATFORM_PROBE_ACPI_IOAPIC_COUNT=$acpiIoApicCountValue"
 Write-Output "BAREMETAL_I386_PLATFORM_PROBE_ACPI_SCI_INTERRUPT=$acpiSciInterruptValue"
+Write-Output "BAREMETAL_I386_PLATFORM_PROBE_IOAPIC_PRESENT=$ioApicPresentValue"
+Write-Output "BAREMETAL_I386_PLATFORM_PROBE_IOAPIC_COUNT=$ioApicCountValue"
+Write-Output "BAREMETAL_I386_PLATFORM_PROBE_IOAPIC_REDIRECTION_ENTRY_COUNT=$ioApicRedirectionEntryCountValue"
+Write-Output "BAREMETAL_I386_PLATFORM_PROBE_IOAPIC_MMIO_ADDR=$ioApicMmioAddrValue"
 Write-Output "BAREMETAL_I386_PLATFORM_PROBE_TIMER_DISPATCH_COUNT=$timerDispatchCountValue"
 Write-Output "BAREMETAL_I386_PLATFORM_PROBE_TIMER_PENDING_WAKE_COUNT=$timerPendingWakeCountValue"
 Write-Output "BAREMETAL_I386_PLATFORM_PROBE_INTERRUPT_MASK_IGNORED_COUNT=$interruptMaskIgnoredCountValue"
@@ -345,6 +403,19 @@ $pass = (
     $acpiPmTimerBlockValue -gt 0 -and
     $acpiFlagsValue -ne 0 -and
     $acpiRsdpAddrValue -gt 0 -and
+    $ioApicMagicValue -eq 0x4f434950 -and
+    $ioApicApiVersionValue -eq $apiVersion -and
+    $ioApicPresentValue -eq 1 -and
+    $ioApicAcpiPresentValue -eq 1 -and
+    $ioApicEnabledValue -eq 1 -and
+    $ioApicCountValue -ge 1 -and
+    $ioApicSelectedIndexValue -eq 0 -and
+    $ioApicRedirectionEntryCountValue -gt 0 -and
+    $ioApicIdValue -ge 0 -and
+    $ioApicVersionValue -gt 0 -and
+    $ioApicArbitrationIdValue -ge 0 -and
+    $ioApicGsiBaseValue -ge 0 -and
+    $ioApicMmioAddrValue -gt 0 -and
     $timerEnabledValue -eq 1 -and
     $timerPendingWakeCountValue -eq 1 -and
     $timerDispatchCountValue -eq 0 -and

@@ -17,6 +17,7 @@ pub const mouse_magic: u32 = 0x4f434d53; // "OCMS"
 pub const acpi_magic: u32 = 0x4f434150; // "OCAP"
 pub const cpu_magic: u32 = 0x4f434350; // "OCCP"
 pub const lapic_magic: u32 = 0x4f434c50; // "OCLP"
+pub const ioapic_magic: u32 = 0x4f434950; // "OCIP"
 pub const ap_startup_magic: u32 = 0x4f434153; // "OCAS"
 
 pub const api_version: u16 = 2;
@@ -460,6 +461,25 @@ pub const BaremetalLapicState = extern struct {
     error_lvt: u32,
     apic_base_msr: u64,
     local_apic_addr: u64,
+};
+
+pub const BaremetalIoApicState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    acpi_present: u8,
+    enabled: u8,
+    reserved0: [3]u8,
+    ioapic_count: u16,
+    selected_index: u16,
+    redirection_entry_count: u16,
+    reserved1: u16,
+    ioapic_id: u32,
+    version: u32,
+    arbitration_id: u32,
+    gsi_base: u32,
+    reserved2: [4]u8,
+    mmio_addr: u64,
 };
 
 pub const BaremetalApStartupState = extern struct {

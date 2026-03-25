@@ -19,6 +19,7 @@ ZAR has already absorbed or independently reached a meaningful subset of the hig
 - additive `i386` build and smoke bootstrap lane
 - bounded ACPI export/render plus live i386 timer/interrupt proof
 - bounded CPU-topology and SMP-readiness export derived from `MADT`
+- bounded IOAPIC state export plus live MMIO proof on the i386 platform lane
 - bounded LAPIC state export plus live i386 `-smp 2` proof
 - bounded AP-startup control diagnostics with exported INIT / deassert / SIPI / SIPI telemetry
 
