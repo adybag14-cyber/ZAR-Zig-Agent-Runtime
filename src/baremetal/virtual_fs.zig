@@ -3,6 +3,10 @@ const builtin = @import("builtin");
 const std = @import("std");
 const abi = @import("abi.zig");
 const acpi = @import("acpi.zig");
+const i386_ap_startup = @import("i386_ap_startup.zig");
+const ioapic = @import("ioapic.zig");
+const lapic = @import("lapic.zig");
+const pic = @import("pic.zig");
 const display_output = @import("display_output.zig");
 const runtime_bridge = @import("runtime_bridge.zig");
 const storage_backend = @import("storage_backend.zig");
@@ -45,6 +49,14 @@ const dev_tty_sessions_path = "/dev/tty/sessions";
 const dev_display_path = "/dev/display";
 const dev_display_state_path = "/dev/display/state";
 const dev_display_outputs_path = "/dev/display/outputs";
+const dev_cpu_path = "/dev/cpu";
+const dev_cpu_state_path = "/dev/cpu/state";
+const dev_cpu_topology_path = "/dev/cpu/topology";
+const dev_cpu_lapic_path = "/dev/cpu/lapic";
+const dev_cpu_ioapic_path = "/dev/cpu/ioapic";
+const dev_cpu_pic_path = "/dev/cpu/pic";
+const dev_cpu_smp_path = "/dev/cpu/smp";
+const dev_cpu_ap_startup_path = "/dev/cpu/ap-startup";
 const dev_net_path = "/dev/net";
 const dev_net_state_path = "/dev/net/state";
 const dev_net_route_path = "/dev/net/route";
@@ -52,6 +64,14 @@ const sys_kernel_version_path = "/sys/kernel/version";
 const sys_kernel_machine_path = "/sys/kernel/machine";
 const sys_acpi_path = "/sys/acpi";
 const sys_acpi_state_path = "/sys/acpi/state";
+const sys_cpu_path = "/sys/cpu";
+const sys_cpu_state_path = "/sys/cpu/state";
+const sys_cpu_topology_path = "/sys/cpu/topology";
+const sys_cpu_lapic_path = "/sys/cpu/lapic";
+const sys_cpu_ioapic_path = "/sys/cpu/ioapic";
+const sys_cpu_pic_path = "/sys/cpu/pic";
+const sys_cpu_smp_path = "/sys/cpu/smp";
+const sys_cpu_ap_startup_path = "/sys/cpu/ap-startup";
 const sys_storage_state_path = "/sys/storage/state";
 const sys_storage_backends_path = "/sys/storage/backends";
 const sys_storage_filesystems_path = "/sys/storage/filesystems";
@@ -122,6 +142,7 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
         try appendDirectoryLine(allocator, &out, "storage", max_bytes);
         try appendDirectoryLine(allocator, &out, "tty", max_bytes);
         try appendDirectoryLine(allocator, &out, "display", max_bytes);
+        try appendDirectoryLine(allocator, &out, "cpu", max_bytes);
         try appendDirectoryLine(allocator, &out, "net", max_bytes);
         try appendFileLine(allocator, &out, "null", dev_null_path, max_bytes);
         return out.toOwnedSlice(allocator);
@@ -157,6 +178,16 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
         try appendDirectoryLine(allocator, &out, "outputs", max_bytes);
         return out.toOwnedSlice(allocator);
     }
+    if (std.mem.eql(u8, path, dev_cpu_path)) {
+        try appendFileLine(allocator, &out, "state", dev_cpu_state_path, max_bytes);
+        try appendFileLine(allocator, &out, "topology", dev_cpu_topology_path, max_bytes);
+        try appendFileLine(allocator, &out, "lapic", dev_cpu_lapic_path, max_bytes);
+        try appendFileLine(allocator, &out, "ioapic", dev_cpu_ioapic_path, max_bytes);
+        try appendFileLine(allocator, &out, "pic", dev_cpu_pic_path, max_bytes);
+        try appendFileLine(allocator, &out, "smp", dev_cpu_smp_path, max_bytes);
+        try appendFileLine(allocator, &out, "ap-startup", dev_cpu_ap_startup_path, max_bytes);
+        return out.toOwnedSlice(allocator);
+    }
     if (std.mem.eql(u8, path, dev_display_outputs_path)) {
         var dev_index: u16 = 0;
         while (dev_index < display_output.outputCount()) : (dev_index += 1) {
@@ -181,6 +212,7 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     if (std.mem.eql(u8, path, "/sys")) {
         try appendDirectoryLine(allocator, &out, "kernel", max_bytes);
         try appendDirectoryLine(allocator, &out, "acpi", max_bytes);
+        try appendDirectoryLine(allocator, &out, "cpu", max_bytes);
         try appendDirectoryLine(allocator, &out, "storage", max_bytes);
         try appendDirectoryLine(allocator, &out, "tty", max_bytes);
         try appendDirectoryLine(allocator, &out, "display", max_bytes);
@@ -194,6 +226,16 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     }
     if (std.mem.eql(u8, path, sys_acpi_path)) {
         try appendFileLine(allocator, &out, "state", sys_acpi_state_path, max_bytes);
+        return out.toOwnedSlice(allocator);
+    }
+    if (std.mem.eql(u8, path, sys_cpu_path)) {
+        try appendFileLine(allocator, &out, "state", sys_cpu_state_path, max_bytes);
+        try appendFileLine(allocator, &out, "topology", sys_cpu_topology_path, max_bytes);
+        try appendFileLine(allocator, &out, "lapic", sys_cpu_lapic_path, max_bytes);
+        try appendFileLine(allocator, &out, "ioapic", sys_cpu_ioapic_path, max_bytes);
+        try appendFileLine(allocator, &out, "pic", sys_cpu_pic_path, max_bytes);
+        try appendFileLine(allocator, &out, "smp", sys_cpu_smp_path, max_bytes);
+        try appendFileLine(allocator, &out, "ap-startup", sys_cpu_ap_startup_path, max_bytes);
         return out.toOwnedSlice(allocator);
     }
     if (std.mem.eql(u8, path, "/sys/storage")) {
@@ -286,11 +328,13 @@ fn isDirectoryPath(path: []const u8) bool {
     if (std.mem.eql(u8, path, dev_tty_path)) return true;
     if (std.mem.eql(u8, path, dev_tty_sessions_path)) return true;
     if (std.mem.eql(u8, path, dev_display_path)) return true;
+    if (std.mem.eql(u8, path, dev_cpu_path)) return true;
     if (std.mem.eql(u8, path, dev_display_outputs_path)) return true;
     if (std.mem.eql(u8, path, dev_net_path)) return true;
     if (std.mem.eql(u8, path, "/sys")) return true;
     if (std.mem.eql(u8, path, "/sys/kernel")) return true;
     if (std.mem.eql(u8, path, sys_acpi_path)) return true;
+    if (std.mem.eql(u8, path, sys_cpu_path)) return true;
     if (std.mem.eql(u8, path, "/sys/storage")) return true;
     if (std.mem.eql(u8, path, sys_tty_path)) return true;
     if (std.mem.eql(u8, path, sys_tty_sessions_path)) return true;
@@ -314,11 +358,25 @@ fn isFilePath(path: []const u8) bool {
     if (std.mem.eql(u8, path, dev_storage_registry_path)) return true;
     if (std.mem.eql(u8, path, dev_tty_state_path)) return true;
     if (std.mem.eql(u8, path, dev_display_state_path)) return true;
+    if (std.mem.eql(u8, path, dev_cpu_state_path)) return true;
+    if (std.mem.eql(u8, path, dev_cpu_topology_path)) return true;
+    if (std.mem.eql(u8, path, dev_cpu_lapic_path)) return true;
+    if (std.mem.eql(u8, path, dev_cpu_ioapic_path)) return true;
+    if (std.mem.eql(u8, path, dev_cpu_pic_path)) return true;
+    if (std.mem.eql(u8, path, dev_cpu_smp_path)) return true;
+    if (std.mem.eql(u8, path, dev_cpu_ap_startup_path)) return true;
     if (std.mem.eql(u8, path, dev_net_state_path)) return true;
     if (std.mem.eql(u8, path, dev_net_route_path)) return true;
     if (std.mem.eql(u8, path, sys_kernel_version_path)) return true;
     if (std.mem.eql(u8, path, sys_kernel_machine_path)) return true;
     if (std.mem.eql(u8, path, sys_acpi_state_path)) return true;
+    if (std.mem.eql(u8, path, sys_cpu_state_path)) return true;
+    if (std.mem.eql(u8, path, sys_cpu_topology_path)) return true;
+    if (std.mem.eql(u8, path, sys_cpu_lapic_path)) return true;
+    if (std.mem.eql(u8, path, sys_cpu_ioapic_path)) return true;
+    if (std.mem.eql(u8, path, sys_cpu_pic_path)) return true;
+    if (std.mem.eql(u8, path, sys_cpu_smp_path)) return true;
+    if (std.mem.eql(u8, path, sys_cpu_ap_startup_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_state_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_backends_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_filesystems_path)) return true;
@@ -370,6 +428,27 @@ fn renderFileAlloc(allocator: std.mem.Allocator, path: []const u8) Error![]u8 {
     }
     if (std.mem.eql(u8, path, dev_display_state_path)) {
         return renderDisplayStateAlloc(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_cpu_state_path) or std.mem.eql(u8, path, sys_cpu_state_path)) {
+        return acpi.renderCpuStateAlloc(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_cpu_topology_path) or std.mem.eql(u8, path, sys_cpu_topology_path)) {
+        return acpi.renderCpuTopologyAlloc(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_cpu_lapic_path) or std.mem.eql(u8, path, sys_cpu_lapic_path)) {
+        return lapic.renderAlloc(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_cpu_ioapic_path) or std.mem.eql(u8, path, sys_cpu_ioapic_path)) {
+        return ioapic.renderAlloc(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_cpu_pic_path) or std.mem.eql(u8, path, sys_cpu_pic_path)) {
+        return pic.renderAlloc(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_cpu_smp_path) or std.mem.eql(u8, path, sys_cpu_smp_path)) {
+        return lapic.renderSmpAlloc(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_cpu_ap_startup_path) or std.mem.eql(u8, path, sys_cpu_ap_startup_path)) {
+        return i386_ap_startup.renderAlloc(allocator);
     }
     if (std.mem.eql(u8, path, dev_net_state_path)) {
         return renderNetStateAlloc(allocator);

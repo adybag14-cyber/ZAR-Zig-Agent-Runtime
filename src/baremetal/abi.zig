@@ -15,6 +15,11 @@ pub const filesystem_magic: u32 = 0x4f434653; // "OCFS"
 pub const keyboard_magic: u32 = 0x4f434b42; // "OCKB"
 pub const mouse_magic: u32 = 0x4f434d53; // "OCMS"
 pub const acpi_magic: u32 = 0x4f434150; // "OCAP"
+pub const cpu_magic: u32 = 0x4f434350; // "OCCP"
+pub const lapic_magic: u32 = 0x4f434c50; // "OCLP"
+pub const ioapic_magic: u32 = 0x4f434950; // "OCIP"
+pub const pic_magic: u32 = 0x4f435043; // "OCPC"
+pub const ap_startup_magic: u32 = 0x4f434153; // "OCAS"
 
 pub const api_version: u16 = 2;
 
@@ -410,6 +415,129 @@ pub const BaremetalAcpiState = extern struct {
     xsdt_addr: u64,
     fadt_addr: u64,
     madt_addr: u64,
+};
+
+pub const BaremetalCpuTopologyState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    supports_smp: u8,
+    cpu_count: u16,
+    exported_count: u16,
+    enabled_count: u16,
+    ioapic_count: u16,
+    lapic_addr_override_count: u16,
+    reserved0: u16,
+    madt_flags: u32,
+    local_apic_addr: u64,
+    madt_addr: u64,
+};
+
+pub const BaremetalCpuTopologyEntry = extern struct {
+    processor_uid: u8,
+    apic_id: u8,
+    enabled: u8,
+    reserved0: u8,
+    flags: u32,
+};
+
+pub const BaremetalLapicState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    apic_supported: u8,
+    enabled: u8,
+    x2apic_supported: u8,
+    bootstrap_processor: u8,
+    topology_present: u8,
+    supports_smp: u8,
+    reserved0: u8,
+    requested_cpu_count: u16,
+    logical_processor_count: u16,
+    current_apic_id: u32,
+    cpuid_apic_id: u32,
+    version: u32,
+    spurious_vector: u32,
+    timer_lvt: u32,
+    error_lvt: u32,
+    apic_base_msr: u64,
+    local_apic_addr: u64,
+};
+
+pub const BaremetalIoApicState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    acpi_present: u8,
+    enabled: u8,
+    reserved0: [3]u8,
+    ioapic_count: u16,
+    selected_index: u16,
+    redirection_entry_count: u16,
+    reserved1: u16,
+    ioapic_id: u32,
+    version: u32,
+    arbitration_id: u32,
+    gsi_base: u32,
+    reserved2: [4]u8,
+    mmio_addr: u64,
+};
+
+pub const BaremetalPicState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    remapped: u8,
+    slave_present: u8,
+    auto_eoi: u8,
+    master_offset: u8,
+    slave_offset: u8,
+    master_mask: u8,
+    slave_mask: u8,
+    master_irr: u8,
+    slave_irr: u8,
+    master_isr: u8,
+    slave_isr: u8,
+    control_mask_profile: u8,
+    last_masked_vector: u8,
+    reserved0: [2]u8,
+    hardware_masked_irq_count: u16,
+    reserved1: u16,
+    control_masked_count: u32,
+    control_ignored_count: u64,
+};
+
+pub const BaremetalApStartupState = extern struct {
+    magic: u32,
+    api_version: u16,
+    supported: u8,
+    attempted: u8,
+    started: u8,
+    halted: u8,
+    last_stage: u8,
+    reserved0: [2]u8,
+    startup_vector: u8,
+    reserved1: [3]u8,
+    trampoline_phys: u32,
+    bsp_apic_id: u32,
+    target_apic_id: u32,
+    reported_apic_id: u32,
+    startup_count: u32,
+    lapic_addr: u32,
+    requested_cpu_count: u16,
+    logical_processor_count: u16,
+    command_seq: u32,
+    response_seq: u32,
+    heartbeat_count: u32,
+    ping_count: u32,
+    warm_reset_programmed: u8,
+    reserved2: [3]u8,
+    warm_reset_vector_segment: u16,
+    warm_reset_vector_offset: u16,
+    init_ipi_count: u32,
+    startup_ipi_count: u32,
+    last_delivery_status: u32,
+    last_accept_status: u32,
 };
 
 pub const BaremetalDisplayOutputEntry = extern struct {

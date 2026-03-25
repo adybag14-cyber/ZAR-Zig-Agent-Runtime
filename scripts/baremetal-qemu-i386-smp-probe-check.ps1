@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 param(
     [switch] $SkipBuild,
-    [int] $TimeoutSeconds = 20
+    [int] $TimeoutSeconds = 60
 )
 
 $ErrorActionPreference = "Stop"
@@ -32,10 +32,7 @@ function Resolve-QemuExecutable {
     $candidates = @(
         "qemu-system-i386",
         "qemu-system-i386.exe",
-        "qemu-system-x86_64",
-        "qemu-system-x86_64.exe",
-        "C:\Program Files\qemu\qemu-system-i386.exe",
-        "C:\Program Files\qemu\qemu-system-x86_64.exe"
+        "C:\Program Files\qemu\qemu-system-i386.exe"
     )
 
     foreach ($name in $candidates) {
@@ -62,16 +59,17 @@ $qemu = Resolve-QemuExecutable
 
 if ($null -eq $qemu) {
     Write-Output "BAREMETAL_I386_QEMU_AVAILABLE=False"
-    Write-Output "BAREMETAL_I386_QEMU_SMOKE=skipped"
+    Write-Output "BAREMETAL_I386_QEMU_SMP_PROBE=skipped"
     return
 }
 
-$expectedExitCode = 85
+$expectedProbeCode = 0x7D
+$expectedExitCode = ($expectedProbeCode * 2) + 1
 
 if (-not $SkipBuild) {
-    & $zig build baremetal-i386 -Doptimize=ReleaseFast -Dbaremetal-qemu-smoke=true --prefix $buildPrefix --summary all
+    & $zig build baremetal-i386 -Doptimize=ReleaseFast -Dbaremetal-i386-smp-probe=true --prefix $buildPrefix --summary all
     if ($LASTEXITCODE -ne 0) {
-        throw "zig build baremetal-i386 -Dbaremetal-qemu-smoke=true failed with exit code $LASTEXITCODE"
+        throw "zig build baremetal-i386 -Dbaremetal-i386-smp-probe=true failed with exit code $LASTEXITCODE"
     }
 }
 
@@ -90,22 +88,25 @@ foreach ($candidate in $artifactCandidates) {
     }
 }
 if ($null -eq $artifact) {
-    throw "i386 bare-metal artifact not found after build."
+    throw "i386 bare-metal SMP artifact not found after build."
 }
 
-$stdoutPath = Join-Path $repo "release\qemu-i386-smoke-stdout.log"
-$stderrPath = Join-Path $repo "release\qemu-i386-smoke-stderr.log"
+$stdoutPath = Join-Path $repo "release\qemu-i386-smp-probe-stdout.log"
+$stderrPath = Join-Path $repo "release\qemu-i386-smp-probe-stderr.log"
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $stdoutPath) | Out-Null
 if (Test-Path $stdoutPath) { Remove-Item -Force $stdoutPath }
 if (Test-Path $stderrPath) { Remove-Item -Force $stderrPath }
 
 $qemuArgs = @(
+    "-M", "q35,accel=tcg",
+    "-m", "128M",
+    "-smp", "2",
     "-kernel", $artifact,
-    "-nographic",
-    "-no-reboot",
-    "-no-shutdown",
+    "-display", "none",
     "-serial", "none",
     "-monitor", "none",
+    "-no-reboot",
+    "-no-shutdown",
     "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"
 )
 
@@ -130,7 +131,7 @@ $stderrTask = $proc.StandardError.ReadToEndAsync()
 
 if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
     try { $proc.Kill($true) } catch {}
-    throw "QEMU i386 bare-metal smoke timed out after $TimeoutSeconds seconds."
+    throw "QEMU i386 SMP probe timed out after $TimeoutSeconds seconds."
 }
 
 $proc.WaitForExit()
@@ -144,7 +145,7 @@ if ($exitCode -ne $expectedExitCode) {
     if (Test-Path $stderrPath) {
         $stderrTail = (Get-Content -Path $stderrPath -Tail 40 -ErrorAction SilentlyContinue) -join "`n"
     }
-    throw "QEMU i386 bare-metal smoke failed: exit=$exitCode expected=$expectedExitCode`n$stderrTail"
+    throw "QEMU i386 SMP probe failed: exit=$exitCode expected=$expectedExitCode`n$stderrTail"
 }
 
 Write-Output "BAREMETAL_I386_QEMU_AVAILABLE=True"
@@ -152,4 +153,5 @@ Write-Output "BAREMETAL_I386_QEMU_BINARY=$qemu"
 Write-Output "BAREMETAL_I386_QEMU_ARTIFACT=$artifact"
 Write-Output "BAREMETAL_I386_QEMU_EXPECTED_EXIT_CODE=$expectedExitCode"
 Write-Output "BAREMETAL_I386_QEMU_EXIT_CODE=$exitCode"
-Write-Output "BAREMETAL_I386_QEMU_SMOKE=pass"
+Write-Output ("BAREMETAL_I386_QEMU_SMP_PROBE_CODE=0x{0:X2}" -f $expectedProbeCode)
+Write-Output "BAREMETAL_I386_QEMU_SMP_PROBE=pass"

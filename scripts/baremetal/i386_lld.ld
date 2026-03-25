@@ -2,11 +2,23 @@ ENTRY(multiboot32_start)
 PHDRS
 {
   note PT_NOTE FLAGS(4);
+  apboot PT_LOAD FLAGS(5);
+  apdata PT_LOAD FLAGS(6);
   text PT_LOAD FLAGS(5);
   data PT_LOAD FLAGS(6);
 }
 SECTIONS
 {
+  . = 0x00080000;
+
+  .ap_trampoline ALIGN(4096) : {
+    KEEP(*(.ap_trampoline))
+  } :apboot
+
+  .ap_trampoline_bss ALIGN(16) (NOLOAD) : {
+    KEEP(*(.ap_trampoline_bss))
+  } :apdata
+
   . = 0x00100000;
 
   .note.Xen ALIGN(4) : {

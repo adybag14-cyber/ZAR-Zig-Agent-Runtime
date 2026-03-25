@@ -7,6 +7,10 @@ const pci = @import("baremetal/pci.zig");
 const disk_installer = @import("baremetal/disk_installer.zig");
 const x86_bootstrap = @import("baremetal/x86_bootstrap.zig");
 const acpi = @import("baremetal/acpi.zig");
+const i386_ap_startup = @import("baremetal/i386_ap_startup.zig");
+const ioapic = @import("baremetal/ioapic.zig");
+const lapic = @import("baremetal/lapic.zig");
+const pic = @import("baremetal/pic.zig");
 const display_output = @import("baremetal/display_output.zig");
 const display_profile_store = @import("baremetal/display_profile_store.zig");
 const virtio_gpu = @import("baremetal/virtio_gpu.zig");
@@ -52,6 +56,12 @@ const BaremetalConsoleState = abi.BaremetalConsoleState;
 const BaremetalFramebufferState = abi.BaremetalFramebufferState;
 const BaremetalDisplayOutputState = abi.BaremetalDisplayOutputState;
 const BaremetalAcpiState = abi.BaremetalAcpiState;
+const BaremetalCpuTopologyState = abi.BaremetalCpuTopologyState;
+const BaremetalCpuTopologyEntry = abi.BaremetalCpuTopologyEntry;
+const BaremetalApStartupState = abi.BaremetalApStartupState;
+const BaremetalLapicState = abi.BaremetalLapicState;
+const BaremetalIoApicState = abi.BaremetalIoApicState;
+const BaremetalPicState = abi.BaremetalPicState;
 const BaremetalEthernetState = abi.BaremetalEthernetState;
 const BaremetalStorageState = abi.BaremetalStorageState;
 const BaremetalStoragePartitionInfo = abi.BaremetalStoragePartitionInfo;
@@ -144,6 +154,9 @@ const qemu_virtio_block_ext2_mount_probe_ok_code: u8 = 0x5B;
 const qemu_virtio_block_fat32_mount_probe_ok_code: u8 = 0x5C;
 const qemu_virtio_block_mount_control_probe_ok_code: u8 = 0x5D;
 const qemu_i386_platform_probe_ok_code: u8 = 0x7C;
+const qemu_i386_smp_probe_ok_code: u8 = 0x7D;
+const qemu_i386_ap_startup_probe_ok_code: u8 = 0x7E;
+const qemu_i386_ap_execution_probe_ok_code: u8 = 0x7F;
 const build_options = if (builtin.is_test)
     struct {
         pub const qemu_smoke: bool = false;
@@ -194,6 +207,8 @@ const build_options = if (builtin.is_test)
         pub const virtio_block_fat32_mount_probe: bool = false;
         pub const virtio_block_mount_control_probe: bool = false;
         pub const i386_platform_probe: bool = false;
+        pub const i386_smp_probe: bool = false;
+        pub const i386_ap_startup_probe: bool = false;
     }
 else
     @import("build_options");
@@ -246,6 +261,8 @@ const virtio_block_ext2_mount_probe_enabled: bool = if (@hasDecl(build_options, 
 const virtio_block_fat32_mount_probe_enabled: bool = if (@hasDecl(build_options, "virtio_block_fat32_mount_probe")) build_options.virtio_block_fat32_mount_probe else false;
 const virtio_block_mount_control_probe_enabled: bool = if (@hasDecl(build_options, "virtio_block_mount_control_probe")) build_options.virtio_block_mount_control_probe else false;
 const i386_platform_probe_enabled: bool = if (@hasDecl(build_options, "i386_platform_probe")) build_options.i386_platform_probe else false;
+const i386_smp_probe_enabled: bool = if (@hasDecl(build_options, "i386_smp_probe")) build_options.i386_smp_probe else false;
+const i386_ap_startup_probe_enabled: bool = if (@hasDecl(build_options, "i386_ap_startup_probe")) build_options.i386_ap_startup_probe else false;
 
 const ata_probe_raw_lba: u32 = 300;
 const ata_probe_raw_block_count: u32 = 2;
@@ -461,6 +478,20 @@ const I386PlatformProbeError = error{
     AcpiIoApicMissing,
     AcpiSciInterruptMissing,
     AcpiRenderMismatch,
+    CpuTopologyMissing,
+    CpuTopologySmpMissing,
+    CpuTopologyRenderMismatch,
+    CpuTopologyEntryMismatch,
+    IoApicProbeFailed,
+    IoApicNotPresent,
+    IoApicDisabled,
+    IoApicRenderMismatch,
+    IoApicEntryMismatch,
+    PicProbeFailed,
+    PicNotPresent,
+    PicRemapMismatch,
+    PicRenderMismatch,
+    PicControlPlaneMismatch,
     InterruptWakeMismatch,
     InterruptVectorMismatch,
     InterruptCountMismatch,
@@ -470,6 +501,38 @@ const I386PlatformProbeError = error{
     TimerPendingMismatch,
     TimerLastInterruptMismatch,
     InterruptMaskIgnoredMismatch,
+};
+
+const I386SmpProbeError = error{
+    UnsupportedPlatform,
+    AcpiProbeFailed,
+    CpuTopologyMissing,
+    CpuTopologySmpMissing,
+    CpuTopologyEntryMismatch,
+    LapicProbeFailed,
+    LapicNotPresent,
+    LapicDisabled,
+    LapicLogicalProcessorMismatch,
+    LapicIdMismatch,
+    LapicBaseMismatch,
+    LapicVersionMismatch,
+    LapicRenderMismatch,
+    SmpRenderMismatch,
+};
+
+const I386ApStartupProbeError = error{
+    UnsupportedPlatform,
+    AcpiProbeFailed,
+    CpuTopologyMissing,
+    CpuTopologySmpMissing,
+    LapicProbeFailed,
+    LapicNotPresent,
+    LapicDisabled,
+    StartupFailed,
+    StartupTargetMismatch,
+    ExecutionFailed,
+    StartupRenderMismatch,
+    SmpRenderMismatch,
 };
 
 const Rtl8139ProbeError = error{
@@ -1834,6 +1897,34 @@ pub export fn oc_acpi_state_ptr() *const BaremetalAcpiState {
     return acpi.statePtr();
 }
 
+pub export fn oc_cpu_topology_state_ptr() *const BaremetalCpuTopologyState {
+    return acpi.cpuTopologyStatePtr();
+}
+
+pub export fn oc_cpu_topology_entry_count() u16 {
+    return acpi.cpuTopologyEntryCount();
+}
+
+pub export fn oc_cpu_topology_entry(index: u16) BaremetalCpuTopologyEntry {
+    return acpi.cpuTopologyEntry(index);
+}
+
+pub export fn oc_lapic_state_ptr() *const BaremetalLapicState {
+    return lapic.statePtr();
+}
+
+pub export fn oc_ioapic_state_ptr() *const BaremetalIoApicState {
+    return ioapic.statePtr();
+}
+
+pub export fn oc_pic_state_ptr() *const BaremetalPicState {
+    return pic.statePtr();
+}
+
+pub export fn oc_i386_ap_startup_state_ptr() *const BaremetalApStartupState {
+    return i386_ap_startup.statePtr();
+}
+
 pub export fn oc_display_output_state_ptr() *const BaremetalDisplayOutputState {
     return display_output.statePtr();
 }
@@ -2890,7 +2981,11 @@ fn baremetalStart() callconv(.c) noreturn {
     storage_backend.init();
     x86_bootstrap.init();
     _ = x86_bootstrap.oc_try_load_descriptor_tables();
+    pic.init();
     acpi.init();
+    i386_ap_startup.init();
+    ioapic.init();
+    lapic.init();
     if (ata_storage_probe_enabled) {
         runAtaStorageProbe() catch |err| qemuExit(ataStorageProbeFailureCode(err));
         qemuExit(qemu_ata_storage_probe_ok_code);
@@ -2930,6 +3025,14 @@ fn baremetalStart() callconv(.c) noreturn {
     if (i386_platform_probe_enabled) {
         runI386PlatformProbe() catch |err| qemuExit(i386PlatformProbeFailureCode(err));
         qemuExit(qemu_i386_platform_probe_ok_code);
+    }
+    if (i386_smp_probe_enabled) {
+        runI386SmpProbe() catch |err| qemuExit(i386SmpProbeFailureCode(err));
+        qemuExit(qemu_i386_smp_probe_ok_code);
+    }
+    if (i386_ap_startup_probe_enabled) {
+        const ap_execution_observed = runI386ApStartupProbe() catch |err| qemuExit(i386ApStartupProbeFailureCode(err));
+        qemuExit(if (ap_execution_observed) qemu_i386_ap_execution_probe_ok_code else qemu_i386_ap_startup_probe_ok_code);
     }
     if (virtio_net_probe_enabled) {
         runVirtioNetProbe() catch |err| qemuExit(virtioNetProbeFailureCode(err));
@@ -17229,6 +17332,14 @@ fn runI386PlatformProbe() I386PlatformProbeError!void {
     if (oc_acpi_state_ptr().present == 0) {
         acpi.probeSyntheticImage(true) catch return error.AcpiProbeFailed;
     }
+    pic.probe() catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+    };
+    ioapic.probe() catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.IoApicMissing => return error.IoApicProbeFailed,
+        error.MmioUnavailable => return error.IoApicProbeFailed,
+    };
 
     const acpi_state = oc_acpi_state_ptr().*;
     if (acpi_state.present != 1) return error.AcpiNotPresent;
@@ -17236,6 +17347,36 @@ fn runI386PlatformProbe() I386PlatformProbeError!void {
     if (acpi_state.lapic_count == 0) return error.AcpiLapicMissing;
     if (acpi_state.ioapic_count == 0) return error.AcpiIoApicMissing;
     if (acpi_state.sci_interrupt == 0) return error.AcpiSciInterruptMissing;
+
+    const cpu_state = oc_cpu_topology_state_ptr().*;
+    if (cpu_state.present != 1 or cpu_state.cpu_count == 0 or cpu_state.enabled_count == 0) return error.CpuTopologyMissing;
+    if (cpu_state.supports_smp != 1 or cpu_state.enabled_count < 2) return error.CpuTopologySmpMissing;
+    if (oc_cpu_topology_entry_count() < 2) return error.CpuTopologyEntryMismatch;
+
+    const cpu0 = oc_cpu_topology_entry(0);
+    const cpu1 = oc_cpu_topology_entry(1);
+    if (cpu0.enabled != 1 or cpu1.enabled != 1) return error.CpuTopologyEntryMismatch;
+    if (cpu0.apic_id == cpu1.apic_id) return error.CpuTopologyEntryMismatch;
+
+    const ioapic_state = oc_ioapic_state_ptr().*;
+    if (ioapic_state.present != 1 or ioapic_state.acpi_present != 1) return error.IoApicNotPresent;
+    if (ioapic_state.enabled != 1 or ioapic_state.mmio_addr == 0 or ioapic_state.redirection_entry_count == 0) {
+        return error.IoApicDisabled;
+    }
+    if (ioapic_state.ioapic_count != acpi_state.ioapic_count) return error.IoApicEntryMismatch;
+    const acpi_ioapic = acpi.ioApicEntry(0) orelse return error.IoApicEntryMismatch;
+    if (ioapic_state.mmio_addr != acpi_ioapic.mmio_addr or ioapic_state.gsi_base != acpi_ioapic.gsi_base) {
+        return error.IoApicEntryMismatch;
+    }
+
+    const pic_state = oc_pic_state_ptr().*;
+    if (pic_state.present != 1 or pic_state.slave_present != 1) return error.PicNotPresent;
+    if (pic_state.remapped != 1 or pic_state.master_offset != 0x20 or pic_state.slave_offset != 0x28) {
+        return error.PicRemapMismatch;
+    }
+    const preserved_master_mask = pic_state.master_mask;
+    const preserved_slave_mask = pic_state.slave_mask;
+    const preserved_hardware_masked_irq_count = pic_state.hardware_masked_irq_count;
 
     var acpi_render_buffer: [1024]u8 = undefined;
     var acpi_fba = std.heap.FixedBufferAllocator.init(&acpi_render_buffer);
@@ -17248,6 +17389,58 @@ fn runI386PlatformProbe() I386PlatformProbeError!void {
         !std.mem.containsAtLeast(u8, acpi_render, 1, "sci_interrupt="))
     {
         return error.AcpiRenderMismatch;
+    }
+
+    var cpu_state_render_buffer: [1024]u8 = undefined;
+    var cpu_state_fba = std.heap.FixedBufferAllocator.init(&cpu_state_render_buffer);
+    const cpu_state_render = virtual_fs.readFileAlloc(cpu_state_fba.allocator(), "/sys/cpu/state", cpu_state_render_buffer.len) catch {
+        return error.CpuTopologyRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, cpu_state_render, 1, "supports_smp=1") or
+        !std.mem.containsAtLeast(u8, cpu_state_render, 1, "cpu_count=") or
+        !std.mem.containsAtLeast(u8, cpu_state_render, 1, "enabled_count=") or
+        !std.mem.containsAtLeast(u8, cpu_state_render, 1, "local_apic_addr="))
+    {
+        return error.CpuTopologyRenderMismatch;
+    }
+
+    var cpu_topology_render_buffer: [1024]u8 = undefined;
+    var cpu_topology_fba = std.heap.FixedBufferAllocator.init(&cpu_topology_render_buffer);
+    const cpu_topology_render = virtual_fs.readFileAlloc(cpu_topology_fba.allocator(), "/sys/cpu/topology", cpu_topology_render_buffer.len) catch {
+        return error.CpuTopologyRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, cpu_topology_render, 1, "cpu[0].apic_id=") or
+        !std.mem.containsAtLeast(u8, cpu_topology_render, 1, "cpu[1].apic_id=") or
+        !std.mem.containsAtLeast(u8, cpu_topology_render, 1, "cpu[0].enabled=1"))
+    {
+        return error.CpuTopologyRenderMismatch;
+    }
+
+    var ioapic_render_buffer: [1024]u8 = undefined;
+    var ioapic_fba = std.heap.FixedBufferAllocator.init(&ioapic_render_buffer);
+    const ioapic_render = virtual_fs.readFileAlloc(ioapic_fba.allocator(), "/sys/cpu/ioapic", ioapic_render_buffer.len) catch {
+        return error.IoApicRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, ioapic_render, 1, "present=1") or
+        !std.mem.containsAtLeast(u8, ioapic_render, 1, "enabled=1") or
+        !std.mem.containsAtLeast(u8, ioapic_render, 1, "redirection_entry_count=") or
+        !std.mem.containsAtLeast(u8, ioapic_render, 1, "mmio_addr="))
+    {
+        return error.IoApicRenderMismatch;
+    }
+
+    var pic_render_buffer: [1024]u8 = undefined;
+    var pic_fba = std.heap.FixedBufferAllocator.init(&pic_render_buffer);
+    const pic_render = virtual_fs.readFileAlloc(pic_fba.allocator(), "/sys/cpu/pic", pic_render_buffer.len) catch {
+        return error.PicRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, pic_render, 1, "present=1") or
+        !std.mem.containsAtLeast(u8, pic_render, 1, "remapped=1") or
+        !std.mem.containsAtLeast(u8, pic_render, 1, "master_offset=0x20") or
+        !std.mem.containsAtLeast(u8, pic_render, 1, "slave_offset=0x28") or
+        !std.mem.containsAtLeast(u8, pic_render, 1, "control_mask_profile="))
+    {
+        return error.PicRenderMismatch;
     }
 
     oc_scheduler_reset();
@@ -17285,6 +17478,21 @@ fn runI386PlatformProbe() I386PlatformProbeError!void {
     oc_tick();
     _ = oc_submit_command(abi.command_interrupt_mask_apply_profile, abi.interrupt_mask_profile_external_all, 0);
     oc_tick();
+    pic.probe() catch return error.PicProbeFailed;
+    const masked_pic_state = oc_pic_state_ptr().*;
+    if (masked_pic_state.remapped != 1 or
+        masked_pic_state.master_offset != 0x20 or
+        masked_pic_state.slave_offset != 0x28 or
+        masked_pic_state.master_mask != preserved_master_mask or
+        masked_pic_state.slave_mask != preserved_slave_mask or
+        masked_pic_state.hardware_masked_irq_count != preserved_hardware_masked_irq_count or
+        masked_pic_state.control_mask_profile != abi.interrupt_mask_profile_external_all or
+        masked_pic_state.control_masked_count != 224 or
+        masked_pic_state.control_ignored_count != 0 or
+        masked_pic_state.last_masked_vector != 0)
+    {
+        return error.PicControlPlaneMismatch;
+    }
     _ = oc_submit_command(abi.command_task_create, 5, 0);
     oc_tick();
     const timer_task_id = oc_scheduler_task(0).task_id;
@@ -17305,6 +17513,204 @@ fn runI386PlatformProbe() I386PlatformProbeError!void {
     if (oc_timer_state_ptr().dispatch_count != 0) return error.TimerDispatchMismatch;
     if (oc_timer_state_ptr().pending_wake_count != 1) return error.TimerPendingMismatch;
     if (oc_timer_state_ptr().last_interrupt_count != 0) return error.TimerLastInterruptMismatch;
+}
+
+fn runI386SmpProbe() I386SmpProbeError!void {
+    if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86) return error.UnsupportedPlatform;
+
+    resetBaremetalRuntimeForTest();
+    acpi.probeLive() catch {};
+    if (oc_acpi_state_ptr().present == 0) {
+        acpi.probeSyntheticImage(true) catch return error.AcpiProbeFailed;
+    }
+    lapic.probe() catch return error.LapicProbeFailed;
+
+    const cpu_state = oc_cpu_topology_state_ptr().*;
+    if (cpu_state.present != 1 or cpu_state.enabled_count == 0) return error.CpuTopologyMissing;
+    if (cpu_state.supports_smp != 1 or cpu_state.enabled_count < 2) return error.CpuTopologySmpMissing;
+    if (oc_cpu_topology_entry_count() < 2) return error.CpuTopologyEntryMismatch;
+
+    const lapic_state = oc_lapic_state_ptr().*;
+    if (lapic_state.present != 1 or lapic_state.apic_supported != 1) return error.LapicNotPresent;
+    if (lapic_state.enabled != 1 or lapic_state.local_apic_addr == 0) return error.LapicDisabled;
+    if (lapic_state.bootstrap_processor != 1) return error.LapicIdMismatch;
+    if (lapic_state.logical_processor_count < 2) return error.LapicLogicalProcessorMismatch;
+    if (lapic_state.version == 0) return error.LapicVersionMismatch;
+    if (lapic_state.local_apic_addr != cpu_state.local_apic_addr) return error.LapicBaseMismatch;
+
+    var apic_id_matched = false;
+    var cpu_index: u16 = 0;
+    while (cpu_index < oc_cpu_topology_entry_count()) : (cpu_index += 1) {
+        const entry = oc_cpu_topology_entry(cpu_index);
+        if (entry.enabled == 1 and entry.apic_id == lapic_state.current_apic_id) {
+            apic_id_matched = true;
+            break;
+        }
+    }
+    if (!apic_id_matched) return error.LapicIdMismatch;
+    if (lapic_state.cpuid_apic_id != lapic_state.current_apic_id) return error.LapicIdMismatch;
+
+    var lapic_render_buffer: [1024]u8 = undefined;
+    var lapic_fba = std.heap.FixedBufferAllocator.init(&lapic_render_buffer);
+    const lapic_render = virtual_fs.readFileAlloc(lapic_fba.allocator(), "/sys/cpu/lapic", lapic_render_buffer.len) catch {
+        return error.LapicRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, lapic_render, 1, "present=1") or
+        !std.mem.containsAtLeast(u8, lapic_render, 1, "logical_processor_count=") or
+        !std.mem.containsAtLeast(u8, lapic_render, 1, "current_apic_id=") or
+        !std.mem.containsAtLeast(u8, lapic_render, 1, "local_apic_addr="))
+    {
+        return error.LapicRenderMismatch;
+    }
+
+    var smp_render_buffer: [512]u8 = undefined;
+    var smp_fba = std.heap.FixedBufferAllocator.init(&smp_render_buffer);
+    const smp_render = virtual_fs.readFileAlloc(smp_fba.allocator(), "/sys/cpu/smp", smp_render_buffer.len) catch {
+        return error.SmpRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, smp_render, 1, "supports_smp=1") or
+        !std.mem.containsAtLeast(u8, smp_render, 1, "requested_cpu_count=2") or
+        !std.mem.containsAtLeast(u8, smp_render, 1, "logical_processor_count=") or
+        !std.mem.containsAtLeast(u8, smp_render, 1, "bootstrap_processor=1"))
+    {
+        return error.SmpRenderMismatch;
+    }
+}
+
+fn runI386ApStartupProbe() I386ApStartupProbeError!bool {
+    if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86) return error.UnsupportedPlatform;
+
+    resetBaremetalRuntimeForTest();
+    acpi.probeLive() catch {};
+    if (oc_acpi_state_ptr().present == 0) {
+        acpi.probeSyntheticImage(true) catch return error.AcpiProbeFailed;
+    }
+    lapic.probe() catch return error.LapicProbeFailed;
+
+    const cpu_state = oc_cpu_topology_state_ptr().*;
+    if (cpu_state.present != 1 or cpu_state.enabled_count == 0) return error.CpuTopologyMissing;
+    if (cpu_state.supports_smp != 1 or cpu_state.enabled_count < 2) return error.CpuTopologySmpMissing;
+
+    const lapic_state = oc_lapic_state_ptr().*;
+    if (lapic_state.present != 1 or lapic_state.apic_supported != 1) return error.LapicNotPresent;
+    if (lapic_state.enabled != 1 or lapic_state.local_apic_addr == 0) return error.LapicDisabled;
+
+    var startup_state: BaremetalApStartupState = undefined;
+    var startup_observed = true;
+    i386_ap_startup.startupSingleAp() catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.CpuTopologyMissing, error.NoSecondaryCpu => return error.CpuTopologySmpMissing,
+        error.LapicUnavailable => return error.LapicDisabled,
+        error.DeliveryTimeout => return error.StartupFailed,
+        error.StartupTimeout => startup_observed = false,
+        error.WrongCpuStarted => return error.StartupTargetMismatch,
+        error.ApNotStarted, error.CommandTimeout => return error.ExecutionFailed,
+    };
+
+    startup_state = oc_i386_ap_startup_state_ptr().*;
+    if (startup_state.supported != 1 or startup_state.attempted != 1) return error.StartupFailed;
+    if (startup_state.target_apic_id == 0) return error.StartupFailed;
+    if (startup_state.warm_reset_programmed != 1 or
+        startup_state.warm_reset_vector_segment != 0x8000 or
+        startup_state.warm_reset_vector_offset != 0 or
+        startup_state.init_ipi_count != 2 or
+        startup_state.startup_ipi_count == 0 or
+        startup_state.last_delivery_status != 0)
+    {
+        return error.StartupFailed;
+    }
+    if (startup_observed) {
+        if (startup_state.started != 1 or startup_state.halted != 0 or startup_state.startup_count == 0) return error.StartupFailed;
+        if (startup_state.reported_apic_id != startup_state.target_apic_id) return error.StartupTargetMismatch;
+        if (startup_state.last_stage != 0x04 or startup_state.heartbeat_count == 0) return error.ExecutionFailed;
+
+        const initial_heartbeat = startup_state.heartbeat_count;
+        i386_ap_startup.pingStartedAp() catch |err| switch (err) {
+            error.ApNotStarted, error.CommandTimeout => return error.ExecutionFailed,
+            else => return error.ExecutionFailed,
+        };
+        startup_state = oc_i386_ap_startup_state_ptr().*;
+        if (startup_state.ping_count == 0 or startup_state.command_seq == 0 or startup_state.response_seq != startup_state.command_seq) return error.ExecutionFailed;
+        if (startup_state.heartbeat_count <= initial_heartbeat or startup_state.last_stage != 0x05) return error.ExecutionFailed;
+
+        i386_ap_startup.haltStartedAp() catch |err| switch (err) {
+            error.ApNotStarted, error.CommandTimeout => return error.ExecutionFailed,
+            else => return error.ExecutionFailed,
+        };
+        startup_state = oc_i386_ap_startup_state_ptr().*;
+        if (startup_state.halted != 1 or startup_state.last_stage != 0x06) return error.ExecutionFailed;
+        if (startup_state.response_seq != startup_state.command_seq or startup_state.command_seq < 2) return error.ExecutionFailed;
+    } else {
+        if (startup_state.started != 0 or startup_state.halted != 0 or startup_state.startup_count != 0) return error.StartupFailed;
+        if (startup_state.reported_apic_id != 0 or startup_state.command_seq != 0 or startup_state.response_seq != 0 or startup_state.ping_count != 0) return error.ExecutionFailed;
+        if (startup_state.startup_ipi_count != 2) return error.StartupFailed;
+        if (startup_state.last_stage != 0x14) return error.StartupFailed;
+    }
+
+    var startup_render_buffer: [1024]u8 = undefined;
+    var startup_fba = std.heap.FixedBufferAllocator.init(&startup_render_buffer);
+    const startup_render = virtual_fs.readFileAlloc(startup_fba.allocator(), "/sys/cpu/ap-startup", startup_render_buffer.len) catch {
+        return error.StartupRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, startup_render, 1, "attempted=1") or
+        !std.mem.containsAtLeast(u8, startup_render, 1, "startup_count=") or
+        !std.mem.containsAtLeast(u8, startup_render, 1, "reported_apic_id=") or
+        !std.mem.containsAtLeast(u8, startup_render, 1, "warm_reset_programmed=1") or
+        !std.mem.containsAtLeast(u8, startup_render, 1, "warm_reset_vector_segment=0x8000") or
+        !std.mem.containsAtLeast(u8, startup_render, 1, "warm_reset_vector_offset=0x0") or
+        !std.mem.containsAtLeast(u8, startup_render, 1, "init_ipi_count=2") or
+        !std.mem.containsAtLeast(u8, startup_render, 1, "last_delivery_status=0x0") or
+        !std.mem.containsAtLeast(u8, startup_render, 1, "last_accept_status="))
+    {
+        return error.StartupRenderMismatch;
+    }
+    if (startup_observed) {
+        if (!std.mem.containsAtLeast(u8, startup_render, 1, "started=1") or
+            !std.mem.containsAtLeast(u8, startup_render, 1, "halted=1") or
+            !std.mem.containsAtLeast(u8, startup_render, 1, "ping_count=1") or
+            !std.mem.containsAtLeast(u8, startup_render, 1, "response_seq=2") or
+            (!std.mem.containsAtLeast(u8, startup_render, 1, "startup_ipi_count=1") and
+                !std.mem.containsAtLeast(u8, startup_render, 1, "startup_ipi_count=2")) or
+            !std.mem.containsAtLeast(u8, startup_render, 1, "last_stage=6"))
+        {
+            return error.StartupRenderMismatch;
+        }
+    } else {
+        if (!std.mem.containsAtLeast(u8, startup_render, 1, "started=0") or
+            !std.mem.containsAtLeast(u8, startup_render, 1, "halted=0") or
+            !std.mem.containsAtLeast(u8, startup_render, 1, "command_seq=0") or
+            !std.mem.containsAtLeast(u8, startup_render, 1, "ping_count=0") or
+            !std.mem.containsAtLeast(u8, startup_render, 1, "startup_ipi_count=2") or
+            !std.mem.containsAtLeast(u8, startup_render, 1, "last_stage=20"))
+        {
+            return error.StartupRenderMismatch;
+        }
+    }
+
+    var smp_render_buffer: [512]u8 = undefined;
+    var smp_fba = std.heap.FixedBufferAllocator.init(&smp_render_buffer);
+    const smp_render = virtual_fs.readFileAlloc(smp_fba.allocator(), "/sys/cpu/smp", smp_render_buffer.len) catch {
+        return error.SmpRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, smp_render, 1, "supports_smp=1") or
+        !std.mem.containsAtLeast(u8, smp_render, 1, "requested_cpu_count=2"))
+    {
+        return error.SmpRenderMismatch;
+    }
+
+    qemuDebugWriteValue("I386_AP_EXECUTION_OBSERVED", @intFromBool(startup_observed));
+    qemuDebugWriteValue("I386_AP_WARM_RESET_PROGRAMMED", startup_state.warm_reset_programmed);
+    qemuDebugWriteHexU32("I386_AP_WARM_RESET_SEGMENT", startup_state.warm_reset_vector_segment);
+    qemuDebugWriteHexU32("I386_AP_WARM_RESET_OFFSET", startup_state.warm_reset_vector_offset);
+    qemuDebugWriteValue("I386_AP_INIT_IPI_COUNT", startup_state.init_ipi_count);
+    qemuDebugWriteValue("I386_AP_STARTUP_IPI_COUNT", startup_state.startup_ipi_count);
+    qemuDebugWriteHexU32("I386_AP_LAST_DELIVERY_STATUS", startup_state.last_delivery_status);
+    qemuDebugWriteHexU32("I386_AP_LAST_ACCEPT_STATUS", startup_state.last_accept_status);
+    qemuDebugWriteValue("I386_AP_LAST_STAGE", startup_state.last_stage);
+    qemuDebugWriteValue("I386_AP_HEARTBEAT_COUNT", startup_state.heartbeat_count);
+    qemuDebugWriteValue("I386_AP_PING_COUNT", startup_state.ping_count);
+
+    return startup_observed;
 }
 
 fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
@@ -18116,15 +18522,65 @@ fn i386PlatformProbeFailureCode(err: I386PlatformProbeError) u8 {
         error.AcpiIoApicMissing => 0xD5,
         error.AcpiSciInterruptMissing => 0xD6,
         error.AcpiRenderMismatch => 0xD7,
-        error.InterruptWakeMismatch => 0xD8,
-        error.InterruptVectorMismatch => 0xD9,
-        error.InterruptCountMismatch => 0xDA,
-        error.InterruptHistoryMismatch => 0xDB,
-        error.TimerWakeMismatch => 0xDC,
-        error.TimerDispatchMismatch => 0xDD,
-        error.TimerPendingMismatch => 0xDE,
-        error.TimerLastInterruptMismatch => 0xDF,
-        error.InterruptMaskIgnoredMismatch => 0xE0,
+        error.CpuTopologyMissing => 0xD8,
+        error.CpuTopologySmpMissing => 0xD9,
+        error.CpuTopologyRenderMismatch => 0xDA,
+        error.CpuTopologyEntryMismatch => 0xDB,
+        error.IoApicProbeFailed => 0xDC,
+        error.IoApicNotPresent => 0xDD,
+        error.IoApicDisabled => 0xDE,
+        error.IoApicRenderMismatch => 0xDF,
+        error.IoApicEntryMismatch => 0xE0,
+        error.PicProbeFailed => 0xE1,
+        error.PicNotPresent => 0xE2,
+        error.PicRemapMismatch => 0xE3,
+        error.PicRenderMismatch => 0xE4,
+        error.PicControlPlaneMismatch => 0xE5,
+        error.InterruptWakeMismatch => 0xE6,
+        error.InterruptVectorMismatch => 0xE7,
+        error.InterruptCountMismatch => 0xE8,
+        error.InterruptHistoryMismatch => 0xE9,
+        error.TimerWakeMismatch => 0xEA,
+        error.TimerDispatchMismatch => 0xEB,
+        error.TimerPendingMismatch => 0xEC,
+        error.TimerLastInterruptMismatch => 0xED,
+        error.InterruptMaskIgnoredMismatch => 0xEE,
+    };
+}
+
+fn i386SmpProbeFailureCode(err: I386SmpProbeError) u8 {
+    return switch (err) {
+        error.UnsupportedPlatform => 0xE5,
+        error.AcpiProbeFailed => 0xE6,
+        error.CpuTopologyMissing => 0xE7,
+        error.CpuTopologySmpMissing => 0xE8,
+        error.CpuTopologyEntryMismatch => 0xE9,
+        error.LapicProbeFailed => 0xEA,
+        error.LapicNotPresent => 0xEB,
+        error.LapicDisabled => 0xEC,
+        error.LapicLogicalProcessorMismatch => 0xED,
+        error.LapicIdMismatch => 0xEE,
+        error.LapicBaseMismatch => 0xEF,
+        error.LapicVersionMismatch => 0xF0,
+        error.LapicRenderMismatch => 0xF1,
+        error.SmpRenderMismatch => 0xF2,
+    };
+}
+
+fn i386ApStartupProbeFailureCode(err: I386ApStartupProbeError) u8 {
+    return switch (err) {
+        error.UnsupportedPlatform => 0xF3,
+        error.AcpiProbeFailed => 0xF4,
+        error.CpuTopologyMissing => 0xF5,
+        error.CpuTopologySmpMissing => 0xF6,
+        error.LapicProbeFailed => 0xF7,
+        error.LapicNotPresent => 0xF8,
+        error.LapicDisabled => 0xF9,
+        error.StartupFailed => 0xFA,
+        error.ExecutionFailed => 0xFB,
+        error.StartupTargetMismatch => 0xFC,
+        error.StartupRenderMismatch => 0xFD,
+        error.SmpRenderMismatch => 0xFE,
     };
 }
 
@@ -19616,6 +20072,10 @@ fn resetBaremetalRuntimeForTest() void {
     oc_timer_reset();
     oc_wake_queue_clear();
     acpi.resetForTest();
+    i386_ap_startup.resetForTest();
+    ioapic.resetForTest();
+    lapic.resetForTest();
+    pic.resetForTest();
     display_output.resetForTest();
     framebuffer_console.resetForTest();
     vga_text_console.resetForTest();
@@ -19675,6 +20135,20 @@ fn qemuDebugWrite(bytes: []const u8) void {
     for (bytes) |byte| {
         qemuDebugWriteByte(byte);
     }
+}
+
+fn qemuDebugWriteValue(label: []const u8, value: anytype) void {
+    if (builtin.os.tag != .freestanding or (builtin.cpu.arch != .x86 and builtin.cpu.arch != .x86_64)) return;
+    var buffer: [96]u8 = undefined;
+    const rendered = std.fmt.bufPrint(&buffer, "{s}={}\n", .{ label, value }) catch return;
+    qemuDebugWrite(rendered);
+}
+
+fn qemuDebugWriteHexU32(label: []const u8, value: u32) void {
+    if (builtin.os.tag != .freestanding or (builtin.cpu.arch != .x86 and builtin.cpu.arch != .x86_64)) return;
+    var buffer: [96]u8 = undefined;
+    const rendered = std.fmt.bufPrint(&buffer, "{s}=0x{x}\n", .{ label, value }) catch return;
+    qemuDebugWrite(rendered);
 }
 
 fn out8(port: u16, value: u8) void {
