@@ -220,6 +220,30 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - hosted CI and `release-preview` now also execute:
   - `scripts/baremetal-qemu-i386-e1000-full-stack-probe-check.ps1`
 
+### Slice 10: i386 Platform ACPI, Timer, and Interrupt Proof
+
+- new bounded platform parser/export seam:
+  - `src/baremetal/acpi.zig`
+- new virtual exports:
+  - `/sys/acpi`
+  - `/sys/acpi/state`
+- new bare-metal ABI export:
+  - `oc_acpi_state_ptr()`
+- new dedicated live i386 QEMU probe:
+  - `scripts/baremetal-qemu-i386-platform-probe-check.ps1`
+- `src/baremetal_main.zig` now carries a dedicated `i386_platform_probe` lane that validates:
+  - descriptor tables are loaded on freestanding `x86`
+  - bounded ACPI state/export/render availability
+  - interrupt wake delivery on vector `31`
+  - masked external interrupt handling on vector `200`
+  - timer-backed wake fallback after the masked interrupt path
+- current direct `-kernel` QEMU boot still does not expose firmware low-memory ACPI tables in this environment, so the platform lane now:
+  - attempts real low-memory ACPI discovery first
+  - falls back to a bounded synthetic `XSDT`-backed ACPI image when firmware tables are unavailable
+  - keeps timer/interrupt behavior as a real live i386 QEMU proof
+- hosted CI and `release-preview` now also execute:
+  - `scripts/baremetal-qemu-i386-platform-probe-check.ps1`
+
 ## ZigOS Follow-On Work
 
 - next adoption analysis is stored in:
@@ -251,6 +275,7 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the i386 freestanding runtime now has live E1000 `ARP` / `IPv4` / `UDP` / bounded `TCP` proof
 - the i386 freestanding runtime now has live E1000 `DHCP` / `DNS` / `HTTP` / `HTTPS` / bounded tool-service proof
 - the i386 freestanding runtime now has live higher-level package/workspace/app/trust/runtime depth on the E1000 controller lane
+- the i386 freestanding runtime now has a dedicated live platform proof for descriptor-load state, bounded ACPI export/render, interrupt wake delivery, and masked-interrupt timer fallback
 - the i386 freestanding runtime now has live RTL8139 `ARP` / `IPv4` / `UDP` / bounded `TCP` / bounded runtime-service proof
 - the i386 freestanding runtime now has live RTL8139 `DHCP` / `DNS` / `HTTP` / `HTTPS` proof
 - the i386 freestanding runtime now has live RTL8139 gateway-routing proof
@@ -258,6 +283,10 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the i386 freestanding runtime now has live virtio-net raw-frame plus `ARP` / `IPv4` / `UDP` / bounded `TCP` / `DHCP` / `DNS` / `HTTP` / `HTTPS` / bounded tool-service proof
 - the i386 freestanding runtime now has live virtio-block raw IO plus installer/runtime, mount, `ext2`, `fat32`, and mount-control proof
 - the i386 freestanding runtime now has live linear-framebuffer console proof
+- the current explicit boundary is:
+  - live i386 timer/interrupt/device/display/storage/NIC proof breadth is broad
+  - ACPI is currently a bounded parser/export seam with synthetic fallback under the direct-loader QEMU path
+  - SMP, real firmware ACPI under a firmware boot path, and broader platform-controller hardening remain the next `FS5.7` steps
 - the i386 freestanding runtime now has live `virtio-gpu` display proof on the i386 controller path with reused output/interface/mode/profile matrix coverage from the shared broad display probe
 
 ## Current Boundary

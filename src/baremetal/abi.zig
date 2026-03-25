@@ -14,6 +14,7 @@ pub const tool_layout_magic: u32 = 0x4f43544c; // "OCTL"
 pub const filesystem_magic: u32 = 0x4f434653; // "OCFS"
 pub const keyboard_magic: u32 = 0x4f434b42; // "OCKB"
 pub const mouse_magic: u32 = 0x4f434d53; // "OCMS"
+pub const acpi_magic: u32 = 0x4f434150; // "OCAP"
 
 pub const api_version: u16 = 2;
 
@@ -390,6 +391,25 @@ pub const BaremetalDisplayOutputState = extern struct {
     serial_number: u32,
     edid_length: u16,
     capability_flags: u16,
+};
+
+pub const BaremetalAcpiState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    revision: u8,
+    oem_id: [6]u8,
+    table_count: u16,
+    lapic_count: u16,
+    ioapic_count: u16,
+    sci_interrupt: u16,
+    pm_timer_block: u32,
+    flags: u32,
+    rsdp_addr: u64,
+    rsdt_addr: u64,
+    xsdt_addr: u64,
+    fadt_addr: u64,
+    madt_addr: u64,
 };
 
 pub const BaremetalDisplayOutputEntry = extern struct {

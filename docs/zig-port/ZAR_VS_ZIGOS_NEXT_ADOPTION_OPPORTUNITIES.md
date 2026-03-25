@@ -17,6 +17,7 @@ ZAR has already absorbed or independently reached a meaningful subset of the hig
 - bounded shell and TTY control over the existing tool/service seam
 - benchmark/stress lane additions
 - additive `i386` build and smoke bootstrap lane
+- bounded ACPI export/render plus live i386 timer/interrupt proof
 
 That means the next ZigOS-derived improvements should focus on subsystems that materially raise ZAR capability rather than duplicate already-landed slices.
 
@@ -193,7 +194,7 @@ Priority: `deferred strategic`
 
 ### Near-term, highest value
 1. `FS5.7` i386/x86 parity expansion
-2. ACPI discovery and timer/interrupt hardening
+2. ACPI hardening on a real firmware boot path plus wider timer/interrupt coverage
 3. SMP bootstrap and bounded multi-core scheduler telemetry
 4. USB/UHCI bounded hardware slice
 5. AC97 bounded audio slice

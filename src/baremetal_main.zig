@@ -6,6 +6,7 @@ const ata_pio_disk = @import("baremetal/ata_pio_disk.zig");
 const pci = @import("baremetal/pci.zig");
 const disk_installer = @import("baremetal/disk_installer.zig");
 const x86_bootstrap = @import("baremetal/x86_bootstrap.zig");
+const acpi = @import("baremetal/acpi.zig");
 const display_output = @import("baremetal/display_output.zig");
 const display_profile_store = @import("baremetal/display_profile_store.zig");
 const virtio_gpu = @import("baremetal/virtio_gpu.zig");
@@ -24,6 +25,7 @@ const storage_registry = @import("baremetal/storage_registry.zig");
 const filesystem = @import("baremetal/filesystem.zig");
 const mounted_external_fs = @import("baremetal/mounted_external_fs.zig");
 const mount_table = @import("baremetal/mount_table.zig");
+const virtual_fs = @import("baremetal/virtual_fs.zig");
 const package_store = @import("baremetal/package_store.zig");
 const app_runtime = @import("baremetal/app_runtime.zig");
 const ps2_input = @import("baremetal/ps2_input.zig");
@@ -49,6 +51,7 @@ const BaremetalBootDiagnostics = abi.BaremetalBootDiagnostics;
 const BaremetalConsoleState = abi.BaremetalConsoleState;
 const BaremetalFramebufferState = abi.BaremetalFramebufferState;
 const BaremetalDisplayOutputState = abi.BaremetalDisplayOutputState;
+const BaremetalAcpiState = abi.BaremetalAcpiState;
 const BaremetalEthernetState = abi.BaremetalEthernetState;
 const BaremetalStorageState = abi.BaremetalStorageState;
 const BaremetalStoragePartitionInfo = abi.BaremetalStoragePartitionInfo;
@@ -140,6 +143,7 @@ const qemu_virtio_block_mount_probe_ok_code: u8 = 0x5A;
 const qemu_virtio_block_ext2_mount_probe_ok_code: u8 = 0x5B;
 const qemu_virtio_block_fat32_mount_probe_ok_code: u8 = 0x5C;
 const qemu_virtio_block_mount_control_probe_ok_code: u8 = 0x5D;
+const qemu_i386_platform_probe_ok_code: u8 = 0x7C;
 const build_options = if (builtin.is_test)
     struct {
         pub const qemu_smoke: bool = false;
@@ -189,6 +193,7 @@ const build_options = if (builtin.is_test)
         pub const virtio_block_ext2_mount_probe: bool = false;
         pub const virtio_block_fat32_mount_probe: bool = false;
         pub const virtio_block_mount_control_probe: bool = false;
+        pub const i386_platform_probe: bool = false;
     }
 else
     @import("build_options");
@@ -240,6 +245,7 @@ const virtio_block_mount_probe_enabled: bool = if (@hasDecl(build_options, "virt
 const virtio_block_ext2_mount_probe_enabled: bool = if (@hasDecl(build_options, "virtio_block_ext2_mount_probe")) build_options.virtio_block_ext2_mount_probe else false;
 const virtio_block_fat32_mount_probe_enabled: bool = if (@hasDecl(build_options, "virtio_block_fat32_mount_probe")) build_options.virtio_block_fat32_mount_probe else false;
 const virtio_block_mount_control_probe_enabled: bool = if (@hasDecl(build_options, "virtio_block_mount_control_probe")) build_options.virtio_block_mount_control_probe else false;
+const i386_platform_probe_enabled: bool = if (@hasDecl(build_options, "i386_platform_probe")) build_options.i386_platform_probe else false;
 
 const ata_probe_raw_lba: u32 = 300;
 const ata_probe_raw_block_count: u32 = 2;
@@ -444,6 +450,26 @@ const VirtioBlockMountControlProbeError = error{
     ReloadFailed,
     MountRemoveFailed,
     PciDiscoveryMismatch,
+};
+
+const I386PlatformProbeError = error{
+    UnsupportedPlatform,
+    AcpiProbeFailed,
+    AcpiNotPresent,
+    AcpiRootMissing,
+    AcpiLapicMissing,
+    AcpiIoApicMissing,
+    AcpiSciInterruptMissing,
+    AcpiRenderMismatch,
+    InterruptWakeMismatch,
+    InterruptVectorMismatch,
+    InterruptCountMismatch,
+    InterruptHistoryMismatch,
+    TimerWakeMismatch,
+    TimerDispatchMismatch,
+    TimerPendingMismatch,
+    TimerLastInterruptMismatch,
+    InterruptMaskIgnoredMismatch,
 };
 
 const Rtl8139ProbeError = error{
@@ -1804,6 +1830,10 @@ pub export fn oc_framebuffer_pixel_at(x: u32, y: u32) u32 {
     return framebuffer_console.pixelAt(x, y);
 }
 
+pub export fn oc_acpi_state_ptr() *const BaremetalAcpiState {
+    return acpi.statePtr();
+}
+
 pub export fn oc_display_output_state_ptr() *const BaremetalDisplayOutputState {
     return display_output.statePtr();
 }
@@ -2860,6 +2890,7 @@ fn baremetalStart() callconv(.c) noreturn {
     storage_backend.init();
     x86_bootstrap.init();
     _ = x86_bootstrap.oc_try_load_descriptor_tables();
+    acpi.init();
     if (ata_storage_probe_enabled) {
         runAtaStorageProbe() catch |err| qemuExit(ataStorageProbeFailureCode(err));
         qemuExit(qemu_ata_storage_probe_ok_code);
@@ -2895,6 +2926,10 @@ fn baremetalStart() callconv(.c) noreturn {
     if (virtio_block_mount_control_probe_enabled) {
         runVirtioBlockMountControlProbe() catch |err| qemuExit(virtioBlockMountControlProbeFailureCode(err));
         qemuExit(qemu_virtio_block_mount_control_probe_ok_code);
+    }
+    if (i386_platform_probe_enabled) {
+        runI386PlatformProbe() catch |err| qemuExit(i386PlatformProbeFailureCode(err));
+        qemuExit(qemu_i386_platform_probe_ok_code);
     }
     if (virtio_net_probe_enabled) {
         runVirtioNetProbe() catch |err| qemuExit(virtioNetProbeFailureCode(err));
@@ -17186,6 +17221,92 @@ fn runToolRuntimeProbe() ToolRuntimeProbeError!void {
     if (!std.mem.eql(u8, restored_session.last_message, "echo runtime-baremetal")) return error.RuntimeRestoredSessionMismatch;
 }
 
+fn runI386PlatformProbe() I386PlatformProbeError!void {
+    if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86) return error.UnsupportedPlatform;
+
+    resetBaremetalRuntimeForTest();
+    acpi.probeLive() catch {};
+    if (oc_acpi_state_ptr().present == 0) {
+        acpi.probeSyntheticImage(true) catch return error.AcpiProbeFailed;
+    }
+
+    const acpi_state = oc_acpi_state_ptr().*;
+    if (acpi_state.present != 1) return error.AcpiNotPresent;
+    if (acpi_state.rsdt_addr == 0 and acpi_state.xsdt_addr == 0) return error.AcpiRootMissing;
+    if (acpi_state.lapic_count == 0) return error.AcpiLapicMissing;
+    if (acpi_state.ioapic_count == 0) return error.AcpiIoApicMissing;
+    if (acpi_state.sci_interrupt == 0) return error.AcpiSciInterruptMissing;
+
+    var acpi_render_buffer: [1024]u8 = undefined;
+    var acpi_fba = std.heap.FixedBufferAllocator.init(&acpi_render_buffer);
+    const acpi_render = virtual_fs.readFileAlloc(acpi_fba.allocator(), "/sys/acpi/state", acpi_render_buffer.len) catch {
+        return error.AcpiRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, acpi_render, 1, "present=1") or
+        !std.mem.containsAtLeast(u8, acpi_render, 1, "lapic_count=") or
+        !std.mem.containsAtLeast(u8, acpi_render, 1, "ioapic_count=") or
+        !std.mem.containsAtLeast(u8, acpi_render, 1, "sci_interrupt="))
+    {
+        return error.AcpiRenderMismatch;
+    }
+
+    oc_scheduler_reset();
+    oc_timer_reset();
+    oc_wake_queue_clear();
+    x86_bootstrap.oc_interrupt_mask_clear_all();
+    x86_bootstrap.oc_interrupt_mask_reset_ignored_counts();
+    x86_bootstrap.oc_reset_interrupt_counters();
+
+    _ = oc_submit_command(abi.command_scheduler_disable, 0, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_task_create, 5, 0);
+    oc_tick();
+    const interrupt_task_id = oc_scheduler_task(0).task_id;
+    if (interrupt_task_id == 0) return error.InterruptWakeMismatch;
+    _ = oc_submit_command(abi.command_task_wait_interrupt_for, interrupt_task_id, 5);
+    oc_tick();
+    _ = oc_submit_command(abi.command_trigger_interrupt, 31, 0);
+    oc_tick();
+    if (oc_wake_queue_len() != 1) return error.InterruptWakeMismatch;
+    const interrupt_event = oc_wake_queue_event(0);
+    if (interrupt_event.reason != abi.wake_reason_interrupt) return error.InterruptWakeMismatch;
+    if (interrupt_event.vector != 31 or x86_bootstrap.oc_last_interrupt_vector() != 31) return error.InterruptVectorMismatch;
+    if (x86_bootstrap.oc_interrupt_count() != 1) return error.InterruptCountMismatch;
+    if (x86_bootstrap.oc_interrupt_history_len() == 0) return error.InterruptHistoryMismatch;
+
+    oc_scheduler_reset();
+    oc_timer_reset();
+    oc_wake_queue_clear();
+    x86_bootstrap.oc_interrupt_mask_clear_all();
+    x86_bootstrap.oc_interrupt_mask_reset_ignored_counts();
+    x86_bootstrap.oc_reset_interrupt_counters();
+
+    _ = oc_submit_command(abi.command_scheduler_disable, 0, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_interrupt_mask_apply_profile, abi.interrupt_mask_profile_external_all, 0);
+    oc_tick();
+    _ = oc_submit_command(abi.command_task_create, 5, 0);
+    oc_tick();
+    const timer_task_id = oc_scheduler_task(0).task_id;
+    if (timer_task_id == 0) return error.TimerWakeMismatch;
+    _ = oc_submit_command(abi.command_task_wait_interrupt_for, timer_task_id, 3);
+    oc_tick();
+    _ = oc_submit_command(abi.command_trigger_interrupt, 200, 0);
+    oc_tick();
+    if (x86_bootstrap.oc_interrupt_mask_ignored_count() != 1) return error.InterruptMaskIgnoredMismatch;
+
+    var wake_spin: u8 = 0;
+    while (oc_wake_queue_len() == 0 and wake_spin < 4) : (wake_spin += 1) {
+        oc_tick();
+    }
+    if (oc_wake_queue_len() != 1) return error.TimerWakeMismatch;
+    const timer_event = oc_wake_queue_event(0);
+    if (timer_event.reason != abi.wake_reason_timer or timer_event.vector != 0) return error.TimerWakeMismatch;
+    if (oc_timer_state_ptr().dispatch_count != 0) return error.TimerDispatchMismatch;
+    if (oc_timer_state_ptr().pending_wake_count != 1) return error.TimerPendingMismatch;
+    if (oc_timer_state_ptr().last_interrupt_count != 0) return error.TimerLastInterruptMismatch;
+}
+
 fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
     resetBaremetalRuntimeForTest();
     const result = virtio_gpu.probeAndPresentPattern() catch |err| switch (err) {
@@ -17982,6 +18103,28 @@ fn virtioBlockMountControlProbeFailureCode(err: VirtioBlockMountControlProbeErro
         error.ReloadFailed => 0xCD,
         error.MountRemoveFailed => 0xCE,
         error.PciDiscoveryMismatch => 0xCF,
+    };
+}
+
+fn i386PlatformProbeFailureCode(err: I386PlatformProbeError) u8 {
+    return switch (err) {
+        error.UnsupportedPlatform => 0xD0,
+        error.AcpiProbeFailed => 0xD1,
+        error.AcpiNotPresent => 0xD2,
+        error.AcpiRootMissing => 0xD3,
+        error.AcpiLapicMissing => 0xD4,
+        error.AcpiIoApicMissing => 0xD5,
+        error.AcpiSciInterruptMissing => 0xD6,
+        error.AcpiRenderMismatch => 0xD7,
+        error.InterruptWakeMismatch => 0xD8,
+        error.InterruptVectorMismatch => 0xD9,
+        error.InterruptCountMismatch => 0xDA,
+        error.InterruptHistoryMismatch => 0xDB,
+        error.TimerWakeMismatch => 0xDC,
+        error.TimerDispatchMismatch => 0xDD,
+        error.TimerPendingMismatch => 0xDE,
+        error.TimerLastInterruptMismatch => 0xDF,
+        error.InterruptMaskIgnoredMismatch => 0xE0,
     };
 }
 
@@ -19472,6 +19615,7 @@ fn resetBaremetalRuntimeForTest() void {
     oc_syscall_reset();
     oc_timer_reset();
     oc_wake_queue_clear();
+    acpi.resetForTest();
     display_output.resetForTest();
     framebuffer_console.resetForTest();
     vga_text_console.resetForTest();

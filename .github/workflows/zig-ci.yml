@@ -169,6 +169,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-smoke-check.ps1
 
+      - name: Bare-metal QEMU i386 platform probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-platform-probe-check.ps1
+
       - name: Bare-metal QEMU i386 ATA storage probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-ata-storage-probe-check.ps1
