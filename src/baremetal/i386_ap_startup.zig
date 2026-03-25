@@ -7,6 +7,7 @@ const lapic = @import("lapic.zig");
 
 const lapic_icr_low_offset: usize = 0x300;
 const lapic_icr_high_offset: usize = 0x310;
+const lapic_error_status_offset: usize = 0x280;
 const lapic_spurious_offset: usize = 0x0F0;
 const lapic_delivery_pending_bit: u32 = 1 << 12;
 const lapic_software_enable_bit: u32 = 1 << 8;
@@ -16,9 +17,11 @@ const lapic_level_assert: u32 = 0x00004000;
 const lapic_trigger_level: u32 = 0x00008000;
 const ap_command_ping: u32 = 1;
 const ap_command_halt: u32 = 2;
-const startup_timeout_iterations: usize = 20_000_000;
+const startup_timeout_iterations: usize = 120_000_000;
 const delivery_timeout_iterations: usize = 2_000_000;
-const inter_ipi_delay_iterations: usize = 1_000_000;
+const init_settle_delay_iterations: usize = 24_000_000;
+const startup_retry_delay_iterations: usize = 1_000_000;
+const first_startup_timeout_iterations: usize = 8_000_000;
 const command_timeout_iterations: usize = 20_000_000;
 pub const trampoline_phys: u32 = 0x00080000;
 pub const startup_vector: u8 = @as(u8, @intCast(trampoline_phys >> 12));
@@ -197,17 +200,29 @@ pub fn startupSingleAp() Error!void {
     enableLocalApic(regs);
     sendInitIpi(regs, target_apic_id) catch return error.DeliveryTimeout;
     writeStateVar(sharedStagePtr(), 0x11);
-    spinDelay(inter_ipi_delay_iterations);
+    spinDelay(init_settle_delay_iterations);
     sendInitDeassertIpi(regs, target_apic_id) catch return error.DeliveryTimeout;
     writeStateVar(sharedStagePtr(), 0x12);
-    spinDelay(inter_ipi_delay_iterations);
+    spinDelay(startup_retry_delay_iterations);
+    clearErrorStatus(regs);
     sendStartupIpi(regs, target_apic_id, startup_vector) catch return error.DeliveryTimeout;
     writeStateVar(sharedStagePtr(), 0x13);
-    spinDelay(inter_ipi_delay_iterations);
+    if (waitForStartedTarget(first_startup_timeout_iterations)) return;
+
+    spinDelay(startup_retry_delay_iterations);
+    clearErrorStatus(regs);
     sendStartupIpi(regs, target_apic_id, startup_vector) catch return error.DeliveryTimeout;
     writeStateVar(sharedStagePtr(), 0x14);
 
-    var remaining = startup_timeout_iterations;
+    if (waitForStartedTarget(startup_timeout_iterations)) return;
+    refreshState();
+    if (state.started == 0) return error.StartupTimeout;
+    if (state.reported_apic_id != state.target_apic_id) return error.WrongCpuStarted;
+    return error.StartupTimeout;
+}
+
+fn waitForStartedTarget(iterations: usize) bool {
+    var remaining = iterations;
     while (remaining > 0) : (remaining -= 1) {
         refreshState();
         if (state.started == 1 and
@@ -215,14 +230,11 @@ pub fn startupSingleAp() Error!void {
             state.last_stage >= 4 and
             state.heartbeat_count != 0)
         {
-            return;
+            return true;
         }
         std.atomic.spinLoopHint();
     }
-    refreshState();
-    if (state.started == 0) return error.StartupTimeout;
-    if (state.reported_apic_id != state.target_apic_id) return error.WrongCpuStarted;
-    return error.StartupTimeout;
+    return false;
 }
 
 pub fn pingStartedAp() Error!void {
@@ -358,6 +370,11 @@ fn enableLocalApic(regs: [*]volatile u32) void {
     const current = readReg(regs, lapic_spurious_offset);
     if ((current & lapic_software_enable_bit) != 0) return;
     writeReg(regs, lapic_spurious_offset, current | lapic_software_enable_bit);
+}
+
+fn clearErrorStatus(regs: [*]volatile u32) void {
+    writeReg(regs, lapic_error_status_offset, 0);
+    writeReg(regs, lapic_error_status_offset, 0);
 }
 
 fn issueCommand(command_kind: u32) Error!void {

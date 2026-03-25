@@ -336,6 +336,22 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - hosted CI and `release-preview` now also execute:
   - `scripts/baremetal-qemu-i386-ap-startup-probe-check.ps1`
 
+### Slice 14: i386 AP-Startup Timing Hardening and Explicit Execution Detection
+
+- `src/baremetal/i386_ap_startup.zig` now hardens the BSP-side startup sequence with:
+  - longer INIT-settle delay before the startup IPIs
+  - shorter bounded retry gap between the first and second SIPI
+  - local-APIC error-status clearing before each SIPI
+  - bounded first-SIPI polling before falling through to the second-SIPI retry
+- `src/baremetal_main.zig` now treats the AP-startup probe as a two-outcome success lane:
+  - `0x7F` means actual AP execution was observed and the bounded ping/halt control path completed live
+  - `0x7E` means only the bounded BSP-side control telemetry was observed, with no false AP-execution claim
+- `scripts/baremetal-qemu-i386-ap-startup-probe-check.ps1` now accepts both success codes and reports:
+  - `BAREMETAL_I386_QEMU_AP_EXECUTION_OBSERVED=True|False`
+- current live result on the direct `-kernel` QEMU path remains:
+  - `BAREMETAL_I386_QEMU_AP_EXECUTION_OBSERVED=False`
+- that means the current direct-loader i386 lane still does not yield actual AP execution even after timing/ESR hardening, but the live probe now states that boundary explicitly instead of hiding it behind a single pass code
+
 ## ZigOS Follow-On Work
 
 - next adoption analysis is stored in:
@@ -370,7 +386,7 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the i386 freestanding runtime now has a dedicated live platform proof for descriptor-load state, bounded ACPI export/render, interrupt wake delivery, and masked-interrupt timer fallback
 - the i386 freestanding runtime now has exported CPU topology and bounded SMP-readiness derived from `MADT`, with `/dev/cpu` and `/sys/cpu` visibility on the i386 platform lane
 - the i386 freestanding runtime now has a dedicated live `-smp 2` LAPIC proof with `/dev/cpu/lapic` and `/sys/cpu/{lapic,smp}` visibility on the i386 platform lane
-- the i386 freestanding runtime now has a dedicated live AP-startup control diagnostic proof with `/dev/cpu/ap-startup` and `/sys/cpu/ap-startup` visibility, a high-page trampoline, verified BSP-side INIT / deassert / SIPI / SIPI sequencing, and bounded command/response/heartbeat telemetry on the current direct-loader QEMU path
+- the i386 freestanding runtime now has a dedicated live AP-startup control diagnostic proof with `/dev/cpu/ap-startup` and `/sys/cpu/ap-startup` visibility, a high-page trampoline, verified BSP-side INIT / deassert / SIPI / SIPI sequencing, bounded command/response/heartbeat telemetry, hardened startup timing/ESR handling, and explicit live AP-execution observation reporting on the current direct-loader QEMU path
 - the i386 freestanding runtime now has live RTL8139 `ARP` / `IPv4` / `UDP` / bounded `TCP` / bounded runtime-service proof
 - the i386 freestanding runtime now has live RTL8139 `DHCP` / `DNS` / `HTTP` / `HTTPS` proof
 - the i386 freestanding runtime now has live RTL8139 gateway-routing proof
@@ -390,7 +406,7 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - it is not yet full 32-bit driver/runtime parity
 - descriptor telemetry is now dual-arch, but the broader descriptor/mailbox live proof lane is still only claimed on the existing `x86_64` PVH artifact
 - i386 display coverage now includes bounded VGA + framebuffer + `virtio-gpu` with reused output/interface/mode/profile matrix validation on the current controller path, but it still does not claim physical HDMI/DisplayPort controller-specific scanout or a separate i386-only display-profile wrapper matrix
-- i386 platform coverage now includes bounded ACPI plus exported CPU topology, LAPIC state, SMP-readiness, and AP-startup execution telemetry, but it still does not claim real firmware-boot ACPI or live AP execution on the current direct-loader path
+- i386 platform coverage now includes bounded ACPI plus exported CPU topology, LAPIC state, SMP-readiness, AP-startup execution telemetry, and explicit live AP-execution observation reporting, but it still does not claim real firmware-boot ACPI or live AP execution on the current direct-loader path
 
 ## Next Steps
 

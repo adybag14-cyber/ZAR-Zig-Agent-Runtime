@@ -63,8 +63,12 @@ if ($null -eq $qemu) {
     return
 }
 
-$expectedProbeCode = 0x7E
-$expectedExitCode = ($expectedProbeCode * 2) + 1
+$fallbackProbeCode = 0x7E
+$executionProbeCode = 0x7F
+$expectedExitCodes = @{
+    (($fallbackProbeCode * 2) + 1) = $fallbackProbeCode
+    (($executionProbeCode * 2) + 1) = $executionProbeCode
+}
 
 if (-not $SkipBuild) {
     & $zig build baremetal-i386 -Doptimize=ReleaseFast -Dbaremetal-i386-ap-startup-probe=true --prefix $buildPrefix --summary all
@@ -140,18 +144,23 @@ $stderr = $stderrTask.GetAwaiter().GetResult()
 Set-Content -Path $stdoutPath -Value $stdout -Encoding Ascii
 Set-Content -Path $stderrPath -Value $stderr -Encoding Ascii
 $exitCode = $proc.ExitCode
-if ($exitCode -ne $expectedExitCode) {
+if (-not $expectedExitCodes.ContainsKey($exitCode)) {
     $stderrTail = ""
     if (Test-Path $stderrPath) {
         $stderrTail = (Get-Content -Path $stderrPath -Tail 40 -ErrorAction SilentlyContinue) -join "`n"
     }
-    throw "QEMU i386 AP startup probe failed: exit=$exitCode expected=$expectedExitCode`n$stderrTail"
+    $expectedText = ($expectedExitCodes.Keys | Sort-Object) -join ", "
+    throw "QEMU i386 AP startup probe failed: exit=$exitCode expected one of [$expectedText]`n$stderrTail"
 }
+
+$observedProbeCode = [int]$expectedExitCodes[$exitCode]
+$executionObserved = ($observedProbeCode -eq $executionProbeCode)
 
 Write-Output "BAREMETAL_I386_QEMU_AVAILABLE=True"
 Write-Output "BAREMETAL_I386_QEMU_BINARY=$qemu"
 Write-Output "BAREMETAL_I386_QEMU_ARTIFACT=$artifact"
-Write-Output "BAREMETAL_I386_QEMU_EXPECTED_EXIT_CODE=$expectedExitCode"
+Write-Output ("BAREMETAL_I386_QEMU_EXPECTED_EXIT_CODES={0}" -f (($expectedExitCodes.Keys | Sort-Object) -join ","))
 Write-Output "BAREMETAL_I386_QEMU_EXIT_CODE=$exitCode"
-Write-Output ("BAREMETAL_I386_QEMU_AP_STARTUP_PROBE_CODE=0x{0:X2}" -f $expectedProbeCode)
+Write-Output ("BAREMETAL_I386_QEMU_AP_STARTUP_PROBE_CODE=0x{0:X2}" -f $observedProbeCode)
+Write-Output ("BAREMETAL_I386_QEMU_AP_EXECUTION_OBSERVED={0}" -f ($(if ($executionObserved) { "True" } else { "False" })))
 Write-Output "BAREMETAL_I386_QEMU_AP_STARTUP_PROBE=pass"

@@ -152,6 +152,7 @@ const qemu_virtio_block_mount_control_probe_ok_code: u8 = 0x5D;
 const qemu_i386_platform_probe_ok_code: u8 = 0x7C;
 const qemu_i386_smp_probe_ok_code: u8 = 0x7D;
 const qemu_i386_ap_startup_probe_ok_code: u8 = 0x7E;
+const qemu_i386_ap_execution_probe_ok_code: u8 = 0x7F;
 const build_options = if (builtin.is_test)
     struct {
         pub const qemu_smoke: bool = false;
@@ -3006,8 +3007,8 @@ fn baremetalStart() callconv(.c) noreturn {
         qemuExit(qemu_i386_smp_probe_ok_code);
     }
     if (i386_ap_startup_probe_enabled) {
-        runI386ApStartupProbe() catch |err| qemuExit(i386ApStartupProbeFailureCode(err));
-        qemuExit(qemu_i386_ap_startup_probe_ok_code);
+        const ap_execution_observed = runI386ApStartupProbe() catch |err| qemuExit(i386ApStartupProbeFailureCode(err));
+        qemuExit(if (ap_execution_observed) qemu_i386_ap_execution_probe_ok_code else qemu_i386_ap_startup_probe_ok_code);
     }
     if (virtio_net_probe_enabled) {
         runVirtioNetProbe() catch |err| qemuExit(virtioNetProbeFailureCode(err));
@@ -17482,7 +17483,7 @@ fn runI386SmpProbe() I386SmpProbeError!void {
     }
 }
 
-fn runI386ApStartupProbe() I386ApStartupProbeError!void {
+fn runI386ApStartupProbe() I386ApStartupProbeError!bool {
     if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86) return error.UnsupportedPlatform;
 
     resetBaremetalRuntimeForTest();
@@ -17583,6 +17584,8 @@ fn runI386ApStartupProbe() I386ApStartupProbeError!void {
     {
         return error.SmpRenderMismatch;
     }
+
+    return startup_observed;
 }
 
 fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
