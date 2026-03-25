@@ -16,6 +16,7 @@ pub fn build(b: *std.Build) void {
     const baremetal_virtio_block_ext2_mount_probe = b.option(bool, "baremetal-virtio-block-ext2-mount-probe", "Enable the virtio-block ext2 read-only mount validation path in the freestanding image") orelse false;
     const baremetal_virtio_block_fat32_mount_probe = b.option(bool, "baremetal-virtio-block-fat32-mount-probe", "Enable the virtio-block FAT32 bounded writable mount validation path in the freestanding image") orelse false;
     const baremetal_virtio_block_mount_control_probe = b.option(bool, "baremetal-virtio-block-mount-control-probe", "Enable the virtio-block mount control validation path in the freestanding image") orelse false;
+    const baremetal_i386_platform_probe = b.option(bool, "baremetal-i386-platform-probe", "Enable the combined i386 ACPI/timer/display platform validation path in the freestanding image") orelse false;
     const baremetal_e1000_probe = b.option(bool, "baremetal-e1000-probe", "Enable the E1000 Ethernet validation path in the freestanding image") orelse false;
     const baremetal_e1000_arp_probe = b.option(bool, "baremetal-e1000-arp-probe", "Enable the E1000 ARP validation path in the freestanding image") orelse false;
     const baremetal_e1000_ipv4_probe = b.option(bool, "baremetal-e1000-ipv4-probe", "Enable the E1000 IPv4 validation path in the freestanding image") orelse false;
@@ -168,6 +169,7 @@ pub fn build(b: *std.Build) void {
     baremetal_options.addOption(bool, "virtio_block_ext2_mount_probe", baremetal_virtio_block_ext2_mount_probe);
     baremetal_options.addOption(bool, "virtio_block_fat32_mount_probe", baremetal_virtio_block_fat32_mount_probe);
     baremetal_options.addOption(bool, "virtio_block_mount_control_probe", baremetal_virtio_block_mount_control_probe);
+    baremetal_options.addOption(bool, "i386_platform_probe", baremetal_i386_platform_probe);
     baremetal_options.addOption(bool, "e1000_probe", baremetal_e1000_probe);
     baremetal_options.addOption(bool, "e1000_arp_probe", baremetal_e1000_arp_probe);
     baremetal_options.addOption(bool, "e1000_ipv4_probe", baremetal_e1000_ipv4_probe);

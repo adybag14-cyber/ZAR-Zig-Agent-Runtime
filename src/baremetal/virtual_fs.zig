@@ -2,6 +2,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const abi = @import("abi.zig");
+const acpi = @import("acpi.zig");
 const display_output = @import("display_output.zig");
 const runtime_bridge = @import("runtime_bridge.zig");
 const storage_backend = @import("storage_backend.zig");
@@ -49,6 +50,8 @@ const dev_net_state_path = "/dev/net/state";
 const dev_net_route_path = "/dev/net/route";
 const sys_kernel_version_path = "/sys/kernel/version";
 const sys_kernel_machine_path = "/sys/kernel/machine";
+const sys_acpi_path = "/sys/acpi";
+const sys_acpi_state_path = "/sys/acpi/state";
 const sys_storage_state_path = "/sys/storage/state";
 const sys_storage_backends_path = "/sys/storage/backends";
 const sys_storage_filesystems_path = "/sys/storage/filesystems";
@@ -177,6 +180,7 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     }
     if (std.mem.eql(u8, path, "/sys")) {
         try appendDirectoryLine(allocator, &out, "kernel", max_bytes);
+        try appendDirectoryLine(allocator, &out, "acpi", max_bytes);
         try appendDirectoryLine(allocator, &out, "storage", max_bytes);
         try appendDirectoryLine(allocator, &out, "tty", max_bytes);
         try appendDirectoryLine(allocator, &out, "display", max_bytes);
@@ -186,6 +190,10 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     if (std.mem.eql(u8, path, "/sys/kernel")) {
         try appendFileLine(allocator, &out, "version", sys_kernel_version_path, max_bytes);
         try appendFileLine(allocator, &out, "machine", sys_kernel_machine_path, max_bytes);
+        return out.toOwnedSlice(allocator);
+    }
+    if (std.mem.eql(u8, path, sys_acpi_path)) {
+        try appendFileLine(allocator, &out, "state", sys_acpi_state_path, max_bytes);
         return out.toOwnedSlice(allocator);
     }
     if (std.mem.eql(u8, path, "/sys/storage")) {
@@ -282,6 +290,7 @@ fn isDirectoryPath(path: []const u8) bool {
     if (std.mem.eql(u8, path, dev_net_path)) return true;
     if (std.mem.eql(u8, path, "/sys")) return true;
     if (std.mem.eql(u8, path, "/sys/kernel")) return true;
+    if (std.mem.eql(u8, path, sys_acpi_path)) return true;
     if (std.mem.eql(u8, path, "/sys/storage")) return true;
     if (std.mem.eql(u8, path, sys_tty_path)) return true;
     if (std.mem.eql(u8, path, sys_tty_sessions_path)) return true;
@@ -309,6 +318,7 @@ fn isFilePath(path: []const u8) bool {
     if (std.mem.eql(u8, path, dev_net_route_path)) return true;
     if (std.mem.eql(u8, path, sys_kernel_version_path)) return true;
     if (std.mem.eql(u8, path, sys_kernel_machine_path)) return true;
+    if (std.mem.eql(u8, path, sys_acpi_state_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_state_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_backends_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_filesystems_path)) return true;
@@ -380,6 +390,9 @@ fn renderFileAlloc(allocator: std.mem.Allocator, path: []const u8) Error![]u8 {
             "arch={s}\nos={s}\n",
             .{ @tagName(builtin.cpu.arch), @tagName(builtin.os.tag) },
         );
+    }
+    if (std.mem.eql(u8, path, sys_acpi_state_path)) {
+        return acpi.renderAlloc(allocator);
     }
     if (std.mem.eql(u8, path, sys_storage_state_path)) {
         return renderStorageStateAlloc(allocator);
