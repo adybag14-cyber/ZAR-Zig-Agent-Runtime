@@ -6,6 +6,7 @@ const acpi = @import("acpi.zig");
 const i386_ap_startup = @import("i386_ap_startup.zig");
 const ioapic = @import("ioapic.zig");
 const lapic = @import("lapic.zig");
+const pic = @import("pic.zig");
 const display_output = @import("display_output.zig");
 const runtime_bridge = @import("runtime_bridge.zig");
 const storage_backend = @import("storage_backend.zig");
@@ -53,6 +54,7 @@ const dev_cpu_state_path = "/dev/cpu/state";
 const dev_cpu_topology_path = "/dev/cpu/topology";
 const dev_cpu_lapic_path = "/dev/cpu/lapic";
 const dev_cpu_ioapic_path = "/dev/cpu/ioapic";
+const dev_cpu_pic_path = "/dev/cpu/pic";
 const dev_cpu_smp_path = "/dev/cpu/smp";
 const dev_cpu_ap_startup_path = "/dev/cpu/ap-startup";
 const dev_net_path = "/dev/net";
@@ -67,6 +69,7 @@ const sys_cpu_state_path = "/sys/cpu/state";
 const sys_cpu_topology_path = "/sys/cpu/topology";
 const sys_cpu_lapic_path = "/sys/cpu/lapic";
 const sys_cpu_ioapic_path = "/sys/cpu/ioapic";
+const sys_cpu_pic_path = "/sys/cpu/pic";
 const sys_cpu_smp_path = "/sys/cpu/smp";
 const sys_cpu_ap_startup_path = "/sys/cpu/ap-startup";
 const sys_storage_state_path = "/sys/storage/state";
@@ -180,6 +183,7 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
         try appendFileLine(allocator, &out, "topology", dev_cpu_topology_path, max_bytes);
         try appendFileLine(allocator, &out, "lapic", dev_cpu_lapic_path, max_bytes);
         try appendFileLine(allocator, &out, "ioapic", dev_cpu_ioapic_path, max_bytes);
+        try appendFileLine(allocator, &out, "pic", dev_cpu_pic_path, max_bytes);
         try appendFileLine(allocator, &out, "smp", dev_cpu_smp_path, max_bytes);
         try appendFileLine(allocator, &out, "ap-startup", dev_cpu_ap_startup_path, max_bytes);
         return out.toOwnedSlice(allocator);
@@ -229,6 +233,7 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
         try appendFileLine(allocator, &out, "topology", sys_cpu_topology_path, max_bytes);
         try appendFileLine(allocator, &out, "lapic", sys_cpu_lapic_path, max_bytes);
         try appendFileLine(allocator, &out, "ioapic", sys_cpu_ioapic_path, max_bytes);
+        try appendFileLine(allocator, &out, "pic", sys_cpu_pic_path, max_bytes);
         try appendFileLine(allocator, &out, "smp", sys_cpu_smp_path, max_bytes);
         try appendFileLine(allocator, &out, "ap-startup", sys_cpu_ap_startup_path, max_bytes);
         return out.toOwnedSlice(allocator);
@@ -357,6 +362,7 @@ fn isFilePath(path: []const u8) bool {
     if (std.mem.eql(u8, path, dev_cpu_topology_path)) return true;
     if (std.mem.eql(u8, path, dev_cpu_lapic_path)) return true;
     if (std.mem.eql(u8, path, dev_cpu_ioapic_path)) return true;
+    if (std.mem.eql(u8, path, dev_cpu_pic_path)) return true;
     if (std.mem.eql(u8, path, dev_cpu_smp_path)) return true;
     if (std.mem.eql(u8, path, dev_cpu_ap_startup_path)) return true;
     if (std.mem.eql(u8, path, dev_net_state_path)) return true;
@@ -368,6 +374,7 @@ fn isFilePath(path: []const u8) bool {
     if (std.mem.eql(u8, path, sys_cpu_topology_path)) return true;
     if (std.mem.eql(u8, path, sys_cpu_lapic_path)) return true;
     if (std.mem.eql(u8, path, sys_cpu_ioapic_path)) return true;
+    if (std.mem.eql(u8, path, sys_cpu_pic_path)) return true;
     if (std.mem.eql(u8, path, sys_cpu_smp_path)) return true;
     if (std.mem.eql(u8, path, sys_cpu_ap_startup_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_state_path)) return true;
@@ -433,6 +440,9 @@ fn renderFileAlloc(allocator: std.mem.Allocator, path: []const u8) Error![]u8 {
     }
     if (std.mem.eql(u8, path, dev_cpu_ioapic_path) or std.mem.eql(u8, path, sys_cpu_ioapic_path)) {
         return ioapic.renderAlloc(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_cpu_pic_path) or std.mem.eql(u8, path, sys_cpu_pic_path)) {
+        return pic.renderAlloc(allocator);
     }
     if (std.mem.eql(u8, path, dev_cpu_smp_path) or std.mem.eql(u8, path, sys_cpu_smp_path)) {
         return lapic.renderSmpAlloc(allocator);

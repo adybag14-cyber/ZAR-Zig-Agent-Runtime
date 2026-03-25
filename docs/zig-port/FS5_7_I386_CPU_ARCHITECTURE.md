@@ -410,6 +410,35 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - `I386_AP_EXECUTION_OBSERVED=0`
 - that means the missing warm-reset programming gap is now closed and the BSP-side delivery path is clean, but the current direct-loader path still does not yield actual AP trampoline execution
 
+### Slice 17: i386 Legacy PIC Export and Live Platform Proof
+
+- new bounded legacy PIC seam:
+  - `src/baremetal/pic.zig`
+- new ABI export:
+  - `oc_pic_state_ptr()`
+- new virtual paths:
+  - `/dev/cpu/pic`
+  - `/sys/cpu/pic`
+- the PIC seam now performs a real legacy dual-8259 remap on hardware-backed `x86` / `x86_64` freestanding runs:
+  - master offset `0x20`
+  - slave offset `0x28`
+  - preserves the live hardware mask bytes while reprogramming the controller
+  - records bounded IRR/ISR visibility for both master and slave PICs
+- the exported PIC state also records the distinct software interrupt-mask control plane from `src/baremetal/x86_bootstrap.zig`:
+  - `control_mask_profile`
+  - `control_masked_count`
+  - `control_ignored_count`
+  - `last_masked_vector`
+- `src/baremetal_main.zig` now widens the dedicated i386 platform probe to require:
+  - `present=1`
+  - `remapped=1`
+  - `master_offset=0x20`
+  - `slave_offset=0x28`
+  - `/sys/cpu/pic` render/readback
+  - preserved hardware PIC masks across a software `interrupt_mask_profile_external_all` apply
+  - updated control-plane counters without falsely mutating the hardware PIC mask bytes
+- that closes bounded legacy PIC export plus live remap/control-plane separation proof on the current direct-loader i386 platform lane without falsely claiming firmware-backed ACPI or actual AP execution
+
 ## ZigOS Follow-On Work
 
 - next adoption analysis is stored in:
@@ -447,6 +476,7 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the i386 freestanding runtime now has a dedicated live AP-startup control diagnostic proof with `/dev/cpu/ap-startup` and `/sys/cpu/ap-startup` visibility, a high-page trampoline, verified BSP-side INIT / deassert / SIPI / SIPI sequencing, bounded command/response/heartbeat telemetry, hardened startup timing/ESR handling, and explicit live AP-execution observation reporting on the current direct-loader QEMU path
 - the i386 freestanding runtime now also proves that the warm-reset vector is programmed correctly and that the BSP-side startup IPIs complete without APIC delivery or accept errors on the current direct-loader path, with the live AP debug trace preserved for inspection
 - the i386 freestanding runtime now has bounded IOAPIC export plus live MMIO proof with `/dev/cpu/ioapic` and `/sys/cpu/ioapic` visibility on the i386 platform lane
+- the i386 freestanding runtime now has bounded legacy PIC export plus live remap/control-plane proof with `/dev/cpu/pic` and `/sys/cpu/pic` visibility on the i386 platform lane
 - the i386 freestanding runtime now has live RTL8139 `ARP` / `IPv4` / `UDP` / bounded `TCP` / bounded runtime-service proof
 - the i386 freestanding runtime now has live RTL8139 `DHCP` / `DNS` / `HTTP` / `HTTPS` proof
 - the i386 freestanding runtime now has live RTL8139 gateway-routing proof
@@ -466,7 +496,7 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - it is not yet full 32-bit driver/runtime parity
 - descriptor telemetry is now dual-arch, but the broader descriptor/mailbox live proof lane is still only claimed on the existing `x86_64` PVH artifact
 - i386 display coverage now includes bounded VGA + framebuffer + `virtio-gpu` with reused output/interface/mode/profile matrix validation on the current controller path, but it still does not claim physical HDMI/DisplayPort controller-specific scanout or a separate i386-only display-profile wrapper matrix
-- i386 platform coverage now includes bounded ACPI plus exported CPU topology, IOAPIC state, LAPIC state, SMP-readiness, AP-startup execution telemetry, and explicit live AP-execution observation reporting, but it still does not claim real firmware-boot ACPI or live AP execution on the current direct-loader path
+- i386 platform coverage now includes bounded ACPI plus exported CPU topology, IOAPIC state, PIC state, LAPIC state, SMP-readiness, AP-startup execution telemetry, and explicit live AP-execution observation reporting, but it still does not claim real firmware-boot ACPI or live AP execution on the current direct-loader path
 - the remaining i386 AP/SMP gap is now narrower and explicit:
   - warm-reset programming is present
   - INIT + SIPI delivery completes cleanly

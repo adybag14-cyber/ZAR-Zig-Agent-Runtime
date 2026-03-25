@@ -18,6 +18,7 @@ pub const acpi_magic: u32 = 0x4f434150; // "OCAP"
 pub const cpu_magic: u32 = 0x4f434350; // "OCCP"
 pub const lapic_magic: u32 = 0x4f434c50; // "OCLP"
 pub const ioapic_magic: u32 = 0x4f434950; // "OCIP"
+pub const pic_magic: u32 = 0x4f435043; // "OCPC"
 pub const ap_startup_magic: u32 = 0x4f434153; // "OCAS"
 
 pub const api_version: u16 = 2;
@@ -480,6 +481,30 @@ pub const BaremetalIoApicState = extern struct {
     gsi_base: u32,
     reserved2: [4]u8,
     mmio_addr: u64,
+};
+
+pub const BaremetalPicState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    remapped: u8,
+    slave_present: u8,
+    auto_eoi: u8,
+    master_offset: u8,
+    slave_offset: u8,
+    master_mask: u8,
+    slave_mask: u8,
+    master_irr: u8,
+    slave_irr: u8,
+    master_isr: u8,
+    slave_isr: u8,
+    control_mask_profile: u8,
+    last_masked_vector: u8,
+    reserved0: [2]u8,
+    hardware_masked_irq_count: u16,
+    reserved1: u16,
+    control_masked_count: u32,
+    control_ignored_count: u64,
 };
 
 pub const BaremetalApStartupState = extern struct {

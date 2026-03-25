@@ -10,6 +10,7 @@ const acpi = @import("baremetal/acpi.zig");
 const i386_ap_startup = @import("baremetal/i386_ap_startup.zig");
 const ioapic = @import("baremetal/ioapic.zig");
 const lapic = @import("baremetal/lapic.zig");
+const pic = @import("baremetal/pic.zig");
 const display_output = @import("baremetal/display_output.zig");
 const display_profile_store = @import("baremetal/display_profile_store.zig");
 const virtio_gpu = @import("baremetal/virtio_gpu.zig");
@@ -60,6 +61,7 @@ const BaremetalCpuTopologyEntry = abi.BaremetalCpuTopologyEntry;
 const BaremetalApStartupState = abi.BaremetalApStartupState;
 const BaremetalLapicState = abi.BaremetalLapicState;
 const BaremetalIoApicState = abi.BaremetalIoApicState;
+const BaremetalPicState = abi.BaremetalPicState;
 const BaremetalEthernetState = abi.BaremetalEthernetState;
 const BaremetalStorageState = abi.BaremetalStorageState;
 const BaremetalStoragePartitionInfo = abi.BaremetalStoragePartitionInfo;
@@ -485,6 +487,11 @@ const I386PlatformProbeError = error{
     IoApicDisabled,
     IoApicRenderMismatch,
     IoApicEntryMismatch,
+    PicProbeFailed,
+    PicNotPresent,
+    PicRemapMismatch,
+    PicRenderMismatch,
+    PicControlPlaneMismatch,
     InterruptWakeMismatch,
     InterruptVectorMismatch,
     InterruptCountMismatch,
@@ -1910,6 +1917,10 @@ pub export fn oc_ioapic_state_ptr() *const BaremetalIoApicState {
     return ioapic.statePtr();
 }
 
+pub export fn oc_pic_state_ptr() *const BaremetalPicState {
+    return pic.statePtr();
+}
+
 pub export fn oc_i386_ap_startup_state_ptr() *const BaremetalApStartupState {
     return i386_ap_startup.statePtr();
 }
@@ -2970,6 +2981,7 @@ fn baremetalStart() callconv(.c) noreturn {
     storage_backend.init();
     x86_bootstrap.init();
     _ = x86_bootstrap.oc_try_load_descriptor_tables();
+    pic.init();
     acpi.init();
     i386_ap_startup.init();
     ioapic.init();
@@ -17320,6 +17332,9 @@ fn runI386PlatformProbe() I386PlatformProbeError!void {
     if (oc_acpi_state_ptr().present == 0) {
         acpi.probeSyntheticImage(true) catch return error.AcpiProbeFailed;
     }
+    pic.probe() catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+    };
     ioapic.probe() catch |err| switch (err) {
         error.UnsupportedPlatform => return error.UnsupportedPlatform,
         error.IoApicMissing => return error.IoApicProbeFailed,
@@ -17353,6 +17368,15 @@ fn runI386PlatformProbe() I386PlatformProbeError!void {
     if (ioapic_state.mmio_addr != acpi_ioapic.mmio_addr or ioapic_state.gsi_base != acpi_ioapic.gsi_base) {
         return error.IoApicEntryMismatch;
     }
+
+    const pic_state = oc_pic_state_ptr().*;
+    if (pic_state.present != 1 or pic_state.slave_present != 1) return error.PicNotPresent;
+    if (pic_state.remapped != 1 or pic_state.master_offset != 0x20 or pic_state.slave_offset != 0x28) {
+        return error.PicRemapMismatch;
+    }
+    const preserved_master_mask = pic_state.master_mask;
+    const preserved_slave_mask = pic_state.slave_mask;
+    const preserved_hardware_masked_irq_count = pic_state.hardware_masked_irq_count;
 
     var acpi_render_buffer: [1024]u8 = undefined;
     var acpi_fba = std.heap.FixedBufferAllocator.init(&acpi_render_buffer);
@@ -17405,6 +17429,20 @@ fn runI386PlatformProbe() I386PlatformProbeError!void {
         return error.IoApicRenderMismatch;
     }
 
+    var pic_render_buffer: [1024]u8 = undefined;
+    var pic_fba = std.heap.FixedBufferAllocator.init(&pic_render_buffer);
+    const pic_render = virtual_fs.readFileAlloc(pic_fba.allocator(), "/sys/cpu/pic", pic_render_buffer.len) catch {
+        return error.PicRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, pic_render, 1, "present=1") or
+        !std.mem.containsAtLeast(u8, pic_render, 1, "remapped=1") or
+        !std.mem.containsAtLeast(u8, pic_render, 1, "master_offset=0x20") or
+        !std.mem.containsAtLeast(u8, pic_render, 1, "slave_offset=0x28") or
+        !std.mem.containsAtLeast(u8, pic_render, 1, "control_mask_profile="))
+    {
+        return error.PicRenderMismatch;
+    }
+
     oc_scheduler_reset();
     oc_timer_reset();
     oc_wake_queue_clear();
@@ -17440,6 +17478,21 @@ fn runI386PlatformProbe() I386PlatformProbeError!void {
     oc_tick();
     _ = oc_submit_command(abi.command_interrupt_mask_apply_profile, abi.interrupt_mask_profile_external_all, 0);
     oc_tick();
+    pic.probe() catch return error.PicProbeFailed;
+    const masked_pic_state = oc_pic_state_ptr().*;
+    if (masked_pic_state.remapped != 1 or
+        masked_pic_state.master_offset != 0x20 or
+        masked_pic_state.slave_offset != 0x28 or
+        masked_pic_state.master_mask != preserved_master_mask or
+        masked_pic_state.slave_mask != preserved_slave_mask or
+        masked_pic_state.hardware_masked_irq_count != preserved_hardware_masked_irq_count or
+        masked_pic_state.control_mask_profile != abi.interrupt_mask_profile_external_all or
+        masked_pic_state.control_masked_count != 224 or
+        masked_pic_state.control_ignored_count != 0 or
+        masked_pic_state.last_masked_vector != 0)
+    {
+        return error.PicControlPlaneMismatch;
+    }
     _ = oc_submit_command(abi.command_task_create, 5, 0);
     oc_tick();
     const timer_task_id = oc_scheduler_task(0).task_id;
@@ -18478,15 +18531,20 @@ fn i386PlatformProbeFailureCode(err: I386PlatformProbeError) u8 {
         error.IoApicDisabled => 0xDE,
         error.IoApicRenderMismatch => 0xDF,
         error.IoApicEntryMismatch => 0xE0,
-        error.InterruptWakeMismatch => 0xE1,
-        error.InterruptVectorMismatch => 0xE2,
-        error.InterruptCountMismatch => 0xE3,
-        error.InterruptHistoryMismatch => 0xE4,
-        error.TimerWakeMismatch => 0xE5,
-        error.TimerDispatchMismatch => 0xE6,
-        error.TimerPendingMismatch => 0xE7,
-        error.TimerLastInterruptMismatch => 0xE8,
-        error.InterruptMaskIgnoredMismatch => 0xE9,
+        error.PicProbeFailed => 0xE1,
+        error.PicNotPresent => 0xE2,
+        error.PicRemapMismatch => 0xE3,
+        error.PicRenderMismatch => 0xE4,
+        error.PicControlPlaneMismatch => 0xE5,
+        error.InterruptWakeMismatch => 0xE6,
+        error.InterruptVectorMismatch => 0xE7,
+        error.InterruptCountMismatch => 0xE8,
+        error.InterruptHistoryMismatch => 0xE9,
+        error.TimerWakeMismatch => 0xEA,
+        error.TimerDispatchMismatch => 0xEB,
+        error.TimerPendingMismatch => 0xEC,
+        error.TimerLastInterruptMismatch => 0xED,
+        error.InterruptMaskIgnoredMismatch => 0xEE,
     };
 }
 
@@ -20017,6 +20075,7 @@ fn resetBaremetalRuntimeForTest() void {
     i386_ap_startup.resetForTest();
     ioapic.resetForTest();
     lapic.resetForTest();
+    pic.resetForTest();
     display_output.resetForTest();
     framebuffer_console.resetForTest();
     vga_text_console.resetForTest();
