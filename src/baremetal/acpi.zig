@@ -9,6 +9,7 @@ const xsdt_signature = "XSDT";
 const fadt_signature = "FACP";
 const madt_signature = "APIC";
 const low_memory_scan_limit: usize = 0x100000;
+const live_physical_table_limit: u64 = 0x08000000;
 const rsdp_v1_length: usize = 20;
 const rsdp_v2_length: usize = 36;
 const sdt_header_length: usize = 36;
@@ -16,9 +17,6 @@ const madt_header_length: usize = 44;
 const madt_entry_local_apic: u8 = 0;
 const madt_entry_io_apic: u8 = 1;
 const madt_entry_local_apic_addr_override: u8 = 5;
-const acpi_flag_has_xsdt: u32 = 1 << 0;
-const acpi_flag_has_fadt: u32 = 1 << 1;
-const acpi_flag_has_madt: u32 = 1 << 2;
 const cpu_topology_capacity: usize = 16;
 const ioapic_capacity: usize = 8;
 
@@ -132,11 +130,15 @@ pub fn probeLive() Error!void {
     if (builtin.cpu.arch != .x86 and builtin.cpu.arch != .x86_64) return error.UnsupportedPlatform;
     const low_mem = @as([*]allowzero const u8, @ptrFromInt(0))[0..low_memory_scan_limit];
     try probeImage(low_mem, 0);
+    state.flags |= abi.acpi_flag_live_low_memory;
+    state.flags &= ~abi.acpi_flag_synthetic_image;
 }
 
 pub fn probeSyntheticImage(use_xsdt: bool) Error!void {
     buildSyntheticAcpiImage(&synthetic_image, use_xsdt);
     try probeImage(&synthetic_image, 0);
+    state.flags |= abi.acpi_flag_synthetic_image;
+    state.flags &= ~abi.acpi_flag_live_low_memory;
 }
 
 pub fn probeImage(image: []const u8, base_phys: u64) Error!void {
@@ -164,6 +166,11 @@ pub fn probeImage(image: []const u8, base_phys: u64) Error!void {
 
     const rsdp_full = sliceAt(image, base_phys, rsdp_phys, rsdp_length) orelse return error.RsdpLengthInvalid;
     const rsdt_addr = @as(u64, readU32(rsdp_v1, 16));
+    @memcpy(state.oem_id[0..6], rsdp_full[9..15]);
+    state.revision = revision;
+    state.rsdp_addr = rsdp_phys;
+    state.rsdt_addr = rsdt_addr;
+    state.xsdt_addr = xsdt_addr;
     var table_count: u16 = 0;
     var active_root_addr: u64 = 0;
     var use_xsdt = false;
@@ -173,7 +180,7 @@ pub fn probeImage(image: []const u8, base_phys: u64) Error!void {
             table_count = countRootEntries(xsdt, true);
             active_root_addr = xsdt_addr;
             use_xsdt = true;
-            state.flags |= acpi_flag_has_xsdt;
+            state.flags |= abi.acpi_flag_has_xsdt;
         }
     }
     if (active_root_addr == 0 and rsdt_addr != 0) {
@@ -195,7 +202,7 @@ pub fn probeImage(image: []const u8, base_phys: u64) Error!void {
         if (validateTable(image, base_phys, fadt_addr, fadt_signature)) |fadt| {
             if (fadt.len >= 48) sci_interrupt = readU16(fadt, 46);
             if (fadt.len >= 80) pm_timer_block = readU32(fadt, 76);
-            state.flags |= acpi_flag_has_fadt;
+            state.flags |= abi.acpi_flag_has_fadt;
         }
     }
 
@@ -212,21 +219,18 @@ pub fn probeImage(image: []const u8, base_phys: u64) Error!void {
                 madt_flags = readU32(madt, 40);
             }
             parseMadt(madt, &lapic_count, &ioapic_count, &enabled_cpu_count, &lapic_addr_override_count, &local_apic_addr);
-            state.flags |= acpi_flag_has_madt;
+            state.flags |= abi.acpi_flag_has_madt;
         }
     }
 
     state.present = 1;
     state.revision = revision;
-    @memcpy(state.oem_id[0..6], rsdp_full[9..15]);
     state.table_count = table_count;
     state.lapic_count = lapic_count;
     state.ioapic_count = ioapic_count;
     state.sci_interrupt = sci_interrupt;
     state.pm_timer_block = pm_timer_block;
     state.rsdp_addr = rsdp_phys;
-    state.rsdt_addr = rsdt_addr;
-    state.xsdt_addr = xsdt_addr;
     state.fadt_addr = fadt_addr;
     state.madt_addr = madt_addr;
 
@@ -245,11 +249,13 @@ pub fn probeImage(image: []const u8, base_phys: u64) Error!void {
 pub fn renderAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
     return std.fmt.allocPrint(
         allocator,
-        "present={d}\nrevision={d}\nflags=0x{x}\nrsdp=0x{x}\nrsdt=0x{x}\nxsdt=0x{x}\nfadt=0x{x}\nmadt=0x{x}\noem={s}\ntable_count={d}\nlapic_count={d}\nioapic_count={d}\nsci_interrupt={d}\npm_timer_block=0x{x}\n",
+        "present={d}\nrevision={d}\nflags=0x{x}\nsource_live_low_memory={d}\nsource_synthetic={d}\nrsdp=0x{x}\nrsdt=0x{x}\nxsdt=0x{x}\nfadt=0x{x}\nmadt=0x{x}\noem={s}\ntable_count={d}\nlapic_count={d}\nioapic_count={d}\nsci_interrupt={d}\npm_timer_block=0x{x}\n",
         .{
             state.present,
             state.revision,
             state.flags,
+            if ((state.flags & abi.acpi_flag_live_low_memory) != 0) @as(u8, 1) else @as(u8, 0),
+            if ((state.flags & abi.acpi_flag_synthetic_image) != 0) @as(u8, 1) else @as(u8, 0),
             state.rsdp_addr,
             state.rsdt_addr,
             state.xsdt_addr,
@@ -312,8 +318,23 @@ fn sliceAt(image: []const u8, base_phys: u64, phys: u64, len: usize) ?[]const u8
     if (phys < base_phys) return null;
     const rel = phys - base_phys;
     const start = std.math.cast(usize, rel) orelse return null;
-    if (start > image.len or len > image.len - start) return null;
-    return image[start .. start + len];
+    if (start <= image.len and len <= image.len - start) {
+        return image[start .. start + len];
+    }
+    return livePhysicalSlice(base_phys, phys, len);
+}
+
+fn livePhysicalSlice(base_phys: u64, phys: u64, len: usize) ?[]const u8 {
+    if (base_phys != 0) return null;
+    if (builtin.os.tag != .freestanding) return null;
+    if (builtin.cpu.arch != .x86 and builtin.cpu.arch != .x86_64) return null;
+    const len64 = std.math.cast(u64, len) orelse return null;
+    const end_phys = std.math.add(u64, phys, len64) catch return null;
+    if (end_phys > live_physical_table_limit) return null;
+    const phys_addr = std.math.cast(usize, phys) orelse return null;
+    if (phys_addr == 0) return null;
+    const ptr = @as([*]const u8, @ptrFromInt(phys_addr));
+    return ptr[0..len];
 }
 
 fn readU16(bytes: []const u8, offset: usize) u16 {
@@ -563,7 +584,7 @@ test "acpi probe image discovers rsdt fadt and madt" {
     try std.testing.expectEqual(@as(u32, 0x608), snapshot.pm_timer_block);
     try std.testing.expectEqual(@as(u64, 0xF0100), snapshot.rsdt_addr);
     try std.testing.expectEqual(@as(u64, 0), snapshot.xsdt_addr);
-    try std.testing.expectEqual(@as(u32, acpi_flag_has_fadt | acpi_flag_has_madt), snapshot.flags);
+    try std.testing.expectEqual(@as(u32, abi.acpi_flag_has_fadt | abi.acpi_flag_has_madt), snapshot.flags);
 }
 
 test "acpi probe image prefers xsdt when revision two tables are present" {
@@ -578,7 +599,7 @@ test "acpi probe image prefers xsdt when revision two tables are present" {
     try std.testing.expectEqual(@as(u8, 2), snapshot.revision);
     try std.testing.expectEqual(@as(u16, 2), snapshot.table_count);
     try std.testing.expectEqual(@as(u64, 0xF0180), snapshot.xsdt_addr);
-    try std.testing.expectEqual(@as(u32, acpi_flag_has_xsdt | acpi_flag_has_fadt | acpi_flag_has_madt), snapshot.flags);
+    try std.testing.expectEqual(@as(u32, abi.acpi_flag_has_xsdt | abi.acpi_flag_has_fadt | abi.acpi_flag_has_madt), snapshot.flags);
 }
 
 test "acpi probe image exports cpu topology from madt" {
@@ -614,4 +635,11 @@ test "acpi probe image exports cpu topology from madt" {
     try std.testing.expectEqual(@as(u8, 1), ioapic.ioapic_id);
     try std.testing.expectEqual(@as(u32, 0xFEC00000), ioapic.mmio_addr);
     try std.testing.expectEqual(@as(u32, 0), ioapic.gsi_base);
+}
+
+test "synthetic acpi probe records synthetic source flag" {
+    resetForTest();
+    try probeSyntheticImage(true);
+    try std.testing.expect((statePtr().flags & abi.acpi_flag_synthetic_image) != 0);
+    try std.testing.expect((statePtr().flags & abi.acpi_flag_live_low_memory) == 0);
 }

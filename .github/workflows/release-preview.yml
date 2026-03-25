@@ -199,6 +199,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-platform-probe-check.ps1
 
+      - name: Bare-metal QEMU i386 firmware platform probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-platform-probe-check.ps1
+
       - name: Bare-metal QEMU i386 SMP probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-smp-probe-check.ps1
