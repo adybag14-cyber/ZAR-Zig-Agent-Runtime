@@ -239,7 +239,7 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - timer-backed wake fallback after the masked interrupt path
 - current direct `-kernel` QEMU boot still does not expose firmware low-memory ACPI tables in this environment, so the platform lane now:
   - attempts real low-memory ACPI discovery first
-  - falls back to a bounded synthetic `XSDT`-backed ACPI image when firmware tables are unavailable
+  - falls back to a bounded synthetic `XSDT`-backed ACPI image when firmware tables are unavailable or insufficient for the bounded SMP-ready platform proof
   - keeps timer/interrupt behavior as a real live i386 QEMU proof
 - hosted CI and `release-preview` now also execute:
   - `scripts/baremetal-qemu-i386-platform-probe-check.ps1`
@@ -291,7 +291,7 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - new live i386 QEMU probe:
   - `scripts/baremetal-qemu-i386-smp-probe-check.ps1`
 - `src/baremetal_main.zig` now carries a dedicated `i386_smp_probe` lane that validates:
-  - ACPI/topology presence with synthetic fallback only when firmware ACPI is unavailable
+  - ACPI/topology presence with synthetic fallback only when firmware ACPI is unavailable or insufficient for the bounded SMP-ready platform proof
   - local APIC support through CPUID
   - local APIC enablement through `IA32_APIC_BASE`
   - bounded LAPIC MMIO register visibility (`ID`, `VERSION`, `SVR`, timer/error `LVT`)
@@ -459,6 +459,38 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - `/sys/cpu/pit` and `/sys/acpi/pm-timer` render/readback
 - that closes bounded i386 timer-controller export and live controller readback on the current direct-loader path instead of only proving higher-level timer wake behavior above the controllers
 
+### Slice 19: i386 Firmware-Boot ACPI Proof
+
+- new BIOS firmware-boot lane:
+  - `scripts/build-i386-firmware-image.ps1`
+  - `scripts/baremetal/i386_bios_boot_sector.asm`
+  - `scripts/baremetal/i386_bios_stage2.asm`
+  - `scripts/baremetal-qemu-i386-firmware-platform-probe-check.ps1`
+- new freestanding build option:
+  - `baremetal-i386-firmware-platform-probe`
+- `src/baremetal_main.zig` now carries a dedicated `i386_firmware_platform_probe` lane that:
+  - requires live low-memory ACPI instead of accepting synthetic fallback
+  - reuses the platform validation surface only after firmware ACPI is proven real
+- `src/baremetal/acpi.zig` now keeps the `RSDP` search bounded to low memory but permits bounded live physical table validation beyond `1 MiB`, so firmware-root `RSDT`/`XSDT` tables can be validated even when BIOS places them high in RAM
+- the live BIOS lane now proves:
+  - real firmware `RSDP` discovery
+  - real firmware root-table validation without synthetic fallback
+  - real `FADT` + `MADT` parsing
+  - real LAPIC, IOAPIC, SCI, and PM-timer data on the firmware-boot path
+- hosted CI and `release-preview` now also execute:
+  - `scripts/baremetal-qemu-i386-firmware-platform-probe-check.ps1`
+- current live result on the firmware-boot i386 path includes:
+  - `ACPI_PRESENT=1`
+  - `ACPI_FLAGS=0x0E`
+  - `source_live_low_memory=1`
+  - `source_synthetic=0`
+  - `ACPI_LAPIC_COUNT=2`
+  - `ACPI_IOAPIC_COUNT=1`
+  - `ACPI_SCI_INTERRUPT=9`
+  - `ACPI_PM_TIMER_BLOCK=0x608`
+  - `ACPI_RSDP_ADDR=0x000F52A0`
+  - `ACPI_RSDT_ADDR=0x07FE1C67`
+
 ## ZigOS Follow-On Work
 
 - next adoption analysis is stored in:
@@ -499,6 +531,7 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the i386 freestanding runtime now has bounded legacy PIC export plus live remap/control-plane proof with `/dev/cpu/pic` and `/sys/cpu/pic` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded PIT export plus live latch/readback proof with `/dev/cpu/pit` and `/sys/cpu/pit` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded ACPI PM-timer export plus live monotonic readback proof through `/sys/acpi/pm-timer` on the i386 platform lane
+- the i386 freestanding runtime now has a real BIOS firmware-boot ACPI proof with no synthetic fallback, using a custom bounded BIOS disk image + stage2 loader and a dedicated firmware platform probe lane
 - the i386 freestanding runtime now has live RTL8139 `ARP` / `IPv4` / `UDP` / bounded `TCP` / bounded runtime-service proof
 - the i386 freestanding runtime now has live RTL8139 `DHCP` / `DNS` / `HTTP` / `HTTPS` proof
 - the i386 freestanding runtime now has live RTL8139 gateway-routing proof
@@ -508,8 +541,9 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the i386 freestanding runtime now has live linear-framebuffer console proof
 - the current explicit boundary is:
   - live i386 timer/interrupt/device/display/storage/NIC proof breadth is broad
-  - ACPI, CPU topology, LAPIC state, and AP-startup control are currently bounded parser/export/control seams with synthetic ACPI fallback under the direct-loader QEMU path
-  - actual AP bring-up/SMP execution, real firmware ACPI under a firmware boot path, and broader platform-controller hardening remain the next `FS5.7` steps
+  - the direct `-kernel` platform lane still has bounded synthetic ACPI fallback when firmware tables are unavailable or insufficient there
+  - a separate BIOS firmware-boot lane now proves real ACPI end to end
+  - actual AP bring-up/SMP execution and broader platform-controller hardening remain the next `FS5.7` steps
 - the i386 freestanding runtime now has live `virtio-gpu` display proof on the i386 controller path with reused output/interface/mode/profile matrix coverage from the shared broad display probe
 
 ## Current Boundary
@@ -518,17 +552,17 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - it is not yet full 32-bit driver/runtime parity
 - descriptor telemetry is now dual-arch, but the broader descriptor/mailbox live proof lane is still only claimed on the existing `x86_64` PVH artifact
 - i386 display coverage now includes bounded VGA + framebuffer + `virtio-gpu` with reused output/interface/mode/profile matrix validation on the current controller path, but it still does not claim physical HDMI/DisplayPort controller-specific scanout or a separate i386-only display-profile wrapper matrix
-- i386 platform coverage now includes bounded ACPI plus exported CPU topology, IOAPIC state, PIC state, LAPIC state, PIT state, ACPI PM-timer state, SMP-readiness, AP-startup execution telemetry, and explicit live AP-execution observation reporting, but it still does not claim real firmware-boot ACPI or live AP execution on the current direct-loader path
+- i386 platform coverage now includes bounded ACPI plus exported CPU topology, IOAPIC state, PIC state, LAPIC state, PIT state, ACPI PM-timer state, SMP-readiness, AP-startup execution telemetry, explicit live AP-execution observation reporting on the current direct-loader path, and a separate real firmware-boot ACPI proof with no synthetic fallback
 - the remaining i386 AP/SMP gap is now narrower and explicit:
   - warm-reset programming is present
   - INIT + SIPI delivery completes cleanly
   - AP execution is still not observed on the direct-loader path
-  - that points the next real closure step at firmware-boot mechanics or a deeper AP startup path, not missing BSP-side setup anymore
+  - that points the next real closure step at actual AP execution / SMP bring-up, not missing firmware ACPI or missing BSP-side setup anymore
 
 ## Next Steps
 
 1. start the next real i386 architecture-hardening slice after bounded AP-startup control diagnostics:
-   - real firmware ACPI under a firmware boot path
+   - actual AP bring-up and execution on top of the now-live firmware/platform seams
 2. then widen bounded SMP groundwork into actual AP bring-up and execution
    - AP trampoline execution
    - LAPIC / IPI bring-up beyond BSP-side sequencing

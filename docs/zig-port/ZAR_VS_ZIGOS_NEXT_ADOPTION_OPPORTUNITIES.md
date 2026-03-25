@@ -23,12 +23,13 @@ ZAR has already absorbed or independently reached a meaningful subset of the hig
 - bounded PIT plus ACPI PM-timer controller visibility on the i386 platform lane
 - bounded LAPIC state export plus live i386 `-smp 2` proof
 - bounded AP-startup control diagnostics with exported INIT / deassert / SIPI / SIPI telemetry
+- real BIOS firmware-boot ACPI proof with no synthetic fallback
 
 That means the next ZigOS-derived improvements should focus on subsystems that materially raise ZAR capability rather than duplicate already-landed slices.
 
 ## What ZigOS Has That Can Still Significantly Improve ZAR
 
-### 1. Real Firmware ACPI and AP Bring-Up
+### 1. Actual AP Bring-Up and SMP Execution
 
 Relevant upstream areas:
 - `src/arch/x86.zig`
@@ -40,7 +41,7 @@ Relevant upstream areas:
 
 Why it matters:
 - This is now the strongest near-term upgrade path for `FS5.7`.
-- ZAR already has bounded ACPI plus exported CPU topology, SMP-readiness, LAPIC state, and AP-startup control diagnostics, so the next meaningful jump is actual AP startup and execution under a firmware-backed path.
+- ZAR now already has real firmware-boot ACPI, bounded ACPI plus exported CPU topology, SMP-readiness, LAPIC state, and AP-startup control diagnostics, so the next meaningful jump is actual AP startup and execution on top of those now-live platform seams.
 - ZigOS already demonstrates a wider split between generic `x86` and `x86_64` architecture support plus SMP/platform bring-up patterns.
 - For the remaining AP-execution mechanics specifically, Linux `arch/x86/kernel/smpboot.c` is still the sharper low-level reference than ZigOS; ZigOS remains the better architectural reference for how far ZAR should take the broader `x86` platform lane after that gap is closed.
 
@@ -180,10 +181,10 @@ Priority: `deferred strategic`
 
 ### Near-term, highest value
 1. `FS5.7` i386/x86 parity expansion
-2. ACPI hardening on a real firmware boot path plus wider timer/interrupt coverage
-3. SMP bootstrap and bounded multi-core scheduler telemetry
-4. USB/UHCI bounded hardware slice
-5. AC97 bounded audio slice
+2. SMP bootstrap and bounded multi-core scheduler telemetry
+3. USB/UHCI bounded hardware slice
+4. AC97 bounded audio slice
+5. richer timer/interrupt hardening above the now-live firmware platform path
 
 ### Medium-term, high value
 1. richer virtual filesystem semantics over current bounded VFS
@@ -208,8 +209,8 @@ Priority: `deferred strategic`
 If the goal is to significantly improve ZAR rather than just add more bounded surface area, the next best ZigOS-derived moves are:
 
 1. close as much of `FS5.7` i386/x86 parity as safely possible
-2. use ZigOS as a design/reference input for the first bounded ACPI + interrupt + timer slice
-3. follow that with SMP telemetry/bootstrap, not userspace
+2. use ZigOS as a design/reference input for actual AP bring-up and bounded SMP execution, not another ACPI parser slice
+3. follow that with USB/UHCI or AC97, not userspace
 4. only then choose between USB/UHCI or AC97 as the next hardware-breadth expansion
 
 That order improves the platform ZAR runs on, not just the features sitting on top of it.

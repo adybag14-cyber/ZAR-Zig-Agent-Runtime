@@ -161,6 +161,7 @@ const qemu_i386_platform_probe_ok_code: u8 = 0x7C;
 const qemu_i386_smp_probe_ok_code: u8 = 0x7D;
 const qemu_i386_ap_startup_probe_ok_code: u8 = 0x7E;
 const qemu_i386_ap_execution_probe_ok_code: u8 = 0x7F;
+const qemu_i386_firmware_platform_probe_ok_code: u8 = 0x80;
 const build_options = if (builtin.is_test)
     struct {
         pub const qemu_smoke: bool = false;
@@ -211,6 +212,7 @@ const build_options = if (builtin.is_test)
         pub const virtio_block_fat32_mount_probe: bool = false;
         pub const virtio_block_mount_control_probe: bool = false;
         pub const i386_platform_probe: bool = false;
+        pub const i386_firmware_platform_probe: bool = false;
         pub const i386_smp_probe: bool = false;
         pub const i386_ap_startup_probe: bool = false;
     }
@@ -265,6 +267,7 @@ const virtio_block_ext2_mount_probe_enabled: bool = if (@hasDecl(build_options, 
 const virtio_block_fat32_mount_probe_enabled: bool = if (@hasDecl(build_options, "virtio_block_fat32_mount_probe")) build_options.virtio_block_fat32_mount_probe else false;
 const virtio_block_mount_control_probe_enabled: bool = if (@hasDecl(build_options, "virtio_block_mount_control_probe")) build_options.virtio_block_mount_control_probe else false;
 const i386_platform_probe_enabled: bool = if (@hasDecl(build_options, "i386_platform_probe")) build_options.i386_platform_probe else false;
+const i386_firmware_platform_probe_enabled: bool = if (@hasDecl(build_options, "i386_firmware_platform_probe")) build_options.i386_firmware_platform_probe else false;
 const i386_smp_probe_enabled: bool = if (@hasDecl(build_options, "i386_smp_probe")) build_options.i386_smp_probe else false;
 const i386_ap_startup_probe_enabled: bool = if (@hasDecl(build_options, "i386_ap_startup_probe")) build_options.i386_ap_startup_probe else false;
 
@@ -481,6 +484,7 @@ const I386PlatformProbeError = error{
     AcpiLapicMissing,
     AcpiIoApicMissing,
     AcpiSciInterruptMissing,
+    AcpiSyntheticFallbackUsed,
     AcpiRenderMismatch,
     CpuTopologyMissing,
     CpuTopologySmpMissing,
@@ -3047,6 +3051,10 @@ fn baremetalStart() callconv(.c) noreturn {
     if (i386_platform_probe_enabled) {
         runI386PlatformProbe() catch |err| qemuExit(i386PlatformProbeFailureCode(err));
         qemuExit(qemu_i386_platform_probe_ok_code);
+    }
+    if (i386_firmware_platform_probe_enabled) {
+        runI386FirmwarePlatformProbe() catch |err| qemuExit(i386PlatformProbeFailureCode(err));
+        qemuExit(qemu_i386_firmware_platform_probe_ok_code);
     }
     if (i386_smp_probe_enabled) {
         runI386SmpProbe() catch |err| qemuExit(i386SmpProbeFailureCode(err));
@@ -17346,12 +17354,23 @@ fn runToolRuntimeProbe() ToolRuntimeProbeError!void {
     if (!std.mem.eql(u8, restored_session.last_message, "echo runtime-baremetal")) return error.RuntimeRestoredSessionMismatch;
 }
 
-fn runI386PlatformProbe() I386PlatformProbeError!void {
+fn runI386PlatformProbeCommon(require_live_acpi: bool) I386PlatformProbeError!void {
     if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86) return error.UnsupportedPlatform;
 
     resetBaremetalRuntimeForTest();
-    acpi.probeLive() catch {};
-    if (oc_acpi_state_ptr().present == 0) {
+    acpi.probeLive() catch |err| {
+        qemuDebugWrite("QA:");
+        qemuDebugWrite(@errorName(err));
+        qemuDebugWrite("\n");
+    };
+    const live_acpi_state = oc_acpi_state_ptr().*;
+    const live_acpi_insufficient = live_acpi_state.present == 0 or
+        (live_acpi_state.rsdt_addr == 0 and live_acpi_state.xsdt_addr == 0) or
+        live_acpi_state.lapic_count < 2 or
+        live_acpi_state.ioapic_count == 0 or
+        live_acpi_state.sci_interrupt == 0;
+    if (live_acpi_insufficient) {
+        if (require_live_acpi) return error.AcpiNotPresent;
         acpi.probeSyntheticImage(true) catch return error.AcpiProbeFailed;
     }
     pic.probe() catch |err| switch (err) {
@@ -17372,6 +17391,9 @@ fn runI386PlatformProbe() I386PlatformProbeError!void {
 
     const acpi_state = oc_acpi_state_ptr().*;
     if (acpi_state.present != 1) return error.AcpiNotPresent;
+    if (require_live_acpi and ((acpi_state.flags & abi.acpi_flag_live_low_memory) == 0 or (acpi_state.flags & abi.acpi_flag_synthetic_image) != 0)) {
+        return error.AcpiSyntheticFallbackUsed;
+    }
     if (acpi_state.rsdt_addr == 0 and acpi_state.xsdt_addr == 0) return error.AcpiRootMissing;
     if (acpi_state.lapic_count == 0) return error.AcpiLapicMissing;
     if (acpi_state.ioapic_count == 0) return error.AcpiIoApicMissing;
@@ -17433,6 +17455,7 @@ fn runI386PlatformProbe() I386PlatformProbeError!void {
         return error.AcpiRenderMismatch;
     };
     if (!std.mem.containsAtLeast(u8, acpi_render, 1, "present=1") or
+        !std.mem.containsAtLeast(u8, acpi_render, 1, "source_live_low_memory=") or
         !std.mem.containsAtLeast(u8, acpi_render, 1, "lapic_count=") or
         !std.mem.containsAtLeast(u8, acpi_render, 1, "ioapic_count=") or
         !std.mem.containsAtLeast(u8, acpi_render, 1, "sci_interrupt="))
@@ -17588,6 +17611,14 @@ fn runI386PlatformProbe() I386PlatformProbeError!void {
     if (oc_timer_state_ptr().dispatch_count != 0) return error.TimerDispatchMismatch;
     if (oc_timer_state_ptr().pending_wake_count != 1) return error.TimerPendingMismatch;
     if (oc_timer_state_ptr().last_interrupt_count != 0) return error.TimerLastInterruptMismatch;
+}
+
+fn runI386PlatformProbe() I386PlatformProbeError!void {
+    try runI386PlatformProbeCommon(false);
+}
+
+fn runI386FirmwarePlatformProbe() I386PlatformProbeError!void {
+    try runI386PlatformProbeCommon(true);
 }
 
 fn runI386SmpProbe() I386SmpProbeError!void {
@@ -18596,38 +18627,39 @@ fn i386PlatformProbeFailureCode(err: I386PlatformProbeError) u8 {
         error.AcpiLapicMissing => 0xD4,
         error.AcpiIoApicMissing => 0xD5,
         error.AcpiSciInterruptMissing => 0xD6,
-        error.AcpiRenderMismatch => 0xD7,
-        error.CpuTopologyMissing => 0xD8,
-        error.CpuTopologySmpMissing => 0xD9,
-        error.CpuTopologyRenderMismatch => 0xDA,
-        error.CpuTopologyEntryMismatch => 0xDB,
-        error.IoApicProbeFailed => 0xDC,
-        error.IoApicNotPresent => 0xDD,
-        error.IoApicDisabled => 0xDE,
-        error.IoApicRenderMismatch => 0xDF,
-        error.IoApicEntryMismatch => 0xE0,
-        error.PicProbeFailed => 0xE1,
-        error.PicNotPresent => 0xE2,
-        error.PicRemapMismatch => 0xE3,
-        error.PicRenderMismatch => 0xE4,
-        error.PicControlPlaneMismatch => 0xE5,
-        error.PitProbeFailed => 0xE6,
-        error.PitNotPresent => 0xE7,
-        error.PitCounterMismatch => 0xE8,
-        error.PitRenderMismatch => 0xE9,
-        error.PmTimerProbeFailed => 0xEA,
-        error.PmTimerNotPresent => 0xEB,
-        error.PmTimerMonotonicMismatch => 0xEC,
-        error.PmTimerRenderMismatch => 0xED,
-        error.InterruptWakeMismatch => 0xEE,
-        error.InterruptVectorMismatch => 0xEF,
-        error.InterruptCountMismatch => 0xF0,
-        error.InterruptHistoryMismatch => 0xF1,
-        error.TimerWakeMismatch => 0xF2,
-        error.TimerDispatchMismatch => 0xF3,
-        error.TimerPendingMismatch => 0xF4,
-        error.TimerLastInterruptMismatch => 0xF5,
-        error.InterruptMaskIgnoredMismatch => 0xF6,
+        error.AcpiSyntheticFallbackUsed => 0xD7,
+        error.AcpiRenderMismatch => 0xD8,
+        error.CpuTopologyMissing => 0xD9,
+        error.CpuTopologySmpMissing => 0xDA,
+        error.CpuTopologyRenderMismatch => 0xDB,
+        error.CpuTopologyEntryMismatch => 0xDC,
+        error.IoApicProbeFailed => 0xDD,
+        error.IoApicNotPresent => 0xDE,
+        error.IoApicDisabled => 0xDF,
+        error.IoApicRenderMismatch => 0xE0,
+        error.IoApicEntryMismatch => 0xE1,
+        error.PicProbeFailed => 0xE2,
+        error.PicNotPresent => 0xE3,
+        error.PicRemapMismatch => 0xE4,
+        error.PicRenderMismatch => 0xE5,
+        error.PicControlPlaneMismatch => 0xE6,
+        error.PitProbeFailed => 0xE7,
+        error.PitNotPresent => 0xE8,
+        error.PitCounterMismatch => 0xE9,
+        error.PitRenderMismatch => 0xEA,
+        error.PmTimerProbeFailed => 0xEB,
+        error.PmTimerNotPresent => 0xEC,
+        error.PmTimerMonotonicMismatch => 0xED,
+        error.PmTimerRenderMismatch => 0xEE,
+        error.InterruptWakeMismatch => 0xEF,
+        error.InterruptVectorMismatch => 0xF0,
+        error.InterruptCountMismatch => 0xF1,
+        error.InterruptHistoryMismatch => 0xF2,
+        error.TimerWakeMismatch => 0xF3,
+        error.TimerDispatchMismatch => 0xF4,
+        error.TimerPendingMismatch => 0xF5,
+        error.TimerLastInterruptMismatch => 0xF6,
+        error.InterruptMaskIgnoredMismatch => 0xF7,
     };
 }
 
