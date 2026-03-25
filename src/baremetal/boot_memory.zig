@@ -20,8 +20,10 @@ const cmos_reg_extended_high_64k_high: u8 = 0x35;
 
 const one_gib: u64 = 1024 * 1024 * 1024;
 const memory_map_entry_type_available: u32 = 1;
+pub const region_capacity: usize = 64;
 
 var state: abi.BaremetalBootMemoryState = zeroState();
+var regions: [region_capacity]abi.BaremetalBootMemoryRegion = std.mem.zeroes([region_capacity]abi.BaremetalBootMemoryRegion);
 
 fn zeroState() abi.BaremetalBootMemoryState {
     return .{
@@ -41,11 +43,14 @@ fn zeroState() abi.BaremetalBootMemoryState {
         .usable_region_count = 0,
         .largest_usable_base = 0,
         .largest_usable_size = 0,
+        .region_entry_count = 0,
+        .reserved1 = 0,
     };
 }
 
 pub fn resetForTest() void {
     state = zeroState();
+    @memset(&regions, std.mem.zeroes(abi.BaremetalBootMemoryRegion));
     oc_i386_boot_magic_raw = 0;
     oc_i386_boot_info_ptr_raw = 0;
 }
@@ -54,8 +59,20 @@ pub fn statePtr() *const abi.BaremetalBootMemoryState {
     return &state;
 }
 
+pub fn regionCount() u32 {
+    return state.region_entry_count;
+}
+
+pub fn regionEntry(index: u32) abi.BaremetalBootMemoryRegion {
+    if (index >= state.region_entry_count or index >= region_capacity) {
+        return std.mem.zeroes(abi.BaremetalBootMemoryRegion);
+    }
+    return regions[index];
+}
+
 pub fn init(kernel_image_end: u64, page_size: u32) void {
     state = zeroState();
+    @memset(&regions, std.mem.zeroes(abi.BaremetalBootMemoryRegion));
     if (builtin.os.tag != .freestanding) {
         configureHeapFallback(kernel_image_end, page_size);
         return;
@@ -82,7 +99,7 @@ pub fn livePhysicalLimit() u64 {
 pub fn renderAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
     return std.fmt.allocPrint(
         allocator,
-        "source={d}\nflags=0x{x}\nmem_lower_kib={d}\nmem_upper_kib={d}\ntotal_bytes={d}\nusable_bytes={d}\nheap_base=0x{x}\nheap_limit=0x{x}\nheap_size={d}\nmmap_entry_count={d}\nusable_region_count={d}\nlargest_usable_base=0x{x}\nlargest_usable_size={d}\n",
+        "source={d}\nflags=0x{x}\nmem_lower_kib={d}\nmem_upper_kib={d}\ntotal_bytes={d}\nusable_bytes={d}\nheap_base=0x{x}\nheap_limit=0x{x}\nheap_size={d}\nmmap_entry_count={d}\nusable_region_count={d}\nlargest_usable_base=0x{x}\nlargest_usable_size={d}\nregion_entry_count={d}\nregions_synthesized={d}\n",
         .{
             state.source,
             state.flags,
@@ -97,11 +114,33 @@ pub fn renderAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
             state.usable_region_count,
             state.largest_usable_base,
             state.largest_usable_size,
+            state.region_entry_count,
+            if ((state.flags & abi.boot_memory_flag_regions_synthesized) != 0) @as(u32, 1) else @as(u32, 0),
         },
     );
 }
 
-fn parseMultiboot2Info(info_ptr: usize) bool {
+pub fn renderMapAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(allocator);
+    const header = try std.fmt.allocPrint(allocator, "region_entry_count={d}\n", .{state.region_entry_count});
+    defer allocator.free(header);
+    try out.appendSlice(allocator, header);
+    var index: u32 = 0;
+    while (index < state.region_entry_count and index < region_capacity) : (index += 1) {
+        const entry = regions[index];
+        const line = try std.fmt.allocPrint(
+            allocator,
+            "region[{d}].base=0x{x}\nregion[{d}].size={d}\nregion[{d}].type={d}\nregion[{d}].flags=0x{x}\n",
+            .{ index, entry.base, index, entry.size, index, entry.entry_type, index, entry.flags },
+        );
+        defer allocator.free(line);
+        try out.appendSlice(allocator, line);
+    }
+    return out.toOwnedSlice(allocator);
+}
+
+pub fn parseMultiboot2Info(info_ptr: usize) bool {
     if (info_ptr == 0) return false;
     const base: [*]const u8 = @ptrFromInt(info_ptr);
     const total_size = readU32(base[0..4]);
@@ -123,6 +162,7 @@ fn parseMultiboot2Info(info_ptr: usize) bool {
         }
         cursor = std.mem.alignForward(usize, cursor + tag_size, 8);
     }
+    if (state.region_entry_count == 0) synthesizeBasicUsableRegion();
     return state.mem_upper_kib != 0 or state.total_bytes != 0;
 }
 
@@ -131,13 +171,14 @@ fn parseBasicMeminfoTag(tag: []const u8) void {
     state.flags |= abi.boot_memory_flag_has_basic_meminfo;
     state.mem_lower_kib = readU32(tag[8..12]);
     state.mem_upper_kib = readU32(tag[12..16]);
+    const unclipped_total = @as(u64, (1024 + state.mem_upper_kib)) * 1024;
+    if (unclipped_total > one_gib) state.flags |= abi.boot_memory_flag_heap_capped_1g;
     if (state.total_bytes == 0) {
-        state.total_bytes = @min(one_gib, @as(u64, (1024 + state.mem_upper_kib)) * 1024);
+        state.total_bytes = @min(one_gib, unclipped_total);
     }
     if (state.usable_bytes == 0) {
         state.usable_bytes = state.total_bytes;
     }
-    synthesizeBasicUsableRegion();
 }
 
 fn parseMemoryMapTag(tag: []const u8) void {
@@ -155,19 +196,26 @@ fn parseMemoryMapTag(tag: []const u8) void {
         const length = readU64(entry[8..16]);
         const entry_type = readU32(entry[16..20]);
         if (length == 0) continue;
-        state.mmap_entry_count += 1;
-        if (entry_type != memory_map_entry_type_available) continue;
-
         const region_base = base_addr;
-        const unclamped_end = region_base + length;
+        const unclamped_end = std.math.add(u64, region_base, length) catch std.math.maxInt(u64);
         const region_end = @min(unclamped_end, one_gib);
         if (region_end <= region_base) continue;
         const clipped_len = region_end - region_base;
-        state.usable_region_count += 1;
-        usable_total += clipped_len;
-        if (clipped_len > state.largest_usable_size) {
-            state.largest_usable_size = clipped_len;
-            state.largest_usable_base = region_base;
+        var region_flags: u32 = 0;
+        if (entry_type == memory_map_entry_type_available) region_flags |= abi.boot_memory_region_flag_usable;
+        if (region_end != unclamped_end) {
+            region_flags |= abi.boot_memory_region_flag_clipped;
+            state.flags |= abi.boot_memory_flag_heap_capped_1g;
+        }
+        appendRegion(region_base, clipped_len, entry_type, region_flags);
+        state.mmap_entry_count += 1;
+        if (entry_type == memory_map_entry_type_available) {
+            state.usable_region_count += 1;
+            usable_total += clipped_len;
+            if (clipped_len > state.largest_usable_size) {
+                state.largest_usable_size = clipped_len;
+                state.largest_usable_base = region_base;
+            }
         }
         if (region_end > capped_total) capped_total = region_end;
     }
@@ -184,20 +232,29 @@ fn parseCmosFallback() void {
     const mem_upper_kib = readExtendedMemoryKib();
     state.mem_lower_kib = 640;
     state.mem_upper_kib = mem_upper_kib;
-    state.total_bytes = @min(one_gib, @as(u64, (1024 + mem_upper_kib)) * 1024);
+    const unclipped_total = @as(u64, (1024 + mem_upper_kib)) * 1024;
+    if (unclipped_total > one_gib) state.flags |= abi.boot_memory_flag_heap_capped_1g;
+    state.total_bytes = @min(one_gib, unclipped_total);
     state.usable_bytes = state.total_bytes;
     synthesizeBasicUsableRegion();
 }
 
 fn synthesizeBasicUsableRegion() void {
-    if (state.usable_region_count != 0 or state.largest_usable_size != 0) return;
+    if (state.region_entry_count != 0 or state.usable_region_count != 0 or state.largest_usable_size != 0) return;
     const upper_base: u64 = 0x0010_0000;
     if (state.total_bytes <= upper_base) return;
     const upper_limit = @min(state.total_bytes, one_gib);
     if (upper_limit <= upper_base) return;
+    appendRegion(
+        upper_base,
+        upper_limit - upper_base,
+        abi.boot_memory_region_type_available,
+        abi.boot_memory_region_flag_usable | abi.boot_memory_region_flag_synthesized,
+    );
     state.usable_region_count = 1;
     state.largest_usable_base = upper_base;
     state.largest_usable_size = upper_limit - upper_base;
+    state.flags |= abi.boot_memory_flag_regions_synthesized;
 }
 
 fn configureHeapFallback(kernel_image_end: u64, page_size: u32) void {
@@ -209,18 +266,30 @@ fn configureHeapFallback(kernel_image_end: u64, page_size: u32) void {
     state.flags |= abi.boot_memory_flag_heap_configured;
 }
 
-fn configureHeap(kernel_image_end: u64, page_size: u32) void {
+pub fn configureHeap(kernel_image_end: u64, page_size: u32) void {
     const heap_base = std.mem.alignForward(u64, @max(kernel_image_end, 0x0010_0000), page_size);
-    var heap_limit = state.total_bytes;
-    if (heap_limit == 0 or heap_limit <= heap_base) {
+    if (state.region_entry_count == 0 or state.usable_region_count == 0) {
         configureHeapFallback(kernel_image_end, page_size);
         return;
     }
-    if (heap_limit > one_gib) {
-        heap_limit = one_gib;
-        state.flags |= abi.boot_memory_flag_heap_capped_1g;
+
+    var heap_limit: u64 = 0;
+    var usable_found = false;
+    var index: u32 = 0;
+    while (index < state.region_entry_count and index < region_capacity) : (index += 1) {
+        const entry = regions[index];
+        if ((entry.flags & abi.boot_memory_region_flag_usable) == 0 or entry.size == 0) continue;
+        const entry_end = entry.base + entry.size;
+        const clipped_base = std.mem.alignForward(u64, @max(entry.base, heap_base), page_size);
+        const clipped_end = std.mem.alignBackward(u64, @min(entry_end, one_gib), page_size);
+        if (clipped_end <= clipped_base) continue;
+        usable_found = true;
+        if (clipped_end > heap_limit) heap_limit = clipped_end;
     }
-    heap_limit = std.mem.alignBackward(u64, heap_limit, page_size);
+    if (!usable_found) {
+        configureHeapFallback(kernel_image_end, page_size);
+        return;
+    }
     if (heap_limit <= heap_base) {
         configureHeapFallback(kernel_image_end, page_size);
         return;
@@ -229,6 +298,19 @@ fn configureHeap(kernel_image_end: u64, page_size: u32) void {
     state.heap_limit = heap_limit;
     state.heap_size = heap_limit - heap_base;
     state.flags |= abi.boot_memory_flag_heap_configured;
+}
+
+fn appendRegion(base: u64, size: u64, entry_type: u32, flags: u32) void {
+    if (size == 0) return;
+    if (state.region_entry_count >= region_capacity) return;
+    regions[state.region_entry_count] = .{
+        .base = base,
+        .size = size,
+        .entry_type = entry_type,
+        .flags = flags,
+    };
+    state.region_entry_count += 1;
+    state.flags |= abi.boot_memory_flag_has_region_entries;
 }
 
 fn readExtendedMemoryKib() u32 {
@@ -293,8 +375,13 @@ test "boot memory parses basic multiboot2 meminfo" {
     try std.testing.expect((parsed.flags & abi.boot_memory_flag_has_basic_meminfo) != 0);
     try std.testing.expectEqual(@as(u64, one_gib), parsed.total_bytes);
     try std.testing.expectEqual(@as(u32, 1), parsed.usable_region_count);
+    try std.testing.expectEqual(@as(u32, 1), parsed.region_entry_count);
     try std.testing.expectEqual(@as(u64, 0x0010_0000), parsed.largest_usable_base);
     try std.testing.expectEqual(@as(u64, one_gib - 0x0010_0000), parsed.largest_usable_size);
+    const region0 = regionEntry(0);
+    try std.testing.expectEqual(@as(u64, 0x0010_0000), region0.base);
+    try std.testing.expectEqual(@as(u32, abi.boot_memory_region_type_available), region0.entry_type);
+    try std.testing.expect((region0.flags & abi.boot_memory_region_flag_synthesized) != 0);
     try std.testing.expectEqual(std.mem.alignForward(u64, 0x0018_0000, 4096), parsed.heap_base);
     try std.testing.expect(parsed.heap_size > 0);
 }
@@ -321,6 +408,11 @@ test "boot memory parses multiboot2 memory map and clips to 1g" {
     try std.testing.expect((parsed.flags & abi.boot_memory_flag_has_memory_map) != 0);
     try std.testing.expectEqual(@as(u32, 1), parsed.mmap_entry_count);
     try std.testing.expectEqual(@as(u32, 1), parsed.usable_region_count);
+    try std.testing.expectEqual(@as(u32, 1), parsed.region_entry_count);
     try std.testing.expectEqual(@as(u64, one_gib), parsed.total_bytes);
     try std.testing.expectEqual(@as(u64, one_gib - std.mem.alignForward(u64, 0x0020_0000, 4096)), parsed.heap_size);
+    const region0 = regionEntry(0);
+    try std.testing.expectEqual(@as(u64, 0x0010_0000), region0.base);
+    try std.testing.expect((region0.flags & abi.boot_memory_region_flag_usable) != 0);
+    try std.testing.expect((region0.flags & abi.boot_memory_region_flag_clipped) != 0);
 }

@@ -928,6 +928,14 @@ pub const boot_memory_flag_has_memory_map: u32 = 1 << 2;
 pub const boot_memory_flag_heap_configured: u32 = 1 << 3;
 pub const boot_memory_flag_heap_capped_1g: u32 = 1 << 4;
 pub const boot_memory_flag_from_firmware_loader: u32 = 1 << 5;
+pub const boot_memory_flag_regions_synthesized: u32 = 1 << 6;
+pub const boot_memory_flag_has_region_entries: u32 = 1 << 7;
+
+pub const boot_memory_region_type_available: u32 = 1;
+
+pub const boot_memory_region_flag_usable: u32 = 1 << 0;
+pub const boot_memory_region_flag_clipped: u32 = 1 << 1;
+pub const boot_memory_region_flag_synthesized: u32 = 1 << 2;
 
 pub const BaremetalBootMemoryState = extern struct {
     magic: u32,
@@ -946,6 +954,15 @@ pub const BaremetalBootMemoryState = extern struct {
     usable_region_count: u32,
     largest_usable_base: u64,
     largest_usable_size: u64,
+    region_entry_count: u32,
+    reserved1: u32,
+};
+
+pub const BaremetalBootMemoryRegion = extern struct {
+    base: u64,
+    size: u64,
+    entry_type: u32,
+    flags: u32,
 };
 
 pub const BaremetalAllocationRecord = extern struct {
@@ -1168,7 +1185,7 @@ test "baremetal kernel info size contract stays stable" {
     try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalSchedulerState));
     try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalTask));
     try std.testing.expectEqual(@as(usize, 88), @sizeOf(BaremetalAllocatorState));
-    try std.testing.expectEqual(@as(usize, 88), @sizeOf(BaremetalBootMemoryState));
+    try std.testing.expectEqual(@as(usize, 96), @sizeOf(BaremetalBootMemoryState));
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(BaremetalBootMemoryState, "magic"));
     try std.testing.expectEqual(@as(usize, 4), @offsetOf(BaremetalBootMemoryState, "api_version"));
     try std.testing.expectEqual(@as(usize, 6), @offsetOf(BaremetalBootMemoryState, "source"));
@@ -1184,6 +1201,8 @@ test "baremetal kernel info size contract stays stable" {
     try std.testing.expectEqual(@as(usize, 68), @offsetOf(BaremetalBootMemoryState, "usable_region_count"));
     try std.testing.expectEqual(@as(usize, 72), @offsetOf(BaremetalBootMemoryState, "largest_usable_base"));
     try std.testing.expectEqual(@as(usize, 80), @offsetOf(BaremetalBootMemoryState, "largest_usable_size"));
+    try std.testing.expectEqual(@as(usize, 88), @offsetOf(BaremetalBootMemoryState, "region_entry_count"));
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(BaremetalBootMemoryRegion));
     try std.testing.expectEqual(@as(usize, 48), @sizeOf(BaremetalAllocationRecord));
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalSyscallState));
     try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalSyscallEntry));

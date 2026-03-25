@@ -34,6 +34,7 @@ $bootMemoryMmapEntryCountOffset = 60
 $bootMemoryUsableRegionCountOffset = 64
 $bootMemoryLargestUsableBaseOffset = 68
 $bootMemoryLargestUsableSizeOffset = 76
+$bootMemoryRegionEntryCountOffset = 84
 $acpiMagicOffset = 0
 $acpiApiVersionOffset = 4
 $acpiPresentOffset = 6
@@ -233,6 +234,7 @@ commands
   printf "BOOT_MEMORY_USABLE_REGION_COUNT=%u\n", *(unsigned int*)(__BOOT_MEMORY_STATE_ADDR__ + __BOOT_MEMORY_USABLE_REGION_COUNT_OFFSET__)
   printf "BOOT_MEMORY_LARGEST_USABLE_BASE=%llu\n", *(unsigned long long*)(__BOOT_MEMORY_STATE_ADDR__ + __BOOT_MEMORY_LARGEST_USABLE_BASE_OFFSET__)
   printf "BOOT_MEMORY_LARGEST_USABLE_SIZE=%llu\n", *(unsigned long long*)(__BOOT_MEMORY_STATE_ADDR__ + __BOOT_MEMORY_LARGEST_USABLE_SIZE_OFFSET__)
+  printf "BOOT_MEMORY_REGION_ENTRY_COUNT=%u\n", *(unsigned int*)(__BOOT_MEMORY_STATE_ADDR__ + __BOOT_MEMORY_REGION_ENTRY_COUNT_OFFSET__)
   printf "ACPI_MAGIC=%u\n", *(unsigned int*)(__ACPI_STATE_ADDR__ + __ACPI_MAGIC_OFFSET__)
   printf "ACPI_API_VERSION=%u\n", *(unsigned short*)(__ACPI_STATE_ADDR__ + __ACPI_API_VERSION_OFFSET__)
   printf "ACPI_PRESENT=%u\n", *(unsigned char*)(__ACPI_STATE_ADDR__ + __ACPI_PRESENT_OFFSET__)
@@ -294,6 +296,7 @@ $gdbScriptContent = $gdbTemplate `
     -replace '__BOOT_MEMORY_USABLE_REGION_COUNT_OFFSET__', $bootMemoryUsableRegionCountOffset `
     -replace '__BOOT_MEMORY_LARGEST_USABLE_BASE_OFFSET__', $bootMemoryLargestUsableBaseOffset `
     -replace '__BOOT_MEMORY_LARGEST_USABLE_SIZE_OFFSET__', $bootMemoryLargestUsableSizeOffset `
+    -replace '__BOOT_MEMORY_REGION_ENTRY_COUNT_OFFSET__', $bootMemoryRegionEntryCountOffset `
     -replace '__ACPI_STATE_ADDR__', ('0x' + $acpiStateAddress) `
     -replace '__IOAPIC_STATE_ADDR__', ('0x' + $ioApicStateAddress) `
     -replace '__TIMER_STATE_ADDR__', ('0x' + $timerStateAddress) `
@@ -395,6 +398,7 @@ $bootMemoryMmapEntryCountValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_
 $bootMemoryUsableRegionCountValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_USABLE_REGION_COUNT'
 $bootMemoryLargestUsableBaseValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_LARGEST_USABLE_BASE'
 $bootMemoryLargestUsableSizeValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_LARGEST_USABLE_SIZE'
+$bootMemoryRegionEntryCountValue = Extract-IntValue -Text $out -Name 'BOOT_MEMORY_REGION_ENTRY_COUNT'
 $acpiMagicValue = Extract-IntValue -Text $out -Name 'ACPI_MAGIC'
 $acpiApiVersionValue = Extract-IntValue -Text $out -Name 'ACPI_API_VERSION'
 $acpiPresentValue = Extract-IntValue -Text $out -Name 'ACPI_PRESENT'
@@ -456,6 +460,7 @@ Write-Output "BAREMETAL_I386_PLATFORM_PROBE_BOOT_MEMORY_MMAP_ENTRY_COUNT=$bootMe
 Write-Output "BAREMETAL_I386_PLATFORM_PROBE_BOOT_MEMORY_USABLE_REGION_COUNT=$bootMemoryUsableRegionCountValue"
 Write-Output "BAREMETAL_I386_PLATFORM_PROBE_BOOT_MEMORY_LARGEST_USABLE_BASE=$bootMemoryLargestUsableBaseValue"
 Write-Output "BAREMETAL_I386_PLATFORM_PROBE_BOOT_MEMORY_LARGEST_USABLE_SIZE=$bootMemoryLargestUsableSizeValue"
+Write-Output "BAREMETAL_I386_PLATFORM_PROBE_BOOT_MEMORY_REGION_ENTRY_COUNT=$bootMemoryRegionEntryCountValue"
 Write-Output "BAREMETAL_I386_PLATFORM_PROBE_ACPI_PRESENT=$acpiPresentValue"
 Write-Output "BAREMETAL_I386_PLATFORM_PROBE_ACPI_TABLE_COUNT=$acpiTableCountValue"
 Write-Output "BAREMETAL_I386_PLATFORM_PROBE_ACPI_LAPIC_COUNT=$acpiLapicCountValue"
@@ -488,6 +493,8 @@ $pass = (
     $bootMemoryUsableRegionCountValue -ge 0 -and
     $bootMemoryLargestUsableBaseValue -ge 0 -and
     $bootMemoryLargestUsableSizeValue -gt 0 -and
+    $bootMemoryRegionEntryCountValue -ge 1 -and
+    (($bootMemoryFlagsValue -band 0x80) -eq 0x80) -and
     $acpiMagicValue -eq $acpiMagic -and
     $acpiApiVersionValue -eq $apiVersion -and
     $acpiPresentValue -eq 1 -and

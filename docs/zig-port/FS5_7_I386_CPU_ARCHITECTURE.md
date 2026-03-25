@@ -491,16 +491,21 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - `ACPI_RSDP_ADDR=0x000F52A0`
   - `ACPI_RSDT_ADDR=0x07FE1C67`
 
-### Slice 20: i386 Boot-Memory Detection and 1 GiB RAM Proof
+### Slice 20: i386 Real Boot-Memory Map and 1 GiB RAM Proof
 
-- new bounded boot-memory seam:
+- new bounded boot-memory + physical-memory seams:
   - `src/baremetal/boot_memory.zig`
+  - `src/baremetal/physical_memory.zig`
   - `oc_boot_memory_state_ptr()`
+  - `oc_boot_memory_region_count()`
+  - `oc_boot_memory_region(index)`
   - `/dev/memory/state`
+  - `/dev/memory/map`
   - `/sys/memory/state`
-- the old fixed i386 `1 MiB` heap is gone; allocator reset now derives heap base, limit, and page count from exported boot-memory telemetry
-- the direct-loader i386 path now records raw boot magic and boot-info pointers from `scripts/baremetal/i386_boot.S`, consumes Multiboot2 memory info when it exists, and otherwise falls back honestly to bounded CMOS extended-memory sizing
-- the BIOS firmware path now synthesizes a bounded Multiboot2 basic-meminfo block in `scripts/baremetal/i386_bios_stage2.asm`, so the firmware-boot lane carries explicit memory telemetry into Zig instead of relying on the old fixed heap fallback
+  - `/sys/memory/map`
+- the old fixed i386 `1 MiB` heap is gone; allocator reset now derives heap base, limit, total span, reserved pages, and usable pages from exported boot-memory regions instead of assuming a contiguous allocatable window
+- the direct-loader i386 path now records raw boot magic and boot-info pointers from `scripts/baremetal/i386_boot.S`, consumes a Multiboot2 memory map when it exists, and otherwise falls back honestly to bounded CMOS extended-memory sizing plus one synthesized upper-memory region
+- the BIOS firmware path now emits a bounded Multiboot2 memory-map tag from live BIOS `E820` data in `scripts/baremetal/i386_bios_stage2.asm`, while preserving the basic-meminfo tag, so the firmware-boot lane now carries a real region table into Zig instead of only aggregate meminfo
 - the bounded boot-memory state now exports:
   - `source`
   - `flags`
@@ -515,7 +520,14 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - `usable_region_count`
   - `largest_usable_base`
   - `largest_usable_size`
-- when no live memory map is available, the boot-memory seam now synthesizes a bounded upper-memory usable region rooted at `0x00100000`, keeping the exported region telemetry internally consistent on both direct-loader and firmware paths
+  - `region_entry_count`
+- the new `/sys/memory/map` render now proves the concrete exported region table:
+  - `region[i].base`
+  - `region[i].size`
+  - `region[i].type`
+  - `region[i].flags`
+- `src/baremetal_main.zig` now routes allocator reset through the region-aware physical-memory seam and explicitly skips non-usable holes, with a regression test that allocates across separated usable windows and proves the hole pages remain unallocated
+- when no live memory map is available, the boot-memory seam now synthesizes exactly one bounded upper-memory usable region rooted at `0x00100000`, sets explicit synthesized-region flags, and keeps the exported region telemetry internally consistent on the direct-loader fallback path without falsely claiming a real memory map
 - live `1024M` validation now covers:
   - `scripts/baremetal-qemu-i386-platform-probe-check.ps1 -MemoryMiB 1024`
   - `scripts/baremetal-qemu-i386-firmware-platform-probe-check.ps1 -MemoryMiB 1024`
@@ -528,6 +540,9 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - firmware platform
   - ATA storage
   - E1000 full-stack
+- current live result at `1024M` is explicit:
+  - direct-loader platform still uses the bounded synthesized-region fallback when no live Multiboot2 map is present
+  - firmware-boot platform uses the real BIOS `E820`-derived Multiboot2 memory map with multiple exported regions
 
 ## ZigOS Follow-On Work
 
