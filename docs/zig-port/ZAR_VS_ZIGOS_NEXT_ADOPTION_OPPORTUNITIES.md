@@ -19,6 +19,7 @@ ZAR has already absorbed or independently reached a meaningful subset of the hig
 - additive `i386` build and smoke bootstrap lane
 - bounded ACPI export/render plus live i386 timer/interrupt proof
 - bounded CPU-topology and SMP-readiness export derived from `MADT`
+- bounded LAPIC state export plus live i386 `-smp 2` proof
 
 That means the next ZigOS-derived improvements should focus on subsystems that materially raise ZAR capability rather than duplicate already-landed slices.
 
@@ -36,7 +37,7 @@ Relevant upstream areas:
 
 Why it matters:
 - This is now the strongest near-term upgrade path for `FS5.7`.
-- ZAR already has bounded ACPI plus exported CPU topology and SMP-readiness, so the next meaningful jump is actual AP startup and execution.
+- ZAR already has bounded ACPI plus exported CPU topology, SMP-readiness, and LAPIC state, so the next meaningful jump is actual AP startup and execution.
 - ZigOS already demonstrates a wider split between generic `x86` and `x86_64` architecture support plus SMP/platform bring-up patterns.
 
 Adoption fit:

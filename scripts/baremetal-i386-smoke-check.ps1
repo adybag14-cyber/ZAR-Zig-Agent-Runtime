@@ -203,7 +203,12 @@ $requiredSymbols = @(
     "oc_descriptor_tables_loaded",
     "oc_descriptor_load_attempt_count",
     "oc_descriptor_load_success_count",
-    "oc_try_load_descriptor_tables"
+    "oc_try_load_descriptor_tables",
+    "oc_acpi_state_ptr",
+    "oc_cpu_topology_state_ptr",
+    "oc_cpu_topology_entry_count",
+    "oc_cpu_topology_entry",
+    "oc_lapic_state_ptr"
 )
 foreach ($required in $requiredSymbols) {
     if (-not $symbols.Contains($required)) {

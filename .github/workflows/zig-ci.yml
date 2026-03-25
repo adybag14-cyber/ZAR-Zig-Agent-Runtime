@@ -173,6 +173,10 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-platform-probe-check.ps1
 
+      - name: Bare-metal QEMU i386 SMP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-smp-probe-check.ps1
+
       - name: Bare-metal QEMU i386 ATA storage probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-ata-storage-probe-check.ps1

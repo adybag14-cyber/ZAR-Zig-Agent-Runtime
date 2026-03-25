@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const abi = @import("abi.zig");
 const acpi = @import("acpi.zig");
+const lapic = @import("lapic.zig");
 const display_output = @import("display_output.zig");
 const runtime_bridge = @import("runtime_bridge.zig");
 const storage_backend = @import("storage_backend.zig");
@@ -48,6 +49,8 @@ const dev_display_outputs_path = "/dev/display/outputs";
 const dev_cpu_path = "/dev/cpu";
 const dev_cpu_state_path = "/dev/cpu/state";
 const dev_cpu_topology_path = "/dev/cpu/topology";
+const dev_cpu_lapic_path = "/dev/cpu/lapic";
+const dev_cpu_smp_path = "/dev/cpu/smp";
 const dev_net_path = "/dev/net";
 const dev_net_state_path = "/dev/net/state";
 const dev_net_route_path = "/dev/net/route";
@@ -58,6 +61,8 @@ const sys_acpi_state_path = "/sys/acpi/state";
 const sys_cpu_path = "/sys/cpu";
 const sys_cpu_state_path = "/sys/cpu/state";
 const sys_cpu_topology_path = "/sys/cpu/topology";
+const sys_cpu_lapic_path = "/sys/cpu/lapic";
+const sys_cpu_smp_path = "/sys/cpu/smp";
 const sys_storage_state_path = "/sys/storage/state";
 const sys_storage_backends_path = "/sys/storage/backends";
 const sys_storage_filesystems_path = "/sys/storage/filesystems";
@@ -167,6 +172,8 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     if (std.mem.eql(u8, path, dev_cpu_path)) {
         try appendFileLine(allocator, &out, "state", dev_cpu_state_path, max_bytes);
         try appendFileLine(allocator, &out, "topology", dev_cpu_topology_path, max_bytes);
+        try appendFileLine(allocator, &out, "lapic", dev_cpu_lapic_path, max_bytes);
+        try appendFileLine(allocator, &out, "smp", dev_cpu_smp_path, max_bytes);
         return out.toOwnedSlice(allocator);
     }
     if (std.mem.eql(u8, path, dev_display_outputs_path)) {
@@ -212,6 +219,8 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
     if (std.mem.eql(u8, path, sys_cpu_path)) {
         try appendFileLine(allocator, &out, "state", sys_cpu_state_path, max_bytes);
         try appendFileLine(allocator, &out, "topology", sys_cpu_topology_path, max_bytes);
+        try appendFileLine(allocator, &out, "lapic", sys_cpu_lapic_path, max_bytes);
+        try appendFileLine(allocator, &out, "smp", sys_cpu_smp_path, max_bytes);
         return out.toOwnedSlice(allocator);
     }
     if (std.mem.eql(u8, path, "/sys/storage")) {
@@ -336,6 +345,8 @@ fn isFilePath(path: []const u8) bool {
     if (std.mem.eql(u8, path, dev_display_state_path)) return true;
     if (std.mem.eql(u8, path, dev_cpu_state_path)) return true;
     if (std.mem.eql(u8, path, dev_cpu_topology_path)) return true;
+    if (std.mem.eql(u8, path, dev_cpu_lapic_path)) return true;
+    if (std.mem.eql(u8, path, dev_cpu_smp_path)) return true;
     if (std.mem.eql(u8, path, dev_net_state_path)) return true;
     if (std.mem.eql(u8, path, dev_net_route_path)) return true;
     if (std.mem.eql(u8, path, sys_kernel_version_path)) return true;
@@ -343,6 +354,8 @@ fn isFilePath(path: []const u8) bool {
     if (std.mem.eql(u8, path, sys_acpi_state_path)) return true;
     if (std.mem.eql(u8, path, sys_cpu_state_path)) return true;
     if (std.mem.eql(u8, path, sys_cpu_topology_path)) return true;
+    if (std.mem.eql(u8, path, sys_cpu_lapic_path)) return true;
+    if (std.mem.eql(u8, path, sys_cpu_smp_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_state_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_backends_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_filesystems_path)) return true;
@@ -400,6 +413,12 @@ fn renderFileAlloc(allocator: std.mem.Allocator, path: []const u8) Error![]u8 {
     }
     if (std.mem.eql(u8, path, dev_cpu_topology_path) or std.mem.eql(u8, path, sys_cpu_topology_path)) {
         return acpi.renderCpuTopologyAlloc(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_cpu_lapic_path) or std.mem.eql(u8, path, sys_cpu_lapic_path)) {
+        return lapic.renderAlloc(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_cpu_smp_path) or std.mem.eql(u8, path, sys_cpu_smp_path)) {
+        return lapic.renderSmpAlloc(allocator);
     }
     if (std.mem.eql(u8, path, dev_net_state_path)) {
         return renderNetStateAlloc(allocator);
