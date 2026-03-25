@@ -15,6 +15,7 @@ pub const filesystem_magic: u32 = 0x4f434653; // "OCFS"
 pub const keyboard_magic: u32 = 0x4f434b42; // "OCKB"
 pub const mouse_magic: u32 = 0x4f434d53; // "OCMS"
 pub const acpi_magic: u32 = 0x4f434150; // "OCAP"
+pub const cpu_magic: u32 = 0x4f434350; // "OCCP"
 
 pub const api_version: u16 = 2;
 
@@ -410,6 +411,30 @@ pub const BaremetalAcpiState = extern struct {
     xsdt_addr: u64,
     fadt_addr: u64,
     madt_addr: u64,
+};
+
+pub const BaremetalCpuTopologyState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    supports_smp: u8,
+    cpu_count: u16,
+    exported_count: u16,
+    enabled_count: u16,
+    ioapic_count: u16,
+    lapic_addr_override_count: u16,
+    reserved0: u16,
+    madt_flags: u32,
+    local_apic_addr: u64,
+    madt_addr: u64,
+};
+
+pub const BaremetalCpuTopologyEntry = extern struct {
+    processor_uid: u8,
+    apic_id: u8,
+    enabled: u8,
+    reserved0: u8,
+    flags: u32,
 };
 
 pub const BaremetalDisplayOutputEntry = extern struct {

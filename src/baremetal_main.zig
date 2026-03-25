@@ -52,6 +52,8 @@ const BaremetalConsoleState = abi.BaremetalConsoleState;
 const BaremetalFramebufferState = abi.BaremetalFramebufferState;
 const BaremetalDisplayOutputState = abi.BaremetalDisplayOutputState;
 const BaremetalAcpiState = abi.BaremetalAcpiState;
+const BaremetalCpuTopologyState = abi.BaremetalCpuTopologyState;
+const BaremetalCpuTopologyEntry = abi.BaremetalCpuTopologyEntry;
 const BaremetalEthernetState = abi.BaremetalEthernetState;
 const BaremetalStorageState = abi.BaremetalStorageState;
 const BaremetalStoragePartitionInfo = abi.BaremetalStoragePartitionInfo;
@@ -461,6 +463,10 @@ const I386PlatformProbeError = error{
     AcpiIoApicMissing,
     AcpiSciInterruptMissing,
     AcpiRenderMismatch,
+    CpuTopologyMissing,
+    CpuTopologySmpMissing,
+    CpuTopologyRenderMismatch,
+    CpuTopologyEntryMismatch,
     InterruptWakeMismatch,
     InterruptVectorMismatch,
     InterruptCountMismatch,
@@ -1832,6 +1838,18 @@ pub export fn oc_framebuffer_pixel_at(x: u32, y: u32) u32 {
 
 pub export fn oc_acpi_state_ptr() *const BaremetalAcpiState {
     return acpi.statePtr();
+}
+
+pub export fn oc_cpu_topology_state_ptr() *const BaremetalCpuTopologyState {
+    return acpi.cpuTopologyStatePtr();
+}
+
+pub export fn oc_cpu_topology_entry_count() u16 {
+    return acpi.cpuTopologyEntryCount();
+}
+
+pub export fn oc_cpu_topology_entry(index: u16) BaremetalCpuTopologyEntry {
+    return acpi.cpuTopologyEntry(index);
 }
 
 pub export fn oc_display_output_state_ptr() *const BaremetalDisplayOutputState {
@@ -17237,6 +17255,16 @@ fn runI386PlatformProbe() I386PlatformProbeError!void {
     if (acpi_state.ioapic_count == 0) return error.AcpiIoApicMissing;
     if (acpi_state.sci_interrupt == 0) return error.AcpiSciInterruptMissing;
 
+    const cpu_state = oc_cpu_topology_state_ptr().*;
+    if (cpu_state.present != 1 or cpu_state.cpu_count == 0 or cpu_state.enabled_count == 0) return error.CpuTopologyMissing;
+    if (cpu_state.supports_smp != 1 or cpu_state.enabled_count < 2) return error.CpuTopologySmpMissing;
+    if (oc_cpu_topology_entry_count() < 2) return error.CpuTopologyEntryMismatch;
+
+    const cpu0 = oc_cpu_topology_entry(0);
+    const cpu1 = oc_cpu_topology_entry(1);
+    if (cpu0.enabled != 1 or cpu1.enabled != 1) return error.CpuTopologyEntryMismatch;
+    if (cpu0.apic_id == cpu1.apic_id) return error.CpuTopologyEntryMismatch;
+
     var acpi_render_buffer: [1024]u8 = undefined;
     var acpi_fba = std.heap.FixedBufferAllocator.init(&acpi_render_buffer);
     const acpi_render = virtual_fs.readFileAlloc(acpi_fba.allocator(), "/sys/acpi/state", acpi_render_buffer.len) catch {
@@ -17248,6 +17276,31 @@ fn runI386PlatformProbe() I386PlatformProbeError!void {
         !std.mem.containsAtLeast(u8, acpi_render, 1, "sci_interrupt="))
     {
         return error.AcpiRenderMismatch;
+    }
+
+    var cpu_state_render_buffer: [1024]u8 = undefined;
+    var cpu_state_fba = std.heap.FixedBufferAllocator.init(&cpu_state_render_buffer);
+    const cpu_state_render = virtual_fs.readFileAlloc(cpu_state_fba.allocator(), "/sys/cpu/state", cpu_state_render_buffer.len) catch {
+        return error.CpuTopologyRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, cpu_state_render, 1, "supports_smp=1") or
+        !std.mem.containsAtLeast(u8, cpu_state_render, 1, "cpu_count=") or
+        !std.mem.containsAtLeast(u8, cpu_state_render, 1, "enabled_count=") or
+        !std.mem.containsAtLeast(u8, cpu_state_render, 1, "local_apic_addr="))
+    {
+        return error.CpuTopologyRenderMismatch;
+    }
+
+    var cpu_topology_render_buffer: [1024]u8 = undefined;
+    var cpu_topology_fba = std.heap.FixedBufferAllocator.init(&cpu_topology_render_buffer);
+    const cpu_topology_render = virtual_fs.readFileAlloc(cpu_topology_fba.allocator(), "/sys/cpu/topology", cpu_topology_render_buffer.len) catch {
+        return error.CpuTopologyRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, cpu_topology_render, 1, "cpu[0].apic_id=") or
+        !std.mem.containsAtLeast(u8, cpu_topology_render, 1, "cpu[1].apic_id=") or
+        !std.mem.containsAtLeast(u8, cpu_topology_render, 1, "cpu[0].enabled=1"))
+    {
+        return error.CpuTopologyRenderMismatch;
     }
 
     oc_scheduler_reset();
@@ -18116,15 +18169,19 @@ fn i386PlatformProbeFailureCode(err: I386PlatformProbeError) u8 {
         error.AcpiIoApicMissing => 0xD5,
         error.AcpiSciInterruptMissing => 0xD6,
         error.AcpiRenderMismatch => 0xD7,
-        error.InterruptWakeMismatch => 0xD8,
-        error.InterruptVectorMismatch => 0xD9,
-        error.InterruptCountMismatch => 0xDA,
-        error.InterruptHistoryMismatch => 0xDB,
-        error.TimerWakeMismatch => 0xDC,
-        error.TimerDispatchMismatch => 0xDD,
-        error.TimerPendingMismatch => 0xDE,
-        error.TimerLastInterruptMismatch => 0xDF,
-        error.InterruptMaskIgnoredMismatch => 0xE0,
+        error.CpuTopologyMissing => 0xD8,
+        error.CpuTopologySmpMissing => 0xD9,
+        error.CpuTopologyRenderMismatch => 0xDA,
+        error.CpuTopologyEntryMismatch => 0xDB,
+        error.InterruptWakeMismatch => 0xDC,
+        error.InterruptVectorMismatch => 0xDD,
+        error.InterruptCountMismatch => 0xDE,
+        error.InterruptHistoryMismatch => 0xDF,
+        error.TimerWakeMismatch => 0xE0,
+        error.TimerDispatchMismatch => 0xE1,
+        error.TimerPendingMismatch => 0xE2,
+        error.TimerLastInterruptMismatch => 0xE3,
+        error.InterruptMaskIgnoredMismatch => 0xE4,
     };
 }
 

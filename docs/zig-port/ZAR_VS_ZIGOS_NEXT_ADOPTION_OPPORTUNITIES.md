@@ -18,12 +18,13 @@ ZAR has already absorbed or independently reached a meaningful subset of the hig
 - benchmark/stress lane additions
 - additive `i386` build and smoke bootstrap lane
 - bounded ACPI export/render plus live i386 timer/interrupt proof
+- bounded CPU-topology and SMP-readiness export derived from `MADT`
 
 That means the next ZigOS-derived improvements should focus on subsystems that materially raise ZAR capability rather than duplicate already-landed slices.
 
 ## What ZigOS Has That Can Still Significantly Improve ZAR
 
-### 1. Architecture and CPU Platform Depth
+### 1. Real Firmware ACPI and AP Bring-Up
 
 Relevant upstream areas:
 - `src/arch/x86.zig`
@@ -34,9 +35,9 @@ Relevant upstream areas:
 - `src/kernel/smp/`
 
 Why it matters:
-- This is the strongest near-term upgrade path for `FS5.7`.
-- ZAR now has a bounded `i386` seam, but not broad 32-bit hardware parity.
-- ZigOS already demonstrates a wider split between generic `x86` and `x86_64` architecture support.
+- This is now the strongest near-term upgrade path for `FS5.7`.
+- ZAR already has bounded ACPI plus exported CPU topology and SMP-readiness, so the next meaningful jump is actual AP startup and execution.
+- ZigOS already demonstrates a wider split between generic `x86` and `x86_64` architecture support plus SMP/platform bring-up patterns.
 
 Adoption fit:
 - `adapt and rebuild`
@@ -45,26 +46,38 @@ Adoption fit:
 
 Priority: `highest`
 
-### 2. ACPI + SMP Platform Bring-Up
+### 2. USB + UHCI Hardware Breadth
 
 Relevant upstream areas:
-- `src/kernel/acpi/`
-- `src/kernel/smp/`
-- `src/kernel/timer/`
+- `src/kernel/drivers/usb.zig`
+- `src/kernel/drivers/uhci.zig`
 
 Why it matters:
-- This is the biggest single hardware/platform capability gap still visible in ZAR.
-- It would move ZAR from a strong single-core appliance runtime toward a more real kernel-grade hardware platform.
-- It also improves the future portability of storage, network, and timer-sensitive runtime code.
+- This is now the most obvious unstarted hardware-breadth win after NIC, storage, and current FS5.7 platform work.
+- It opens practical peripheral/device bring-up beyond PS/2-era assumptions.
 
 Adoption fit:
 - `adapt and rebuild`
-- ACPI table walking, LAPIC/IOAPIC discovery, and SMP startup logic need a ZAR-native implementation
-- not a direct import because ZAR does not currently expose a syscall-visible scheduler/kernel model
+- controller models, enumeration, and device-class handling still need to fit ZAR's bounded appliance/runtime architecture
 
-Priority: `highest`
+Priority: `high`
 
-### 3. Serial + Interrupt + Timer Robustness
+### 3. AC97 Audio Output
+
+Relevant upstream area:
+- `src/kernel/drivers/ac97.zig`
+
+Why it matters:
+- Audio is still absent from the current ZAR hardware story.
+- AC97 is a bounded first audio target in QEMU and older x86 environments.
+
+Adoption fit:
+- `adapt and rebuild`
+- bounded device-first slice is realistic
+
+Priority: `medium-high`
+
+### 4. Serial + Interrupt + Timer Robustness
 
 Relevant upstream areas:
 - `src/kernel/drivers/serial.zig`
@@ -72,47 +85,14 @@ Relevant upstream areas:
 - `src/kernel/timer/`
 
 Why it matters:
-- This is a smaller but high-leverage step before deeper SMP or userspace work.
+- This is still a high-leverage step before deeper SMP or userspace work.
 - It improves debugging, determinism, and future i386/x86 parity.
-- It also gives stronger proof lanes for CI and appliance diagnostics.
 
 Adoption fit:
 - `adapt`
 - likely incremental over current ZAR internals
 
 Priority: `high`
-
-### 4. USB + UHCI Hardware Breadth
-
-Relevant upstream areas:
-- `src/kernel/drivers/usb.zig`
-- `src/kernel/drivers/uhci.zig`
-
-Why it matters:
-- This is the most obvious unstarted hardware-breadth win after NIC and storage.
-- It opens practical keyboard/input/media/device bring-up beyond PS/2-era assumptions.
-
-Adoption fit:
-- `adapt and rebuild`
-- controller models, enumeration, and device-class handling need to fit ZAR's bounded appliance/runtime architecture
-
-Priority: `high`
-
-### 5. Audio Output via AC97
-
-Relevant upstream area:
-- `src/kernel/drivers/ac97.zig`
-
-Why it matters:
-- Audio is absent from the current ZAR hardware story.
-- AC97 is a bounded first audio target in QEMU and older x86 environments.
-- It would significantly improve the appliance/hardware maturity story.
-
-Adoption fit:
-- `adapt and rebuild`
-- bounded device-first slice is realistic
-
-Priority: `medium-high`
 
 ### 6. Stronger tmpfs / devfs / procfs / sysfs Semantics
 
