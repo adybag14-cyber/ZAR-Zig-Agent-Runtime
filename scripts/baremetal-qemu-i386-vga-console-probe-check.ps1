@@ -96,6 +96,11 @@ function Remove-PathWithRetry {
 
 Set-Location $repo
 New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+$scriptStem = [System.IO.Path]::GetFileNameWithoutExtension($PSCommandPath)
+$buildPrefix = Join-Path $repo ("zig-out\" + $scriptStem)
+$env:ZIG_LOCAL_CACHE_DIR = Join-Path $repo (".zig-cache-" + $scriptStem)
+$env:ZIG_GLOBAL_CACHE_DIR = Join-Path $repo (".zig-global-cache-" + $scriptStem)
+New-Item -ItemType Directory -Force -Path $buildPrefix | Out-Null
 
 $zig = Resolve-ZigExecutable
 $qemu = Resolve-QemuExecutable
@@ -113,11 +118,12 @@ if ($null -eq $qemu -or $null -eq $gdb -or $null -eq $nm) {
 if ($GdbPort -le 0) { $GdbPort = Resolve-FreeTcpPort }
 
 if (-not $SkipBuild) {
-    & $zig build baremetal-i386 -Doptimize=Debug -Dbaremetal-console-probe-banner=true --summary all
+    & $zig build baremetal-i386 -Doptimize=Debug -Dbaremetal-console-probe-banner=true --prefix $buildPrefix --summary all
     if ($LASTEXITCODE -ne 0) { throw "zig build baremetal-i386 console probe failed with exit code $LASTEXITCODE" }
 }
 
-$artifact = Join-Path $repo 'zig-out\bin\openclaw-zig-baremetal-i386.elf'
+$artifact = Join-Path $buildPrefix 'bin\openclaw-zig-baremetal-i386.elf'
+if (-not (Test-Path $artifact)) { $artifact = Join-Path $repo 'zig-out\bin\openclaw-zig-baremetal-i386.elf' }
 if (-not (Test-Path $artifact)) { throw "i386 VGA console artifact is missing: $artifact" }
 $artifact = (Resolve-Path $artifact).Path
 

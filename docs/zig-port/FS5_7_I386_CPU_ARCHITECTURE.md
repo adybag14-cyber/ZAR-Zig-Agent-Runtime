@@ -301,7 +301,7 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - hosted CI and `release-preview` now also execute:
   - `scripts/baremetal-qemu-i386-smp-probe-check.ps1`
 
-### Slice 13: i386 AP-Startup Control Diagnostics
+### Slice 13: i386 AP-Startup Control and Execution Telemetry
 
 - new bounded AP-startup seam:
   - `src/baremetal/i386_ap_startup.zig`
@@ -320,10 +320,19 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - bounded high-page trampoline placement at `0x00080000`
   - BSP-side local-APIC enablement plus explicit INIT / deassert / SIPI / SIPI sequencing
   - exported stage progression through `0x10` .. `0x14`
+  - bounded command/response/heartbeat telemetry for AP execution control when an AP actually comes online
   - `/sys/cpu/ap-startup` render/readback
-- the current direct `-kernel` QEMU path still does not yield actual AP execution here, so this lane is intentionally bounded:
+- `src/baremetal/i386_ap_startup.zig` now also owns a bounded ping/halt control protocol with:
+  - `command_seq`
+  - `response_seq`
+  - `heartbeat_count`
+  - `ping_count`
+- hosted regressions now prove the bounded ping/halt helper path with a simulated AP responder thread
+- the current direct `-kernel` QEMU path still does not yield actual AP execution here, so the live lane remains intentionally bounded:
   - it proves the full BSP-side startup-control sequence and exported telemetry
-  - it does not claim that the AP executes the trampoline or reaches halted state yet
+  - it exposes the AP execution-control state shape used for the future real bring-up lane
+  - it does not claim that the AP executes the trampoline or reaches halted state on the current direct-loader path yet
+- the i386 live probe scripts now build into per-script isolated prefixes and caches so one probe cannot accidentally execute another probe's ELF artifact
 - hosted CI and `release-preview` now also execute:
   - `scripts/baremetal-qemu-i386-ap-startup-probe-check.ps1`
 
@@ -361,7 +370,7 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the i386 freestanding runtime now has a dedicated live platform proof for descriptor-load state, bounded ACPI export/render, interrupt wake delivery, and masked-interrupt timer fallback
 - the i386 freestanding runtime now has exported CPU topology and bounded SMP-readiness derived from `MADT`, with `/dev/cpu` and `/sys/cpu` visibility on the i386 platform lane
 - the i386 freestanding runtime now has a dedicated live `-smp 2` LAPIC proof with `/dev/cpu/lapic` and `/sys/cpu/{lapic,smp}` visibility on the i386 platform lane
-- the i386 freestanding runtime now has a dedicated live AP-startup control diagnostic proof with `/dev/cpu/ap-startup` and `/sys/cpu/ap-startup` visibility, a high-page trampoline, and verified BSP-side INIT / deassert / SIPI / SIPI sequencing on the current direct-loader QEMU path
+- the i386 freestanding runtime now has a dedicated live AP-startup control diagnostic proof with `/dev/cpu/ap-startup` and `/sys/cpu/ap-startup` visibility, a high-page trampoline, verified BSP-side INIT / deassert / SIPI / SIPI sequencing, and bounded command/response/heartbeat telemetry on the current direct-loader QEMU path
 - the i386 freestanding runtime now has live RTL8139 `ARP` / `IPv4` / `UDP` / bounded `TCP` / bounded runtime-service proof
 - the i386 freestanding runtime now has live RTL8139 `DHCP` / `DNS` / `HTTP` / `HTTPS` proof
 - the i386 freestanding runtime now has live RTL8139 gateway-routing proof
@@ -381,7 +390,7 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - it is not yet full 32-bit driver/runtime parity
 - descriptor telemetry is now dual-arch, but the broader descriptor/mailbox live proof lane is still only claimed on the existing `x86_64` PVH artifact
 - i386 display coverage now includes bounded VGA + framebuffer + `virtio-gpu` with reused output/interface/mode/profile matrix validation on the current controller path, but it still does not claim physical HDMI/DisplayPort controller-specific scanout or a separate i386-only display-profile wrapper matrix
-- i386 platform coverage now includes bounded ACPI plus exported CPU topology, LAPIC state, SMP-readiness, and AP-startup control diagnostics, but it still does not claim real firmware-boot ACPI or AP execution
+- i386 platform coverage now includes bounded ACPI plus exported CPU topology, LAPIC state, SMP-readiness, and AP-startup execution telemetry, but it still does not claim real firmware-boot ACPI or live AP execution on the current direct-loader path
 
 ## Next Steps
 

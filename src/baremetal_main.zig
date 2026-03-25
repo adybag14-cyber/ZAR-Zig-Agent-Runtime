@@ -514,8 +514,8 @@ const I386ApStartupProbeError = error{
     LapicNotPresent,
     LapicDisabled,
     StartupFailed,
-    StartupNotObserved,
     StartupTargetMismatch,
+    ExecutionFailed,
     StartupRenderMismatch,
     SmpRenderMismatch,
 };
@@ -17500,6 +17500,7 @@ fn runI386ApStartupProbe() I386ApStartupProbeError!void {
     if (lapic_state.present != 1 or lapic_state.apic_supported != 1) return error.LapicNotPresent;
     if (lapic_state.enabled != 1 or lapic_state.local_apic_addr == 0) return error.LapicDisabled;
 
+    var startup_state: BaremetalApStartupState = undefined;
     var startup_observed = true;
     i386_ap_startup.startupSingleAp() catch |err| switch (err) {
         error.UnsupportedPlatform => return error.UnsupportedPlatform,
@@ -17508,18 +17509,37 @@ fn runI386ApStartupProbe() I386ApStartupProbeError!void {
         error.DeliveryTimeout => return error.StartupFailed,
         error.StartupTimeout => startup_observed = false,
         error.WrongCpuStarted => return error.StartupTargetMismatch,
+        error.ApNotStarted, error.CommandTimeout => return error.ExecutionFailed,
     };
 
-    const startup_state = oc_i386_ap_startup_state_ptr().*;
+    startup_state = oc_i386_ap_startup_state_ptr().*;
     if (startup_state.supported != 1 or startup_state.attempted != 1) return error.StartupFailed;
     if (startup_state.target_apic_id == 0) return error.StartupFailed;
     if (startup_observed) {
-        if (startup_state.started != 1 or startup_state.halted != 1 or startup_state.startup_count == 0) return error.StartupNotObserved;
+        if (startup_state.started != 1 or startup_state.halted != 0 or startup_state.startup_count == 0) return error.StartupFailed;
         if (startup_state.reported_apic_id != startup_state.target_apic_id) return error.StartupTargetMismatch;
+        if (startup_state.last_stage != 0x04 or startup_state.heartbeat_count == 0) return error.ExecutionFailed;
+
+        const initial_heartbeat = startup_state.heartbeat_count;
+        i386_ap_startup.pingStartedAp() catch |err| switch (err) {
+            error.ApNotStarted, error.CommandTimeout => return error.ExecutionFailed,
+            else => return error.ExecutionFailed,
+        };
+        startup_state = oc_i386_ap_startup_state_ptr().*;
+        if (startup_state.ping_count == 0 or startup_state.command_seq == 0 or startup_state.response_seq != startup_state.command_seq) return error.ExecutionFailed;
+        if (startup_state.heartbeat_count <= initial_heartbeat or startup_state.last_stage != 0x05) return error.ExecutionFailed;
+
+        i386_ap_startup.haltStartedAp() catch |err| switch (err) {
+            error.ApNotStarted, error.CommandTimeout => return error.ExecutionFailed,
+            else => return error.ExecutionFailed,
+        };
+        startup_state = oc_i386_ap_startup_state_ptr().*;
+        if (startup_state.halted != 1 or startup_state.last_stage != 0x06) return error.ExecutionFailed;
+        if (startup_state.response_seq != startup_state.command_seq or startup_state.command_seq < 2) return error.ExecutionFailed;
     } else {
+        if (startup_state.started != 0 or startup_state.halted != 0 or startup_state.startup_count != 0) return error.StartupFailed;
+        if (startup_state.reported_apic_id != 0 or startup_state.command_seq != 0 or startup_state.response_seq != 0 or startup_state.ping_count != 0) return error.ExecutionFailed;
         if (startup_state.last_stage != 0x14) return error.StartupFailed;
-        if (startup_state.started != 0 or startup_state.halted != 0 or startup_state.startup_count != 0) return error.StartupNotObserved;
-        if (startup_state.reported_apic_id != 0) return error.StartupTargetMismatch;
     }
 
     var startup_render_buffer: [1024]u8 = undefined;
@@ -17535,13 +17555,18 @@ fn runI386ApStartupProbe() I386ApStartupProbeError!void {
     }
     if (startup_observed) {
         if (!std.mem.containsAtLeast(u8, startup_render, 1, "started=1") or
-            !std.mem.containsAtLeast(u8, startup_render, 1, "halted=1"))
+            !std.mem.containsAtLeast(u8, startup_render, 1, "halted=1") or
+            !std.mem.containsAtLeast(u8, startup_render, 1, "ping_count=1") or
+            !std.mem.containsAtLeast(u8, startup_render, 1, "response_seq=2") or
+            !std.mem.containsAtLeast(u8, startup_render, 1, "last_stage=6"))
         {
             return error.StartupRenderMismatch;
         }
     } else {
         if (!std.mem.containsAtLeast(u8, startup_render, 1, "started=0") or
             !std.mem.containsAtLeast(u8, startup_render, 1, "halted=0") or
+            !std.mem.containsAtLeast(u8, startup_render, 1, "command_seq=0") or
+            !std.mem.containsAtLeast(u8, startup_render, 1, "ping_count=0") or
             !std.mem.containsAtLeast(u8, startup_render, 1, "last_stage=20"))
         {
             return error.StartupRenderMismatch;
@@ -18414,7 +18439,7 @@ fn i386ApStartupProbeFailureCode(err: I386ApStartupProbeError) u8 {
         error.LapicNotPresent => 0xF8,
         error.LapicDisabled => 0xF9,
         error.StartupFailed => 0xFA,
-        error.StartupNotObserved => 0xFB,
+        error.ExecutionFailed => 0xFB,
         error.StartupTargetMismatch => 0xFC,
         error.StartupRenderMismatch => 0xFD,
         error.SmpRenderMismatch => 0xFE,

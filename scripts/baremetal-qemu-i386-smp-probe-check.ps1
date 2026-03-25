@@ -49,6 +49,11 @@ function Resolve-QemuExecutable {
 }
 
 Set-Location $repo
+$scriptStem = [System.IO.Path]::GetFileNameWithoutExtension($PSCommandPath)
+$buildPrefix = Join-Path $repo ("zig-out\" + $scriptStem)
+$env:ZIG_LOCAL_CACHE_DIR = Join-Path $repo (".zig-cache-" + $scriptStem)
+$env:ZIG_GLOBAL_CACHE_DIR = Join-Path $repo (".zig-global-cache-" + $scriptStem)
+New-Item -ItemType Directory -Force -Path $buildPrefix | Out-Null
 $zig = Resolve-ZigExecutable
 $qemu = Resolve-QemuExecutable
 
@@ -62,13 +67,14 @@ $expectedProbeCode = 0x7D
 $expectedExitCode = ($expectedProbeCode * 2) + 1
 
 if (-not $SkipBuild) {
-    & $zig build baremetal-i386 -Doptimize=ReleaseFast -Dbaremetal-i386-smp-probe=true --summary all
+    & $zig build baremetal-i386 -Doptimize=ReleaseFast -Dbaremetal-i386-smp-probe=true --prefix $buildPrefix --summary all
     if ($LASTEXITCODE -ne 0) {
         throw "zig build baremetal-i386 -Dbaremetal-i386-smp-probe=true failed with exit code $LASTEXITCODE"
     }
 }
 
 $artifactCandidates = @(
+    (Join-Path $buildPrefix "bin\openclaw-zig-baremetal-i386.elf"),
     (Join-Path $repo "zig-out\bin\openclaw-zig-baremetal-i386.elf"),
     (Join-Path $repo "zig-out/openclaw-zig-baremetal-i386.elf"),
     (Join-Path $repo "zig-out\openclaw-zig-baremetal-i386.elf")

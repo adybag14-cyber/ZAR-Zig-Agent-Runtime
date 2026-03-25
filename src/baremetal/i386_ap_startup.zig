@@ -14,9 +14,12 @@ const lapic_delivery_mode_init: u32 = 0x00000500;
 const lapic_delivery_mode_startup: u32 = 0x00000600;
 const lapic_level_assert: u32 = 0x00004000;
 const lapic_trigger_level: u32 = 0x00008000;
+const ap_command_ping: u32 = 1;
+const ap_command_halt: u32 = 2;
 const startup_timeout_iterations: usize = 20_000_000;
 const delivery_timeout_iterations: usize = 2_000_000;
 const inter_ipi_delay_iterations: usize = 1_000_000;
+const command_timeout_iterations: usize = 20_000_000;
 pub const trampoline_phys: u32 = 0x00080000;
 pub const startup_vector: u8 = @as(u8, @intCast(trampoline_phys >> 12));
 const use_extern_shared = builtin.os.tag == .freestanding and builtin.cpu.arch == .x86 and !builtin.is_test;
@@ -29,6 +32,8 @@ pub const Error = error{
     DeliveryTimeout,
     StartupTimeout,
     WrongCpuStarted,
+    ApNotStarted,
+    CommandTimeout,
 };
 
 var state: abi.BaremetalApStartupState = zeroState();
@@ -41,6 +46,11 @@ const SharedStorage = struct {
     var target_apic_id: u32 = 0;
     var bsp_apic_id: u32 = 0;
     var local_apic_addr: u32 = 0;
+    var command_kind: u32 = 0;
+    var command_seq: u32 = 0;
+    var response_seq: u32 = 0;
+    var heartbeat: u32 = 0;
+    var ping_count: u32 = 0;
 };
 
 const SharedExtern = struct {
@@ -52,6 +62,11 @@ const SharedExtern = struct {
     extern var oc_i386_ap_shared_target_apic_id: u32;
     extern var oc_i386_ap_shared_bsp_apic_id: u32;
     extern var oc_i386_ap_shared_local_apic_addr: u32;
+    extern var oc_i386_ap_shared_command_kind: u32;
+    extern var oc_i386_ap_shared_command_seq: u32;
+    extern var oc_i386_ap_shared_response_seq: u32;
+    extern var oc_i386_ap_shared_heartbeat: u32;
+    extern var oc_i386_ap_shared_ping_count: u32;
 };
 
 fn sharedStagePtr() *u32 {
@@ -86,6 +101,26 @@ fn sharedLocalApicAddrPtr() *u32 {
     return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_local_apic_addr else &SharedStorage.local_apic_addr;
 }
 
+fn sharedCommandKindPtr() *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_command_kind else &SharedStorage.command_kind;
+}
+
+fn sharedCommandSeqPtr() *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_command_seq else &SharedStorage.command_seq;
+}
+
+fn sharedResponseSeqPtr() *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_response_seq else &SharedStorage.response_seq;
+}
+
+fn sharedHeartbeatPtr() *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_heartbeat else &SharedStorage.heartbeat;
+}
+
+fn sharedPingCountPtr() *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_ping_count else &SharedStorage.ping_count;
+}
+
 fn zeroState() abi.BaremetalApStartupState {
     return .{
         .magic = abi.ap_startup_magic,
@@ -106,6 +141,10 @@ fn zeroState() abi.BaremetalApStartupState {
         .lapic_addr = 0,
         .requested_cpu_count = 0,
         .logical_processor_count = 0,
+        .command_seq = 0,
+        .response_seq = 0,
+        .heartbeat_count = 0,
+        .ping_count = 0,
     };
 }
 
@@ -119,6 +158,11 @@ pub fn resetForTest() void {
     writeStateVar(sharedTargetApicIdPtr(), 0);
     writeStateVar(sharedBspApicIdPtr(), 0);
     writeStateVar(sharedLocalApicAddrPtr(), 0);
+    writeStateVar(sharedCommandKindPtr(), 0);
+    writeStateVar(sharedCommandSeqPtr(), 0);
+    writeStateVar(sharedResponseSeqPtr(), 0);
+    writeStateVar(sharedHeartbeatPtr(), 0);
+    writeStateVar(sharedPingCountPtr(), 0);
 }
 
 pub fn init() void {
@@ -166,19 +210,47 @@ pub fn startupSingleAp() Error!void {
     var remaining = startup_timeout_iterations;
     while (remaining > 0) : (remaining -= 1) {
         refreshState();
-        if (state.started == 1) break;
+        if (state.started == 1 and
+            state.reported_apic_id == state.target_apic_id and
+            state.last_stage >= 4 and
+            state.heartbeat_count != 0)
+        {
+            return;
+        }
         std.atomic.spinLoopHint();
     }
     refreshState();
     if (state.started == 0) return error.StartupTimeout;
     if (state.reported_apic_id != state.target_apic_id) return error.WrongCpuStarted;
+    return error.StartupTimeout;
+}
+
+pub fn pingStartedAp() Error!void {
+    refreshState();
+    if (state.started == 0 or state.halted == 1) return error.ApNotStarted;
+    try issueCommand(ap_command_ping);
+    refreshState();
+    if (state.ping_count == 0 or state.last_stage != 5) return error.CommandTimeout;
+}
+
+pub fn haltStartedAp() Error!void {
+    refreshState();
+    if (state.started == 0 or state.halted == 1) return error.ApNotStarted;
+    try issueCommand(ap_command_halt);
+    var remaining = command_timeout_iterations;
+    while (remaining > 0) : (remaining -= 1) {
+        refreshState();
+        if (state.halted == 1 and state.last_stage == 6) return;
+        std.atomic.spinLoopHint();
+    }
+    return error.CommandTimeout;
 }
 
 pub fn renderAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
     refreshState();
     return std.fmt.allocPrint(
         allocator,
-        "supported={d}\nattempted={d}\nstarted={d}\nhalted={d}\nlast_stage={d}\nstartup_vector=0x{x}\ntrampoline_phys=0x{x}\nbsp_apic_id={d}\ntarget_apic_id={d}\nreported_apic_id={d}\nstartup_count={d}\nlapic_addr=0x{x}\nrequested_cpu_count={d}\nlogical_processor_count={d}\n",
+        "supported={d}\nattempted={d}\nstarted={d}\nhalted={d}\nlast_stage={d}\nstartup_vector=0x{x}\ntrampoline_phys=0x{x}\nbsp_apic_id={d}\ntarget_apic_id={d}\nreported_apic_id={d}\nstartup_count={d}\nlapic_addr=0x{x}\nrequested_cpu_count={d}\nlogical_processor_count={d}\ncommand_seq={d}\nresponse_seq={d}\nheartbeat_count={d}\nping_count={d}\n",
         .{
             state.supported,
             state.attempted,
@@ -194,6 +266,10 @@ pub fn renderAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
             state.lapic_addr,
             state.requested_cpu_count,
             state.logical_processor_count,
+            state.command_seq,
+            state.response_seq,
+            state.heartbeat_count,
+            state.ping_count,
         },
     );
 }
@@ -203,7 +279,7 @@ fn refreshState() void {
     const lapic_state = lapic.statePtr().*;
     state = zeroState();
     state.supported = if (builtin.os.tag == .freestanding and builtin.cpu.arch == .x86 and topology.present == 1 and topology.supports_smp == 1 and topology.enabled_count >= 2 and lapic_state.present == 1 and lapic_state.enabled == 1) 1 else 0;
-    state.attempted = if (readStateVar(sharedTargetApicIdPtr()) != 0 or readStateVar(sharedStartedPtr()) != 0) 1 else 0;
+    state.attempted = if (readStateVar(sharedTargetApicIdPtr()) != 0 or readStateVar(sharedStartedPtr()) != 0 or readStateVar(sharedCommandSeqPtr()) != 0) 1 else 0;
     state.started = if (readStateVar(sharedStartedPtr()) != 0) 1 else 0;
     state.halted = if (readStateVar(sharedHaltedPtr()) != 0) 1 else 0;
     state.last_stage = @as(u8, @truncate(readStateVar(sharedStagePtr())));
@@ -216,6 +292,10 @@ fn refreshState() void {
     state.lapic_addr = readStateVar(sharedLocalApicAddrPtr());
     state.requested_cpu_count = topology.enabled_count;
     state.logical_processor_count = lapic_state.logical_processor_count;
+    state.command_seq = readStateVar(sharedCommandSeqPtr());
+    state.response_seq = readStateVar(sharedResponseSeqPtr());
+    state.heartbeat_count = readStateVar(sharedHeartbeatPtr());
+    state.ping_count = readStateVar(sharedPingCountPtr());
 }
 
 fn findSecondaryApicId(current_apic_id: u32) ?u32 {
@@ -280,12 +360,44 @@ fn enableLocalApic(regs: [*]volatile u32) void {
     writeReg(regs, lapic_spurious_offset, current | lapic_software_enable_bit);
 }
 
+fn issueCommand(command_kind: u32) Error!void {
+    const next_seq = readStateVar(sharedCommandSeqPtr()) + 1;
+    writeStateVar(sharedCommandKindPtr(), command_kind);
+    writeStateVar(sharedCommandSeqPtr(), next_seq);
+
+    var remaining = command_timeout_iterations;
+    while (remaining > 0) : (remaining -= 1) {
+        if (readStateVar(sharedResponseSeqPtr()) == next_seq) return;
+        std.atomic.spinLoopHint();
+    }
+    return error.CommandTimeout;
+}
+
 fn readStateVar(ptr: *u32) u32 {
     return @as(*volatile u32, @ptrCast(ptr)).*;
 }
 
 fn writeStateVar(ptr: *u32, value: u32) void {
     @as(*volatile u32, @ptrCast(ptr)).* = value;
+}
+
+fn testApResponder() void {
+    while (true) {
+        const command_seq = readStateVar(sharedCommandSeqPtr());
+        if (command_seq == 1 and readStateVar(sharedResponseSeqPtr()) == 0) {
+            writeStateVar(sharedHeartbeatPtr(), 2);
+            writeStateVar(sharedPingCountPtr(), 1);
+            writeStateVar(sharedStagePtr(), 5);
+            writeStateVar(sharedResponseSeqPtr(), 1);
+        } else if (command_seq == 2 and readStateVar(sharedResponseSeqPtr()) == 1) {
+            writeStateVar(sharedHeartbeatPtr(), 3);
+            writeStateVar(sharedStagePtr(), 6);
+            writeStateVar(sharedHaltedPtr(), 1);
+            writeStateVar(sharedResponseSeqPtr(), 2);
+            return;
+        }
+        std.atomic.spinLoopHint();
+    }
 }
 
 test "i386 ap startup render reflects bounded exported state" {
@@ -300,10 +412,45 @@ test "i386 ap startup render reflects bounded exported state" {
     writeStateVar(sharedHaltedPtr(), 1);
     writeStateVar(sharedStartupCountPtr(), 1);
     writeStateVar(sharedReportedApicIdPtr(), 1);
+    writeStateVar(sharedCommandSeqPtr(), 2);
+    writeStateVar(sharedResponseSeqPtr(), 2);
+    writeStateVar(sharedHeartbeatPtr(), 16);
+    writeStateVar(sharedPingCountPtr(), 1);
+    writeStateVar(sharedStagePtr(), 6);
 
     const render = try renderAlloc(std.testing.allocator);
     defer std.testing.allocator.free(render);
     try std.testing.expect(std.mem.indexOf(u8, render, "started=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, render, "response_seq=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, render, "ping_count=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, render, "target_apic_id=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, render, "trampoline_phys=0x80000") != null);
+}
+
+test "i386 ap startup command helpers drive bounded ping and halt telemetry" {
+    resetForTest();
+    acpi.resetForTest();
+    try acpi.probeSyntheticImage(true);
+    writeStateVar(sharedStartedPtr(), 1);
+    writeStateVar(sharedStagePtr(), 4);
+    writeStateVar(sharedReportedApicIdPtr(), 1);
+    writeStateVar(sharedTargetApicIdPtr(), 1);
+    writeStateVar(sharedHeartbeatPtr(), 1);
+
+    const responder = try std.Thread.spawn(.{}, testApResponder, .{});
+    defer responder.join();
+
+    try pingStartedAp();
+    var snapshot = statePtr().*;
+    try std.testing.expectEqual(@as(u32, 1), snapshot.command_seq);
+    try std.testing.expectEqual(@as(u32, 1), snapshot.response_seq);
+    try std.testing.expectEqual(@as(u32, 1), snapshot.ping_count);
+    try std.testing.expectEqual(@as(u8, 0), snapshot.halted);
+
+    try haltStartedAp();
+    snapshot = statePtr().*;
+    try std.testing.expectEqual(@as(u32, 2), snapshot.command_seq);
+    try std.testing.expectEqual(@as(u32, 2), snapshot.response_seq);
+    try std.testing.expectEqual(@as(u8, 1), snapshot.halted);
+    try std.testing.expectEqual(@as(u8, 6), snapshot.last_stage);
 }

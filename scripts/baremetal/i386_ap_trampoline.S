@@ -41,7 +41,37 @@ oc_i386_ap_trampoline_pmode:
     movl %edx, oc_i386_ap_shared_reported_apic_id
     movl $1, oc_i386_ap_shared_started
     movl $4, oc_i386_ap_shared_stage
+    xorl %edi, %edi
+
+ap_trampoline_command_loop:
+    incl oc_i386_ap_shared_heartbeat
+    movl oc_i386_ap_shared_command_seq, %eax
+    cmpl %edi, %eax
+    je ap_trampoline_pause
+    movl %eax, %edi
+    movl oc_i386_ap_shared_command_kind, %ecx
+    cmpl $1, %ecx
+    je ap_trampoline_ping
+    cmpl $2, %ecx
+    je ap_trampoline_halt_command
+    movl %edi, oc_i386_ap_shared_response_seq
+    jmp ap_trampoline_pause
+
+ap_trampoline_ping:
+    incl oc_i386_ap_shared_ping_count
+    movl $5, oc_i386_ap_shared_stage
+    movl %edi, oc_i386_ap_shared_response_seq
+    jmp ap_trampoline_pause
+
+ap_trampoline_halt_command:
+    movl $6, oc_i386_ap_shared_stage
+    movl %edi, oc_i386_ap_shared_response_seq
     movl $1, oc_i386_ap_shared_halted
+    jmp ap_trampoline_halt
+
+ap_trampoline_pause:
+    pause
+    jmp ap_trampoline_command_loop
 
 ap_trampoline_halt:
     cli
@@ -89,6 +119,21 @@ oc_i386_ap_shared_bsp_apic_id:
     .long 0
 .global oc_i386_ap_shared_local_apic_addr
 oc_i386_ap_shared_local_apic_addr:
+    .long 0
+.global oc_i386_ap_shared_command_kind
+oc_i386_ap_shared_command_kind:
+    .long 0
+.global oc_i386_ap_shared_command_seq
+oc_i386_ap_shared_command_seq:
+    .long 0
+.global oc_i386_ap_shared_response_seq
+oc_i386_ap_shared_response_seq:
+    .long 0
+.global oc_i386_ap_shared_heartbeat
+oc_i386_ap_shared_heartbeat:
+    .long 0
+.global oc_i386_ap_shared_ping_count
+oc_i386_ap_shared_ping_count:
     .long 0
 
 .balign 16

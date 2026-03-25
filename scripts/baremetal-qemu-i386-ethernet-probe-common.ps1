@@ -65,6 +65,11 @@ function Get-FreeUdpPort {
 
 Set-Location $repo
 New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+$scriptStem = [System.IO.Path]::GetFileNameWithoutExtension($PSCommandPath)
+$buildPrefix = Join-Path $repo ("zig-out\" + $scriptStem)
+$env:ZIG_LOCAL_CACHE_DIR = Join-Path $repo (".zig-cache-" + $scriptStem)
+$env:ZIG_GLOBAL_CACHE_DIR = Join-Path $repo (".zig-global-cache-" + $scriptStem)
+New-Item -ItemType Directory -Force -Path $buildPrefix | Out-Null
 $zig = Resolve-ZigExecutable
 $qemu = Resolve-QemuExecutable
 if ($null -eq $qemu) {
@@ -74,11 +79,12 @@ if ($null -eq $qemu) {
 }
 
 if (-not $SkipBuild) {
-    & $zig build baremetal-i386 -Doptimize=ReleaseFast ("-D{0}=true" -f $BuildOption) --summary all
+    & $zig build baremetal-i386 -Doptimize=ReleaseFast ("-D{0}=true" -f $BuildOption) --prefix $buildPrefix --summary all
     if ($LASTEXITCODE -ne 0) { throw "zig build baremetal-i386 $BuildOption failed with exit code $LASTEXITCODE" }
 }
 
 $artifactCandidates = @(
+    (Join-Path $buildPrefix 'bin\openclaw-zig-baremetal-i386.elf'),
     (Join-Path $repo 'zig-out\bin\openclaw-zig-baremetal-i386.elf'),
     (Join-Path $repo 'zig-out\openclaw-zig-baremetal-i386.elf'),
     (Join-Path $repo 'zig-out/openclaw-zig-baremetal-i386.elf')

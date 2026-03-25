@@ -481,6 +481,10 @@ pub const BaremetalApStartupState = extern struct {
     lapic_addr: u32,
     requested_cpu_count: u16,
     logical_processor_count: u16,
+    command_seq: u32,
+    response_seq: u32,
+    heartbeat_count: u32,
+    ping_count: u32,
 };
 
 pub const BaremetalDisplayOutputEntry = extern struct {
