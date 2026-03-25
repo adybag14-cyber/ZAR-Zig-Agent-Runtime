@@ -97,9 +97,11 @@ if ($null -eq $artifact) {
 
 $stdoutPath = Join-Path $repo "release\qemu-i386-ap-startup-probe-stdout.log"
 $stderrPath = Join-Path $repo "release\qemu-i386-ap-startup-probe-stderr.log"
+$debugLogPath = Join-Path $repo "release\qemu-i386-ap-startup-probe-debug.log"
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $stdoutPath) | Out-Null
 if (Test-Path $stdoutPath) { Remove-Item -Force $stdoutPath }
 if (Test-Path $stderrPath) { Remove-Item -Force $stderrPath }
+if (Test-Path $debugLogPath) { Remove-Item -Force $debugLogPath }
 
 $qemuArgs = @(
     "-M", "q35,accel=tcg",
@@ -111,6 +113,8 @@ $qemuArgs = @(
     "-monitor", "none",
     "-no-reboot",
     "-no-shutdown",
+    "-debugcon", "file:$debugLogPath",
+    "-global", "isa-debugcon.iobase=0xe9",
     "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"
 )
 
@@ -135,7 +139,14 @@ $stderrTask = $proc.StandardError.ReadToEndAsync()
 
 if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
     try { $proc.Kill($true) } catch {}
-    throw "QEMU i386 AP startup probe timed out after $TimeoutSeconds seconds."
+    $debugTail = ""
+    if (Test-Path $debugLogPath) {
+        $debugTail = (Get-Content -Path $debugLogPath -Tail 40 -ErrorAction SilentlyContinue) -join "`n"
+    }
+    if ([string]::IsNullOrWhiteSpace($debugTail)) {
+        throw "QEMU i386 AP startup probe timed out after $TimeoutSeconds seconds."
+    }
+    throw "QEMU i386 AP startup probe timed out after $TimeoutSeconds seconds.`n$debugTail"
 }
 
 $proc.WaitForExit()
@@ -149,8 +160,12 @@ if (-not $expectedExitCodes.ContainsKey($exitCode)) {
     if (Test-Path $stderrPath) {
         $stderrTail = (Get-Content -Path $stderrPath -Tail 40 -ErrorAction SilentlyContinue) -join "`n"
     }
+    $debugTail = ""
+    if (Test-Path $debugLogPath) {
+        $debugTail = (Get-Content -Path $debugLogPath -Tail 40 -ErrorAction SilentlyContinue) -join "`n"
+    }
     $expectedText = ($expectedExitCodes.Keys | Sort-Object) -join ", "
-    throw "QEMU i386 AP startup probe failed: exit=$exitCode expected one of [$expectedText]`n$stderrTail"
+    throw "QEMU i386 AP startup probe failed: exit=$exitCode expected one of [$expectedText]`n$stderrTail`n$debugTail"
 }
 
 $observedProbeCode = [int]$expectedExitCodes[$exitCode]
@@ -163,4 +178,5 @@ Write-Output ("BAREMETAL_I386_QEMU_EXPECTED_EXIT_CODES={0}" -f (($expectedExitCo
 Write-Output "BAREMETAL_I386_QEMU_EXIT_CODE=$exitCode"
 Write-Output ("BAREMETAL_I386_QEMU_AP_STARTUP_PROBE_CODE=0x{0:X2}" -f $observedProbeCode)
 Write-Output ("BAREMETAL_I386_QEMU_AP_EXECUTION_OBSERVED={0}" -f ($(if ($executionObserved) { "True" } else { "False" })))
+Write-Output "BAREMETAL_I386_QEMU_AP_STARTUP_PROBE_DEBUG=$debugLogPath"
 Write-Output "BAREMETAL_I386_QEMU_AP_STARTUP_PROBE=pass"

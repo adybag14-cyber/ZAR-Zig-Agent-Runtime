@@ -15,6 +15,12 @@ const lapic_delivery_mode_init: u32 = 0x00000500;
 const lapic_delivery_mode_startup: u32 = 0x00000600;
 const lapic_level_assert: u32 = 0x00004000;
 const lapic_trigger_level: u32 = 0x00008000;
+const cmos_index_port: u16 = 0x70;
+const cmos_data_port: u16 = 0x71;
+const cmos_shutdown_status_register: u8 = 0x0F;
+const cmos_shutdown_warm_reset: u8 = 0x0A;
+const warm_reset_vector_offset_phys: usize = 0x467;
+const warm_reset_vector_segment_phys: usize = 0x469;
 const ap_command_ping: u32 = 1;
 const ap_command_halt: u32 = 2;
 const startup_timeout_iterations: usize = 120_000_000;
@@ -40,6 +46,17 @@ pub const Error = error{
 };
 
 var state: abi.BaremetalApStartupState = zeroState();
+const DiagnosticsState = struct {
+    warm_reset_programmed: u8 = 0,
+    warm_reset_vector_segment: u16 = 0,
+    warm_reset_vector_offset: u16 = 0,
+    init_ipi_count: u32 = 0,
+    startup_ipi_count: u32 = 0,
+    last_delivery_status: u32 = 0,
+    last_accept_status: u32 = 0,
+};
+
+var diagnostics = DiagnosticsState{};
 const SharedStorage = struct {
     var stage: u32 = 0;
     var started: u32 = 0;
@@ -55,6 +72,10 @@ const SharedStorage = struct {
     var heartbeat: u32 = 0;
     var ping_count: u32 = 0;
 };
+
+var test_cmos_shutdown_value_ptr: ?*u8 = null;
+var test_warm_reset_offset_ptr: ?*u16 = null;
+var test_warm_reset_segment_ptr: ?*u16 = null;
 
 const SharedExtern = struct {
     extern var oc_i386_ap_shared_stage: u32;
@@ -148,11 +169,20 @@ fn zeroState() abi.BaremetalApStartupState {
         .response_seq = 0,
         .heartbeat_count = 0,
         .ping_count = 0,
+        .warm_reset_programmed = 0,
+        .reserved2 = .{ 0, 0, 0 },
+        .warm_reset_vector_segment = 0,
+        .warm_reset_vector_offset = 0,
+        .init_ipi_count = 0,
+        .startup_ipi_count = 0,
+        .last_delivery_status = 0,
+        .last_accept_status = 0,
     };
 }
 
 pub fn resetForTest() void {
     state = zeroState();
+    diagnostics = .{};
     writeStateVar(sharedStagePtr(), 0);
     writeStateVar(sharedStartedPtr(), 0);
     writeStateVar(sharedHaltedPtr(), 0);
@@ -166,6 +196,9 @@ pub fn resetForTest() void {
     writeStateVar(sharedResponseSeqPtr(), 0);
     writeStateVar(sharedHeartbeatPtr(), 0);
     writeStateVar(sharedPingCountPtr(), 0);
+    test_cmos_shutdown_value_ptr = null;
+    test_warm_reset_offset_ptr = null;
+    test_warm_reset_segment_ptr = null;
 }
 
 pub fn init() void {
@@ -191,27 +224,35 @@ pub fn startupSingleAp() Error!void {
     writeStateVar(sharedBspApicIdPtr(), lapic_state.current_apic_id);
     writeStateVar(sharedTargetApicIdPtr(), target_apic_id);
     writeStateVar(sharedLocalApicAddrPtr(), lapic_addr_u32);
+    programWarmResetVector(trampoline_phys);
+    defer clearWarmResetVector();
     refreshState();
     state.supported = 1;
     state.attempted = 1;
 
     const regs = lapicRegs(lapic_addr_u32);
     writeStateVar(sharedStagePtr(), 0x10);
+    diagnostics.init_ipi_count += 1;
     enableLocalApic(regs);
     sendInitIpi(regs, target_apic_id) catch return error.DeliveryTimeout;
     writeStateVar(sharedStagePtr(), 0x11);
     spinDelay(init_settle_delay_iterations);
+    diagnostics.init_ipi_count += 1;
     sendInitDeassertIpi(regs, target_apic_id) catch return error.DeliveryTimeout;
     writeStateVar(sharedStagePtr(), 0x12);
     spinDelay(startup_retry_delay_iterations);
     clearErrorStatus(regs);
+    diagnostics.startup_ipi_count += 1;
     sendStartupIpi(regs, target_apic_id, startup_vector) catch return error.DeliveryTimeout;
+    diagnostics.last_accept_status = readAcceptStatus(regs);
     writeStateVar(sharedStagePtr(), 0x13);
     if (waitForStartedTarget(first_startup_timeout_iterations)) return;
 
     spinDelay(startup_retry_delay_iterations);
     clearErrorStatus(regs);
+    diagnostics.startup_ipi_count += 1;
     sendStartupIpi(regs, target_apic_id, startup_vector) catch return error.DeliveryTimeout;
+    diagnostics.last_accept_status = readAcceptStatus(regs);
     writeStateVar(sharedStagePtr(), 0x14);
 
     if (waitForStartedTarget(startup_timeout_iterations)) return;
@@ -262,7 +303,7 @@ pub fn renderAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
     refreshState();
     return std.fmt.allocPrint(
         allocator,
-        "supported={d}\nattempted={d}\nstarted={d}\nhalted={d}\nlast_stage={d}\nstartup_vector=0x{x}\ntrampoline_phys=0x{x}\nbsp_apic_id={d}\ntarget_apic_id={d}\nreported_apic_id={d}\nstartup_count={d}\nlapic_addr=0x{x}\nrequested_cpu_count={d}\nlogical_processor_count={d}\ncommand_seq={d}\nresponse_seq={d}\nheartbeat_count={d}\nping_count={d}\n",
+        "supported={d}\nattempted={d}\nstarted={d}\nhalted={d}\nlast_stage={d}\nstartup_vector=0x{x}\ntrampoline_phys=0x{x}\nbsp_apic_id={d}\ntarget_apic_id={d}\nreported_apic_id={d}\nstartup_count={d}\nlapic_addr=0x{x}\nrequested_cpu_count={d}\nlogical_processor_count={d}\ncommand_seq={d}\nresponse_seq={d}\nheartbeat_count={d}\nping_count={d}\nwarm_reset_programmed={d}\nwarm_reset_vector_segment=0x{x}\nwarm_reset_vector_offset=0x{x}\ninit_ipi_count={d}\nstartup_ipi_count={d}\nlast_delivery_status=0x{x}\nlast_accept_status=0x{x}\n",
         .{
             state.supported,
             state.attempted,
@@ -282,6 +323,13 @@ pub fn renderAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
             state.response_seq,
             state.heartbeat_count,
             state.ping_count,
+            state.warm_reset_programmed,
+            state.warm_reset_vector_segment,
+            state.warm_reset_vector_offset,
+            state.init_ipi_count,
+            state.startup_ipi_count,
+            state.last_delivery_status,
+            state.last_accept_status,
         },
     );
 }
@@ -308,6 +356,13 @@ fn refreshState() void {
     state.response_seq = readStateVar(sharedResponseSeqPtr());
     state.heartbeat_count = readStateVar(sharedHeartbeatPtr());
     state.ping_count = readStateVar(sharedPingCountPtr());
+    state.warm_reset_programmed = diagnostics.warm_reset_programmed;
+    state.warm_reset_vector_segment = diagnostics.warm_reset_vector_segment;
+    state.warm_reset_vector_offset = diagnostics.warm_reset_vector_offset;
+    state.init_ipi_count = diagnostics.init_ipi_count;
+    state.startup_ipi_count = diagnostics.startup_ipi_count;
+    state.last_delivery_status = diagnostics.last_delivery_status;
+    state.last_accept_status = diagnostics.last_accept_status;
 }
 
 fn findSecondaryApicId(current_apic_id: u32) ?u32 {
@@ -321,6 +376,57 @@ fn findSecondaryApicId(current_apic_id: u32) ?u32 {
     return null;
 }
 
+fn programWarmResetVector(start_eip: u32) void {
+    const vector_segment = @as(u16, @truncate(start_eip >> 4));
+    const vector_offset = @as(u16, @truncate(start_eip & 0x0F));
+    diagnostics.warm_reset_programmed = 1;
+    diagnostics.warm_reset_vector_segment = vector_segment;
+    diagnostics.warm_reset_vector_offset = vector_offset;
+    writeWarmResetOffset(vector_offset);
+    writeWarmResetSegment(vector_segment);
+    writeCmosShutdown(cmos_shutdown_warm_reset);
+}
+
+fn clearWarmResetVector() void {
+    writeCmosShutdown(0);
+    writeWarmResetOffset(0);
+    writeWarmResetSegment(0);
+}
+
+fn writeCmosShutdown(value: u8) void {
+    if (builtin.is_test) {
+        if (test_cmos_shutdown_value_ptr) |ptr| {
+            ptr.* = value;
+            return;
+        }
+    }
+    if (builtin.cpu.arch != .x86 and builtin.cpu.arch != .x86_64) return;
+    writePort8(cmos_index_port, cmos_shutdown_status_register);
+    writePort8(cmos_data_port, value);
+}
+
+fn writeWarmResetOffset(value: u16) void {
+    if (builtin.is_test) {
+        if (test_warm_reset_offset_ptr) |ptr| {
+            ptr.* = value;
+            return;
+        }
+    }
+    const ptr = @as(*align(1) volatile u16, @ptrFromInt(warm_reset_vector_offset_phys));
+    ptr.* = value;
+}
+
+fn writeWarmResetSegment(value: u16) void {
+    if (builtin.is_test) {
+        if (test_warm_reset_segment_ptr) |ptr| {
+            ptr.* = value;
+            return;
+        }
+    }
+    const ptr = @as(*align(1) volatile u16, @ptrFromInt(warm_reset_vector_segment_phys));
+    ptr.* = value;
+}
+
 fn lapicRegs(lapic_addr: u32) [*]volatile u32 {
     return @as([*]volatile u32, @ptrFromInt(@as(usize, lapic_addr)));
 }
@@ -332,6 +438,10 @@ fn readReg(regs: [*]volatile u32, offset: usize) u32 {
 fn writeReg(regs: [*]volatile u32, offset: usize, value: u32) void {
     regs[offset / @sizeOf(u32)] = value;
     _ = regs[offset / @sizeOf(u32)];
+}
+
+fn readAcceptStatus(regs: [*]volatile u32) u32 {
+    return readReg(regs, lapic_error_status_offset) & 0xEF;
 }
 
 fn sendInitIpi(regs: [*]volatile u32, target_apic_id: u32) !void {
@@ -355,10 +465,31 @@ fn sendStartupIpi(regs: [*]volatile u32, target_apic_id: u32, vector: u8) !void 
 fn waitForDeliveryClear(regs: [*]volatile u32) !void {
     var remaining = delivery_timeout_iterations;
     while (remaining > 0) : (remaining -= 1) {
-        if ((readReg(regs, lapic_icr_low_offset) & lapic_delivery_pending_bit) == 0) return;
+        if ((readReg(regs, lapic_icr_low_offset) & lapic_delivery_pending_bit) == 0) {
+            diagnostics.last_delivery_status = 0;
+            return;
+        }
         std.atomic.spinLoopHint();
     }
+    diagnostics.last_delivery_status = readReg(regs, lapic_icr_low_offset);
     return error.DeliveryTimeout;
+}
+
+fn readPort8(port: u16) u8 {
+    if (builtin.cpu.arch != .x86 and builtin.cpu.arch != .x86_64) return 0;
+    return asm volatile ("inb %[dx], %[al]"
+        : [al] "={al}" (-> u8),
+        : [dx] "{dx}" (port),
+    );
+}
+
+fn writePort8(port: u16, value: u8) void {
+    if (builtin.cpu.arch != .x86 and builtin.cpu.arch != .x86_64) return;
+    asm volatile ("outb %[al], %[dx]"
+        :
+        : [al] "{al}" (value),
+          [dx] "{dx}" (port),
+    );
 }
 
 fn spinDelay(iterations: usize) void {
@@ -421,6 +552,13 @@ test "i386 ap startup render reflects bounded exported state" {
     resetForTest();
     acpi.resetForTest();
     try acpi.probeSyntheticImage(true);
+    diagnostics.warm_reset_programmed = 1;
+    diagnostics.warm_reset_vector_segment = 0x8000;
+    diagnostics.warm_reset_vector_offset = 0;
+    diagnostics.init_ipi_count = 2;
+    diagnostics.startup_ipi_count = 2;
+    diagnostics.last_delivery_status = 0;
+    diagnostics.last_accept_status = 0;
     writeStateVar(sharedBspApicIdPtr(), 0);
     writeStateVar(sharedTargetApicIdPtr(), 1);
     writeStateVar(sharedLocalApicAddrPtr(), 0xFEE00000);
@@ -442,6 +580,9 @@ test "i386 ap startup render reflects bounded exported state" {
     try std.testing.expect(std.mem.indexOf(u8, render, "ping_count=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, render, "target_apic_id=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, render, "trampoline_phys=0x80000") != null);
+    try std.testing.expect(std.mem.indexOf(u8, render, "warm_reset_programmed=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, render, "startup_ipi_count=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, render, "warm_reset_vector_segment=0x8000") != null);
 }
 
 test "i386 ap startup command helpers drive bounded ping and halt telemetry" {
@@ -470,4 +611,27 @@ test "i386 ap startup command helpers drive bounded ping and halt telemetry" {
     try std.testing.expectEqual(@as(u32, 2), snapshot.response_seq);
     try std.testing.expectEqual(@as(u8, 1), snapshot.halted);
     try std.testing.expectEqual(@as(u8, 6), snapshot.last_stage);
+}
+
+test "i386 ap startup warm reset programming records bounded diagnostics" {
+    resetForTest();
+    var cmos_shutdown: u8 = 0;
+    var warm_reset_offset: u16 = 0xFFFF;
+    var warm_reset_segment: u16 = 0xFFFF;
+    test_cmos_shutdown_value_ptr = &cmos_shutdown;
+    test_warm_reset_offset_ptr = &warm_reset_offset;
+    test_warm_reset_segment_ptr = &warm_reset_segment;
+
+    programWarmResetVector(trampoline_phys);
+    try std.testing.expectEqual(@as(u8, cmos_shutdown_warm_reset), cmos_shutdown);
+    try std.testing.expectEqual(@as(u16, 0), warm_reset_offset);
+    try std.testing.expectEqual(@as(u16, 0x8000), warm_reset_segment);
+    try std.testing.expectEqual(@as(u8, 1), diagnostics.warm_reset_programmed);
+    try std.testing.expectEqual(@as(u16, 0), diagnostics.warm_reset_vector_offset);
+    try std.testing.expectEqual(@as(u16, 0x8000), diagnostics.warm_reset_vector_segment);
+
+    clearWarmResetVector();
+    try std.testing.expectEqual(@as(u8, 0), cmos_shutdown);
+    try std.testing.expectEqual(@as(u16, 0), warm_reset_offset);
+    try std.testing.expectEqual(@as(u16, 0), warm_reset_segment);
 }

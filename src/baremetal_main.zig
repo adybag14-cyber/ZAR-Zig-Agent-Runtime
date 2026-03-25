@@ -17557,6 +17557,15 @@ fn runI386ApStartupProbe() I386ApStartupProbeError!bool {
     startup_state = oc_i386_ap_startup_state_ptr().*;
     if (startup_state.supported != 1 or startup_state.attempted != 1) return error.StartupFailed;
     if (startup_state.target_apic_id == 0) return error.StartupFailed;
+    if (startup_state.warm_reset_programmed != 1 or
+        startup_state.warm_reset_vector_segment != 0x8000 or
+        startup_state.warm_reset_vector_offset != 0 or
+        startup_state.init_ipi_count != 2 or
+        startup_state.startup_ipi_count == 0 or
+        startup_state.last_delivery_status != 0)
+    {
+        return error.StartupFailed;
+    }
     if (startup_observed) {
         if (startup_state.started != 1 or startup_state.halted != 0 or startup_state.startup_count == 0) return error.StartupFailed;
         if (startup_state.reported_apic_id != startup_state.target_apic_id) return error.StartupTargetMismatch;
@@ -17581,6 +17590,7 @@ fn runI386ApStartupProbe() I386ApStartupProbeError!bool {
     } else {
         if (startup_state.started != 0 or startup_state.halted != 0 or startup_state.startup_count != 0) return error.StartupFailed;
         if (startup_state.reported_apic_id != 0 or startup_state.command_seq != 0 or startup_state.response_seq != 0 or startup_state.ping_count != 0) return error.ExecutionFailed;
+        if (startup_state.startup_ipi_count != 2) return error.StartupFailed;
         if (startup_state.last_stage != 0x14) return error.StartupFailed;
     }
 
@@ -17591,7 +17601,13 @@ fn runI386ApStartupProbe() I386ApStartupProbeError!bool {
     };
     if (!std.mem.containsAtLeast(u8, startup_render, 1, "attempted=1") or
         !std.mem.containsAtLeast(u8, startup_render, 1, "startup_count=") or
-        !std.mem.containsAtLeast(u8, startup_render, 1, "reported_apic_id="))
+        !std.mem.containsAtLeast(u8, startup_render, 1, "reported_apic_id=") or
+        !std.mem.containsAtLeast(u8, startup_render, 1, "warm_reset_programmed=1") or
+        !std.mem.containsAtLeast(u8, startup_render, 1, "warm_reset_vector_segment=0x8000") or
+        !std.mem.containsAtLeast(u8, startup_render, 1, "warm_reset_vector_offset=0x0") or
+        !std.mem.containsAtLeast(u8, startup_render, 1, "init_ipi_count=2") or
+        !std.mem.containsAtLeast(u8, startup_render, 1, "last_delivery_status=0x0") or
+        !std.mem.containsAtLeast(u8, startup_render, 1, "last_accept_status="))
     {
         return error.StartupRenderMismatch;
     }
@@ -17600,6 +17616,8 @@ fn runI386ApStartupProbe() I386ApStartupProbeError!bool {
             !std.mem.containsAtLeast(u8, startup_render, 1, "halted=1") or
             !std.mem.containsAtLeast(u8, startup_render, 1, "ping_count=1") or
             !std.mem.containsAtLeast(u8, startup_render, 1, "response_seq=2") or
+            (!std.mem.containsAtLeast(u8, startup_render, 1, "startup_ipi_count=1") and
+                !std.mem.containsAtLeast(u8, startup_render, 1, "startup_ipi_count=2")) or
             !std.mem.containsAtLeast(u8, startup_render, 1, "last_stage=6"))
         {
             return error.StartupRenderMismatch;
@@ -17609,6 +17627,7 @@ fn runI386ApStartupProbe() I386ApStartupProbeError!bool {
             !std.mem.containsAtLeast(u8, startup_render, 1, "halted=0") or
             !std.mem.containsAtLeast(u8, startup_render, 1, "command_seq=0") or
             !std.mem.containsAtLeast(u8, startup_render, 1, "ping_count=0") or
+            !std.mem.containsAtLeast(u8, startup_render, 1, "startup_ipi_count=2") or
             !std.mem.containsAtLeast(u8, startup_render, 1, "last_stage=20"))
         {
             return error.StartupRenderMismatch;
@@ -17625,6 +17644,18 @@ fn runI386ApStartupProbe() I386ApStartupProbeError!bool {
     {
         return error.SmpRenderMismatch;
     }
+
+    qemuDebugWriteValue("I386_AP_EXECUTION_OBSERVED", @intFromBool(startup_observed));
+    qemuDebugWriteValue("I386_AP_WARM_RESET_PROGRAMMED", startup_state.warm_reset_programmed);
+    qemuDebugWriteHexU32("I386_AP_WARM_RESET_SEGMENT", startup_state.warm_reset_vector_segment);
+    qemuDebugWriteHexU32("I386_AP_WARM_RESET_OFFSET", startup_state.warm_reset_vector_offset);
+    qemuDebugWriteValue("I386_AP_INIT_IPI_COUNT", startup_state.init_ipi_count);
+    qemuDebugWriteValue("I386_AP_STARTUP_IPI_COUNT", startup_state.startup_ipi_count);
+    qemuDebugWriteHexU32("I386_AP_LAST_DELIVERY_STATUS", startup_state.last_delivery_status);
+    qemuDebugWriteHexU32("I386_AP_LAST_ACCEPT_STATUS", startup_state.last_accept_status);
+    qemuDebugWriteValue("I386_AP_LAST_STAGE", startup_state.last_stage);
+    qemuDebugWriteValue("I386_AP_HEARTBEAT_COUNT", startup_state.heartbeat_count);
+    qemuDebugWriteValue("I386_AP_PING_COUNT", startup_state.ping_count);
 
     return startup_observed;
 }
@@ -20045,6 +20076,20 @@ fn qemuDebugWrite(bytes: []const u8) void {
     for (bytes) |byte| {
         qemuDebugWriteByte(byte);
     }
+}
+
+fn qemuDebugWriteValue(label: []const u8, value: anytype) void {
+    if (builtin.os.tag != .freestanding or (builtin.cpu.arch != .x86 and builtin.cpu.arch != .x86_64)) return;
+    var buffer: [96]u8 = undefined;
+    const rendered = std.fmt.bufPrint(&buffer, "{s}={}\n", .{ label, value }) catch return;
+    qemuDebugWrite(rendered);
+}
+
+fn qemuDebugWriteHexU32(label: []const u8, value: u32) void {
+    if (builtin.os.tag != .freestanding or (builtin.cpu.arch != .x86 and builtin.cpu.arch != .x86_64)) return;
+    var buffer: [96]u8 = undefined;
+    const rendered = std.fmt.bufPrint(&buffer, "{s}=0x{x}\n", .{ label, value }) catch return;
+    qemuDebugWrite(rendered);
 }
 
 fn out8(port: u16, value: u8) void {

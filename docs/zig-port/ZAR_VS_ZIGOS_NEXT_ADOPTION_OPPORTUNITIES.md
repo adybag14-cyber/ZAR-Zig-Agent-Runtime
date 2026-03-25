@@ -41,6 +41,7 @@ Why it matters:
 - This is now the strongest near-term upgrade path for `FS5.7`.
 - ZAR already has bounded ACPI plus exported CPU topology, SMP-readiness, LAPIC state, and AP-startup control diagnostics, so the next meaningful jump is actual AP startup and execution under a firmware-backed path.
 - ZigOS already demonstrates a wider split between generic `x86` and `x86_64` architecture support plus SMP/platform bring-up patterns.
+- For the remaining AP-execution mechanics specifically, Linux `arch/x86/kernel/smpboot.c` is still the sharper low-level reference than ZigOS; ZigOS remains the better architectural reference for how far ZAR should take the broader `x86` platform lane after that gap is closed.
 
 Adoption fit:
 - `adapt and rebuild`

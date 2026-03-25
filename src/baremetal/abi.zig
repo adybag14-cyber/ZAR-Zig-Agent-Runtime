@@ -505,6 +505,14 @@ pub const BaremetalApStartupState = extern struct {
     response_seq: u32,
     heartbeat_count: u32,
     ping_count: u32,
+    warm_reset_programmed: u8,
+    reserved2: [3]u8,
+    warm_reset_vector_segment: u16,
+    warm_reset_vector_offset: u16,
+    init_ipi_count: u32,
+    startup_ipi_count: u32,
+    last_delivery_status: u32,
+    last_accept_status: u32,
 };
 
 pub const BaremetalDisplayOutputEntry = extern struct {
