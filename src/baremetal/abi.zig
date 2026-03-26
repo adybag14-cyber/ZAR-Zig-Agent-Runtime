@@ -25,6 +25,7 @@ pub const ap_startup_magic: u32 = 0x4f434153; // "OCAS"
 pub const ap_multi_magic: u32 = 0x4f43414d; // "OCAM"
 pub const ap_slot_magic: u32 = 0x4f43534c; // "OCSL"
 pub const ap_ownership_magic: u32 = 0x4f43414f; // "OCAO"
+pub const ap_failover_magic: u32 = 0x4f434146; // "OCAF"
 
 pub const api_version: u16 = 2;
 
@@ -705,6 +706,27 @@ pub const BaremetalApOwnershipEntry = extern struct {
     halted: u8,
     slot_index: u8,
     reserved0: u8,
+};
+
+pub const BaremetalApFailoverState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    policy: u8,
+    retired_slot_event_count: u8,
+    active_count: u8,
+    peak_active_slot_count: u8,
+    last_round_active_slot_count: u8,
+    last_retired_slot_index: u8,
+    reserved0: [3]u8,
+    total_owned_task_count: u32,
+    total_dispatch_count: u32,
+    total_accumulator: u32,
+    dispatch_round_count: u32,
+    total_redistributed_task_count: u32,
+    last_redistributed_task_count: u32,
+    total_failed_over_task_count: u32,
+    last_failed_over_task_count: u32,
 };
 
 pub const BaremetalDisplayOutputEntry = extern struct {
