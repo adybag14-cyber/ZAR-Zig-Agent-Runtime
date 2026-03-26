@@ -544,6 +544,68 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - direct-loader platform still uses the bounded synthesized-region fallback when no live Multiboot2 map is present
   - firmware-boot platform uses the real BIOS `E820`-derived Multiboot2 memory map with multiple exported regions
 
+### Slice 21: i386 Firmware AP Execution Proof
+
+- new BIOS firmware-boot AP-startup lane:
+  - `scripts/baremetal-qemu-i386-firmware-ap-startup-probe-check.ps1`
+- the new firmware AP-startup probe reuses the existing:
+  - `baremetal-i386-ap-startup-probe`
+  - `scripts/build-i386-firmware-image.ps1`
+  - `scripts/baremetal/i386_bios_boot_sector.asm`
+  - `scripts/baremetal/i386_bios_stage2.asm`
+- the live BIOS lane now proves:
+  - actual AP execution on the i386 firmware-boot path
+  - bounded AP heartbeat visibility
+  - bounded `ping` command acknowledgment
+  - bounded `halt` command acknowledgment
+  - the same proof at `1024 MiB`
+- the current live firmware result is explicit:
+  - `BAREMETAL_I386_QEMU_FIRMWARE_AP_STARTUP_PROBE_CODE=0x7F`
+  - `BAREMETAL_I386_QEMU_FIRMWARE_AP_EXECUTION_OBSERVED=True`
+  - `I386_AP_LAST_STAGE=6`
+  - `I386_AP_PING_COUNT=1`
+  - `I386_AP_HEARTBEAT_COUNT>0`
+- hosted `zig-ci` and `release-preview` now also execute:
+  - `scripts/baremetal-qemu-i386-firmware-ap-startup-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-firmware-ap-startup-probe-check.ps1 -MemoryMiB 1024`
+
+### Slice 22: i386 Firmware AP Work Dispatch Proof
+
+- new firmware-only SMP-work lane:
+  - `baremetal-i386-smp-work-probe`
+  - `scripts/baremetal-qemu-i386-firmware-smp-work-probe-check.ps1`
+- `src/baremetal/i386_ap_startup.zig` now extends the bounded AP-control protocol with:
+  - `command_value`
+  - `work_count`
+  - `last_work_value`
+  - `work_accumulator`
+  - `dispatchWorkToStartedAp(value)`
+- `scripts/baremetal/i386_ap_trampoline.S` now handles a dedicated bounded `work` command that:
+  - reads the BSP-provided command value
+  - records the last work value
+  - accumulates the work total
+  - increments the work count
+  - acknowledges completion through the existing response sequence
+- the AP work state is now exported through:
+  - `/dev/cpu/ap-work`
+  - `/sys/cpu/ap-work`
+- `src/baremetal_main.zig` now carries a dedicated firmware-only `i386_smp_work_probe` lane that requires:
+  - real firmware ACPI with no synthetic fallback
+  - live AP execution
+  - two bounded BSP-dispatched AP work units (`3`, then `7`)
+  - correct AP-owned accumulator/result telemetry
+  - bounded `ping` and `halt` control after work completion
+  - `/sys/cpu/ap-startup`, `/sys/cpu/ap-work`, and `/sys/cpu/smp` render/readback
+- the current live firmware result is explicit:
+  - `BAREMETAL_I386_QEMU_FIRMWARE_SMP_WORK_PROBE_CODE=0x7B`
+  - `I386_AP_EXECUTION_OBSERVED=1`
+  - `I386_AP_WORK_COUNT=2`
+  - `I386_AP_LAST_WORK_VALUE=7`
+  - `I386_AP_WORK_ACCUMULATOR=10`
+- hosted `zig-ci` and `release-preview` now also execute:
+  - `scripts/baremetal-qemu-i386-firmware-smp-work-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-firmware-smp-work-probe-check.ps1 -MemoryMiB 1024`
+
 ## ZigOS Follow-On Work
 
 - next adoption analysis is stored in:
@@ -580,6 +642,7 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the i386 freestanding runtime now has a dedicated live `-smp 2` LAPIC proof with `/dev/cpu/lapic` and `/sys/cpu/{lapic,smp}` visibility on the i386 platform lane
 - the i386 freestanding runtime now has a dedicated live AP-startup control diagnostic proof with `/dev/cpu/ap-startup` and `/sys/cpu/ap-startup` visibility, a high-page trampoline, verified BSP-side INIT / deassert / SIPI / SIPI sequencing, bounded command/response/heartbeat telemetry, hardened startup timing/ESR handling, and explicit live AP-execution observation reporting on the current direct-loader QEMU path
 - the i386 freestanding runtime now also proves that the warm-reset vector is programmed correctly and that the BSP-side startup IPIs complete without APIC delivery or accept errors on the current direct-loader path, with the live AP debug trace preserved for inspection
+- the i386 freestanding runtime now also has a real BIOS firmware-boot AP-startup lane that observes actual AP execution and bounded ping/halt control on the live i386 path
 - the i386 freestanding runtime now has bounded IOAPIC export plus live MMIO proof with `/dev/cpu/ioapic` and `/sys/cpu/ioapic` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded legacy PIC export plus live remap/control-plane proof with `/dev/cpu/pic` and `/sys/cpu/pic` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded PIT export plus live latch/readback proof with `/dev/cpu/pit` and `/sys/cpu/pit` visibility on the i386 platform lane
@@ -598,7 +661,8 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - live i386 timer/interrupt/device/display/storage/NIC proof breadth is broad
   - the direct `-kernel` platform lane still has bounded synthetic ACPI fallback when firmware tables are unavailable or insufficient there
   - a separate BIOS firmware-boot lane now proves real ACPI end to end
-  - actual AP bring-up/SMP execution and broader platform-controller hardening remain the next `FS5.7` steps
+  - a separate BIOS firmware-boot lane now also proves actual AP execution and bounded AP command control end to end
+  - broader SMP bring-up beyond one AP heartbeat/ping/halt loop and broader platform-controller hardening remain the next `FS5.7` steps
 - the i386 freestanding runtime now has live `virtio-gpu` display proof on the i386 controller path with reused output/interface/mode/profile matrix coverage from the shared broad display probe
 
 ## Current Boundary
@@ -613,13 +677,13 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - warm-reset programming is present
   - INIT + SIPI delivery completes cleanly
   - AP execution is still not observed on the direct-loader path
-  - that points the next real closure step at actual AP execution / SMP bring-up, not missing firmware ACPI or missing BSP-side setup anymore
+  - actual AP execution is now observed on the BIOS firmware-boot path
+  - that moves the next real closure step to broader SMP bring-up beyond the first firmware-backed AP execution loop
 
 ## Next Steps
 
-1. start the next real i386 architecture-hardening slice after bounded AP-startup control diagnostics:
-   - actual AP bring-up and execution on top of the now-live firmware/platform seams
-2. then widen bounded SMP groundwork into actual AP bring-up and execution
-   - AP trampoline execution
-   - LAPIC / IPI bring-up beyond BSP-side sequencing
+1. widen the current firmware-backed AP execution lane into broader SMP bring-up:
+   - more than one bounded AP command
+   - AP-owned work dispatch
+2. then lift that broader SMP model back toward the direct-loader path where possible
 3. only after that, widen timer / interrupt hardening around the real multi-core path

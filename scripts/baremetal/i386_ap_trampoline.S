@@ -54,6 +54,8 @@ ap_trampoline_command_loop:
     je ap_trampoline_ping
     cmpl $2, %ecx
     je ap_trampoline_halt_command
+    cmpl $3, %ecx
+    je ap_trampoline_work
     movl %edi, oc_i386_ap_shared_response_seq
     jmp ap_trampoline_pause
 
@@ -68,6 +70,15 @@ ap_trampoline_halt_command:
     movl %edi, oc_i386_ap_shared_response_seq
     movl $1, oc_i386_ap_shared_halted
     jmp ap_trampoline_halt
+
+ap_trampoline_work:
+    movl oc_i386_ap_shared_command_value, %eax
+    movl %eax, oc_i386_ap_shared_last_work_value
+    addl %eax, oc_i386_ap_shared_work_accumulator
+    incl oc_i386_ap_shared_work_count
+    movl $7, oc_i386_ap_shared_stage
+    movl %edi, oc_i386_ap_shared_response_seq
+    jmp ap_trampoline_pause
 
 ap_trampoline_pause:
     pause
@@ -134,6 +145,18 @@ oc_i386_ap_shared_heartbeat:
     .long 0
 .global oc_i386_ap_shared_ping_count
 oc_i386_ap_shared_ping_count:
+    .long 0
+.global oc_i386_ap_shared_command_value
+oc_i386_ap_shared_command_value:
+    .long 0
+.global oc_i386_ap_shared_work_count
+oc_i386_ap_shared_work_count:
+    .long 0
+.global oc_i386_ap_shared_last_work_value
+oc_i386_ap_shared_last_work_value:
+    .long 0
+.global oc_i386_ap_shared_work_accumulator
+oc_i386_ap_shared_work_accumulator:
     .long 0
 
 .balign 16
