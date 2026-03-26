@@ -22,6 +22,7 @@ pub const pic_magic: u32 = 0x4f435043; // "OCPC"
 pub const pit_magic: u32 = 0x4f435054; // "OCPT"
 pub const pm_timer_magic: u32 = 0x4f43504d; // "OCPM"
 pub const ap_startup_magic: u32 = 0x4f434153; // "OCAS"
+pub const ap_multi_magic: u32 = 0x4f43414d; // "OCAM"
 
 pub const api_version: u16 = 2;
 
@@ -586,6 +587,40 @@ pub const BaremetalApStartupState = extern struct {
     batch_count: u32,
     last_batch_count: u32,
     last_batch_accumulator: u32,
+};
+
+pub const BaremetalApMultiState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    exported_count: u8,
+    run_count: u16,
+    started_count: u16,
+    halted_count: u16,
+    requested_cpu_count: u16,
+    logical_processor_count: u16,
+    reserved0: u16,
+    bsp_apic_id: u32,
+    last_target_apic_id: u32,
+    last_reported_apic_id: u32,
+    total_task_count: u32,
+    total_batch_count: u32,
+    total_accumulator: u32,
+};
+
+pub const BaremetalApMultiEntry = extern struct {
+    target_apic_id: u32,
+    reported_apic_id: u32,
+    task_count: u32,
+    batch_count: u32,
+    last_batch_count: u32,
+    last_batch_accumulator: u32,
+    heartbeat_count: u32,
+    ping_count: u32,
+    started: u8,
+    halted: u8,
+    last_stage: u8,
+    reserved0: u8,
 };
 
 pub const BaremetalDisplayOutputEntry = extern struct {

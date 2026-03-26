@@ -235,6 +235,14 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-firmware-smp-batch-probe-check.ps1 -MemoryMiB 1024
 
+      - name: Bare-metal QEMU i386 firmware SMP multi probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-multi-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware SMP multi probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-multi-probe-check.ps1 -MemoryMiB 1024
+
       - name: Bare-metal QEMU i386 SMP probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-smp-probe-check.ps1

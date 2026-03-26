@@ -26,6 +26,7 @@ const ap_command_halt: u32 = 2;
 const ap_command_work: u32 = 3;
 const ap_command_batch_work: u32 = 4;
 pub const max_task_batch_entries: usize = 8;
+pub const max_multi_ap_entries: usize = 4;
 const startup_timeout_iterations: usize = 120_000_000;
 const delivery_timeout_iterations: usize = 2_000_000;
 const init_settle_delay_iterations: usize = 24_000_000;
@@ -50,6 +51,8 @@ pub const Error = error{
 };
 
 var state: abi.BaremetalApStartupState = zeroState();
+var multi_state: abi.BaremetalApMultiState = zeroMultiState();
+var multi_entries: [max_multi_ap_entries]abi.BaremetalApMultiEntry = std.mem.zeroes([max_multi_ap_entries]abi.BaremetalApMultiEntry);
 const DiagnosticsState = struct {
     warm_reset_programmed: u8 = 0,
     warm_reset_vector_segment: u16 = 0,
@@ -246,7 +249,28 @@ fn zeroState() abi.BaremetalApStartupState {
     };
 }
 
-pub fn resetForTest() void {
+fn zeroMultiState() abi.BaremetalApMultiState {
+    return .{
+        .magic = abi.ap_multi_magic,
+        .api_version = abi.api_version,
+        .present = 0,
+        .exported_count = 0,
+        .run_count = 0,
+        .started_count = 0,
+        .halted_count = 0,
+        .requested_cpu_count = 0,
+        .logical_processor_count = 0,
+        .reserved0 = 0,
+        .bsp_apic_id = 0,
+        .last_target_apic_id = 0,
+        .last_reported_apic_id = 0,
+        .total_task_count = 0,
+        .total_batch_count = 0,
+        .total_accumulator = 0,
+    };
+}
+
+fn resetSingleState() void {
     state = zeroState();
     diagnostics = .{};
     writeStateVar(sharedStagePtr(), 0);
@@ -271,6 +295,16 @@ pub fn resetForTest() void {
     writeStateVar(sharedBatchCountPtr(), 0);
     writeStateVar(sharedLastBatchCountPtr(), 0);
     writeStateVar(sharedLastBatchAccumulatorPtr(), 0);
+}
+
+pub fn resetMultiState() void {
+    multi_state = zeroMultiState();
+    @memset(&multi_entries, std.mem.zeroes(abi.BaremetalApMultiEntry));
+}
+
+pub fn resetForTest() void {
+    resetSingleState();
+    resetMultiState();
     test_cmos_shutdown_value_ptr = null;
     test_warm_reset_offset_ptr = null;
     test_warm_reset_segment_ptr = null;
@@ -285,16 +319,39 @@ pub fn statePtr() *const abi.BaremetalApStartupState {
     return &state;
 }
 
+pub fn multiStatePtr() *const abi.BaremetalApMultiState {
+    refreshState();
+    return &multi_state;
+}
+
+pub fn multiEntryCount() u16 {
+    refreshState();
+    return multi_state.exported_count;
+}
+
+pub fn multiEntry(index: u16) abi.BaremetalApMultiEntry {
+    refreshState();
+    if (index >= multi_state.exported_count) return std.mem.zeroes(abi.BaremetalApMultiEntry);
+    return multi_entries[index];
+}
+
 pub fn startupSingleAp() Error!void {
-    resetForTest();
+    if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86) return error.UnsupportedPlatform;
+    const lapic_state = lapic.statePtr().*;
+    const target_apic_id = findSecondaryApicId(lapic_state.current_apic_id) orelse return error.NoSecondaryCpu;
+    return startupApByApicId(target_apic_id);
+}
+
+pub fn startupApByApicId(target_apic_id: u32) Error!void {
+    resetSingleState();
     if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86) return error.UnsupportedPlatform;
 
     const topology = acpi.cpuTopologyStatePtr().*;
     const lapic_state = lapic.statePtr().*;
     if (topology.present == 0 or topology.supports_smp == 0 or topology.enabled_count < 2) return error.CpuTopologyMissing;
     if (lapic_state.present == 0 or lapic_state.enabled == 0 or lapic_state.local_apic_addr == 0) return error.LapicUnavailable;
+    if (!topologyContainsTargetApicId(target_apic_id, lapic_state.current_apic_id)) return error.NoSecondaryCpu;
 
-    const target_apic_id = findSecondaryApicId(lapic_state.current_apic_id) orelse return error.NoSecondaryCpu;
     const lapic_addr_u32 = @as(u32, @intCast(lapic_state.local_apic_addr & 0xFFFF_FFFF));
     writeStateVar(sharedBspApicIdPtr(), lapic_state.current_apic_id);
     writeStateVar(sharedTargetApicIdPtr(), target_apic_id);
@@ -549,6 +606,55 @@ pub fn renderTasksAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]
     return allocator.dupe(u8, buffer[0..used]);
 }
 
+pub fn renderMultiAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
+    refreshState();
+    var buffer: [1536]u8 = undefined;
+    var used: usize = 0;
+    const head = std.fmt.bufPrint(
+        buffer[used..],
+        "present={d}\nexported_count={d}\nrun_count={d}\nstarted_count={d}\nhalted_count={d}\nrequested_cpu_count={d}\nlogical_processor_count={d}\nbsp_apic_id={d}\nlast_target_apic_id={d}\nlast_reported_apic_id={d}\ntotal_task_count={d}\ntotal_batch_count={d}\ntotal_accumulator={d}\n",
+        .{
+            multi_state.present,
+            multi_state.exported_count,
+            multi_state.run_count,
+            multi_state.started_count,
+            multi_state.halted_count,
+            multi_state.requested_cpu_count,
+            multi_state.logical_processor_count,
+            multi_state.bsp_apic_id,
+            multi_state.last_target_apic_id,
+            multi_state.last_reported_apic_id,
+            multi_state.total_task_count,
+            multi_state.total_batch_count,
+            multi_state.total_accumulator,
+        },
+    ) catch unreachable;
+    used += head.len;
+    var entry_index: u16 = 0;
+    while (entry_index < multi_state.exported_count) : (entry_index += 1) {
+        const entry = multi_entries[entry_index];
+        const line = std.fmt.bufPrint(
+            buffer[used..],
+            "ap[{d}].target_apic_id={d}\nap[{d}].reported_apic_id={d}\nap[{d}].task_count={d}\nap[{d}].batch_count={d}\nap[{d}].last_batch_count={d}\nap[{d}].last_batch_accumulator={d}\nap[{d}].heartbeat_count={d}\nap[{d}].ping_count={d}\nap[{d}].started={d}\nap[{d}].halted={d}\nap[{d}].last_stage={d}\n",
+            .{
+                entry_index, entry.target_apic_id,
+                entry_index, entry.reported_apic_id,
+                entry_index, entry.task_count,
+                entry_index, entry.batch_count,
+                entry_index, entry.last_batch_count,
+                entry_index, entry.last_batch_accumulator,
+                entry_index, entry.heartbeat_count,
+                entry_index, entry.ping_count,
+                entry_index, entry.started,
+                entry_index, entry.halted,
+                entry_index, entry.last_stage,
+            },
+        ) catch unreachable;
+        used += line.len;
+    }
+    return allocator.dupe(u8, buffer[0..used]);
+}
+
 fn refreshState() void {
     const topology = acpi.cpuTopologyStatePtr().*;
     const lapic_state = lapic.statePtr().*;
@@ -586,17 +692,74 @@ fn refreshState() void {
     state.startup_ipi_count = diagnostics.startup_ipi_count;
     state.last_delivery_status = diagnostics.last_delivery_status;
     state.last_accept_status = diagnostics.last_accept_status;
+    multi_state.requested_cpu_count = topology.enabled_count;
+    multi_state.logical_processor_count = lapic_state.logical_processor_count;
+    multi_state.bsp_apic_id = lapic_state.current_apic_id;
+    if (multi_state.run_count == 0 and multi_state.exported_count == 0) {
+        multi_state.present = if (state.supported != 0) 1 else multi_state.present;
+    }
 }
 
 fn findSecondaryApicId(current_apic_id: u32) ?u32 {
+    return secondaryApicIdAt(0, current_apic_id);
+}
+
+pub fn secondaryApicIdAt(target_index: u16, current_apic_id: u32) ?u32 {
+    var remaining = target_index;
+    var entry_index: u16 = 0;
+    while (entry_index < acpi.cpuTopologyEntryCount()) : (entry_index += 1) {
+        const entry = acpi.cpuTopologyEntry(entry_index);
+        if (entry.enabled == 0) continue;
+        if (entry.apic_id == @as(u8, @truncate(current_apic_id))) continue;
+        if (remaining == 0) return entry.apic_id;
+        remaining -= 1;
+    }
+    return null;
+}
+
+fn topologyContainsTargetApicId(target_apic_id: u32, current_apic_id: u32) bool {
     var index: u16 = 0;
     while (index < acpi.cpuTopologyEntryCount()) : (index += 1) {
         const entry = acpi.cpuTopologyEntry(index);
         if (entry.enabled == 0) continue;
         if (entry.apic_id == @as(u8, @truncate(current_apic_id))) continue;
-        return entry.apic_id;
+        if (entry.apic_id == @as(u8, @truncate(target_apic_id))) return true;
     }
-    return null;
+    return false;
+}
+
+pub fn recordCurrentApRun() void {
+    refreshState();
+    const entry_index = @min(@as(usize, multi_state.run_count), max_multi_ap_entries - 1);
+    multi_entries[entry_index] = .{
+        .target_apic_id = state.target_apic_id,
+        .reported_apic_id = state.reported_apic_id,
+        .task_count = state.task_count,
+        .batch_count = state.batch_count,
+        .last_batch_count = state.last_batch_count,
+        .last_batch_accumulator = state.last_batch_accumulator,
+        .heartbeat_count = state.heartbeat_count,
+        .ping_count = state.ping_count,
+        .started = state.started,
+        .halted = state.halted,
+        .last_stage = state.last_stage,
+        .reserved0 = 0,
+    };
+    multi_state.present = 1;
+    if (multi_state.exported_count < max_multi_ap_entries and entry_index == multi_state.exported_count) {
+        multi_state.exported_count += 1;
+    }
+    multi_state.run_count +%= 1;
+    if (state.started != 0) multi_state.started_count +%= 1;
+    if (state.halted != 0) multi_state.halted_count +%= 1;
+    multi_state.requested_cpu_count = state.requested_cpu_count;
+    multi_state.logical_processor_count = state.logical_processor_count;
+    multi_state.bsp_apic_id = state.bsp_apic_id;
+    multi_state.last_target_apic_id = state.target_apic_id;
+    multi_state.last_reported_apic_id = state.reported_apic_id;
+    multi_state.total_task_count +%= state.task_count;
+    multi_state.total_batch_count +%= state.batch_count;
+    multi_state.total_accumulator +%= state.last_batch_accumulator;
 }
 
 fn programWarmResetVector(start_eip: u32) void {
@@ -943,6 +1106,62 @@ test "i386 ap startup dispatches bounded work batch telemetry" {
     snapshot = statePtr().*;
     try std.testing.expectEqual(@as(u8, 1), snapshot.halted);
     try std.testing.expectEqual(@as(u8, 6), snapshot.last_stage);
+}
+
+test "i386 ap startup records bounded multi-ap telemetry" {
+    resetForTest();
+    acpi.resetForTest();
+    try acpi.probeSyntheticImage(true);
+
+    writeStateVar(sharedBspApicIdPtr(), 0);
+    writeStateVar(sharedTargetApicIdPtr(), 1);
+    writeStateVar(sharedReportedApicIdPtr(), 1);
+    writeStateVar(sharedStartedPtr(), 1);
+    writeStateVar(sharedHaltedPtr(), 1);
+    writeStateVar(sharedStagePtr(), 6);
+    writeStateVar(sharedHeartbeatPtr(), 5);
+    writeStateVar(sharedPingCountPtr(), 1);
+    writeStateVar(sharedTaskCountPtr(), 2);
+    writeStateVar(sharedBatchCountPtr(), 1);
+    writeStateVar(sharedLastBatchCountPtr(), 2);
+    writeStateVar(sharedLastBatchAccumulatorPtr(), 8);
+    recordCurrentApRun();
+
+    writeStateVar(sharedTargetApicIdPtr(), 2);
+    writeStateVar(sharedReportedApicIdPtr(), 2);
+    writeStateVar(sharedHeartbeatPtr(), 7);
+    writeStateVar(sharedPingCountPtr(), 1);
+    writeStateVar(sharedTaskCountPtr(), 3);
+    writeStateVar(sharedBatchCountPtr(), 1);
+    writeStateVar(sharedLastBatchCountPtr(), 3);
+    writeStateVar(sharedLastBatchAccumulatorPtr(), 41);
+    recordCurrentApRun();
+
+    const multi_snapshot = multiStatePtr().*;
+    try std.testing.expectEqual(@as(u8, 1), multi_snapshot.present);
+    try std.testing.expectEqual(@as(u8, 2), multi_snapshot.exported_count);
+    try std.testing.expectEqual(@as(u16, 2), multi_snapshot.run_count);
+    try std.testing.expectEqual(@as(u16, 2), multi_snapshot.started_count);
+    try std.testing.expectEqual(@as(u16, 2), multi_snapshot.halted_count);
+    try std.testing.expectEqual(@as(u32, 5), multi_snapshot.total_task_count);
+    try std.testing.expectEqual(@as(u32, 2), multi_snapshot.total_batch_count);
+    try std.testing.expectEqual(@as(u32, 49), multi_snapshot.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 2), multi_snapshot.last_target_apic_id);
+    try std.testing.expectEqual(@as(u32, 2), multi_snapshot.last_reported_apic_id);
+
+    const first_entry = multiEntry(0);
+    try std.testing.expectEqual(@as(u32, 1), first_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 8), first_entry.last_batch_accumulator);
+    const second_entry = multiEntry(1);
+    try std.testing.expectEqual(@as(u32, 2), second_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 41), second_entry.last_batch_accumulator);
+
+    const multi_render = try renderMultiAlloc(std.testing.allocator);
+    defer std.testing.allocator.free(multi_render);
+    try std.testing.expect(std.mem.indexOf(u8, multi_render, "run_count=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, multi_render, "total_accumulator=49") != null);
+    try std.testing.expect(std.mem.indexOf(u8, multi_render, "ap[0].target_apic_id=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, multi_render, "ap[1].target_apic_id=2") != null);
 }
 
 test "i386 ap startup warm reset programming records bounded diagnostics" {

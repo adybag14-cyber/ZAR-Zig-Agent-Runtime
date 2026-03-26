@@ -67,6 +67,7 @@ const dev_cpu_smp_path = "/dev/cpu/smp";
 const dev_cpu_ap_startup_path = "/dev/cpu/ap-startup";
 const dev_cpu_ap_work_path = "/dev/cpu/ap-work";
 const dev_cpu_ap_tasks_path = "/dev/cpu/ap-tasks";
+const dev_cpu_ap_multi_path = "/dev/cpu/ap-multi";
 const dev_net_path = "/dev/net";
 const dev_net_state_path = "/dev/net/state";
 const dev_net_route_path = "/dev/net/route";
@@ -89,6 +90,7 @@ const sys_cpu_smp_path = "/sys/cpu/smp";
 const sys_cpu_ap_startup_path = "/sys/cpu/ap-startup";
 const sys_cpu_ap_work_path = "/sys/cpu/ap-work";
 const sys_cpu_ap_tasks_path = "/sys/cpu/ap-tasks";
+const sys_cpu_ap_multi_path = "/sys/cpu/ap-multi";
 const sys_storage_state_path = "/sys/storage/state";
 const sys_storage_backends_path = "/sys/storage/backends";
 const sys_storage_filesystems_path = "/sys/storage/filesystems";
@@ -212,6 +214,7 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
         try appendFileLine(allocator, &out, "ap-startup", dev_cpu_ap_startup_path, max_bytes);
         try appendFileLine(allocator, &out, "ap-work", dev_cpu_ap_work_path, max_bytes);
         try appendFileLine(allocator, &out, "ap-tasks", dev_cpu_ap_tasks_path, max_bytes);
+        try appendFileLine(allocator, &out, "ap-multi", dev_cpu_ap_multi_path, max_bytes);
         return out.toOwnedSlice(allocator);
     }
     if (std.mem.eql(u8, path, dev_display_outputs_path)) {
@@ -272,6 +275,7 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
         try appendFileLine(allocator, &out, "ap-startup", sys_cpu_ap_startup_path, max_bytes);
         try appendFileLine(allocator, &out, "ap-work", sys_cpu_ap_work_path, max_bytes);
         try appendFileLine(allocator, &out, "ap-tasks", sys_cpu_ap_tasks_path, max_bytes);
+        try appendFileLine(allocator, &out, "ap-multi", sys_cpu_ap_multi_path, max_bytes);
         return out.toOwnedSlice(allocator);
     }
     if (std.mem.eql(u8, path, "/sys/storage")) {
@@ -408,6 +412,7 @@ fn isFilePath(path: []const u8) bool {
     if (std.mem.eql(u8, path, dev_cpu_ap_startup_path)) return true;
     if (std.mem.eql(u8, path, dev_cpu_ap_work_path)) return true;
     if (std.mem.eql(u8, path, dev_cpu_ap_tasks_path)) return true;
+    if (std.mem.eql(u8, path, dev_cpu_ap_multi_path)) return true;
     if (std.mem.eql(u8, path, dev_net_state_path)) return true;
     if (std.mem.eql(u8, path, dev_net_route_path)) return true;
     if (std.mem.eql(u8, path, sys_kernel_version_path)) return true;
@@ -426,6 +431,7 @@ fn isFilePath(path: []const u8) bool {
     if (std.mem.eql(u8, path, sys_cpu_ap_startup_path)) return true;
     if (std.mem.eql(u8, path, sys_cpu_ap_work_path)) return true;
     if (std.mem.eql(u8, path, sys_cpu_ap_tasks_path)) return true;
+    if (std.mem.eql(u8, path, sys_cpu_ap_multi_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_state_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_backends_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_filesystems_path)) return true;
@@ -513,6 +519,9 @@ fn renderFileAlloc(allocator: std.mem.Allocator, path: []const u8) Error![]u8 {
     }
     if (std.mem.eql(u8, path, dev_cpu_ap_tasks_path) or std.mem.eql(u8, path, sys_cpu_ap_tasks_path)) {
         return i386_ap_startup.renderTasksAlloc(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_cpu_ap_multi_path) or std.mem.eql(u8, path, sys_cpu_ap_multi_path)) {
+        return i386_ap_startup.renderMultiAlloc(allocator);
     }
     if (std.mem.eql(u8, path, dev_net_state_path)) {
         return renderNetStateAlloc(allocator);

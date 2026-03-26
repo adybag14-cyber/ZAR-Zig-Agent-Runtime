@@ -683,6 +683,7 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the i386 freestanding runtime now also proves that the warm-reset vector is programmed correctly and that the BSP-side startup IPIs complete without APIC delivery or accept errors on the current direct-loader path, with the live AP debug trace preserved for inspection
 - the i386 freestanding runtime now also has a real BIOS firmware-boot AP-startup lane that observes actual AP execution and bounded ping/halt control on the live i386 path
 - the i386 freestanding runtime now also has a real BIOS firmware-boot AP batch-work lane that proves bounded multi-dispatch AP-owned task execution with `/dev/cpu/ap-tasks` and `/sys/cpu/ap-tasks` visibility
+- the i386 freestanding runtime now also has a real BIOS firmware-boot multi-AP coordination lane that proves two distinct secondary APs can be started sequentially under `-smp 3`, execute bounded batch work, halt cleanly, and export aggregate totals plus per-AP entries through `/dev/cpu/ap-multi` and `/sys/cpu/ap-multi`
 - the i386 freestanding runtime now has bounded IOAPIC export plus live MMIO proof with `/dev/cpu/ioapic` and `/sys/cpu/ioapic` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded legacy PIC export plus live remap/control-plane proof with `/dev/cpu/pic` and `/sys/cpu/pic` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded PIT export plus live latch/readback proof with `/dev/cpu/pit` and `/sys/cpu/pit` visibility on the i386 platform lane
@@ -701,8 +702,8 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - live i386 timer/interrupt/device/display/storage/NIC proof breadth is broad
   - the direct `-kernel` platform lane still has bounded synthetic ACPI fallback when firmware tables are unavailable or insufficient there
   - a separate BIOS firmware-boot lane now proves real ACPI end to end
-  - a separate BIOS firmware-boot lane now also proves actual AP execution, bounded AP command control, and bounded AP batch-work execution end to end
-  - broader SMP bring-up beyond bounded AP batch execution and broader platform-controller hardening remain the next `FS5.7` steps
+  - a separate BIOS firmware-boot lane now also proves actual AP execution, bounded AP command control, bounded AP batch-work execution, and bounded two-AP aggregate coordination end to end
+  - broader SMP bring-up beyond bounded multi-AP coordination and broader platform-controller hardening remain the next `FS5.7` steps
 - the i386 freestanding runtime now has live `virtio-gpu` display proof on the i386 controller path with reused output/interface/mode/profile matrix coverage from the shared broad display probe
 
 ## Current Boundary
