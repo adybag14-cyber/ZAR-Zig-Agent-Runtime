@@ -71,6 +71,7 @@ const dev_cpu_ap_multi_path = "/dev/cpu/ap-multi";
 const dev_cpu_ap_slots_path = "/dev/cpu/ap-slots";
 const dev_cpu_ap_ownership_path = "/dev/cpu/ap-ownership";
 const dev_cpu_ap_redistribution_path = "/dev/cpu/ap-redistribution";
+const dev_cpu_ap_failover_path = "/dev/cpu/ap-failover";
 const dev_net_path = "/dev/net";
 const dev_net_state_path = "/dev/net/state";
 const dev_net_route_path = "/dev/net/route";
@@ -97,6 +98,7 @@ const sys_cpu_ap_multi_path = "/sys/cpu/ap-multi";
 const sys_cpu_ap_slots_path = "/sys/cpu/ap-slots";
 const sys_cpu_ap_ownership_path = "/sys/cpu/ap-ownership";
 const sys_cpu_ap_redistribution_path = "/sys/cpu/ap-redistribution";
+const sys_cpu_ap_failover_path = "/sys/cpu/ap-failover";
 const sys_storage_state_path = "/sys/storage/state";
 const sys_storage_backends_path = "/sys/storage/backends";
 const sys_storage_filesystems_path = "/sys/storage/filesystems";
@@ -224,6 +226,7 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
         try appendFileLine(allocator, &out, "ap-slots", dev_cpu_ap_slots_path, max_bytes);
         try appendFileLine(allocator, &out, "ap-ownership", dev_cpu_ap_ownership_path, max_bytes);
         try appendFileLine(allocator, &out, "ap-redistribution", dev_cpu_ap_redistribution_path, max_bytes);
+        try appendFileLine(allocator, &out, "ap-failover", dev_cpu_ap_failover_path, max_bytes);
         return out.toOwnedSlice(allocator);
     }
     if (std.mem.eql(u8, path, dev_display_outputs_path)) {
@@ -288,6 +291,7 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
         try appendFileLine(allocator, &out, "ap-slots", sys_cpu_ap_slots_path, max_bytes);
         try appendFileLine(allocator, &out, "ap-ownership", sys_cpu_ap_ownership_path, max_bytes);
         try appendFileLine(allocator, &out, "ap-redistribution", sys_cpu_ap_redistribution_path, max_bytes);
+        try appendFileLine(allocator, &out, "ap-failover", sys_cpu_ap_failover_path, max_bytes);
         return out.toOwnedSlice(allocator);
     }
     if (std.mem.eql(u8, path, "/sys/storage")) {
@@ -550,6 +554,9 @@ fn renderFileAlloc(allocator: std.mem.Allocator, path: []const u8) Error![]u8 {
         std.mem.eql(u8, path, sys_cpu_ap_redistribution_path))
     {
         return i386_ap_startup.renderOwnershipAlloc(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_cpu_ap_failover_path) or std.mem.eql(u8, path, sys_cpu_ap_failover_path)) {
+        return i386_ap_startup.renderFailoverAlloc(allocator);
     }
     if (std.mem.eql(u8, path, dev_net_state_path)) {
         return renderNetStateAlloc(allocator);
