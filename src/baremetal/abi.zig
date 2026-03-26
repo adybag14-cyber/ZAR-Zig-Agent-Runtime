@@ -192,6 +192,7 @@ pub const scheduler_state_enabled: u8 = 1;
 pub const scheduler_policy_round_robin: u8 = 0;
 pub const scheduler_policy_priority: u8 = 1;
 pub const ap_ownership_policy_round_robin: u8 = 0;
+pub const ap_ownership_policy_priority: u8 = 1;
 
 pub const task_state_unused: u8 = 0;
 pub const task_state_ready: u8 = 1;

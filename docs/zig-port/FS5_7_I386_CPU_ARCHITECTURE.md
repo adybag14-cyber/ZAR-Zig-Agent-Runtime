@@ -690,6 +690,41 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - `scripts/baremetal-qemu-i386-firmware-smp-owned-probe-check.ps1`
   - `scripts/baremetal-qemu-i386-firmware-smp-owned-probe-check.ps1 -MemoryMiB 1024`
 
+## Firmware Priority Ownership Proof
+
+- `src/baremetal/i386_ap_startup.zig` now records the active ownership policy for the firmware AP scheduler lane, exports it through the AP-ownership state, and adds bounded priority-aware runnable-task collection for owned dispatch
+- the firmware AP ownership engine now supports:
+  - `dispatchOwnedSchedulerTasksPriority(...)`
+  - `dispatchOwnedSchedulerTasksPriorityFromOffset(...)`
+  - stable descending-priority ordering for runnable tasks
+  - redistribution accounting across policy-driven rounds
+- hosted regressions now prove:
+  - initial priority-owned AP slot assignment
+  - reprioritization-driven migration across the next owned round
+- `src/baremetal_main.zig` now adds a dedicated firmware-only `i386_smp_priority_probe` lane that requires:
+  - real firmware ACPI with no synthetic fallback
+  - two resident AP slots under BIOS boot with `-smp 3`
+  - synchronous scheduler disable plus `priority` policy apply
+  - synchronous creation of five ready scheduler tasks
+  - a first priority-owned dispatch round
+  - live `command_task_set_priority` reprioritization before the second round
+  - a second priority-owned round with a changed AP-slot ownership map
+  - `/sys/cpu/ap-ownership` plus `/sys/cpu/smp` render/readback
+  - bounded halt of both resident AP slots after the priority-owned rounds
+- the dedicated live results are explicit:
+  - `BAREMETAL_I386_QEMU_FIRMWARE_SMP_PRIORITY_PROBE_CODE=0x74`
+  - `I386_AP_EXECUTION_OBSERVED=1`
+  - `I386_AP_OWNERSHIP_POLICY=1`
+  - `I386_AP_OWNERSHIP_TOTAL_TASK_COUNT=10`
+  - `I386_AP_OWNERSHIP_TOTAL_DISPATCH_COUNT=4`
+  - `I386_AP_OWNERSHIP_TOTAL_ACCUMULATOR=30`
+  - `I386_AP_OWNERSHIP_TOTAL_REDISTRIBUTED_TASK_COUNT=4`
+  - `I386_AP_OWNERSHIP_LAST_REDISTRIBUTED_TASK_COUNT=4`
+  - `I386_AP_OWNERSHIP_LAST_START_SLOT_INDEX=0`
+- hosted `zig-ci` and `release-preview` now also execute:
+  - `scripts/baremetal-qemu-i386-firmware-smp-priority-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-firmware-smp-priority-probe-check.ps1 -MemoryMiB 1024`
+
 ## ZigOS Follow-On Work
 
 - next adoption analysis is stored in:
@@ -732,6 +767,7 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the i386 freestanding runtime now also has a real BIOS firmware-boot concurrent multi-AP slot lane that proves two secondary APs can remain resident concurrently under `-smp 3`, receive targeted bounded batch work on separate slot-indexed mailboxes, and export independent per-slot state through `/dev/cpu/ap-slots` and `/sys/cpu/ap-slots`
 - the i386 freestanding runtime now also has a real BIOS firmware-boot scheduler-owned AP-dispatch lane that proves two resident AP slots can receive round-robin ownership of five scheduler-created ready tasks, export per-slot ownership lists through `/dev/cpu/ap-ownership` and `/sys/cpu/ap-ownership`, and complete the owned dispatch without relying on incidental timer ticks
 - the i386 freestanding runtime now also has a real BIOS firmware-boot scheduler-redistribution lane that proves the same five scheduler-created ready tasks can be redistributed across those resident AP slots over two owned rounds, exports cumulative and per-round redistribution telemetry through `/dev/cpu/ap-ownership`, `/sys/cpu/ap-ownership`, `/dev/cpu/ap-redistribution`, and `/sys/cpu/ap-redistribution`, and completes the second rotated round with cumulative totals `10/4/30` and `5` migrated tasks
+- the i386 freestanding runtime now also has a real BIOS firmware-boot priority-owned scheduler lane that proves the same five scheduler-created ready tasks can be owned by resident AP slots under the `priority` policy, then migrate after live task reprioritization on the next owned round, while exporting the active policy plus cumulative redistribution telemetry through `/dev/cpu/ap-ownership` and `/sys/cpu/ap-ownership`, with cumulative totals `10/4/30` and `4` migrated tasks
 - the i386 freestanding runtime now has bounded IOAPIC export plus live MMIO proof with `/dev/cpu/ioapic` and `/sys/cpu/ioapic` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded legacy PIC export plus live remap/control-plane proof with `/dev/cpu/pic` and `/sys/cpu/pic` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded PIT export plus live latch/readback proof with `/dev/cpu/pit` and `/sys/cpu/pit` visibility on the i386 platform lane
@@ -751,8 +787,8 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - the direct `-kernel` platform lane still has bounded synthetic ACPI fallback when firmware tables are unavailable or insufficient there
   - a separate BIOS firmware-boot lane now proves real ACPI end to end
   - a separate BIOS firmware-boot lane now also proves actual AP execution, bounded AP command control, bounded AP batch-work execution, bounded two-AP aggregate coordination, and bounded concurrent two-AP slot-targeted dispatch end to end
-  - a separate BIOS firmware-boot lane now also proves bounded scheduler-owned dispatch and bounded multi-round redistribution on top of those resident AP slots
-  - broader SMP bring-up beyond bounded concurrent/owned/redistributed multi-AP dispatch and broader platform-controller hardening remain the next `FS5.7` steps
+  - a separate BIOS firmware-boot lane now also proves bounded scheduler-owned dispatch, bounded multi-round redistribution, and bounded priority-aware ownership on top of those resident AP slots
+  - broader SMP bring-up beyond bounded concurrent/owned/redistributed/priority-aware multi-AP dispatch and broader platform-controller hardening remain the next `FS5.7` steps
 - the i386 freestanding runtime now has live `virtio-gpu` display proof on the i386 controller path with reused output/interface/mode/profile matrix coverage from the shared broad display probe
 
 ## Current Boundary
@@ -771,13 +807,15 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - bounded AP batch execution is now observed on the BIOS firmware-boot path
   - bounded concurrent two-AP targeted dispatch is now observed on the BIOS firmware-boot path
   - bounded scheduler-owned dispatch is now observed on the BIOS firmware-boot path
-  - that moves the next real closure step to broader SMP bring-up beyond bounded concurrent/owned AP slot dispatch
+  - bounded scheduler redistribution is now observed on the BIOS firmware-boot path
+  - bounded priority-aware ownership after live reprioritization is now observed on the BIOS firmware-boot path
+  - that moves the next real closure step to broader SMP bring-up beyond bounded concurrent/owned/redistributed/priority-aware AP slot dispatch
 
 ## Next Steps
 
 1. widen the current firmware-backed AP execution lane into broader SMP bring-up:
    - more than two bounded resident AP slots
-   - AP-owned work dispatch beyond the current targeted owned and redistributed round-robin model
-   - scheduler behavior beyond the current two-round ownership/redistribution map
+   - AP-owned work dispatch beyond the current targeted owned/redistributed/priority-aware model
+   - scheduler behavior beyond the current two-round ownership plus live reprioritization map
 2. then lift that broader SMP model back toward the direct-loader path where possible
 3. only after that, widen timer / interrupt hardening around the real multi-core path
