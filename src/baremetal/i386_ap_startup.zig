@@ -23,6 +23,7 @@ const warm_reset_vector_offset_phys: usize = 0x467;
 const warm_reset_vector_segment_phys: usize = 0x469;
 const ap_command_ping: u32 = 1;
 const ap_command_halt: u32 = 2;
+const ap_command_work: u32 = 3;
 const startup_timeout_iterations: usize = 120_000_000;
 const delivery_timeout_iterations: usize = 2_000_000;
 const init_settle_delay_iterations: usize = 24_000_000;
@@ -67,10 +68,14 @@ const SharedStorage = struct {
     var bsp_apic_id: u32 = 0;
     var local_apic_addr: u32 = 0;
     var command_kind: u32 = 0;
+    var command_value: u32 = 0;
     var command_seq: u32 = 0;
     var response_seq: u32 = 0;
     var heartbeat: u32 = 0;
     var ping_count: u32 = 0;
+    var work_count: u32 = 0;
+    var last_work_value: u32 = 0;
+    var work_accumulator: u32 = 0;
 };
 
 var test_cmos_shutdown_value_ptr: ?*u8 = null;
@@ -87,10 +92,14 @@ const SharedExtern = struct {
     extern var oc_i386_ap_shared_bsp_apic_id: u32;
     extern var oc_i386_ap_shared_local_apic_addr: u32;
     extern var oc_i386_ap_shared_command_kind: u32;
+    extern var oc_i386_ap_shared_command_value: u32;
     extern var oc_i386_ap_shared_command_seq: u32;
     extern var oc_i386_ap_shared_response_seq: u32;
     extern var oc_i386_ap_shared_heartbeat: u32;
     extern var oc_i386_ap_shared_ping_count: u32;
+    extern var oc_i386_ap_shared_work_count: u32;
+    extern var oc_i386_ap_shared_last_work_value: u32;
+    extern var oc_i386_ap_shared_work_accumulator: u32;
 };
 
 fn sharedStagePtr() *u32 {
@@ -129,6 +138,10 @@ fn sharedCommandKindPtr() *u32 {
     return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_command_kind else &SharedStorage.command_kind;
 }
 
+fn sharedCommandValuePtr() *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_command_value else &SharedStorage.command_value;
+}
+
 fn sharedCommandSeqPtr() *u32 {
     return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_command_seq else &SharedStorage.command_seq;
 }
@@ -143,6 +156,18 @@ fn sharedHeartbeatPtr() *u32 {
 
 fn sharedPingCountPtr() *u32 {
     return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_ping_count else &SharedStorage.ping_count;
+}
+
+fn sharedWorkCountPtr() *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_work_count else &SharedStorage.work_count;
+}
+
+fn sharedLastWorkValuePtr() *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_last_work_value else &SharedStorage.last_work_value;
+}
+
+fn sharedWorkAccumulatorPtr() *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_work_accumulator else &SharedStorage.work_accumulator;
 }
 
 fn zeroState() abi.BaremetalApStartupState {
@@ -177,6 +202,10 @@ fn zeroState() abi.BaremetalApStartupState {
         .startup_ipi_count = 0,
         .last_delivery_status = 0,
         .last_accept_status = 0,
+        .command_value = 0,
+        .work_count = 0,
+        .last_work_value = 0,
+        .work_accumulator = 0,
     };
 }
 
@@ -192,10 +221,14 @@ pub fn resetForTest() void {
     writeStateVar(sharedBspApicIdPtr(), 0);
     writeStateVar(sharedLocalApicAddrPtr(), 0);
     writeStateVar(sharedCommandKindPtr(), 0);
+    writeStateVar(sharedCommandValuePtr(), 0);
     writeStateVar(sharedCommandSeqPtr(), 0);
     writeStateVar(sharedResponseSeqPtr(), 0);
     writeStateVar(sharedHeartbeatPtr(), 0);
     writeStateVar(sharedPingCountPtr(), 0);
+    writeStateVar(sharedWorkCountPtr(), 0);
+    writeStateVar(sharedLastWorkValuePtr(), 0);
+    writeStateVar(sharedWorkAccumulatorPtr(), 0);
     test_cmos_shutdown_value_ptr = null;
     test_warm_reset_offset_ptr = null;
     test_warm_reset_segment_ptr = null;
@@ -286,6 +319,23 @@ pub fn pingStartedAp() Error!void {
     if (state.ping_count == 0 or state.last_stage != 5) return error.CommandTimeout;
 }
 
+pub fn dispatchWorkToStartedAp(value: u32) Error!u32 {
+    refreshState();
+    if (state.started == 0 or state.halted == 1) return error.ApNotStarted;
+    const prior_count = state.work_count;
+    const expected_accumulator = state.work_accumulator + value;
+    try issueCommandWithValue(ap_command_work, value);
+    refreshState();
+    if (state.work_count != prior_count + 1 or
+        state.last_work_value != value or
+        state.work_accumulator != expected_accumulator or
+        state.last_stage != 7)
+    {
+        return error.CommandTimeout;
+    }
+    return state.work_accumulator;
+}
+
 pub fn haltStartedAp() Error!void {
     refreshState();
     if (state.started == 0 or state.halted == 1) return error.ApNotStarted;
@@ -303,7 +353,7 @@ pub fn renderAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
     refreshState();
     return std.fmt.allocPrint(
         allocator,
-        "supported={d}\nattempted={d}\nstarted={d}\nhalted={d}\nlast_stage={d}\nstartup_vector=0x{x}\ntrampoline_phys=0x{x}\nbsp_apic_id={d}\ntarget_apic_id={d}\nreported_apic_id={d}\nstartup_count={d}\nlapic_addr=0x{x}\nrequested_cpu_count={d}\nlogical_processor_count={d}\ncommand_seq={d}\nresponse_seq={d}\nheartbeat_count={d}\nping_count={d}\nwarm_reset_programmed={d}\nwarm_reset_vector_segment=0x{x}\nwarm_reset_vector_offset=0x{x}\ninit_ipi_count={d}\nstartup_ipi_count={d}\nlast_delivery_status=0x{x}\nlast_accept_status=0x{x}\n",
+        "supported={d}\nattempted={d}\nstarted={d}\nhalted={d}\nlast_stage={d}\nstartup_vector=0x{x}\ntrampoline_phys=0x{x}\nbsp_apic_id={d}\ntarget_apic_id={d}\nreported_apic_id={d}\nstartup_count={d}\nlapic_addr=0x{x}\nrequested_cpu_count={d}\nlogical_processor_count={d}\ncommand_seq={d}\nresponse_seq={d}\nheartbeat_count={d}\nping_count={d}\nwarm_reset_programmed={d}\nwarm_reset_vector_segment=0x{x}\nwarm_reset_vector_offset=0x{x}\ninit_ipi_count={d}\nstartup_ipi_count={d}\nlast_delivery_status=0x{x}\nlast_accept_status=0x{x}\ncommand_value={d}\nwork_count={d}\nlast_work_value={d}\nwork_accumulator={d}\n",
         .{
             state.supported,
             state.attempted,
@@ -330,6 +380,31 @@ pub fn renderAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
             state.startup_ipi_count,
             state.last_delivery_status,
             state.last_accept_status,
+            state.command_value,
+            state.work_count,
+            state.last_work_value,
+            state.work_accumulator,
+        },
+    );
+}
+
+pub fn renderWorkAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
+    refreshState();
+    return std.fmt.allocPrint(
+        allocator,
+        "started={d}\nhalted={d}\nlast_stage={d}\ncommand_seq={d}\nresponse_seq={d}\ncommand_value={d}\nwork_count={d}\nlast_work_value={d}\nwork_accumulator={d}\nheartbeat_count={d}\nping_count={d}\n",
+        .{
+            state.started,
+            state.halted,
+            state.last_stage,
+            state.command_seq,
+            state.response_seq,
+            state.command_value,
+            state.work_count,
+            state.last_work_value,
+            state.work_accumulator,
+            state.heartbeat_count,
+            state.ping_count,
         },
     );
 }
@@ -352,10 +427,14 @@ fn refreshState() void {
     state.lapic_addr = readStateVar(sharedLocalApicAddrPtr());
     state.requested_cpu_count = topology.enabled_count;
     state.logical_processor_count = lapic_state.logical_processor_count;
+    state.command_value = readStateVar(sharedCommandValuePtr());
     state.command_seq = readStateVar(sharedCommandSeqPtr());
     state.response_seq = readStateVar(sharedResponseSeqPtr());
     state.heartbeat_count = readStateVar(sharedHeartbeatPtr());
     state.ping_count = readStateVar(sharedPingCountPtr());
+    state.work_count = readStateVar(sharedWorkCountPtr());
+    state.last_work_value = readStateVar(sharedLastWorkValuePtr());
+    state.work_accumulator = readStateVar(sharedWorkAccumulatorPtr());
     state.warm_reset_programmed = diagnostics.warm_reset_programmed;
     state.warm_reset_vector_segment = diagnostics.warm_reset_vector_segment;
     state.warm_reset_vector_offset = diagnostics.warm_reset_vector_offset;
@@ -509,8 +588,13 @@ fn clearErrorStatus(regs: [*]volatile u32) void {
 }
 
 fn issueCommand(command_kind: u32) Error!void {
+    return issueCommandWithValue(command_kind, 0);
+}
+
+fn issueCommandWithValue(command_kind: u32, command_value: u32) Error!void {
     const next_seq = readStateVar(sharedCommandSeqPtr()) + 1;
     writeStateVar(sharedCommandKindPtr(), command_kind);
+    writeStateVar(sharedCommandValuePtr(), command_value);
     writeStateVar(sharedCommandSeqPtr(), next_seq);
 
     var remaining = command_timeout_iterations;
@@ -532,17 +616,31 @@ fn writeStateVar(ptr: *u32, value: u32) void {
 fn testApResponder() void {
     while (true) {
         const command_seq = readStateVar(sharedCommandSeqPtr());
-        if (command_seq == 1 and readStateVar(sharedResponseSeqPtr()) == 0) {
-            writeStateVar(sharedHeartbeatPtr(), 2);
-            writeStateVar(sharedPingCountPtr(), 1);
-            writeStateVar(sharedStagePtr(), 5);
-            writeStateVar(sharedResponseSeqPtr(), 1);
-        } else if (command_seq == 2 and readStateVar(sharedResponseSeqPtr()) == 1) {
-            writeStateVar(sharedHeartbeatPtr(), 3);
-            writeStateVar(sharedStagePtr(), 6);
-            writeStateVar(sharedHaltedPtr(), 1);
-            writeStateVar(sharedResponseSeqPtr(), 2);
-            return;
+        const response_seq = readStateVar(sharedResponseSeqPtr());
+        if (command_seq != 0 and command_seq != response_seq) {
+            const command_kind = readStateVar(sharedCommandKindPtr());
+            if (command_kind == ap_command_ping) {
+                writeStateVar(sharedHeartbeatPtr(), readStateVar(sharedHeartbeatPtr()) + 1);
+                writeStateVar(sharedPingCountPtr(), readStateVar(sharedPingCountPtr()) + 1);
+                writeStateVar(sharedStagePtr(), 5);
+                writeStateVar(sharedResponseSeqPtr(), command_seq);
+            } else if (command_kind == ap_command_halt) {
+                writeStateVar(sharedHeartbeatPtr(), readStateVar(sharedHeartbeatPtr()) + 1);
+                writeStateVar(sharedStagePtr(), 6);
+                writeStateVar(sharedHaltedPtr(), 1);
+                writeStateVar(sharedResponseSeqPtr(), command_seq);
+                return;
+            } else if (command_kind == ap_command_work) {
+                const value = readStateVar(sharedCommandValuePtr());
+                writeStateVar(sharedLastWorkValuePtr(), value);
+                writeStateVar(sharedWorkAccumulatorPtr(), readStateVar(sharedWorkAccumulatorPtr()) + value);
+                writeStateVar(sharedWorkCountPtr(), readStateVar(sharedWorkCountPtr()) + 1);
+                writeStateVar(sharedHeartbeatPtr(), readStateVar(sharedHeartbeatPtr()) + 1);
+                writeStateVar(sharedStagePtr(), 7);
+                writeStateVar(sharedResponseSeqPtr(), command_seq);
+            } else {
+                writeStateVar(sharedResponseSeqPtr(), command_seq);
+            }
         }
         std.atomic.spinLoopHint();
     }
@@ -609,6 +707,45 @@ test "i386 ap startup command helpers drive bounded ping and halt telemetry" {
     snapshot = statePtr().*;
     try std.testing.expectEqual(@as(u32, 2), snapshot.command_seq);
     try std.testing.expectEqual(@as(u32, 2), snapshot.response_seq);
+    try std.testing.expectEqual(@as(u8, 1), snapshot.halted);
+    try std.testing.expectEqual(@as(u8, 6), snapshot.last_stage);
+}
+
+test "i386 ap startup dispatches bounded work telemetry" {
+    resetForTest();
+    acpi.resetForTest();
+    try acpi.probeSyntheticImage(true);
+    writeStateVar(sharedStartedPtr(), 1);
+    writeStateVar(sharedStagePtr(), 4);
+    writeStateVar(sharedReportedApicIdPtr(), 1);
+    writeStateVar(sharedTargetApicIdPtr(), 1);
+    writeStateVar(sharedHeartbeatPtr(), 1);
+
+    const responder = try std.Thread.spawn(.{}, testApResponder, .{});
+    defer responder.join();
+
+    const first_accumulator = try dispatchWorkToStartedAp(3);
+    try std.testing.expectEqual(@as(u32, 3), first_accumulator);
+    var snapshot = statePtr().*;
+    try std.testing.expectEqual(@as(u32, 1), snapshot.command_seq);
+    try std.testing.expectEqual(@as(u32, 1), snapshot.response_seq);
+    try std.testing.expectEqual(@as(u32, 1), snapshot.work_count);
+    try std.testing.expectEqual(@as(u32, 3), snapshot.last_work_value);
+    try std.testing.expectEqual(@as(u32, 3), snapshot.work_accumulator);
+    try std.testing.expectEqual(@as(u8, 7), snapshot.last_stage);
+
+    const second_accumulator = try dispatchWorkToStartedAp(7);
+    try std.testing.expectEqual(@as(u32, 10), second_accumulator);
+    snapshot = statePtr().*;
+    try std.testing.expectEqual(@as(u32, 2), snapshot.command_seq);
+    try std.testing.expectEqual(@as(u32, 2), snapshot.response_seq);
+    try std.testing.expectEqual(@as(u32, 2), snapshot.work_count);
+    try std.testing.expectEqual(@as(u32, 7), snapshot.last_work_value);
+    try std.testing.expectEqual(@as(u32, 10), snapshot.work_accumulator);
+    try std.testing.expectEqual(@as(u8, 7), snapshot.last_stage);
+
+    try haltStartedAp();
+    snapshot = statePtr().*;
     try std.testing.expectEqual(@as(u8, 1), snapshot.halted);
     try std.testing.expectEqual(@as(u8, 6), snapshot.last_stage);
 }

@@ -569,6 +569,43 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - `scripts/baremetal-qemu-i386-firmware-ap-startup-probe-check.ps1`
   - `scripts/baremetal-qemu-i386-firmware-ap-startup-probe-check.ps1 -MemoryMiB 1024`
 
+### Slice 22: i386 Firmware AP Work Dispatch Proof
+
+- new firmware-only SMP-work lane:
+  - `baremetal-i386-smp-work-probe`
+  - `scripts/baremetal-qemu-i386-firmware-smp-work-probe-check.ps1`
+- `src/baremetal/i386_ap_startup.zig` now extends the bounded AP-control protocol with:
+  - `command_value`
+  - `work_count`
+  - `last_work_value`
+  - `work_accumulator`
+  - `dispatchWorkToStartedAp(value)`
+- `scripts/baremetal/i386_ap_trampoline.S` now handles a dedicated bounded `work` command that:
+  - reads the BSP-provided command value
+  - records the last work value
+  - accumulates the work total
+  - increments the work count
+  - acknowledges completion through the existing response sequence
+- the AP work state is now exported through:
+  - `/dev/cpu/ap-work`
+  - `/sys/cpu/ap-work`
+- `src/baremetal_main.zig` now carries a dedicated firmware-only `i386_smp_work_probe` lane that requires:
+  - real firmware ACPI with no synthetic fallback
+  - live AP execution
+  - two bounded BSP-dispatched AP work units (`3`, then `7`)
+  - correct AP-owned accumulator/result telemetry
+  - bounded `ping` and `halt` control after work completion
+  - `/sys/cpu/ap-startup`, `/sys/cpu/ap-work`, and `/sys/cpu/smp` render/readback
+- the current live firmware result is explicit:
+  - `BAREMETAL_I386_QEMU_FIRMWARE_SMP_WORK_PROBE_CODE=0x7B`
+  - `I386_AP_EXECUTION_OBSERVED=1`
+  - `I386_AP_WORK_COUNT=2`
+  - `I386_AP_LAST_WORK_VALUE=7`
+  - `I386_AP_WORK_ACCUMULATOR=10`
+- hosted `zig-ci` and `release-preview` now also execute:
+  - `scripts/baremetal-qemu-i386-firmware-smp-work-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-firmware-smp-work-probe-check.ps1 -MemoryMiB 1024`
+
 ## ZigOS Follow-On Work
 
 - next adoption analysis is stored in:
