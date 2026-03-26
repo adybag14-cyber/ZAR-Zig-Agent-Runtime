@@ -579,9 +579,13 @@ pub const BaremetalApStartupState = extern struct {
     last_delivery_status: u32,
     last_accept_status: u32,
     command_value: u32,
+    task_count: u32,
     work_count: u32,
     last_work_value: u32,
     work_accumulator: u32,
+    batch_count: u32,
+    last_batch_count: u32,
+    last_batch_accumulator: u32,
 };
 
 pub const BaremetalDisplayOutputEntry = extern struct {

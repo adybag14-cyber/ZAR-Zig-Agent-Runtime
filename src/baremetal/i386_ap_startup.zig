@@ -24,6 +24,8 @@ const warm_reset_vector_segment_phys: usize = 0x469;
 const ap_command_ping: u32 = 1;
 const ap_command_halt: u32 = 2;
 const ap_command_work: u32 = 3;
+const ap_command_batch_work: u32 = 4;
+pub const max_task_batch_entries: usize = 8;
 const startup_timeout_iterations: usize = 120_000_000;
 const delivery_timeout_iterations: usize = 2_000_000;
 const init_settle_delay_iterations: usize = 24_000_000;
@@ -44,6 +46,7 @@ pub const Error = error{
     WrongCpuStarted,
     ApNotStarted,
     CommandTimeout,
+    InvalidWorkBatch,
 };
 
 var state: abi.BaremetalApStartupState = zeroState();
@@ -76,6 +79,11 @@ const SharedStorage = struct {
     var work_count: u32 = 0;
     var last_work_value: u32 = 0;
     var work_accumulator: u32 = 0;
+    var task_count: u32 = 0;
+    var task_values: [max_task_batch_entries]u32 = [_]u32{0} ** max_task_batch_entries;
+    var batch_count: u32 = 0;
+    var last_batch_count: u32 = 0;
+    var last_batch_accumulator: u32 = 0;
 };
 
 var test_cmos_shutdown_value_ptr: ?*u8 = null;
@@ -100,6 +108,11 @@ const SharedExtern = struct {
     extern var oc_i386_ap_shared_work_count: u32;
     extern var oc_i386_ap_shared_last_work_value: u32;
     extern var oc_i386_ap_shared_work_accumulator: u32;
+    extern var oc_i386_ap_shared_task_count: u32;
+    extern var oc_i386_ap_shared_task_values: [max_task_batch_entries]u32;
+    extern var oc_i386_ap_shared_batch_count: u32;
+    extern var oc_i386_ap_shared_last_batch_count: u32;
+    extern var oc_i386_ap_shared_last_batch_accumulator: u32;
 };
 
 fn sharedStagePtr() *u32 {
@@ -170,6 +183,26 @@ fn sharedWorkAccumulatorPtr() *u32 {
     return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_work_accumulator else &SharedStorage.work_accumulator;
 }
 
+fn sharedTaskCountPtr() *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_task_count else &SharedStorage.task_count;
+}
+
+fn sharedTaskValuePtr(index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_task_values[index] else &SharedStorage.task_values[index];
+}
+
+fn sharedBatchCountPtr() *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_batch_count else &SharedStorage.batch_count;
+}
+
+fn sharedLastBatchCountPtr() *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_last_batch_count else &SharedStorage.last_batch_count;
+}
+
+fn sharedLastBatchAccumulatorPtr() *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_last_batch_accumulator else &SharedStorage.last_batch_accumulator;
+}
+
 fn zeroState() abi.BaremetalApStartupState {
     return .{
         .magic = abi.ap_startup_magic,
@@ -203,9 +236,13 @@ fn zeroState() abi.BaremetalApStartupState {
         .last_delivery_status = 0,
         .last_accept_status = 0,
         .command_value = 0,
+        .task_count = 0,
         .work_count = 0,
         .last_work_value = 0,
         .work_accumulator = 0,
+        .batch_count = 0,
+        .last_batch_count = 0,
+        .last_batch_accumulator = 0,
     };
 }
 
@@ -229,6 +266,11 @@ pub fn resetForTest() void {
     writeStateVar(sharedWorkCountPtr(), 0);
     writeStateVar(sharedLastWorkValuePtr(), 0);
     writeStateVar(sharedWorkAccumulatorPtr(), 0);
+    writeStateVar(sharedTaskCountPtr(), 0);
+    for (0..max_task_batch_entries) |index| writeStateVar(sharedTaskValuePtr(index), 0);
+    writeStateVar(sharedBatchCountPtr(), 0);
+    writeStateVar(sharedLastBatchCountPtr(), 0);
+    writeStateVar(sharedLastBatchAccumulatorPtr(), 0);
     test_cmos_shutdown_value_ptr = null;
     test_warm_reset_offset_ptr = null;
     test_warm_reset_segment_ptr = null;
@@ -336,6 +378,45 @@ pub fn dispatchWorkToStartedAp(value: u32) Error!u32 {
     return state.work_accumulator;
 }
 
+fn batchAccumulator(values: []const u32) u32 {
+    var accumulator: u32 = 0;
+    for (values) |value| accumulator +%= value;
+    return accumulator;
+}
+
+fn stageTaskBatch(values: []const u32) void {
+    writeStateVar(sharedTaskCountPtr(), @as(u32, @intCast(values.len)));
+    for (0..max_task_batch_entries) |index| {
+        const value = if (index < values.len) values[index] else 0;
+        writeStateVar(sharedTaskValuePtr(index), value);
+    }
+}
+
+pub fn dispatchWorkBatchToStartedAp(values: []const u32) Error!u32 {
+    refreshState();
+    if (state.started == 0 or state.halted == 1) return error.ApNotStarted;
+    if (values.len == 0 or values.len > max_task_batch_entries) return error.InvalidWorkBatch;
+
+    const prior_batch_count = state.batch_count;
+    const expected_accumulator = batchAccumulator(values);
+    stageTaskBatch(values);
+    writeStateVar(sharedCommandValuePtr(), @as(u32, @intCast(values.len)));
+    try issueCommandWithValue(ap_command_batch_work, @as(u32, @intCast(values.len)));
+    refreshState();
+    if (state.batch_count != prior_batch_count + 1 or
+        state.task_count != values.len or
+        state.last_batch_count != values.len or
+        state.last_batch_accumulator != expected_accumulator or
+        state.last_stage != 8)
+    {
+        return error.CommandTimeout;
+    }
+    for (values, 0..) |value, index| {
+        if (readStateVar(sharedTaskValuePtr(index)) != value) return error.CommandTimeout;
+    }
+    return state.last_batch_accumulator;
+}
+
 pub fn haltStartedAp() Error!void {
     refreshState();
     if (state.started == 0 or state.halted == 1) return error.ApNotStarted;
@@ -351,9 +432,12 @@ pub fn haltStartedAp() Error!void {
 
 pub fn renderAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
     refreshState();
-    return std.fmt.allocPrint(
-        allocator,
-        "supported={d}\nattempted={d}\nstarted={d}\nhalted={d}\nlast_stage={d}\nstartup_vector=0x{x}\ntrampoline_phys=0x{x}\nbsp_apic_id={d}\ntarget_apic_id={d}\nreported_apic_id={d}\nstartup_count={d}\nlapic_addr=0x{x}\nrequested_cpu_count={d}\nlogical_processor_count={d}\ncommand_seq={d}\nresponse_seq={d}\nheartbeat_count={d}\nping_count={d}\nwarm_reset_programmed={d}\nwarm_reset_vector_segment=0x{x}\nwarm_reset_vector_offset=0x{x}\ninit_ipi_count={d}\nstartup_ipi_count={d}\nlast_delivery_status=0x{x}\nlast_accept_status=0x{x}\ncommand_value={d}\nwork_count={d}\nlast_work_value={d}\nwork_accumulator={d}\n",
+    var buffer: [1536]u8 = undefined;
+    var used: usize = 0;
+
+    const head = std.fmt.bufPrint(
+        buffer[used..],
+        "supported={d}\nattempted={d}\nstarted={d}\nhalted={d}\nlast_stage={d}\nstartup_vector=0x{x}\ntrampoline_phys=0x{x}\nbsp_apic_id={d}\ntarget_apic_id={d}\nreported_apic_id={d}\nstartup_count={d}\nlapic_addr=0x{x}\nrequested_cpu_count={d}\nlogical_processor_count={d}\n",
         .{
             state.supported,
             state.attempted,
@@ -369,6 +453,14 @@ pub fn renderAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
             state.lapic_addr,
             state.requested_cpu_count,
             state.logical_processor_count,
+        },
+    ) catch unreachable;
+    used += head.len;
+
+    const mid = std.fmt.bufPrint(
+        buffer[used..],
+        "command_seq={d}\nresponse_seq={d}\nheartbeat_count={d}\nping_count={d}\nwarm_reset_programmed={d}\nwarm_reset_vector_segment=0x{x}\nwarm_reset_vector_offset=0x{x}\ninit_ipi_count={d}\nstartup_ipi_count={d}\nlast_delivery_status=0x{x}\nlast_accept_status=0x{x}\n",
+        .{
             state.command_seq,
             state.response_seq,
             state.heartbeat_count,
@@ -380,19 +472,34 @@ pub fn renderAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
             state.startup_ipi_count,
             state.last_delivery_status,
             state.last_accept_status,
+        },
+    ) catch unreachable;
+    used += mid.len;
+
+    const tail = std.fmt.bufPrint(
+        buffer[used..],
+        "command_value={d}\ntask_count={d}\nwork_count={d}\nlast_work_value={d}\nwork_accumulator={d}\nbatch_count={d}\nlast_batch_count={d}\nlast_batch_accumulator={d}\n",
+        .{
             state.command_value,
+            state.task_count,
             state.work_count,
             state.last_work_value,
             state.work_accumulator,
+            state.batch_count,
+            state.last_batch_count,
+            state.last_batch_accumulator,
         },
-    );
+    ) catch unreachable;
+    used += tail.len;
+
+    return allocator.dupe(u8, buffer[0..used]);
 }
 
 pub fn renderWorkAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
     refreshState();
     return std.fmt.allocPrint(
         allocator,
-        "started={d}\nhalted={d}\nlast_stage={d}\ncommand_seq={d}\nresponse_seq={d}\ncommand_value={d}\nwork_count={d}\nlast_work_value={d}\nwork_accumulator={d}\nheartbeat_count={d}\nping_count={d}\n",
+        "started={d}\nhalted={d}\nlast_stage={d}\ncommand_seq={d}\nresponse_seq={d}\ncommand_value={d}\ntask_count={d}\nwork_count={d}\nlast_work_value={d}\nwork_accumulator={d}\nbatch_count={d}\nlast_batch_count={d}\nlast_batch_accumulator={d}\nheartbeat_count={d}\nping_count={d}\n",
         .{
             state.started,
             state.halted,
@@ -400,13 +507,46 @@ pub fn renderWorkAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u
             state.command_seq,
             state.response_seq,
             state.command_value,
+            state.task_count,
             state.work_count,
             state.last_work_value,
             state.work_accumulator,
+            state.batch_count,
+            state.last_batch_count,
+            state.last_batch_accumulator,
             state.heartbeat_count,
             state.ping_count,
         },
     );
+}
+
+pub fn renderTasksAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
+    refreshState();
+    var buffer: [1024]u8 = undefined;
+    var used: usize = 0;
+    const head = std.fmt.bufPrint(
+        buffer[used..],
+        "started={d}\nhalted={d}\nlast_stage={d}\ncommand_seq={d}\nresponse_seq={d}\ncommand_value={d}\ntask_count={d}\nbatch_count={d}\nlast_batch_count={d}\nlast_batch_accumulator={d}\n",
+        .{
+            state.started,
+            state.halted,
+            state.last_stage,
+            state.command_seq,
+            state.response_seq,
+            state.command_value,
+            state.task_count,
+            state.batch_count,
+            state.last_batch_count,
+            state.last_batch_accumulator,
+        },
+    ) catch unreachable;
+    used += head.len;
+    const task_count = @min(@as(usize, @intCast(state.task_count)), max_task_batch_entries);
+    for (0..task_count) |index| {
+        const line = std.fmt.bufPrint(buffer[used..], "task[{d}]={d}\n", .{ index, readStateVar(sharedTaskValuePtr(index)) }) catch unreachable;
+        used += line.len;
+    }
+    return allocator.dupe(u8, buffer[0..used]);
 }
 
 fn refreshState() void {
@@ -432,9 +572,13 @@ fn refreshState() void {
     state.response_seq = readStateVar(sharedResponseSeqPtr());
     state.heartbeat_count = readStateVar(sharedHeartbeatPtr());
     state.ping_count = readStateVar(sharedPingCountPtr());
+    state.task_count = readStateVar(sharedTaskCountPtr());
     state.work_count = readStateVar(sharedWorkCountPtr());
     state.last_work_value = readStateVar(sharedLastWorkValuePtr());
     state.work_accumulator = readStateVar(sharedWorkAccumulatorPtr());
+    state.batch_count = readStateVar(sharedBatchCountPtr());
+    state.last_batch_count = readStateVar(sharedLastBatchCountPtr());
+    state.last_batch_accumulator = readStateVar(sharedLastBatchAccumulatorPtr());
     state.warm_reset_programmed = diagnostics.warm_reset_programmed;
     state.warm_reset_vector_segment = diagnostics.warm_reset_vector_segment;
     state.warm_reset_vector_offset = diagnostics.warm_reset_vector_offset;
@@ -638,6 +782,16 @@ fn testApResponder() void {
                 writeStateVar(sharedHeartbeatPtr(), readStateVar(sharedHeartbeatPtr()) + 1);
                 writeStateVar(sharedStagePtr(), 7);
                 writeStateVar(sharedResponseSeqPtr(), command_seq);
+            } else if (command_kind == ap_command_batch_work) {
+                const task_count = @min(@as(usize, @intCast(readStateVar(sharedTaskCountPtr()))), max_task_batch_entries);
+                var accumulator: u32 = 0;
+                for (0..task_count) |index| accumulator +%= readStateVar(sharedTaskValuePtr(index));
+                writeStateVar(sharedLastBatchCountPtr(), @as(u32, @intCast(task_count)));
+                writeStateVar(sharedLastBatchAccumulatorPtr(), accumulator);
+                writeStateVar(sharedBatchCountPtr(), readStateVar(sharedBatchCountPtr()) + 1);
+                writeStateVar(sharedHeartbeatPtr(), readStateVar(sharedHeartbeatPtr()) + 1);
+                writeStateVar(sharedStagePtr(), 8);
+                writeStateVar(sharedResponseSeqPtr(), command_seq);
             } else {
                 writeStateVar(sharedResponseSeqPtr(), command_seq);
             }
@@ -681,6 +835,8 @@ test "i386 ap startup render reflects bounded exported state" {
     try std.testing.expect(std.mem.indexOf(u8, render, "warm_reset_programmed=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, render, "startup_ipi_count=2") != null);
     try std.testing.expect(std.mem.indexOf(u8, render, "warm_reset_vector_segment=0x8000") != null);
+    try std.testing.expect(std.mem.indexOf(u8, render, "task_count=0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, render, "batch_count=0") != null);
 }
 
 test "i386 ap startup command helpers drive bounded ping and halt telemetry" {
@@ -743,6 +899,45 @@ test "i386 ap startup dispatches bounded work telemetry" {
     try std.testing.expectEqual(@as(u32, 7), snapshot.last_work_value);
     try std.testing.expectEqual(@as(u32, 10), snapshot.work_accumulator);
     try std.testing.expectEqual(@as(u8, 7), snapshot.last_stage);
+
+    try haltStartedAp();
+    snapshot = statePtr().*;
+    try std.testing.expectEqual(@as(u8, 1), snapshot.halted);
+    try std.testing.expectEqual(@as(u8, 6), snapshot.last_stage);
+}
+
+test "i386 ap startup dispatches bounded work batch telemetry" {
+    resetForTest();
+    acpi.resetForTest();
+    try acpi.probeSyntheticImage(true);
+    writeStateVar(sharedStartedPtr(), 1);
+    writeStateVar(sharedStagePtr(), 4);
+    writeStateVar(sharedReportedApicIdPtr(), 1);
+    writeStateVar(sharedTargetApicIdPtr(), 1);
+    writeStateVar(sharedHeartbeatPtr(), 1);
+
+    const responder = try std.Thread.spawn(.{}, testApResponder, .{});
+    defer responder.join();
+
+    const accumulator = try dispatchWorkBatchToStartedAp(&.{ 3, 7, 11 });
+    try std.testing.expectEqual(@as(u32, 21), accumulator);
+    var snapshot = statePtr().*;
+    try std.testing.expectEqual(@as(u32, 1), snapshot.command_seq);
+    try std.testing.expectEqual(@as(u32, 1), snapshot.response_seq);
+    try std.testing.expectEqual(@as(u32, 3), snapshot.task_count);
+    try std.testing.expectEqual(@as(u32, 1), snapshot.batch_count);
+    try std.testing.expectEqual(@as(u32, 3), snapshot.last_batch_count);
+    try std.testing.expectEqual(@as(u32, 21), snapshot.last_batch_accumulator);
+    try std.testing.expectEqual(@as(u8, 8), snapshot.last_stage);
+
+    const tasks_render = try renderTasksAlloc(std.testing.allocator);
+    defer std.testing.allocator.free(tasks_render);
+    try std.testing.expect(std.mem.indexOf(u8, tasks_render, "task_count=3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tasks_render, "batch_count=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tasks_render, "last_batch_accumulator=21") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tasks_render, "task[0]=3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tasks_render, "task[1]=7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tasks_render, "task[2]=11") != null);
 
     try haltStartedAp();
     snapshot = statePtr().*;

@@ -56,6 +56,8 @@ ap_trampoline_command_loop:
     je ap_trampoline_halt_command
     cmpl $3, %ecx
     je ap_trampoline_work
+    cmpl $4, %ecx
+    je ap_trampoline_batch_work
     movl %edi, oc_i386_ap_shared_response_seq
     jmp ap_trampoline_pause
 
@@ -77,6 +79,36 @@ ap_trampoline_work:
     addl %eax, oc_i386_ap_shared_work_accumulator
     incl oc_i386_ap_shared_work_count
     movl $7, oc_i386_ap_shared_stage
+    movl %edi, oc_i386_ap_shared_response_seq
+    jmp ap_trampoline_pause
+
+ap_trampoline_batch_work:
+    movl oc_i386_ap_shared_task_count, %ecx
+    testl %ecx, %ecx
+    jz ap_trampoline_batch_work_empty
+    cmpl $8, %ecx
+    jbe ap_trampoline_batch_work_count_ready
+    movl $8, %ecx
+
+ap_trampoline_batch_work_count_ready:
+    xorl %eax, %eax
+    xorl %ebx, %ebx
+
+ap_trampoline_batch_work_loop:
+    addl oc_i386_ap_shared_task_values(,%ebx,4), %eax
+    incl %ebx
+    cmpl %ecx, %ebx
+    jne ap_trampoline_batch_work_loop
+    jmp ap_trampoline_batch_work_commit
+
+ap_trampoline_batch_work_empty:
+    xorl %eax, %eax
+
+ap_trampoline_batch_work_commit:
+    movl %ecx, oc_i386_ap_shared_last_batch_count
+    movl %eax, oc_i386_ap_shared_last_batch_accumulator
+    incl oc_i386_ap_shared_batch_count
+    movl $8, oc_i386_ap_shared_stage
     movl %edi, oc_i386_ap_shared_response_seq
     jmp ap_trampoline_pause
 
@@ -157,6 +189,21 @@ oc_i386_ap_shared_last_work_value:
     .long 0
 .global oc_i386_ap_shared_work_accumulator
 oc_i386_ap_shared_work_accumulator:
+    .long 0
+.global oc_i386_ap_shared_task_count
+oc_i386_ap_shared_task_count:
+    .long 0
+.global oc_i386_ap_shared_task_values
+oc_i386_ap_shared_task_values:
+    .fill 8,4,0
+.global oc_i386_ap_shared_batch_count
+oc_i386_ap_shared_batch_count:
+    .long 0
+.global oc_i386_ap_shared_last_batch_count
+oc_i386_ap_shared_last_batch_count:
+    .long 0
+.global oc_i386_ap_shared_last_batch_accumulator
+oc_i386_ap_shared_last_batch_accumulator:
     .long 0
 
 .balign 16
