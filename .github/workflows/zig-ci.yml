@@ -286,6 +286,12 @@ jobs:
       - name: Bare-metal QEMU i386 firmware SMP priority failover probe 1GiB (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-failover-probe-check.ps1 -MemoryMiB 1024
+      - name: Bare-metal QEMU i386 firmware SMP priority backfill probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-backfill-probe-check.ps1
+      - name: Bare-metal QEMU i386 firmware SMP priority backfill probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-backfill-probe-check.ps1 -MemoryMiB 1024
 
       - name: Bare-metal QEMU i386 SMP probe (optional)
         shell: pwsh

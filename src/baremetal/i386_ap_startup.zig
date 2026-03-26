@@ -65,6 +65,8 @@ var slot_entries: [max_ap_command_slots]abi.BaremetalApSlotEntry = std.mem.zeroe
 var ownership_state: abi.BaremetalApOwnershipState = zeroOwnershipState();
 var ownership_entries: [max_ap_command_slots]abi.BaremetalApOwnershipEntry = std.mem.zeroes([max_ap_command_slots]abi.BaremetalApOwnershipEntry);
 var failover_state: abi.BaremetalApFailoverState = zeroFailoverState();
+var backfill_state: abi.BaremetalApBackfillState = zeroBackfillState();
+var backfill_entries: [max_ap_command_slots]abi.BaremetalApBackfillEntry = std.mem.zeroes([max_ap_command_slots]abi.BaremetalApBackfillEntry);
 var ownership_dispatch_round_count: u32 = 0;
 var ownership_policy: u8 = abi.ap_ownership_policy_round_robin;
 var ownership_peak_active_slot_count: u8 = 0;
@@ -78,6 +80,11 @@ var failover_retired_slot_event_count: u8 = 0;
 var failover_last_retired_slot_index: u8 = 0;
 var failover_total_failed_over_task_count: u32 = 0;
 var failover_last_failed_over_task_count: u32 = 0;
+var backfill_last_backfilled_task_count: u32 = 0;
+var backfill_total_terminated_task_count: u32 = 0;
+var backfill_last_terminated_task_count: u32 = 0;
+var backfill_total_round_count: u32 = 0;
+const max_backfill_seen_tasks: usize = 128;
 const OwnershipStorage = struct {
     var owned_task_ids: [max_ap_command_slots][max_task_batch_entries]u32 = [_][max_task_batch_entries]u32{[_]u32{0} ** max_task_batch_entries} ** max_ap_command_slots;
     var owned_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
@@ -85,11 +92,15 @@ const OwnershipStorage = struct {
     var total_owned_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var redistributed_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var total_redistributed_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var backfilled_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var total_backfilled_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var last_task_id: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var last_priority: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var last_budget_ticks: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var last_batch_accumulator: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var total_accumulator: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var seen_task_ids: [max_backfill_seen_tasks]u32 = [_]u32{0} ** max_backfill_seen_tasks;
+    var seen_task_count: usize = 0;
 };
 const DiagnosticsState = struct {
     warm_reset_programmed: u8 = 0,
@@ -471,6 +482,35 @@ fn zeroFailoverState() abi.BaremetalApFailoverState {
     };
 }
 
+fn zeroBackfillState() abi.BaremetalApBackfillState {
+    return .{
+        .magic = abi.ap_backfill_magic,
+        .api_version = abi.api_version,
+        .present = 0,
+        .policy = abi.ap_ownership_policy_round_robin,
+        .exported_count = 0,
+        .active_count = 0,
+        .peak_active_slot_count = 0,
+        .last_round_active_slot_count = 0,
+        .requested_cpu_count = 0,
+        .logical_processor_count = 0,
+        .reserved0 = 0,
+        .bsp_apic_id = 0,
+        .total_owned_task_count = 0,
+        .total_dispatch_count = 0,
+        .total_accumulator = 0,
+        .dispatch_round_count = 0,
+        .total_redistributed_task_count = 0,
+        .last_redistributed_task_count = 0,
+        .total_backfilled_task_count = 0,
+        .last_backfilled_task_count = 0,
+        .total_terminated_task_count = 0,
+        .last_terminated_task_count = 0,
+        .total_backfill_round_count = 0,
+        .last_start_slot_index = 0,
+    };
+}
+
 fn resetSingleState() void {
     state = zeroState();
     diagnostics = .{};
@@ -527,6 +567,7 @@ fn resetSlotEntry(slot_index: usize) void {
 fn clearOwnershipRoundSlot(slot_index: usize) void {
     OwnershipStorage.owned_task_count[slot_index] = 0;
     OwnershipStorage.redistributed_task_count[slot_index] = 0;
+    OwnershipStorage.backfilled_task_count[slot_index] = 0;
     OwnershipStorage.last_task_id[slot_index] = 0;
     OwnershipStorage.last_priority[slot_index] = 0;
     OwnershipStorage.last_budget_ticks[slot_index] = 0;
@@ -539,6 +580,7 @@ fn resetOwnershipSlot(slot_index: usize) void {
     OwnershipStorage.dispatch_count[slot_index] = 0;
     OwnershipStorage.total_owned_task_count[slot_index] = 0;
     OwnershipStorage.total_redistributed_task_count[slot_index] = 0;
+    OwnershipStorage.total_backfilled_task_count[slot_index] = 0;
     OwnershipStorage.total_accumulator[slot_index] = 0;
 }
 
@@ -550,7 +592,9 @@ pub fn resetMultiState() void {
 pub fn resetOwnershipState() void {
     ownership_state = zeroOwnershipState();
     failover_state = zeroFailoverState();
+    backfill_state = zeroBackfillState();
     @memset(&ownership_entries, std.mem.zeroes(abi.BaremetalApOwnershipEntry));
+    @memset(&backfill_entries, std.mem.zeroes(abi.BaremetalApBackfillEntry));
     ownership_dispatch_round_count = 0;
     ownership_policy = abi.ap_ownership_policy_round_robin;
     ownership_peak_active_slot_count = 0;
@@ -564,7 +608,13 @@ pub fn resetOwnershipState() void {
     failover_last_retired_slot_index = 0;
     failover_total_failed_over_task_count = 0;
     failover_last_failed_over_task_count = 0;
+    backfill_last_backfilled_task_count = 0;
+    backfill_total_terminated_task_count = 0;
+    backfill_last_terminated_task_count = 0;
+    backfill_total_round_count = 0;
     for (0..max_ap_command_slots) |slot_index| resetOwnershipSlot(slot_index);
+    @memset(&OwnershipStorage.seen_task_ids, 0);
+    OwnershipStorage.seen_task_count = 0;
 }
 
 pub fn resetSlotState() void {
@@ -635,6 +685,11 @@ pub fn failoverStatePtr() *const abi.BaremetalApFailoverState {
     return &failover_state;
 }
 
+pub fn backfillStatePtr() *const abi.BaremetalApBackfillState {
+    refreshState();
+    return &backfill_state;
+}
+
 pub fn ownershipEntryCount() u16 {
     refreshState();
     return ownership_state.exported_count;
@@ -644,6 +699,17 @@ pub fn ownershipEntry(index: u16) abi.BaremetalApOwnershipEntry {
     refreshState();
     if (index >= ownership_state.exported_count) return std.mem.zeroes(abi.BaremetalApOwnershipEntry);
     return ownership_entries[index];
+}
+
+pub fn backfillEntryCount() u16 {
+    refreshState();
+    return backfill_state.exported_count;
+}
+
+pub fn backfillEntry(index: u16) abi.BaremetalApBackfillEntry {
+    refreshState();
+    if (index >= backfill_state.exported_count) return std.mem.zeroes(abi.BaremetalApBackfillEntry);
+    return backfill_entries[index];
 }
 
 pub fn startupSingleAp() Error!void {
@@ -846,6 +912,47 @@ fn previousTaskOwner(
     return null;
 }
 
+fn taskSliceContains(tasks: []const abi.BaremetalTask, task_id: u32) bool {
+    for (tasks) |task| {
+        if (task.task_id == task_id) return true;
+    }
+    return false;
+}
+
+fn countRemovedOwnedTasks(
+    previous_owned_task_ids: [max_ap_command_slots][max_task_batch_entries]u32,
+    previous_owned_task_count: [max_ap_command_slots]u32,
+    current_tasks: []const abi.BaremetalTask,
+) u32 {
+    var removed_count: u32 = 0;
+    var slot_index: usize = 0;
+    while (slot_index < max_ap_command_slots) : (slot_index += 1) {
+        const owned_count = @min(@as(usize, @intCast(previous_owned_task_count[slot_index])), max_task_batch_entries);
+        var task_index: usize = 0;
+        while (task_index < owned_count) : (task_index += 1) {
+            const task_id = previous_owned_task_ids[slot_index][task_index];
+            if (task_id == 0) continue;
+            if (!taskSliceContains(current_tasks, task_id)) removed_count +%= 1;
+        }
+    }
+    return removed_count;
+}
+
+fn hasSeenOwnedTask(task_id: u32) bool {
+    var index: usize = 0;
+    while (index < OwnershipStorage.seen_task_count) : (index += 1) {
+        if (OwnershipStorage.seen_task_ids[index] == task_id) return true;
+    }
+    return false;
+}
+
+fn markSeenOwnedTask(task_id: u32) void {
+    if (task_id == 0 or hasSeenOwnedTask(task_id)) return;
+    if (OwnershipStorage.seen_task_count >= OwnershipStorage.seen_task_ids.len) return;
+    OwnershipStorage.seen_task_ids[OwnershipStorage.seen_task_count] = task_id;
+    OwnershipStorage.seen_task_count += 1;
+}
+
 fn slotIndexIsActive(active_slots: []const u16, slot_index: usize) bool {
     for (active_slots) |active_slot| {
         if (@as(usize, active_slot) == slot_index) return true;
@@ -898,6 +1005,8 @@ fn dispatchOwnedSchedulerTasksByPolicyFromOffset(
     const previous_owned_task_count = OwnershipStorage.owned_task_count;
     var ordered_tasks_storage: [max_owned_dispatch_entries]abi.BaremetalTask = undefined;
     const ordered_tasks = try collectOwnedRunnableTasksOrdered(tasks, policy, &ordered_tasks_storage);
+    const prior_dispatch_round_count = ownership_dispatch_round_count;
+    const terminated_count = if (prior_dispatch_round_count == 0) @as(u32, 0) else countRemovedOwnedTasks(previous_owned_task_ids, previous_owned_task_count, ordered_tasks);
     clearOwnershipRoundTelemetry();
     ownership_policy = policy;
     ownership_dispatch_round_count +%= 1;
@@ -912,6 +1021,7 @@ fn dispatchOwnedSchedulerTasksByPolicyFromOffset(
     var assigned_count: usize = 0;
     var redistributed_count: u32 = 0;
     var failed_over_count: u32 = 0;
+    var backfilled_count: u32 = 0;
     for (ordered_tasks) |task| {
         const slot_index = @as(usize, active_slots[slot_cursor]);
         const owned_count = @as(usize, OwnershipStorage.owned_task_count[slot_index]);
@@ -923,6 +1033,13 @@ fn dispatchOwnedSchedulerTasksByPolicyFromOffset(
         OwnershipStorage.last_task_id[slot_index] = task.task_id;
         OwnershipStorage.last_priority[slot_index] = @as(u32, task.priority);
         OwnershipStorage.last_budget_ticks[slot_index] = task.budget_ticks;
+        const seen_before = hasSeenOwnedTask(task.task_id);
+        if (prior_dispatch_round_count != 0 and !seen_before) {
+            OwnershipStorage.backfilled_task_count[slot_index] +%= 1;
+            OwnershipStorage.total_backfilled_task_count[slot_index] +%= 1;
+            backfilled_count +%= 1;
+        }
+        markSeenOwnedTask(task.task_id);
         if (previousTaskOwner(previous_owned_task_ids, previous_owned_task_count, task.task_id)) |previous_owner| {
             if (previous_owner != slot_index) {
                 OwnershipStorage.redistributed_task_count[slot_index] +%= 1;
@@ -940,6 +1057,10 @@ fn dispatchOwnedSchedulerTasksByPolicyFromOffset(
     ownership_last_redistributed_task_count = redistributed_count;
     failover_last_failed_over_task_count = failed_over_count;
     failover_total_failed_over_task_count +%= failed_over_count;
+    backfill_last_backfilled_task_count = backfilled_count;
+    backfill_last_terminated_task_count = terminated_count;
+    backfill_total_terminated_task_count +%= terminated_count;
+    if (backfilled_count != 0) backfill_total_round_count +%= 1;
 
     var total_accumulator: u32 = 0;
     var round_dispatch_count: u32 = 0;
@@ -1329,6 +1450,75 @@ pub fn renderFailoverAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error
     );
 }
 
+pub fn renderBackfillAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
+    refreshState();
+    var buffer: [4096]u8 = undefined;
+    var used: usize = 0;
+    const head = std.fmt.bufPrint(
+        buffer[used..],
+        "present={d}\npolicy={d}\nexported_count={d}\nactive_count={d}\npeak_active_slot_count={d}\nlast_round_active_slot_count={d}\nrequested_cpu_count={d}\nlogical_processor_count={d}\nbsp_apic_id={d}\ntotal_owned_task_count={d}\ntotal_dispatch_count={d}\ntotal_accumulator={d}\ndispatch_round_count={d}\ntotal_redistributed_task_count={d}\nlast_redistributed_task_count={d}\n",
+        .{
+            backfill_state.present,
+            backfill_state.policy,
+            backfill_state.exported_count,
+            backfill_state.active_count,
+            backfill_state.peak_active_slot_count,
+            backfill_state.last_round_active_slot_count,
+            backfill_state.requested_cpu_count,
+            backfill_state.logical_processor_count,
+            backfill_state.bsp_apic_id,
+            backfill_state.total_owned_task_count,
+            backfill_state.total_dispatch_count,
+            backfill_state.total_accumulator,
+            backfill_state.dispatch_round_count,
+            backfill_state.total_redistributed_task_count,
+            backfill_state.last_redistributed_task_count,
+        },
+    ) catch unreachable;
+    used += head.len;
+    const tail = std.fmt.bufPrint(
+        buffer[used..],
+        "total_backfilled_task_count={d}\nlast_backfilled_task_count={d}\ntotal_terminated_task_count={d}\nlast_terminated_task_count={d}\ntotal_backfill_round_count={d}\nlast_start_slot_index={d}\n",
+        .{
+            backfill_state.total_backfilled_task_count,
+            backfill_state.last_backfilled_task_count,
+            backfill_state.total_terminated_task_count,
+            backfill_state.last_terminated_task_count,
+            backfill_state.total_backfill_round_count,
+            backfill_state.last_start_slot_index,
+        },
+    ) catch unreachable;
+    used += tail.len;
+    var entry_index: u16 = 0;
+    while (entry_index < backfill_state.exported_count) : (entry_index += 1) {
+        const entry = backfill_entries[entry_index];
+        const line = std.fmt.bufPrint(
+            buffer[used..],
+            "slot[{d}].target_apic_id={d}\nslot[{d}].dispatch_count={d}\nslot[{d}].owned_task_count={d}\nslot[{d}].total_owned_task_count={d}\nslot[{d}].redistributed_task_count={d}\nslot[{d}].total_redistributed_task_count={d}\nslot[{d}].backfilled_task_count={d}\nslot[{d}].total_backfilled_task_count={d}\nslot[{d}].last_task_id={d}\nslot[{d}].last_priority={d}\nslot[{d}].last_budget_ticks={d}\nslot[{d}].last_batch_accumulator={d}\nslot[{d}].total_accumulator={d}\nslot[{d}].started={d}\nslot[{d}].halted={d}\nslot[{d}].slot_index={d}\n",
+            .{
+                entry_index, entry.target_apic_id,
+                entry_index, entry.dispatch_count,
+                entry_index, entry.owned_task_count,
+                entry_index, entry.total_owned_task_count,
+                entry_index, entry.redistributed_task_count,
+                entry_index, entry.total_redistributed_task_count,
+                entry_index, entry.backfilled_task_count,
+                entry_index, entry.total_backfilled_task_count,
+                entry_index, entry.last_task_id,
+                entry_index, entry.last_priority,
+                entry_index, entry.last_budget_ticks,
+                entry_index, entry.last_batch_accumulator,
+                entry_index, entry.total_accumulator,
+                entry_index, entry.started,
+                entry_index, entry.halted,
+                entry_index, entry.slot_index,
+            },
+        ) catch unreachable;
+        used += line.len;
+    }
+    return allocator.dupe(u8, buffer[0..used]);
+}
+
 fn refreshState() void {
     const topology = acpi.cpuTopologyStatePtr().*;
     const lapic_state = lapic.statePtr().*;
@@ -1505,6 +1695,58 @@ fn refreshState() void {
     failover_state.total_failed_over_task_count = failover_total_failed_over_task_count;
     failover_state.last_failed_over_task_count = failover_last_failed_over_task_count;
     if (failover_state.retired_slot_event_count != 0) failover_state.present = 1;
+
+    backfill_state = zeroBackfillState();
+    backfill_state.present = ownership_state.present;
+    backfill_state.policy = ownership_state.policy;
+    backfill_state.exported_count = ownership_state.exported_count;
+    backfill_state.active_count = ownership_state.active_count;
+    backfill_state.peak_active_slot_count = ownership_state.peak_active_slot_count;
+    backfill_state.last_round_active_slot_count = ownership_state.last_round_active_slot_count;
+    backfill_state.requested_cpu_count = ownership_state.requested_cpu_count;
+    backfill_state.logical_processor_count = ownership_state.logical_processor_count;
+    backfill_state.bsp_apic_id = ownership_state.bsp_apic_id;
+    backfill_state.total_owned_task_count = ownership_state.total_owned_task_count;
+    backfill_state.total_dispatch_count = ownership_state.total_dispatch_count;
+    backfill_state.total_accumulator = ownership_state.total_accumulator;
+    backfill_state.dispatch_round_count = ownership_state.dispatch_round_count;
+    backfill_state.total_redistributed_task_count = ownership_state.total_redistributed_task_count;
+    backfill_state.last_redistributed_task_count = ownership_state.last_redistributed_task_count;
+    backfill_state.last_backfilled_task_count = backfill_last_backfilled_task_count;
+    backfill_state.total_terminated_task_count = backfill_total_terminated_task_count;
+    backfill_state.last_terminated_task_count = backfill_last_terminated_task_count;
+    backfill_state.total_backfill_round_count = backfill_total_round_count;
+    backfill_state.last_start_slot_index = ownership_state.last_start_slot_index;
+    @memset(&backfill_entries, std.mem.zeroes(abi.BaremetalApBackfillEntry));
+    slot_index = 0;
+    while (slot_index < max_ap_command_slots) : (slot_index += 1) {
+        if (slot_index >= backfill_state.exported_count) break;
+        const ownership_entry = ownership_entries[slot_index];
+        const total_backfilled_task_count = OwnershipStorage.total_backfilled_task_count[slot_index];
+        backfill_entries[slot_index] = .{
+            .target_apic_id = ownership_entry.target_apic_id,
+            .dispatch_count = ownership_entry.dispatch_count,
+            .owned_task_count = ownership_entry.owned_task_count,
+            .total_owned_task_count = ownership_entry.total_owned_task_count,
+            .redistributed_task_count = ownership_entry.redistributed_task_count,
+            .total_redistributed_task_count = ownership_entry.total_redistributed_task_count,
+            .backfilled_task_count = OwnershipStorage.backfilled_task_count[slot_index],
+            .total_backfilled_task_count = total_backfilled_task_count,
+            .last_task_id = ownership_entry.last_task_id,
+            .last_priority = ownership_entry.last_priority,
+            .last_budget_ticks = ownership_entry.last_budget_ticks,
+            .last_batch_accumulator = ownership_entry.last_batch_accumulator,
+            .total_accumulator = ownership_entry.total_accumulator,
+            .started = ownership_entry.started,
+            .halted = ownership_entry.halted,
+            .slot_index = ownership_entry.slot_index,
+            .reserved0 = 0,
+        };
+        backfill_state.total_backfilled_task_count +%= total_backfilled_task_count;
+    }
+    if (backfill_state.total_backfilled_task_count != 0 or backfill_state.total_terminated_task_count != 0) {
+        backfill_state.present = 1;
+    }
 }
 
 fn findSecondaryApicId(current_apic_id: u32) ?u32 {

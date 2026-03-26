@@ -32,6 +32,7 @@ pub fn build(b: *std.Build) void {
     const baremetal_i386_smp_priority_saturation_probe = b.option(bool, "baremetal-i386-smp-priority-saturation-probe", "Enable the BIOS firmware i386 scheduler full task-table priority saturation validation path in the freestanding image") orelse false;
     const baremetal_i386_smp_priority_reprioritization_probe = b.option(bool, "baremetal-i386-smp-priority-reprioritization-probe", "Enable the BIOS firmware i386 scheduler saturated reprioritization validation path in the freestanding image") orelse false;
     const baremetal_i386_smp_priority_failover_probe = b.option(bool, "baremetal-i386-smp-priority-failover-probe", "Enable the BIOS firmware i386 scheduler failover redistribution validation path in the freestanding image") orelse false;
+    const baremetal_i386_smp_priority_backfill_probe = b.option(bool, "baremetal-i386-smp-priority-backfill-probe", "Enable the BIOS firmware i386 scheduler refill/backfill validation path in the freestanding image") orelse false;
     const baremetal_e1000_probe = b.option(bool, "baremetal-e1000-probe", "Enable the E1000 Ethernet validation path in the freestanding image") orelse false;
     const baremetal_e1000_arp_probe = b.option(bool, "baremetal-e1000-arp-probe", "Enable the E1000 ARP validation path in the freestanding image") orelse false;
     const baremetal_e1000_ipv4_probe = b.option(bool, "baremetal-e1000-ipv4-probe", "Enable the E1000 IPv4 validation path in the freestanding image") orelse false;
@@ -200,6 +201,7 @@ pub fn build(b: *std.Build) void {
     baremetal_options.addOption(bool, "i386_smp_priority_saturation_probe", baremetal_i386_smp_priority_saturation_probe);
     baremetal_options.addOption(bool, "i386_smp_priority_reprioritization_probe", baremetal_i386_smp_priority_reprioritization_probe);
     baremetal_options.addOption(bool, "i386_smp_priority_failover_probe", baremetal_i386_smp_priority_failover_probe);
+    baremetal_options.addOption(bool, "i386_smp_priority_backfill_probe", baremetal_i386_smp_priority_backfill_probe);
     baremetal_options.addOption(bool, "e1000_probe", baremetal_e1000_probe);
     baremetal_options.addOption(bool, "e1000_arp_probe", baremetal_e1000_arp_probe);
     baremetal_options.addOption(bool, "e1000_ipv4_probe", baremetal_e1000_ipv4_probe);

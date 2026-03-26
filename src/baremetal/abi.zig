@@ -26,6 +26,7 @@ pub const ap_multi_magic: u32 = 0x4f43414d; // "OCAM"
 pub const ap_slot_magic: u32 = 0x4f43534c; // "OCSL"
 pub const ap_ownership_magic: u32 = 0x4f43414f; // "OCAO"
 pub const ap_failover_magic: u32 = 0x4f434146; // "OCAF"
+pub const ap_backfill_magic: u32 = 0x4f434142; // "OCAB"
 
 pub const api_version: u16 = 2;
 
@@ -727,6 +728,53 @@ pub const BaremetalApFailoverState = extern struct {
     last_redistributed_task_count: u32,
     total_failed_over_task_count: u32,
     last_failed_over_task_count: u32,
+};
+
+pub const BaremetalApBackfillState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    policy: u8,
+    exported_count: u8,
+    active_count: u8,
+    peak_active_slot_count: u8,
+    last_round_active_slot_count: u8,
+    requested_cpu_count: u16,
+    logical_processor_count: u16,
+    reserved0: u16,
+    bsp_apic_id: u32,
+    total_owned_task_count: u32,
+    total_dispatch_count: u32,
+    total_accumulator: u32,
+    dispatch_round_count: u32,
+    total_redistributed_task_count: u32,
+    last_redistributed_task_count: u32,
+    total_backfilled_task_count: u32,
+    last_backfilled_task_count: u32,
+    total_terminated_task_count: u32,
+    last_terminated_task_count: u32,
+    total_backfill_round_count: u32,
+    last_start_slot_index: u32,
+};
+
+pub const BaremetalApBackfillEntry = extern struct {
+    target_apic_id: u32,
+    dispatch_count: u32,
+    owned_task_count: u32,
+    total_owned_task_count: u32,
+    redistributed_task_count: u32,
+    total_redistributed_task_count: u32,
+    backfilled_task_count: u32,
+    total_backfilled_task_count: u32,
+    last_task_id: u32,
+    last_priority: u32,
+    last_budget_ticks: u32,
+    last_batch_accumulator: u32,
+    total_accumulator: u32,
+    started: u8,
+    halted: u8,
+    slot_index: u8,
+    reserved0: u8,
 };
 
 pub const BaremetalDisplayOutputEntry = extern struct {
