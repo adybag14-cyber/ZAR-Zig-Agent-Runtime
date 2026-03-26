@@ -291,6 +291,14 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-fanout-probe-check.ps1 -MemoryMiB 1024
 
+      - name: Bare-metal QEMU i386 firmware SMP priority saturation probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-saturation-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware SMP priority saturation probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-saturation-probe-check.ps1 -MemoryMiB 1024
+
       - name: Bare-metal QEMU i386 SMP probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-smp-probe-check.ps1
