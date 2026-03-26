@@ -66,6 +66,8 @@ var ownership_state: abi.BaremetalApOwnershipState = zeroOwnershipState();
 var ownership_entries: [max_ap_command_slots]abi.BaremetalApOwnershipEntry = std.mem.zeroes([max_ap_command_slots]abi.BaremetalApOwnershipEntry);
 var ownership_dispatch_round_count: u32 = 0;
 var ownership_policy: u8 = abi.ap_ownership_policy_round_robin;
+var ownership_peak_active_slot_count: u8 = 0;
+var ownership_last_round_active_slot_count: u8 = 0;
 var ownership_last_round_owned_task_count: u32 = 0;
 var ownership_last_round_dispatch_count: u32 = 0;
 var ownership_last_round_accumulator: u32 = 0;
@@ -422,10 +424,11 @@ fn zeroOwnershipState() abi.BaremetalApOwnershipState {
         .policy = abi.ap_ownership_policy_round_robin,
         .exported_count = 0,
         .active_count = 0,
-        .reserved0 = 0,
+        .peak_active_slot_count = 0,
+        .last_round_active_slot_count = 0,
         .requested_cpu_count = 0,
         .logical_processor_count = 0,
-        .reserved1 = 0,
+        .reserved0 = 0,
         .bsp_apic_id = 0,
         .total_owned_task_count = 0,
         .total_dispatch_count = 0,
@@ -521,6 +524,8 @@ pub fn resetOwnershipState() void {
     @memset(&ownership_entries, std.mem.zeroes(abi.BaremetalApOwnershipEntry));
     ownership_dispatch_round_count = 0;
     ownership_policy = abi.ap_ownership_policy_round_robin;
+    ownership_peak_active_slot_count = 0;
+    ownership_last_round_active_slot_count = 0;
     ownership_last_round_owned_task_count = 0;
     ownership_last_round_dispatch_count = 0;
     ownership_last_round_accumulator = 0;
@@ -778,6 +783,7 @@ fn activeOwnershipSlots(slot_indices: *[max_ap_command_slots]u16) usize {
 fn clearOwnershipRoundTelemetry() void {
     ownership_state = zeroOwnershipState();
     @memset(&ownership_entries, std.mem.zeroes(abi.BaremetalApOwnershipEntry));
+    ownership_last_round_active_slot_count = 0;
     ownership_last_round_owned_task_count = 0;
     ownership_last_round_dispatch_count = 0;
     ownership_last_round_accumulator = 0;
@@ -852,6 +858,10 @@ fn dispatchOwnedSchedulerTasksByPolicyFromOffset(
     ownership_dispatch_round_count +%= 1;
     const initial_slot_cursor = start_slot_offset % active_slot_count;
     ownership_last_start_slot_index = @as(u32, @intCast(initial_slot_cursor));
+    ownership_last_round_active_slot_count = @as(u8, @intCast(active_slot_count));
+    if (ownership_peak_active_slot_count < ownership_last_round_active_slot_count) {
+        ownership_peak_active_slot_count = ownership_last_round_active_slot_count;
+    }
 
     var slot_cursor: usize = initial_slot_cursor;
     var assigned_count: usize = 0;
@@ -1163,12 +1173,13 @@ pub fn renderOwnershipAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Erro
     var used: usize = 0;
     const head = std.fmt.bufPrint(
         buffer[used..],
-        "present={d}\npolicy={d}\nexported_count={d}\nactive_count={d}\nrequested_cpu_count={d}\nlogical_processor_count={d}\nbsp_apic_id={d}\ntotal_owned_task_count={d}\ntotal_dispatch_count={d}\ntotal_accumulator={d}\ndispatch_round_count={d}\n",
+        "present={d}\npolicy={d}\nexported_count={d}\nactive_count={d}\npeak_active_slot_count={d}\nrequested_cpu_count={d}\nlogical_processor_count={d}\nbsp_apic_id={d}\ntotal_owned_task_count={d}\ntotal_dispatch_count={d}\ntotal_accumulator={d}\ndispatch_round_count={d}\n",
         .{
             ownership_state.present,
             ownership_state.policy,
             ownership_state.exported_count,
             ownership_state.active_count,
+            ownership_state.peak_active_slot_count,
             ownership_state.requested_cpu_count,
             ownership_state.logical_processor_count,
             ownership_state.bsp_apic_id,
@@ -1181,8 +1192,9 @@ pub fn renderOwnershipAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Erro
     used += head.len;
     const round = std.fmt.bufPrint(
         buffer[used..],
-        "last_round_owned_task_count={d}\nlast_round_dispatch_count={d}\nlast_round_accumulator={d}\ntotal_redistributed_task_count={d}\nlast_redistributed_task_count={d}\nlast_start_slot_index={d}\n",
+        "last_round_active_slot_count={d}\nlast_round_owned_task_count={d}\nlast_round_dispatch_count={d}\nlast_round_accumulator={d}\ntotal_redistributed_task_count={d}\nlast_redistributed_task_count={d}\nlast_start_slot_index={d}\n",
         .{
+            ownership_state.last_round_active_slot_count,
             ownership_state.last_round_owned_task_count,
             ownership_state.last_round_dispatch_count,
             ownership_state.last_round_accumulator,
@@ -1324,6 +1336,8 @@ fn refreshState() void {
     ownership_state.requested_cpu_count = topology.enabled_count;
     ownership_state.logical_processor_count = lapic_state.logical_processor_count;
     ownership_state.bsp_apic_id = lapic_state.current_apic_id;
+    ownership_state.peak_active_slot_count = ownership_peak_active_slot_count;
+    ownership_state.last_round_active_slot_count = ownership_last_round_active_slot_count;
     ownership_state.dispatch_round_count = ownership_dispatch_round_count;
     ownership_state.last_round_owned_task_count = ownership_last_round_owned_task_count;
     ownership_state.last_round_dispatch_count = ownership_last_round_dispatch_count;
@@ -1380,6 +1394,10 @@ fn refreshState() void {
         ownership_state.total_accumulator +%= total_accumulator;
         ownership_state.total_redistributed_task_count +%= total_redistributed_task_count;
     }
+    if (ownership_state.active_count > ownership_peak_active_slot_count) {
+        ownership_peak_active_slot_count = ownership_state.active_count;
+    }
+    ownership_state.peak_active_slot_count = ownership_peak_active_slot_count;
     if (ownership_state.exported_count != 0) ownership_state.present = 1;
 }
 
@@ -2310,6 +2328,354 @@ test "i386 ap startup reprioritizes scheduler-owned tasks across priority rounds
     try std.testing.expectEqual(@as(u32, 10), snapshot.total_owned_task_count);
     try std.testing.expectEqual(@as(u32, 4), snapshot.total_dispatch_count);
     try std.testing.expectEqual(@as(u32, 30), snapshot.total_accumulator);
+}
+
+test "i386 ap startup rotates priority-owned tasks across three slots and rounds" {
+    resetForTest();
+    acpi.resetForTest();
+    try acpi.probeSyntheticImage(true);
+
+    for (0..3) |slot_index| {
+        writeStateVar(slotStartedPtr(slot_index), 1);
+        writeStateVar(slotStagePtr(slot_index), 4);
+        writeStateVar(slotReportedApicIdPtr(slot_index), @as(u32, @intCast(slot_index + 1)));
+        writeStateVar(slotTargetApicIdPtr(slot_index), @as(u32, @intCast(slot_index + 1)));
+        writeStateVar(slotHeartbeatPtr(slot_index), 1);
+    }
+
+    const responder0 = try std.Thread.spawn(.{}, testApSlotResponder, .{0});
+    defer responder0.join();
+    const responder1 = try std.Thread.spawn(.{}, testApSlotResponder, .{1});
+    defer responder1.join();
+    const responder2 = try std.Thread.spawn(.{}, testApSlotResponder, .{2});
+    defer responder2.join();
+    errdefer {
+        _ = haltApSlot(2) catch {};
+        _ = haltApSlot(1) catch {};
+        _ = haltApSlot(0) catch {};
+    }
+
+    const tasks_round_one = [_]abi.BaremetalTask{
+        .{ .task_id = 1, .state = abi.task_state_ready, .priority = 1, .reserved0 = 0, .run_count = 0, .budget_ticks = 5, .budget_remaining = 5, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 2, .state = abi.task_state_ready, .priority = 5, .reserved0 = 0, .run_count = 0, .budget_ticks = 7, .budget_remaining = 7, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 3, .state = abi.task_state_ready, .priority = 9, .reserved0 = 0, .run_count = 0, .budget_ticks = 9, .budget_remaining = 9, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 4, .state = abi.task_state_ready, .priority = 3, .reserved0 = 0, .run_count = 0, .budget_ticks = 11, .budget_remaining = 11, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 5, .state = abi.task_state_ready, .priority = 7, .reserved0 = 0, .run_count = 0, .budget_ticks = 13, .budget_remaining = 13, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 6, .state = abi.task_state_ready, .priority = 2, .reserved0 = 0, .run_count = 0, .budget_ticks = 15, .budget_remaining = 15, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 7, .state = abi.task_state_ready, .priority = 8, .reserved0 = 0, .run_count = 0, .budget_ticks = 17, .budget_remaining = 17, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 8, .state = abi.task_state_ready, .priority = 4, .reserved0 = 0, .run_count = 0, .budget_ticks = 19, .budget_remaining = 19, .created_tick = 0, .last_run_tick = 0 },
+    };
+    const tasks_round_two = [_]abi.BaremetalTask{
+        .{ .task_id = 1, .state = abi.task_state_ready, .priority = 10, .reserved0 = 0, .run_count = 0, .budget_ticks = 5, .budget_remaining = 5, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 2, .state = abi.task_state_ready, .priority = 5, .reserved0 = 0, .run_count = 0, .budget_ticks = 7, .budget_remaining = 7, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 3, .state = abi.task_state_ready, .priority = 9, .reserved0 = 0, .run_count = 0, .budget_ticks = 9, .budget_remaining = 9, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 4, .state = abi.task_state_ready, .priority = 9, .reserved0 = 0, .run_count = 0, .budget_ticks = 11, .budget_remaining = 11, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 5, .state = abi.task_state_ready, .priority = 7, .reserved0 = 0, .run_count = 0, .budget_ticks = 13, .budget_remaining = 13, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 6, .state = abi.task_state_ready, .priority = 2, .reserved0 = 0, .run_count = 0, .budget_ticks = 15, .budget_remaining = 15, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 7, .state = abi.task_state_ready, .priority = 0, .reserved0 = 0, .run_count = 0, .budget_ticks = 17, .budget_remaining = 17, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 8, .state = abi.task_state_ready, .priority = 4, .reserved0 = 0, .run_count = 0, .budget_ticks = 19, .budget_remaining = 19, .created_tick = 0, .last_run_tick = 0 },
+    };
+    const tasks_round_three = [_]abi.BaremetalTask{
+        .{ .task_id = 1, .state = abi.task_state_ready, .priority = 10, .reserved0 = 0, .run_count = 0, .budget_ticks = 5, .budget_remaining = 5, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 2, .state = abi.task_state_ready, .priority = 5, .reserved0 = 0, .run_count = 0, .budget_ticks = 7, .budget_remaining = 7, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 3, .state = abi.task_state_ready, .priority = 1, .reserved0 = 0, .run_count = 0, .budget_ticks = 9, .budget_remaining = 9, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 4, .state = abi.task_state_ready, .priority = 9, .reserved0 = 0, .run_count = 0, .budget_ticks = 11, .budget_remaining = 11, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 5, .state = abi.task_state_ready, .priority = 7, .reserved0 = 0, .run_count = 0, .budget_ticks = 13, .budget_remaining = 13, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 6, .state = abi.task_state_ready, .priority = 11, .reserved0 = 0, .run_count = 0, .budget_ticks = 15, .budget_remaining = 15, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 7, .state = abi.task_state_ready, .priority = 0, .reserved0 = 0, .run_count = 0, .budget_ticks = 17, .budget_remaining = 17, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 8, .state = abi.task_state_ready, .priority = 10, .reserved0 = 0, .run_count = 0, .budget_ticks = 19, .budget_remaining = 19, .created_tick = 0, .last_run_tick = 0 },
+    };
+
+    try std.testing.expectEqual(@as(u32, 36), try dispatchOwnedSchedulerTasksPriorityFromOffset(tasks_round_one[0..], 0));
+    try std.testing.expectEqual(@as(u32, 36), try dispatchOwnedSchedulerTasksPriorityFromOffset(tasks_round_two[0..], 1));
+    try std.testing.expectEqual(@as(u32, 36), try dispatchOwnedSchedulerTasksPriorityFromOffset(tasks_round_three[0..], 2));
+
+    var snapshot = ownershipStatePtr().*;
+    try std.testing.expectEqual(@as(u8, 1), snapshot.present);
+    try std.testing.expectEqual(@as(u8, abi.ap_ownership_policy_priority), snapshot.policy);
+    try std.testing.expectEqual(@as(u8, 3), snapshot.exported_count);
+    try std.testing.expectEqual(@as(u8, 3), snapshot.active_count);
+    try std.testing.expectEqual(@as(u8, 3), snapshot.peak_active_slot_count);
+    try std.testing.expectEqual(@as(u8, 3), snapshot.last_round_active_slot_count);
+    try std.testing.expectEqual(@as(u32, 24), snapshot.total_owned_task_count);
+    try std.testing.expectEqual(@as(u32, 9), snapshot.total_dispatch_count);
+    try std.testing.expectEqual(@as(u32, 108), snapshot.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 3), snapshot.dispatch_round_count);
+    try std.testing.expectEqual(@as(u32, 8), snapshot.last_round_owned_task_count);
+    try std.testing.expectEqual(@as(u32, 3), snapshot.last_round_dispatch_count);
+    try std.testing.expectEqual(@as(u32, 36), snapshot.last_round_accumulator);
+    try std.testing.expectEqual(@as(u32, 14), snapshot.total_redistributed_task_count);
+    try std.testing.expectEqual(@as(u32, 7), snapshot.last_redistributed_task_count);
+    try std.testing.expectEqual(@as(u32, 2), snapshot.last_start_slot_index);
+
+    const first_entry = ownershipEntry(0);
+    const second_entry = ownershipEntry(1);
+    const third_entry = ownershipEntry(2);
+
+    try std.testing.expectEqual(@as(u32, 1), first_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 3), first_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 3), first_entry.owned_task_count);
+    try std.testing.expectEqual(@as(u32, 8), first_entry.total_owned_task_count);
+    try std.testing.expectEqual(@as(u32, 3), first_entry.redistributed_task_count);
+    try std.testing.expectEqual(@as(u32, 5), first_entry.total_redistributed_task_count);
+    try std.testing.expectEqual(@as(u32, 7), first_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 0), first_entry.last_priority);
+    try std.testing.expectEqual(@as(u32, 17), first_entry.last_budget_ticks);
+    try std.testing.expectEqual(@as(u32, 13), first_entry.last_batch_accumulator);
+    try std.testing.expectEqual(@as(u32, 36), first_entry.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 1), OwnershipStorage.owned_task_ids[@as(usize, first_entry.slot_index)][0]);
+    try std.testing.expectEqual(@as(u32, 5), OwnershipStorage.owned_task_ids[@as(usize, first_entry.slot_index)][1]);
+    try std.testing.expectEqual(@as(u32, 7), OwnershipStorage.owned_task_ids[@as(usize, first_entry.slot_index)][2]);
+
+    try std.testing.expectEqual(@as(u32, 2), second_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 3), second_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 2), second_entry.owned_task_count);
+    try std.testing.expectEqual(@as(u32, 8), second_entry.total_owned_task_count);
+    try std.testing.expectEqual(@as(u32, 2), second_entry.redistributed_task_count);
+    try std.testing.expectEqual(@as(u32, 4), second_entry.total_redistributed_task_count);
+    try std.testing.expectEqual(@as(u32, 2), second_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 5), second_entry.last_priority);
+    try std.testing.expectEqual(@as(u32, 7), second_entry.last_budget_ticks);
+    try std.testing.expectEqual(@as(u32, 10), second_entry.last_batch_accumulator);
+    try std.testing.expectEqual(@as(u32, 38), second_entry.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 8), OwnershipStorage.owned_task_ids[@as(usize, second_entry.slot_index)][0]);
+    try std.testing.expectEqual(@as(u32, 2), OwnershipStorage.owned_task_ids[@as(usize, second_entry.slot_index)][1]);
+
+    try std.testing.expectEqual(@as(u32, 3), third_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 3), third_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 3), third_entry.owned_task_count);
+    try std.testing.expectEqual(@as(u32, 8), third_entry.total_owned_task_count);
+    try std.testing.expectEqual(@as(u32, 2), third_entry.redistributed_task_count);
+    try std.testing.expectEqual(@as(u32, 5), third_entry.total_redistributed_task_count);
+    try std.testing.expectEqual(@as(u32, 3), third_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 1), third_entry.last_priority);
+    try std.testing.expectEqual(@as(u32, 9), third_entry.last_budget_ticks);
+    try std.testing.expectEqual(@as(u32, 13), third_entry.last_batch_accumulator);
+    try std.testing.expectEqual(@as(u32, 34), third_entry.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 6), OwnershipStorage.owned_task_ids[@as(usize, third_entry.slot_index)][0]);
+    try std.testing.expectEqual(@as(u32, 4), OwnershipStorage.owned_task_ids[@as(usize, third_entry.slot_index)][1]);
+    try std.testing.expectEqual(@as(u32, 3), OwnershipStorage.owned_task_ids[@as(usize, third_entry.slot_index)][2]);
+
+    const ownership_render = try renderOwnershipAlloc(std.testing.allocator);
+    defer std.testing.allocator.free(ownership_render);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "policy=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "active_count=3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "peak_active_slot_count=3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "last_round_active_slot_count=3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "dispatch_round_count=3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "total_owned_task_count=24") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "total_dispatch_count=9") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "total_accumulator=108") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "total_redistributed_task_count=14") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "last_redistributed_task_count=7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "last_start_slot_index=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[0].task[0]=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[0].task[1]=5") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[0].task[2]=7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[1].task[0]=8") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[1].task[1]=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[2].task[0]=6") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[2].task[1]=4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[2].task[2]=3") != null);
+
+    try haltApSlot(0);
+    try haltApSlot(1);
+    try haltApSlot(2);
+    snapshot = ownershipStatePtr().*;
+    try std.testing.expectEqual(@as(u8, 0), snapshot.active_count);
+    try std.testing.expectEqual(@as(u8, 3), snapshot.peak_active_slot_count);
+    try std.testing.expectEqual(@as(u8, 3), snapshot.last_round_active_slot_count);
+    try std.testing.expectEqual(@as(u32, 24), snapshot.total_owned_task_count);
+    try std.testing.expectEqual(@as(u32, 9), snapshot.total_dispatch_count);
+    try std.testing.expectEqual(@as(u32, 108), snapshot.total_accumulator);
+}
+
+test "i386 ap startup rotates priority-owned tasks across four slots and rounds" {
+    resetForTest();
+    acpi.resetForTest();
+    try acpi.probeSyntheticImage(true);
+
+    for (0..4) |slot_index| {
+        writeStateVar(slotStartedPtr(slot_index), 1);
+        writeStateVar(slotStagePtr(slot_index), 4);
+        writeStateVar(slotReportedApicIdPtr(slot_index), @as(u32, @intCast(slot_index + 1)));
+        writeStateVar(slotTargetApicIdPtr(slot_index), @as(u32, @intCast(slot_index + 1)));
+        writeStateVar(slotHeartbeatPtr(slot_index), 1);
+    }
+
+    const responder0 = try std.Thread.spawn(.{}, testApSlotResponder, .{0});
+    defer responder0.join();
+    const responder1 = try std.Thread.spawn(.{}, testApSlotResponder, .{1});
+    defer responder1.join();
+    const responder2 = try std.Thread.spawn(.{}, testApSlotResponder, .{2});
+    defer responder2.join();
+    const responder3 = try std.Thread.spawn(.{}, testApSlotResponder, .{3});
+    defer responder3.join();
+    errdefer {
+        _ = haltApSlot(3) catch {};
+        _ = haltApSlot(2) catch {};
+        _ = haltApSlot(1) catch {};
+        _ = haltApSlot(0) catch {};
+    }
+
+    const tasks_round_one = [_]abi.BaremetalTask{
+        .{ .task_id = 1, .state = abi.task_state_ready, .priority = 1, .reserved0 = 0, .run_count = 0, .budget_ticks = 5, .budget_remaining = 5, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 2, .state = abi.task_state_ready, .priority = 5, .reserved0 = 0, .run_count = 0, .budget_ticks = 7, .budget_remaining = 7, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 3, .state = abi.task_state_ready, .priority = 9, .reserved0 = 0, .run_count = 0, .budget_ticks = 9, .budget_remaining = 9, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 4, .state = abi.task_state_ready, .priority = 3, .reserved0 = 0, .run_count = 0, .budget_ticks = 11, .budget_remaining = 11, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 5, .state = abi.task_state_ready, .priority = 7, .reserved0 = 0, .run_count = 0, .budget_ticks = 13, .budget_remaining = 13, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 6, .state = abi.task_state_ready, .priority = 2, .reserved0 = 0, .run_count = 0, .budget_ticks = 15, .budget_remaining = 15, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 7, .state = abi.task_state_ready, .priority = 8, .reserved0 = 0, .run_count = 0, .budget_ticks = 17, .budget_remaining = 17, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 8, .state = abi.task_state_ready, .priority = 4, .reserved0 = 0, .run_count = 0, .budget_ticks = 19, .budget_remaining = 19, .created_tick = 0, .last_run_tick = 0 },
+    };
+    const tasks_round_two = [_]abi.BaremetalTask{
+        .{ .task_id = 1, .state = abi.task_state_ready, .priority = 10, .reserved0 = 0, .run_count = 0, .budget_ticks = 5, .budget_remaining = 5, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 2, .state = abi.task_state_ready, .priority = 5, .reserved0 = 0, .run_count = 0, .budget_ticks = 7, .budget_remaining = 7, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 3, .state = abi.task_state_ready, .priority = 9, .reserved0 = 0, .run_count = 0, .budget_ticks = 9, .budget_remaining = 9, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 4, .state = abi.task_state_ready, .priority = 9, .reserved0 = 0, .run_count = 0, .budget_ticks = 11, .budget_remaining = 11, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 5, .state = abi.task_state_ready, .priority = 7, .reserved0 = 0, .run_count = 0, .budget_ticks = 13, .budget_remaining = 13, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 6, .state = abi.task_state_ready, .priority = 2, .reserved0 = 0, .run_count = 0, .budget_ticks = 15, .budget_remaining = 15, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 7, .state = abi.task_state_ready, .priority = 0, .reserved0 = 0, .run_count = 0, .budget_ticks = 17, .budget_remaining = 17, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 8, .state = abi.task_state_ready, .priority = 4, .reserved0 = 0, .run_count = 0, .budget_ticks = 19, .budget_remaining = 19, .created_tick = 0, .last_run_tick = 0 },
+    };
+    const tasks_round_three = [_]abi.BaremetalTask{
+        .{ .task_id = 1, .state = abi.task_state_ready, .priority = 10, .reserved0 = 0, .run_count = 0, .budget_ticks = 5, .budget_remaining = 5, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 2, .state = abi.task_state_ready, .priority = 5, .reserved0 = 0, .run_count = 0, .budget_ticks = 7, .budget_remaining = 7, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 3, .state = abi.task_state_ready, .priority = 1, .reserved0 = 0, .run_count = 0, .budget_ticks = 9, .budget_remaining = 9, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 4, .state = abi.task_state_ready, .priority = 9, .reserved0 = 0, .run_count = 0, .budget_ticks = 11, .budget_remaining = 11, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 5, .state = abi.task_state_ready, .priority = 7, .reserved0 = 0, .run_count = 0, .budget_ticks = 13, .budget_remaining = 13, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 6, .state = abi.task_state_ready, .priority = 11, .reserved0 = 0, .run_count = 0, .budget_ticks = 15, .budget_remaining = 15, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 7, .state = abi.task_state_ready, .priority = 0, .reserved0 = 0, .run_count = 0, .budget_ticks = 17, .budget_remaining = 17, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 8, .state = abi.task_state_ready, .priority = 10, .reserved0 = 0, .run_count = 0, .budget_ticks = 19, .budget_remaining = 19, .created_tick = 0, .last_run_tick = 0 },
+    };
+    const tasks_round_four = [_]abi.BaremetalTask{
+        .{ .task_id = 1, .state = abi.task_state_ready, .priority = 10, .reserved0 = 0, .run_count = 0, .budget_ticks = 5, .budget_remaining = 5, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 2, .state = abi.task_state_ready, .priority = 12, .reserved0 = 0, .run_count = 0, .budget_ticks = 7, .budget_remaining = 7, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 3, .state = abi.task_state_ready, .priority = 1, .reserved0 = 0, .run_count = 0, .budget_ticks = 9, .budget_remaining = 9, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 4, .state = abi.task_state_ready, .priority = 0, .reserved0 = 0, .run_count = 0, .budget_ticks = 11, .budget_remaining = 11, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 5, .state = abi.task_state_ready, .priority = 11, .reserved0 = 0, .run_count = 0, .budget_ticks = 13, .budget_remaining = 13, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 6, .state = abi.task_state_ready, .priority = 11, .reserved0 = 0, .run_count = 0, .budget_ticks = 15, .budget_remaining = 15, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 7, .state = abi.task_state_ready, .priority = 9, .reserved0 = 0, .run_count = 0, .budget_ticks = 17, .budget_remaining = 17, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 8, .state = abi.task_state_ready, .priority = 10, .reserved0 = 0, .run_count = 0, .budget_ticks = 19, .budget_remaining = 19, .created_tick = 0, .last_run_tick = 0 },
+    };
+
+    try std.testing.expectEqual(@as(u32, 36), try dispatchOwnedSchedulerTasksPriorityFromOffset(tasks_round_one[0..], 0));
+    try std.testing.expectEqual(@as(u32, 36), try dispatchOwnedSchedulerTasksPriorityFromOffset(tasks_round_two[0..], 1));
+    try std.testing.expectEqual(@as(u32, 36), try dispatchOwnedSchedulerTasksPriorityFromOffset(tasks_round_three[0..], 2));
+    try std.testing.expectEqual(@as(u32, 36), try dispatchOwnedSchedulerTasksPriorityFromOffset(tasks_round_four[0..], 3));
+
+    var snapshot = ownershipStatePtr().*;
+    try std.testing.expectEqual(@as(u8, 1), snapshot.present);
+    try std.testing.expectEqual(@as(u8, abi.ap_ownership_policy_priority), snapshot.policy);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.exported_count);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.active_count);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.peak_active_slot_count);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.last_round_active_slot_count);
+    try std.testing.expectEqual(@as(u32, 32), snapshot.total_owned_task_count);
+    try std.testing.expectEqual(@as(u32, 16), snapshot.total_dispatch_count);
+    try std.testing.expectEqual(@as(u32, 144), snapshot.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 4), snapshot.dispatch_round_count);
+    try std.testing.expectEqual(@as(u32, 8), snapshot.last_round_owned_task_count);
+    try std.testing.expectEqual(@as(u32, 4), snapshot.last_round_dispatch_count);
+    try std.testing.expectEqual(@as(u32, 36), snapshot.last_round_accumulator);
+    try std.testing.expectEqual(@as(u32, 23), snapshot.total_redistributed_task_count);
+    try std.testing.expectEqual(@as(u32, 7), snapshot.last_redistributed_task_count);
+    try std.testing.expectEqual(@as(u32, 3), snapshot.last_start_slot_index);
+
+    const first_entry = ownershipEntry(0);
+    const second_entry = ownershipEntry(1);
+    const third_entry = ownershipEntry(2);
+    const fourth_entry = ownershipEntry(3);
+
+    try std.testing.expectEqual(@as(u32, 1), first_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 4), first_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 2), first_entry.owned_task_count);
+    try std.testing.expectEqual(@as(u32, 8), first_entry.total_owned_task_count);
+    try std.testing.expectEqual(@as(u32, 2), first_entry.redistributed_task_count);
+    try std.testing.expectEqual(@as(u32, 6), first_entry.total_redistributed_task_count);
+    try std.testing.expectEqual(@as(u32, 7), first_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 9), first_entry.last_priority);
+    try std.testing.expectEqual(@as(u32, 17), first_entry.last_budget_ticks);
+    try std.testing.expectEqual(@as(u32, 12), first_entry.last_batch_accumulator);
+    try std.testing.expectEqual(@as(u32, 46), first_entry.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 5), OwnershipStorage.owned_task_ids[@as(usize, first_entry.slot_index)][0]);
+    try std.testing.expectEqual(@as(u32, 7), OwnershipStorage.owned_task_ids[@as(usize, first_entry.slot_index)][1]);
+
+    try std.testing.expectEqual(@as(u32, 2), second_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 4), second_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 2), second_entry.owned_task_count);
+    try std.testing.expectEqual(@as(u32, 8), second_entry.total_owned_task_count);
+    try std.testing.expectEqual(@as(u32, 2), second_entry.redistributed_task_count);
+    try std.testing.expectEqual(@as(u32, 6), second_entry.total_redistributed_task_count);
+    try std.testing.expectEqual(@as(u32, 3), second_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 1), second_entry.last_priority);
+    try std.testing.expectEqual(@as(u32, 9), second_entry.last_budget_ticks);
+    try std.testing.expectEqual(@as(u32, 9), second_entry.last_batch_accumulator);
+    try std.testing.expectEqual(@as(u32, 34), second_entry.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 6), OwnershipStorage.owned_task_ids[@as(usize, second_entry.slot_index)][0]);
+    try std.testing.expectEqual(@as(u32, 3), OwnershipStorage.owned_task_ids[@as(usize, second_entry.slot_index)][1]);
+
+    try std.testing.expectEqual(@as(u32, 3), third_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 4), third_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 2), third_entry.owned_task_count);
+    try std.testing.expectEqual(@as(u32, 8), third_entry.total_owned_task_count);
+    try std.testing.expectEqual(@as(u32, 2), third_entry.redistributed_task_count);
+    try std.testing.expectEqual(@as(u32, 6), third_entry.total_redistributed_task_count);
+    try std.testing.expectEqual(@as(u32, 4), third_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 0), third_entry.last_priority);
+    try std.testing.expectEqual(@as(u32, 11), third_entry.last_budget_ticks);
+    try std.testing.expectEqual(@as(u32, 5), third_entry.last_batch_accumulator);
+    try std.testing.expectEqual(@as(u32, 38), third_entry.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 1), OwnershipStorage.owned_task_ids[@as(usize, third_entry.slot_index)][0]);
+    try std.testing.expectEqual(@as(u32, 4), OwnershipStorage.owned_task_ids[@as(usize, third_entry.slot_index)][1]);
+
+    try std.testing.expectEqual(@as(u32, 4), fourth_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 4), fourth_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 2), fourth_entry.owned_task_count);
+    try std.testing.expectEqual(@as(u32, 8), fourth_entry.total_owned_task_count);
+    try std.testing.expectEqual(@as(u32, 1), fourth_entry.redistributed_task_count);
+    try std.testing.expectEqual(@as(u32, 5), fourth_entry.total_redistributed_task_count);
+    try std.testing.expectEqual(@as(u32, 8), fourth_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 10), fourth_entry.last_priority);
+    try std.testing.expectEqual(@as(u32, 19), fourth_entry.last_budget_ticks);
+    try std.testing.expectEqual(@as(u32, 10), fourth_entry.last_batch_accumulator);
+    try std.testing.expectEqual(@as(u32, 26), fourth_entry.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 2), OwnershipStorage.owned_task_ids[@as(usize, fourth_entry.slot_index)][0]);
+    try std.testing.expectEqual(@as(u32, 8), OwnershipStorage.owned_task_ids[@as(usize, fourth_entry.slot_index)][1]);
+
+    const ownership_render = try renderOwnershipAlloc(std.testing.allocator);
+    defer std.testing.allocator.free(ownership_render);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "policy=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "active_count=4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "peak_active_slot_count=4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "last_round_active_slot_count=4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "dispatch_round_count=4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "total_owned_task_count=32") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "total_dispatch_count=16") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "total_accumulator=144") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "total_redistributed_task_count=23") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "last_redistributed_task_count=7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "last_start_slot_index=3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[0].task[0]=5") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[0].task[1]=7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[1].task[0]=6") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[1].task[1]=3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[2].task[0]=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[2].task[1]=4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[3].task[0]=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[3].task[1]=8") != null);
+
+    try haltApSlot(0);
+    try haltApSlot(1);
+    try haltApSlot(2);
+    try haltApSlot(3);
+    snapshot = ownershipStatePtr().*;
+    try std.testing.expectEqual(@as(u8, 0), snapshot.active_count);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.peak_active_slot_count);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.last_round_active_slot_count);
+    try std.testing.expectEqual(@as(u32, 32), snapshot.total_owned_task_count);
+    try std.testing.expectEqual(@as(u32, 16), snapshot.total_dispatch_count);
+    try std.testing.expectEqual(@as(u32, 144), snapshot.total_accumulator);
 }
 
 test "i386 ap startup warm reset programming records bounded diagnostics" {
