@@ -26,6 +26,7 @@ const ap_command_halt: u32 = 2;
 const ap_command_work: u32 = 3;
 const ap_command_batch_work: u32 = 4;
 pub const max_task_batch_entries: usize = 8;
+pub const max_ap_command_slots: usize = 4;
 pub const max_multi_ap_entries: usize = 4;
 const startup_timeout_iterations: usize = 120_000_000;
 const delivery_timeout_iterations: usize = 2_000_000;
@@ -53,6 +54,8 @@ pub const Error = error{
 var state: abi.BaremetalApStartupState = zeroState();
 var multi_state: abi.BaremetalApMultiState = zeroMultiState();
 var multi_entries: [max_multi_ap_entries]abi.BaremetalApMultiEntry = std.mem.zeroes([max_multi_ap_entries]abi.BaremetalApMultiEntry);
+var slot_state: abi.BaremetalApSlotState = zeroSlotState();
+var slot_entries: [max_ap_command_slots]abi.BaremetalApSlotEntry = std.mem.zeroes([max_ap_command_slots]abi.BaremetalApSlotEntry);
 const DiagnosticsState = struct {
     warm_reset_programmed: u8 = 0,
     warm_reset_vector_segment: u16 = 0,
@@ -65,28 +68,29 @@ const DiagnosticsState = struct {
 
 var diagnostics = DiagnosticsState{};
 const SharedStorage = struct {
-    var stage: u32 = 0;
-    var started: u32 = 0;
-    var halted: u32 = 0;
-    var startup_count: u32 = 0;
-    var reported_apic_id: u32 = 0;
-    var target_apic_id: u32 = 0;
-    var bsp_apic_id: u32 = 0;
-    var local_apic_addr: u32 = 0;
-    var command_kind: u32 = 0;
-    var command_value: u32 = 0;
-    var command_seq: u32 = 0;
-    var response_seq: u32 = 0;
-    var heartbeat: u32 = 0;
-    var ping_count: u32 = 0;
-    var work_count: u32 = 0;
-    var last_work_value: u32 = 0;
-    var work_accumulator: u32 = 0;
-    var task_count: u32 = 0;
-    var task_values: [max_task_batch_entries]u32 = [_]u32{0} ** max_task_batch_entries;
-    var batch_count: u32 = 0;
-    var last_batch_count: u32 = 0;
-    var last_batch_accumulator: u32 = 0;
+    var boot_slot_index: u32 = 0;
+    var stage: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var started: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var halted: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var startup_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var reported_apic_id: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var target_apic_id: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var bsp_apic_id: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var local_apic_addr: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var command_kind: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var command_value: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var command_seq: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var response_seq: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var heartbeat: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var ping_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var work_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_work_value: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var work_accumulator: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var task_values: [max_ap_command_slots][max_task_batch_entries]u32 = [_][max_task_batch_entries]u32{[_]u32{0} ** max_task_batch_entries} ** max_ap_command_slots;
+    var batch_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_batch_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_batch_accumulator: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
 };
 
 var test_cmos_shutdown_value_ptr: ?*u8 = null;
@@ -94,116 +98,209 @@ var test_warm_reset_offset_ptr: ?*u16 = null;
 var test_warm_reset_segment_ptr: ?*u16 = null;
 
 const SharedExtern = struct {
-    extern var oc_i386_ap_shared_stage: u32;
-    extern var oc_i386_ap_shared_started: u32;
-    extern var oc_i386_ap_shared_halted: u32;
-    extern var oc_i386_ap_shared_startup_count: u32;
-    extern var oc_i386_ap_shared_reported_apic_id: u32;
-    extern var oc_i386_ap_shared_target_apic_id: u32;
-    extern var oc_i386_ap_shared_bsp_apic_id: u32;
-    extern var oc_i386_ap_shared_local_apic_addr: u32;
-    extern var oc_i386_ap_shared_command_kind: u32;
-    extern var oc_i386_ap_shared_command_value: u32;
-    extern var oc_i386_ap_shared_command_seq: u32;
-    extern var oc_i386_ap_shared_response_seq: u32;
-    extern var oc_i386_ap_shared_heartbeat: u32;
-    extern var oc_i386_ap_shared_ping_count: u32;
-    extern var oc_i386_ap_shared_work_count: u32;
-    extern var oc_i386_ap_shared_last_work_value: u32;
-    extern var oc_i386_ap_shared_work_accumulator: u32;
-    extern var oc_i386_ap_shared_task_count: u32;
-    extern var oc_i386_ap_shared_task_values: [max_task_batch_entries]u32;
-    extern var oc_i386_ap_shared_batch_count: u32;
-    extern var oc_i386_ap_shared_last_batch_count: u32;
-    extern var oc_i386_ap_shared_last_batch_accumulator: u32;
+    extern var oc_i386_ap_shared_boot_slot_index: u32;
+    extern var oc_i386_ap_slot_stage: [max_ap_command_slots]u32;
+    extern var oc_i386_ap_slot_started: [max_ap_command_slots]u32;
+    extern var oc_i386_ap_slot_halted: [max_ap_command_slots]u32;
+    extern var oc_i386_ap_slot_startup_count: [max_ap_command_slots]u32;
+    extern var oc_i386_ap_slot_reported_apic_id: [max_ap_command_slots]u32;
+    extern var oc_i386_ap_slot_target_apic_id: [max_ap_command_slots]u32;
+    extern var oc_i386_ap_slot_bsp_apic_id: [max_ap_command_slots]u32;
+    extern var oc_i386_ap_slot_local_apic_addr: [max_ap_command_slots]u32;
+    extern var oc_i386_ap_slot_command_kind: [max_ap_command_slots]u32;
+    extern var oc_i386_ap_slot_command_value: [max_ap_command_slots]u32;
+    extern var oc_i386_ap_slot_command_seq: [max_ap_command_slots]u32;
+    extern var oc_i386_ap_slot_response_seq: [max_ap_command_slots]u32;
+    extern var oc_i386_ap_slot_heartbeat: [max_ap_command_slots]u32;
+    extern var oc_i386_ap_slot_ping_count: [max_ap_command_slots]u32;
+    extern var oc_i386_ap_slot_work_count: [max_ap_command_slots]u32;
+    extern var oc_i386_ap_slot_last_work_value: [max_ap_command_slots]u32;
+    extern var oc_i386_ap_slot_work_accumulator: [max_ap_command_slots]u32;
+    extern var oc_i386_ap_slot_task_count: [max_ap_command_slots]u32;
+    extern var oc_i386_ap_slot_task_values: [max_ap_command_slots][max_task_batch_entries]u32;
+    extern var oc_i386_ap_slot_batch_count: [max_ap_command_slots]u32;
+    extern var oc_i386_ap_slot_last_batch_count: [max_ap_command_slots]u32;
+    extern var oc_i386_ap_slot_last_batch_accumulator: [max_ap_command_slots]u32;
 };
 
+fn sharedBootSlotIndexPtr() *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_boot_slot_index else &SharedStorage.boot_slot_index;
+}
+
+fn slotStagePtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_stage[slot_index] else &SharedStorage.stage[slot_index];
+}
+
+fn slotStartedPtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_started[slot_index] else &SharedStorage.started[slot_index];
+}
+
+fn slotHaltedPtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_halted[slot_index] else &SharedStorage.halted[slot_index];
+}
+
+fn slotStartupCountPtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_startup_count[slot_index] else &SharedStorage.startup_count[slot_index];
+}
+
+fn slotReportedApicIdPtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_reported_apic_id[slot_index] else &SharedStorage.reported_apic_id[slot_index];
+}
+
+fn slotTargetApicIdPtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_target_apic_id[slot_index] else &SharedStorage.target_apic_id[slot_index];
+}
+
+fn slotBspApicIdPtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_bsp_apic_id[slot_index] else &SharedStorage.bsp_apic_id[slot_index];
+}
+
+fn slotLocalApicAddrPtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_local_apic_addr[slot_index] else &SharedStorage.local_apic_addr[slot_index];
+}
+
+fn slotCommandKindPtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_command_kind[slot_index] else &SharedStorage.command_kind[slot_index];
+}
+
+fn slotCommandValuePtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_command_value[slot_index] else &SharedStorage.command_value[slot_index];
+}
+
+fn slotCommandSeqPtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_command_seq[slot_index] else &SharedStorage.command_seq[slot_index];
+}
+
+fn slotResponseSeqPtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_response_seq[slot_index] else &SharedStorage.response_seq[slot_index];
+}
+
+fn slotHeartbeatPtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_heartbeat[slot_index] else &SharedStorage.heartbeat[slot_index];
+}
+
+fn slotPingCountPtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_ping_count[slot_index] else &SharedStorage.ping_count[slot_index];
+}
+
+fn slotWorkCountPtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_work_count[slot_index] else &SharedStorage.work_count[slot_index];
+}
+
+fn slotLastWorkValuePtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_last_work_value[slot_index] else &SharedStorage.last_work_value[slot_index];
+}
+
+fn slotWorkAccumulatorPtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_work_accumulator[slot_index] else &SharedStorage.work_accumulator[slot_index];
+}
+
+fn slotTaskCountPtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_task_count[slot_index] else &SharedStorage.task_count[slot_index];
+}
+
+fn slotTaskValuePtr(slot_index: usize, index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_task_values[slot_index][index] else &SharedStorage.task_values[slot_index][index];
+}
+
+fn slotBatchCountPtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_batch_count[slot_index] else &SharedStorage.batch_count[slot_index];
+}
+
+fn slotLastBatchCountPtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_last_batch_count[slot_index] else &SharedStorage.last_batch_count[slot_index];
+}
+
+fn slotLastBatchAccumulatorPtr(slot_index: usize) *u32 {
+    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_slot_last_batch_accumulator[slot_index] else &SharedStorage.last_batch_accumulator[slot_index];
+}
+
 fn sharedStagePtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_stage else &SharedStorage.stage;
+    return slotStagePtr(0);
 }
 
 fn sharedStartedPtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_started else &SharedStorage.started;
+    return slotStartedPtr(0);
 }
 
 fn sharedHaltedPtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_halted else &SharedStorage.halted;
+    return slotHaltedPtr(0);
 }
 
 fn sharedStartupCountPtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_startup_count else &SharedStorage.startup_count;
+    return slotStartupCountPtr(0);
 }
 
 fn sharedReportedApicIdPtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_reported_apic_id else &SharedStorage.reported_apic_id;
+    return slotReportedApicIdPtr(0);
 }
 
 fn sharedTargetApicIdPtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_target_apic_id else &SharedStorage.target_apic_id;
+    return slotTargetApicIdPtr(0);
 }
 
 fn sharedBspApicIdPtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_bsp_apic_id else &SharedStorage.bsp_apic_id;
+    return slotBspApicIdPtr(0);
 }
 
 fn sharedLocalApicAddrPtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_local_apic_addr else &SharedStorage.local_apic_addr;
+    return slotLocalApicAddrPtr(0);
 }
 
 fn sharedCommandKindPtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_command_kind else &SharedStorage.command_kind;
+    return slotCommandKindPtr(0);
 }
 
 fn sharedCommandValuePtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_command_value else &SharedStorage.command_value;
+    return slotCommandValuePtr(0);
 }
 
 fn sharedCommandSeqPtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_command_seq else &SharedStorage.command_seq;
+    return slotCommandSeqPtr(0);
 }
 
 fn sharedResponseSeqPtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_response_seq else &SharedStorage.response_seq;
+    return slotResponseSeqPtr(0);
 }
 
 fn sharedHeartbeatPtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_heartbeat else &SharedStorage.heartbeat;
+    return slotHeartbeatPtr(0);
 }
 
 fn sharedPingCountPtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_ping_count else &SharedStorage.ping_count;
+    return slotPingCountPtr(0);
 }
 
 fn sharedWorkCountPtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_work_count else &SharedStorage.work_count;
+    return slotWorkCountPtr(0);
 }
 
 fn sharedLastWorkValuePtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_last_work_value else &SharedStorage.last_work_value;
+    return slotLastWorkValuePtr(0);
 }
 
 fn sharedWorkAccumulatorPtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_work_accumulator else &SharedStorage.work_accumulator;
+    return slotWorkAccumulatorPtr(0);
 }
 
 fn sharedTaskCountPtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_task_count else &SharedStorage.task_count;
+    return slotTaskCountPtr(0);
 }
 
 fn sharedTaskValuePtr(index: usize) *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_task_values[index] else &SharedStorage.task_values[index];
+    return slotTaskValuePtr(0, index);
 }
 
 fn sharedBatchCountPtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_batch_count else &SharedStorage.batch_count;
+    return slotBatchCountPtr(0);
 }
 
 fn sharedLastBatchCountPtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_last_batch_count else &SharedStorage.last_batch_count;
+    return slotLastBatchCountPtr(0);
 }
 
 fn sharedLastBatchAccumulatorPtr() *u32 {
-    return if (comptime use_extern_shared) &SharedExtern.oc_i386_ap_shared_last_batch_accumulator else &SharedStorage.last_batch_accumulator;
+    return slotLastBatchAccumulatorPtr(0);
 }
 
 fn zeroState() abi.BaremetalApStartupState {
@@ -270,9 +367,29 @@ fn zeroMultiState() abi.BaremetalApMultiState {
     };
 }
 
+fn zeroSlotState() abi.BaremetalApSlotState {
+    return .{
+        .magic = abi.ap_slot_magic,
+        .api_version = abi.api_version,
+        .present = 0,
+        .exported_count = 0,
+        .active_count = 0,
+        .started_count = 0,
+        .halted_count = 0,
+        .requested_cpu_count = 0,
+        .logical_processor_count = 0,
+        .reserved0 = 0,
+        .bsp_apic_id = 0,
+        .total_task_count = 0,
+        .total_batch_count = 0,
+        .total_accumulator = 0,
+    };
+}
+
 fn resetSingleState() void {
     state = zeroState();
     diagnostics = .{};
+    writeStateVar(sharedBootSlotIndexPtr(), 0);
     writeStateVar(sharedStagePtr(), 0);
     writeStateVar(sharedStartedPtr(), 0);
     writeStateVar(sharedHaltedPtr(), 0);
@@ -297,14 +414,47 @@ fn resetSingleState() void {
     writeStateVar(sharedLastBatchAccumulatorPtr(), 0);
 }
 
+fn resetSlotEntry(slot_index: usize) void {
+    writeStateVar(slotStagePtr(slot_index), 0);
+    writeStateVar(slotStartedPtr(slot_index), 0);
+    writeStateVar(slotHaltedPtr(slot_index), 0);
+    writeStateVar(slotStartupCountPtr(slot_index), 0);
+    writeStateVar(slotReportedApicIdPtr(slot_index), 0);
+    writeStateVar(slotTargetApicIdPtr(slot_index), 0);
+    writeStateVar(slotBspApicIdPtr(slot_index), 0);
+    writeStateVar(slotLocalApicAddrPtr(slot_index), 0);
+    writeStateVar(slotCommandKindPtr(slot_index), 0);
+    writeStateVar(slotCommandValuePtr(slot_index), 0);
+    writeStateVar(slotCommandSeqPtr(slot_index), 0);
+    writeStateVar(slotResponseSeqPtr(slot_index), 0);
+    writeStateVar(slotHeartbeatPtr(slot_index), 0);
+    writeStateVar(slotPingCountPtr(slot_index), 0);
+    writeStateVar(slotWorkCountPtr(slot_index), 0);
+    writeStateVar(slotLastWorkValuePtr(slot_index), 0);
+    writeStateVar(slotWorkAccumulatorPtr(slot_index), 0);
+    writeStateVar(slotTaskCountPtr(slot_index), 0);
+    for (0..max_task_batch_entries) |index| writeStateVar(slotTaskValuePtr(slot_index, index), 0);
+    writeStateVar(slotBatchCountPtr(slot_index), 0);
+    writeStateVar(slotLastBatchCountPtr(slot_index), 0);
+    writeStateVar(slotLastBatchAccumulatorPtr(slot_index), 0);
+}
+
 pub fn resetMultiState() void {
     multi_state = zeroMultiState();
     @memset(&multi_entries, std.mem.zeroes(abi.BaremetalApMultiEntry));
 }
 
+pub fn resetSlotState() void {
+    slot_state = zeroSlotState();
+    @memset(&slot_entries, std.mem.zeroes(abi.BaremetalApSlotEntry));
+    writeStateVar(sharedBootSlotIndexPtr(), 0);
+    for (0..max_ap_command_slots) |slot_index| resetSlotEntry(slot_index);
+}
+
 pub fn resetForTest() void {
     resetSingleState();
     resetMultiState();
+    resetSlotState();
     test_cmos_shutdown_value_ptr = null;
     test_warm_reset_offset_ptr = null;
     test_warm_reset_segment_ptr = null;
@@ -335,6 +485,22 @@ pub fn multiEntry(index: u16) abi.BaremetalApMultiEntry {
     return multi_entries[index];
 }
 
+pub fn slotStatePtr() *const abi.BaremetalApSlotState {
+    refreshState();
+    return &slot_state;
+}
+
+pub fn slotEntryCount() u16 {
+    refreshState();
+    return slot_state.exported_count;
+}
+
+pub fn slotEntry(index: u16) abi.BaremetalApSlotEntry {
+    refreshState();
+    if (index >= slot_state.exported_count) return std.mem.zeroes(abi.BaremetalApSlotEntry);
+    return slot_entries[index];
+}
+
 pub fn startupSingleAp() Error!void {
     if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86) return error.UnsupportedPlatform;
     const lapic_state = lapic.statePtr().*;
@@ -344,7 +510,14 @@ pub fn startupSingleAp() Error!void {
 
 pub fn startupApByApicId(target_apic_id: u32) Error!void {
     resetSingleState();
+    resetSlotEntry(0);
+    return startupApInSlot(target_apic_id, 0);
+}
+
+pub fn startupApInSlot(target_apic_id: u32, slot_index: u16) Error!void {
     if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86) return error.UnsupportedPlatform;
+    const slot_usize: usize = slot_index;
+    if (slot_usize >= max_ap_command_slots) return error.NoSecondaryCpu;
 
     const topology = acpi.cpuTopologyStatePtr().*;
     const lapic_state = lapic.statePtr().*;
@@ -353,55 +526,53 @@ pub fn startupApByApicId(target_apic_id: u32) Error!void {
     if (!topologyContainsTargetApicId(target_apic_id, lapic_state.current_apic_id)) return error.NoSecondaryCpu;
 
     const lapic_addr_u32 = @as(u32, @intCast(lapic_state.local_apic_addr & 0xFFFF_FFFF));
-    writeStateVar(sharedBspApicIdPtr(), lapic_state.current_apic_id);
-    writeStateVar(sharedTargetApicIdPtr(), target_apic_id);
-    writeStateVar(sharedLocalApicAddrPtr(), lapic_addr_u32);
+    resetSlotEntry(slot_usize);
+    writeStateVar(sharedBootSlotIndexPtr(), slot_index);
+    writeStateVar(slotBspApicIdPtr(slot_usize), lapic_state.current_apic_id);
+    writeStateVar(slotTargetApicIdPtr(slot_usize), target_apic_id);
+    writeStateVar(slotLocalApicAddrPtr(slot_usize), lapic_addr_u32);
     programWarmResetVector(trampoline_phys);
     defer clearWarmResetVector();
     refreshState();
-    state.supported = 1;
-    state.attempted = 1;
 
     const regs = lapicRegs(lapic_addr_u32);
-    writeStateVar(sharedStagePtr(), 0x10);
+    writeStateVar(slotStagePtr(slot_usize), 0x10);
     diagnostics.init_ipi_count += 1;
     enableLocalApic(regs);
     sendInitIpi(regs, target_apic_id) catch return error.DeliveryTimeout;
-    writeStateVar(sharedStagePtr(), 0x11);
+    writeStateVar(slotStagePtr(slot_usize), 0x11);
     spinDelay(init_settle_delay_iterations);
     diagnostics.init_ipi_count += 1;
     sendInitDeassertIpi(regs, target_apic_id) catch return error.DeliveryTimeout;
-    writeStateVar(sharedStagePtr(), 0x12);
+    writeStateVar(slotStagePtr(slot_usize), 0x12);
     spinDelay(startup_retry_delay_iterations);
     clearErrorStatus(regs);
     diagnostics.startup_ipi_count += 1;
     sendStartupIpi(regs, target_apic_id, startup_vector) catch return error.DeliveryTimeout;
     diagnostics.last_accept_status = readAcceptStatus(regs);
-    writeStateVar(sharedStagePtr(), 0x13);
-    if (waitForStartedTarget(first_startup_timeout_iterations)) return;
+    writeStateVar(slotStagePtr(slot_usize), 0x13);
+    if (waitForStartedTarget(slot_usize, first_startup_timeout_iterations)) return;
 
     spinDelay(startup_retry_delay_iterations);
     clearErrorStatus(regs);
     diagnostics.startup_ipi_count += 1;
     sendStartupIpi(regs, target_apic_id, startup_vector) catch return error.DeliveryTimeout;
     diagnostics.last_accept_status = readAcceptStatus(regs);
-    writeStateVar(sharedStagePtr(), 0x14);
+    writeStateVar(slotStagePtr(slot_usize), 0x14);
 
-    if (waitForStartedTarget(startup_timeout_iterations)) return;
-    refreshState();
-    if (state.started == 0) return error.StartupTimeout;
-    if (state.reported_apic_id != state.target_apic_id) return error.WrongCpuStarted;
+    if (waitForStartedTarget(slot_usize, startup_timeout_iterations)) return;
+    if (readStateVar(slotStartedPtr(slot_usize)) == 0) return error.StartupTimeout;
+    if (readStateVar(slotReportedApicIdPtr(slot_usize)) != readStateVar(slotTargetApicIdPtr(slot_usize))) return error.WrongCpuStarted;
     return error.StartupTimeout;
 }
 
-fn waitForStartedTarget(iterations: usize) bool {
+fn waitForStartedTarget(slot_index: usize, iterations: usize) bool {
     var remaining = iterations;
     while (remaining > 0) : (remaining -= 1) {
-        refreshState();
-        if (state.started == 1 and
-            state.reported_apic_id == state.target_apic_id and
-            state.last_stage >= 4 and
-            state.heartbeat_count != 0)
+        if (readStateVar(slotStartedPtr(slot_index)) == 1 and
+            readStateVar(slotReportedApicIdPtr(slot_index)) == readStateVar(slotTargetApicIdPtr(slot_index)) and
+            readStateVar(slotStagePtr(slot_index)) >= 4 and
+            readStateVar(slotHeartbeatPtr(slot_index)) != 0)
         {
             return true;
         }
@@ -411,28 +582,11 @@ fn waitForStartedTarget(iterations: usize) bool {
 }
 
 pub fn pingStartedAp() Error!void {
-    refreshState();
-    if (state.started == 0 or state.halted == 1) return error.ApNotStarted;
-    try issueCommand(ap_command_ping);
-    refreshState();
-    if (state.ping_count == 0 or state.last_stage != 5) return error.CommandTimeout;
+    try pingApSlot(0);
 }
 
 pub fn dispatchWorkToStartedAp(value: u32) Error!u32 {
-    refreshState();
-    if (state.started == 0 or state.halted == 1) return error.ApNotStarted;
-    const prior_count = state.work_count;
-    const expected_accumulator = state.work_accumulator + value;
-    try issueCommandWithValue(ap_command_work, value);
-    refreshState();
-    if (state.work_count != prior_count + 1 or
-        state.last_work_value != value or
-        state.work_accumulator != expected_accumulator or
-        state.last_stage != 7)
-    {
-        return error.CommandTimeout;
-    }
-    return state.work_accumulator;
+    return dispatchWorkToApSlot(0, value);
 }
 
 fn batchAccumulator(values: []const u32) u32 {
@@ -441,47 +595,80 @@ fn batchAccumulator(values: []const u32) u32 {
     return accumulator;
 }
 
-fn stageTaskBatch(values: []const u32) void {
-    writeStateVar(sharedTaskCountPtr(), @as(u32, @intCast(values.len)));
+pub fn dispatchWorkBatchToStartedAp(values: []const u32) Error!u32 {
+    return dispatchWorkBatchToApSlot(0, values);
+}
+
+pub fn haltStartedAp() Error!void {
+    try haltApSlot(0);
+}
+
+pub fn pingApSlot(slot_index: u16) Error!void {
+    const slot_usize: usize = slot_index;
+    if (slot_usize >= max_ap_command_slots) return error.NoSecondaryCpu;
+    if (readStateVar(slotStartedPtr(slot_usize)) == 0 or readStateVar(slotHaltedPtr(slot_usize)) == 1) return error.ApNotStarted;
+    try issueSlotCommand(slot_usize, ap_command_ping);
+    if (readStateVar(slotPingCountPtr(slot_usize)) == 0 or readStateVar(slotStagePtr(slot_usize)) != 5) return error.CommandTimeout;
+}
+
+pub fn dispatchWorkToApSlot(slot_index: u16, value: u32) Error!u32 {
+    const slot_usize: usize = slot_index;
+    if (slot_usize >= max_ap_command_slots) return error.NoSecondaryCpu;
+    if (readStateVar(slotStartedPtr(slot_usize)) == 0 or readStateVar(slotHaltedPtr(slot_usize)) == 1) return error.ApNotStarted;
+    const prior_count = readStateVar(slotWorkCountPtr(slot_usize));
+    const expected_accumulator = readStateVar(slotWorkAccumulatorPtr(slot_usize)) + value;
+    try issueSlotCommandWithValue(slot_usize, ap_command_work, value);
+    if (readStateVar(slotWorkCountPtr(slot_usize)) != prior_count + 1 or
+        readStateVar(slotLastWorkValuePtr(slot_usize)) != value or
+        readStateVar(slotWorkAccumulatorPtr(slot_usize)) != expected_accumulator or
+        readStateVar(slotStagePtr(slot_usize)) != 7)
+    {
+        return error.CommandTimeout;
+    }
+    return readStateVar(slotWorkAccumulatorPtr(slot_usize));
+}
+
+fn stageTaskBatchForSlot(slot_index: usize, values: []const u32) void {
+    writeStateVar(slotTaskCountPtr(slot_index), @as(u32, @intCast(values.len)));
     for (0..max_task_batch_entries) |index| {
         const value = if (index < values.len) values[index] else 0;
-        writeStateVar(sharedTaskValuePtr(index), value);
+        writeStateVar(slotTaskValuePtr(slot_index, index), value);
     }
 }
 
-pub fn dispatchWorkBatchToStartedAp(values: []const u32) Error!u32 {
-    refreshState();
-    if (state.started == 0 or state.halted == 1) return error.ApNotStarted;
+pub fn dispatchWorkBatchToApSlot(slot_index: u16, values: []const u32) Error!u32 {
+    const slot_usize: usize = slot_index;
+    if (slot_usize >= max_ap_command_slots) return error.NoSecondaryCpu;
+    if (readStateVar(slotStartedPtr(slot_usize)) == 0 or readStateVar(slotHaltedPtr(slot_usize)) == 1) return error.ApNotStarted;
     if (values.len == 0 or values.len > max_task_batch_entries) return error.InvalidWorkBatch;
 
-    const prior_batch_count = state.batch_count;
+    const prior_batch_count = readStateVar(slotBatchCountPtr(slot_usize));
     const expected_accumulator = batchAccumulator(values);
-    stageTaskBatch(values);
-    writeStateVar(sharedCommandValuePtr(), @as(u32, @intCast(values.len)));
-    try issueCommandWithValue(ap_command_batch_work, @as(u32, @intCast(values.len)));
-    refreshState();
-    if (state.batch_count != prior_batch_count + 1 or
-        state.task_count != values.len or
-        state.last_batch_count != values.len or
-        state.last_batch_accumulator != expected_accumulator or
-        state.last_stage != 8)
+    stageTaskBatchForSlot(slot_usize, values);
+    writeStateVar(slotCommandValuePtr(slot_usize), @as(u32, @intCast(values.len)));
+    try issueSlotCommandWithValue(slot_usize, ap_command_batch_work, @as(u32, @intCast(values.len)));
+    if (readStateVar(slotBatchCountPtr(slot_usize)) != prior_batch_count + 1 or
+        readStateVar(slotTaskCountPtr(slot_usize)) != values.len or
+        readStateVar(slotLastBatchCountPtr(slot_usize)) != values.len or
+        readStateVar(slotLastBatchAccumulatorPtr(slot_usize)) != expected_accumulator or
+        readStateVar(slotStagePtr(slot_usize)) != 8)
     {
         return error.CommandTimeout;
     }
     for (values, 0..) |value, index| {
-        if (readStateVar(sharedTaskValuePtr(index)) != value) return error.CommandTimeout;
+        if (readStateVar(slotTaskValuePtr(slot_usize, index)) != value) return error.CommandTimeout;
     }
-    return state.last_batch_accumulator;
+    return readStateVar(slotLastBatchAccumulatorPtr(slot_usize));
 }
 
-pub fn haltStartedAp() Error!void {
-    refreshState();
-    if (state.started == 0 or state.halted == 1) return error.ApNotStarted;
-    try issueCommand(ap_command_halt);
+pub fn haltApSlot(slot_index: u16) Error!void {
+    const slot_usize: usize = slot_index;
+    if (slot_usize >= max_ap_command_slots) return error.NoSecondaryCpu;
+    if (readStateVar(slotStartedPtr(slot_usize)) == 0 or readStateVar(slotHaltedPtr(slot_usize)) == 1) return error.ApNotStarted;
+    try issueSlotCommand(slot_usize, ap_command_halt);
     var remaining = command_timeout_iterations;
     while (remaining > 0) : (remaining -= 1) {
-        refreshState();
-        if (state.halted == 1 and state.last_stage == 6) return;
+        if (readStateVar(slotHaltedPtr(slot_usize)) == 1 and readStateVar(slotStagePtr(slot_usize)) == 6) return;
         std.atomic.spinLoopHint();
     }
     return error.CommandTimeout;
@@ -655,6 +842,66 @@ pub fn renderMultiAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]
     return allocator.dupe(u8, buffer[0..used]);
 }
 
+pub fn renderSlotsAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
+    refreshState();
+    var buffer: [2048]u8 = undefined;
+    var used: usize = 0;
+    const head = std.fmt.bufPrint(
+        buffer[used..],
+        "present={d}\nexported_count={d}\nactive_count={d}\nstarted_count={d}\nhalted_count={d}\nrequested_cpu_count={d}\nlogical_processor_count={d}\nbsp_apic_id={d}\ntotal_task_count={d}\ntotal_batch_count={d}\ntotal_accumulator={d}\n",
+        .{
+            slot_state.present,
+            slot_state.exported_count,
+            slot_state.active_count,
+            slot_state.started_count,
+            slot_state.halted_count,
+            slot_state.requested_cpu_count,
+            slot_state.logical_processor_count,
+            slot_state.bsp_apic_id,
+            slot_state.total_task_count,
+            slot_state.total_batch_count,
+            slot_state.total_accumulator,
+        },
+    ) catch unreachable;
+    used += head.len;
+    var entry_index: u16 = 0;
+    while (entry_index < slot_state.exported_count) : (entry_index += 1) {
+        const entry = slot_entries[entry_index];
+        const line_a = std.fmt.bufPrint(
+            buffer[used..],
+            "slot[{d}].target_apic_id={d}\nslot[{d}].reported_apic_id={d}\nslot[{d}].command_seq={d}\nslot[{d}].response_seq={d}\nslot[{d}].heartbeat_count={d}\nslot[{d}].ping_count={d}\nslot[{d}].task_count={d}\nslot[{d}].batch_count={d}\nslot[{d}].last_batch_count={d}\n",
+            .{
+                entry_index, entry.target_apic_id,
+                entry_index, entry.reported_apic_id,
+                entry_index, entry.command_seq,
+                entry_index, entry.response_seq,
+                entry_index, entry.heartbeat_count,
+                entry_index, entry.ping_count,
+                entry_index, entry.task_count,
+                entry_index, entry.batch_count,
+                entry_index, entry.last_batch_count,
+            },
+        ) catch unreachable;
+        used += line_a.len;
+        const line_b = std.fmt.bufPrint(
+            buffer[used..],
+            "slot[{d}].last_batch_accumulator={d}\nslot[{d}].work_count={d}\nslot[{d}].last_work_value={d}\nslot[{d}].work_accumulator={d}\nslot[{d}].started={d}\nslot[{d}].halted={d}\nslot[{d}].last_stage={d}\nslot[{d}].slot_index={d}\n",
+            .{
+                entry_index, entry.last_batch_accumulator,
+                entry_index, entry.work_count,
+                entry_index, entry.last_work_value,
+                entry_index, entry.work_accumulator,
+                entry_index, entry.started,
+                entry_index, entry.halted,
+                entry_index, entry.last_stage,
+                entry_index, entry.slot_index,
+            },
+        ) catch unreachable;
+        used += line_b.len;
+    }
+    return allocator.dupe(u8, buffer[0..used]);
+}
+
 fn refreshState() void {
     const topology = acpi.cpuTopologyStatePtr().*;
     const lapic_state = lapic.statePtr().*;
@@ -698,6 +945,51 @@ fn refreshState() void {
     if (multi_state.run_count == 0 and multi_state.exported_count == 0) {
         multi_state.present = if (state.supported != 0) 1 else multi_state.present;
     }
+
+    slot_state = zeroSlotState();
+    slot_state.present = if (state.supported != 0) 1 else 0;
+    slot_state.requested_cpu_count = topology.enabled_count;
+    slot_state.logical_processor_count = lapic_state.logical_processor_count;
+    slot_state.bsp_apic_id = lapic_state.current_apic_id;
+    @memset(&slot_entries, std.mem.zeroes(abi.BaremetalApSlotEntry));
+    var slot_index: usize = 0;
+    while (slot_index < max_ap_command_slots) : (slot_index += 1) {
+        const target_apic_id = readStateVar(slotTargetApicIdPtr(slot_index));
+        const reported_apic_id = readStateVar(slotReportedApicIdPtr(slot_index));
+        const started = if (readStateVar(slotStartedPtr(slot_index)) != 0) @as(u8, 1) else @as(u8, 0);
+        const halted = if (readStateVar(slotHaltedPtr(slot_index)) != 0) @as(u8, 1) else @as(u8, 0);
+        const last_stage = @as(u8, @truncate(readStateVar(slotStagePtr(slot_index))));
+        const heartbeat_count = readStateVar(slotHeartbeatPtr(slot_index));
+        if (target_apic_id == 0 and reported_apic_id == 0 and started == 0 and halted == 0 and last_stage == 0 and heartbeat_count == 0) continue;
+        const exported_index = slot_state.exported_count;
+        slot_entries[exported_index] = .{
+            .target_apic_id = target_apic_id,
+            .reported_apic_id = reported_apic_id,
+            .command_seq = readStateVar(slotCommandSeqPtr(slot_index)),
+            .response_seq = readStateVar(slotResponseSeqPtr(slot_index)),
+            .heartbeat_count = heartbeat_count,
+            .ping_count = readStateVar(slotPingCountPtr(slot_index)),
+            .task_count = readStateVar(slotTaskCountPtr(slot_index)),
+            .batch_count = readStateVar(slotBatchCountPtr(slot_index)),
+            .last_batch_count = readStateVar(slotLastBatchCountPtr(slot_index)),
+            .last_batch_accumulator = readStateVar(slotLastBatchAccumulatorPtr(slot_index)),
+            .work_count = readStateVar(slotWorkCountPtr(slot_index)),
+            .last_work_value = readStateVar(slotLastWorkValuePtr(slot_index)),
+            .work_accumulator = readStateVar(slotWorkAccumulatorPtr(slot_index)),
+            .started = started,
+            .halted = halted,
+            .last_stage = last_stage,
+            .slot_index = @as(u8, @intCast(slot_index)),
+        };
+        slot_state.exported_count += 1;
+        if (started != 0) slot_state.started_count +%= 1;
+        if (started != 0 and halted == 0) slot_state.active_count +%= 1;
+        if (halted != 0) slot_state.halted_count +%= 1;
+        slot_state.total_task_count +%= slot_entries[exported_index].task_count;
+        slot_state.total_batch_count +%= slot_entries[exported_index].batch_count;
+        slot_state.total_accumulator +%= slot_entries[exported_index].last_batch_accumulator;
+    }
+    if (slot_state.exported_count != 0) slot_state.present = 1;
 }
 
 fn findSecondaryApicId(current_apic_id: u32) ?u32 {
@@ -895,18 +1187,26 @@ fn clearErrorStatus(regs: [*]volatile u32) void {
 }
 
 fn issueCommand(command_kind: u32) Error!void {
-    return issueCommandWithValue(command_kind, 0);
+    return issueSlotCommand(0, command_kind);
 }
 
 fn issueCommandWithValue(command_kind: u32, command_value: u32) Error!void {
-    const next_seq = readStateVar(sharedCommandSeqPtr()) + 1;
-    writeStateVar(sharedCommandKindPtr(), command_kind);
-    writeStateVar(sharedCommandValuePtr(), command_value);
-    writeStateVar(sharedCommandSeqPtr(), next_seq);
+    return issueSlotCommandWithValue(0, command_kind, command_value);
+}
+
+fn issueSlotCommand(slot_index: usize, command_kind: u32) Error!void {
+    return issueSlotCommandWithValue(slot_index, command_kind, 0);
+}
+
+fn issueSlotCommandWithValue(slot_index: usize, command_kind: u32, command_value: u32) Error!void {
+    const next_seq = readStateVar(slotCommandSeqPtr(slot_index)) + 1;
+    writeStateVar(slotCommandKindPtr(slot_index), command_kind);
+    writeStateVar(slotCommandValuePtr(slot_index), command_value);
+    writeStateVar(slotCommandSeqPtr(slot_index), next_seq);
 
     var remaining = command_timeout_iterations;
     while (remaining > 0) : (remaining -= 1) {
-        if (readStateVar(sharedResponseSeqPtr()) == next_seq) return;
+        if (readStateVar(slotResponseSeqPtr(slot_index)) == next_seq) return;
         std.atomic.spinLoopHint();
     }
     return error.CommandTimeout;
@@ -921,42 +1221,46 @@ fn writeStateVar(ptr: *u32, value: u32) void {
 }
 
 fn testApResponder() void {
+    testApSlotResponder(0);
+}
+
+fn testApSlotResponder(slot_index: usize) void {
     while (true) {
-        const command_seq = readStateVar(sharedCommandSeqPtr());
-        const response_seq = readStateVar(sharedResponseSeqPtr());
+        const command_seq = readStateVar(slotCommandSeqPtr(slot_index));
+        const response_seq = readStateVar(slotResponseSeqPtr(slot_index));
         if (command_seq != 0 and command_seq != response_seq) {
-            const command_kind = readStateVar(sharedCommandKindPtr());
+            const command_kind = readStateVar(slotCommandKindPtr(slot_index));
             if (command_kind == ap_command_ping) {
-                writeStateVar(sharedHeartbeatPtr(), readStateVar(sharedHeartbeatPtr()) + 1);
-                writeStateVar(sharedPingCountPtr(), readStateVar(sharedPingCountPtr()) + 1);
-                writeStateVar(sharedStagePtr(), 5);
-                writeStateVar(sharedResponseSeqPtr(), command_seq);
+                writeStateVar(slotHeartbeatPtr(slot_index), readStateVar(slotHeartbeatPtr(slot_index)) + 1);
+                writeStateVar(slotPingCountPtr(slot_index), readStateVar(slotPingCountPtr(slot_index)) + 1);
+                writeStateVar(slotStagePtr(slot_index), 5);
+                writeStateVar(slotResponseSeqPtr(slot_index), command_seq);
             } else if (command_kind == ap_command_halt) {
-                writeStateVar(sharedHeartbeatPtr(), readStateVar(sharedHeartbeatPtr()) + 1);
-                writeStateVar(sharedStagePtr(), 6);
-                writeStateVar(sharedHaltedPtr(), 1);
-                writeStateVar(sharedResponseSeqPtr(), command_seq);
+                writeStateVar(slotHeartbeatPtr(slot_index), readStateVar(slotHeartbeatPtr(slot_index)) + 1);
+                writeStateVar(slotStagePtr(slot_index), 6);
+                writeStateVar(slotHaltedPtr(slot_index), 1);
+                writeStateVar(slotResponseSeqPtr(slot_index), command_seq);
                 return;
             } else if (command_kind == ap_command_work) {
-                const value = readStateVar(sharedCommandValuePtr());
-                writeStateVar(sharedLastWorkValuePtr(), value);
-                writeStateVar(sharedWorkAccumulatorPtr(), readStateVar(sharedWorkAccumulatorPtr()) + value);
-                writeStateVar(sharedWorkCountPtr(), readStateVar(sharedWorkCountPtr()) + 1);
-                writeStateVar(sharedHeartbeatPtr(), readStateVar(sharedHeartbeatPtr()) + 1);
-                writeStateVar(sharedStagePtr(), 7);
-                writeStateVar(sharedResponseSeqPtr(), command_seq);
+                const value = readStateVar(slotCommandValuePtr(slot_index));
+                writeStateVar(slotLastWorkValuePtr(slot_index), value);
+                writeStateVar(slotWorkAccumulatorPtr(slot_index), readStateVar(slotWorkAccumulatorPtr(slot_index)) + value);
+                writeStateVar(slotWorkCountPtr(slot_index), readStateVar(slotWorkCountPtr(slot_index)) + 1);
+                writeStateVar(slotHeartbeatPtr(slot_index), readStateVar(slotHeartbeatPtr(slot_index)) + 1);
+                writeStateVar(slotStagePtr(slot_index), 7);
+                writeStateVar(slotResponseSeqPtr(slot_index), command_seq);
             } else if (command_kind == ap_command_batch_work) {
-                const task_count = @min(@as(usize, @intCast(readStateVar(sharedTaskCountPtr()))), max_task_batch_entries);
+                const task_count = @min(@as(usize, @intCast(readStateVar(slotTaskCountPtr(slot_index)))), max_task_batch_entries);
                 var accumulator: u32 = 0;
-                for (0..task_count) |index| accumulator +%= readStateVar(sharedTaskValuePtr(index));
-                writeStateVar(sharedLastBatchCountPtr(), @as(u32, @intCast(task_count)));
-                writeStateVar(sharedLastBatchAccumulatorPtr(), accumulator);
-                writeStateVar(sharedBatchCountPtr(), readStateVar(sharedBatchCountPtr()) + 1);
-                writeStateVar(sharedHeartbeatPtr(), readStateVar(sharedHeartbeatPtr()) + 1);
-                writeStateVar(sharedStagePtr(), 8);
-                writeStateVar(sharedResponseSeqPtr(), command_seq);
+                for (0..task_count) |index| accumulator +%= readStateVar(slotTaskValuePtr(slot_index, index));
+                writeStateVar(slotLastBatchCountPtr(slot_index), @as(u32, @intCast(task_count)));
+                writeStateVar(slotLastBatchAccumulatorPtr(slot_index), accumulator);
+                writeStateVar(slotBatchCountPtr(slot_index), readStateVar(slotBatchCountPtr(slot_index)) + 1);
+                writeStateVar(slotHeartbeatPtr(slot_index), readStateVar(slotHeartbeatPtr(slot_index)) + 1);
+                writeStateVar(slotStagePtr(slot_index), 8);
+                writeStateVar(slotResponseSeqPtr(slot_index), command_seq);
             } else {
-                writeStateVar(sharedResponseSeqPtr(), command_seq);
+                writeStateVar(slotResponseSeqPtr(slot_index), command_seq);
             }
         }
         std.atomic.spinLoopHint();
@@ -1162,6 +1466,74 @@ test "i386 ap startup records bounded multi-ap telemetry" {
     try std.testing.expect(std.mem.indexOf(u8, multi_render, "total_accumulator=49") != null);
     try std.testing.expect(std.mem.indexOf(u8, multi_render, "ap[0].target_apic_id=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, multi_render, "ap[1].target_apic_id=2") != null);
+}
+
+test "i386 ap startup drives bounded concurrent slot telemetry" {
+    resetForTest();
+    acpi.resetForTest();
+    try acpi.probeSyntheticImage(true);
+
+    writeStateVar(slotStartedPtr(0), 1);
+    writeStateVar(slotStagePtr(0), 4);
+    writeStateVar(slotReportedApicIdPtr(0), 1);
+    writeStateVar(slotTargetApicIdPtr(0), 1);
+    writeStateVar(slotHeartbeatPtr(0), 1);
+
+    writeStateVar(slotStartedPtr(1), 1);
+    writeStateVar(slotStagePtr(1), 4);
+    writeStateVar(slotReportedApicIdPtr(1), 2);
+    writeStateVar(slotTargetApicIdPtr(1), 2);
+    writeStateVar(slotHeartbeatPtr(1), 1);
+
+    const responder0 = try std.Thread.spawn(.{}, testApSlotResponder, .{0});
+    defer responder0.join();
+    const responder1 = try std.Thread.spawn(.{}, testApSlotResponder, .{1});
+    defer responder1.join();
+    errdefer {
+        _ = haltApSlot(1) catch {};
+        _ = haltApSlot(0) catch {};
+    }
+
+    const first_accumulator = try dispatchWorkBatchToApSlot(0, &.{ 3, 5 });
+    try std.testing.expectEqual(@as(u32, 8), first_accumulator);
+    const second_accumulator = try dispatchWorkBatchToApSlot(1, &.{ 11, 13, 17 });
+    try std.testing.expectEqual(@as(u32, 41), second_accumulator);
+
+    try pingApSlot(0);
+    try pingApSlot(1);
+
+    var snapshot = slotStatePtr().*;
+    try std.testing.expectEqual(@as(u8, 1), snapshot.present);
+    try std.testing.expectEqual(@as(u8, 2), snapshot.exported_count);
+    try std.testing.expectEqual(@as(u16, 2), snapshot.active_count);
+    try std.testing.expectEqual(@as(u16, 2), snapshot.started_count);
+    try std.testing.expectEqual(@as(u16, 0), snapshot.halted_count);
+    try std.testing.expectEqual(@as(u32, 5), snapshot.total_task_count);
+    try std.testing.expectEqual(@as(u32, 2), snapshot.total_batch_count);
+    try std.testing.expectEqual(@as(u32, 49), snapshot.total_accumulator);
+
+    const first_entry = slotEntry(0);
+    const second_entry = slotEntry(1);
+    try std.testing.expectEqual(@as(u32, 1), first_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 8), first_entry.last_batch_accumulator);
+    try std.testing.expectEqual(@as(u8, 0), first_entry.halted);
+    try std.testing.expectEqual(@as(u32, 2), second_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 41), second_entry.last_batch_accumulator);
+    try std.testing.expectEqual(@as(u8, 0), second_entry.halted);
+
+    const slots_render = try renderSlotsAlloc(std.testing.allocator);
+    defer std.testing.allocator.free(slots_render);
+    try std.testing.expect(std.mem.indexOf(u8, slots_render, "active_count=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, slots_render, "slot[0].target_apic_id=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, slots_render, "slot[1].target_apic_id=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, slots_render, "slot[0].last_batch_accumulator=8") != null);
+    try std.testing.expect(std.mem.indexOf(u8, slots_render, "slot[1].last_batch_accumulator=41") != null);
+
+    try haltApSlot(0);
+    try haltApSlot(1);
+    snapshot = slotStatePtr().*;
+    try std.testing.expectEqual(@as(u16, 0), snapshot.active_count);
+    try std.testing.expectEqual(@as(u16, 2), snapshot.halted_count);
 }
 
 test "i386 ap startup warm reset programming records bounded diagnostics" {

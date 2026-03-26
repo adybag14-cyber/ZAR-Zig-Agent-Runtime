@@ -684,6 +684,7 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the i386 freestanding runtime now also has a real BIOS firmware-boot AP-startup lane that observes actual AP execution and bounded ping/halt control on the live i386 path
 - the i386 freestanding runtime now also has a real BIOS firmware-boot AP batch-work lane that proves bounded multi-dispatch AP-owned task execution with `/dev/cpu/ap-tasks` and `/sys/cpu/ap-tasks` visibility
 - the i386 freestanding runtime now also has a real BIOS firmware-boot multi-AP coordination lane that proves two distinct secondary APs can be started sequentially under `-smp 3`, execute bounded batch work, halt cleanly, and export aggregate totals plus per-AP entries through `/dev/cpu/ap-multi` and `/sys/cpu/ap-multi`
+- the i386 freestanding runtime now also has a real BIOS firmware-boot concurrent multi-AP slot lane that proves two secondary APs can remain resident concurrently under `-smp 3`, receive targeted bounded batch work on separate slot-indexed mailboxes, and export independent per-slot state through `/dev/cpu/ap-slots` and `/sys/cpu/ap-slots`
 - the i386 freestanding runtime now has bounded IOAPIC export plus live MMIO proof with `/dev/cpu/ioapic` and `/sys/cpu/ioapic` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded legacy PIC export plus live remap/control-plane proof with `/dev/cpu/pic` and `/sys/cpu/pic` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded PIT export plus live latch/readback proof with `/dev/cpu/pit` and `/sys/cpu/pit` visibility on the i386 platform lane
@@ -702,8 +703,8 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - live i386 timer/interrupt/device/display/storage/NIC proof breadth is broad
   - the direct `-kernel` platform lane still has bounded synthetic ACPI fallback when firmware tables are unavailable or insufficient there
   - a separate BIOS firmware-boot lane now proves real ACPI end to end
-  - a separate BIOS firmware-boot lane now also proves actual AP execution, bounded AP command control, bounded AP batch-work execution, and bounded two-AP aggregate coordination end to end
-  - broader SMP bring-up beyond bounded multi-AP coordination and broader platform-controller hardening remain the next `FS5.7` steps
+  - a separate BIOS firmware-boot lane now also proves actual AP execution, bounded AP command control, bounded AP batch-work execution, bounded two-AP aggregate coordination, and bounded concurrent two-AP slot-targeted dispatch end to end
+  - broader SMP bring-up beyond bounded concurrent multi-AP dispatch and broader platform-controller hardening remain the next `FS5.7` steps
 - the i386 freestanding runtime now has live `virtio-gpu` display proof on the i386 controller path with reused output/interface/mode/profile matrix coverage from the shared broad display probe
 
 ## Current Boundary
@@ -720,13 +721,14 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - AP execution is still not observed on the direct-loader path
   - actual AP execution is now observed on the BIOS firmware-boot path
   - bounded AP batch execution is now observed on the BIOS firmware-boot path
-  - that moves the next real closure step to broader SMP bring-up beyond bounded AP batch execution
+  - bounded concurrent two-AP targeted dispatch is now observed on the BIOS firmware-boot path
+  - that moves the next real closure step to broader SMP bring-up beyond bounded concurrent AP slot dispatch
 
 ## Next Steps
 
 1. widen the current firmware-backed AP execution lane into broader SMP bring-up:
-   - more than one bounded AP command
-   - AP-owned work dispatch
-   - AP-owned batch dispatch beyond the current single-AP command channel
+   - more than two bounded resident AP slots
+   - AP-owned work dispatch beyond the current targeted batch mailbox model
+   - first real scheduler-style ownership instead of BSP-directed slot commands
 2. then lift that broader SMP model back toward the direct-loader path where possible
 3. only after that, widen timer / interrupt hardening around the real multi-core path
