@@ -838,6 +838,38 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - `scripts/baremetal-qemu-i386-firmware-smp-priority-saturation-probe-check.ps1`
   - `scripts/baremetal-qemu-i386-firmware-smp-priority-saturation-probe-check.ps1 -MemoryMiB 1024`
 
+## Firmware Priority Backfill
+
+- the current FS5.7 slice widens the firmware i386 scheduler lane from bounded failover into bounded refill/backfill after live task termination:
+  - `src/baremetal/i386_ap_startup.zig`
+  - `src/baremetal_main.zig`
+  - `scripts/baremetal-qemu-i386-firmware-smp-priority-backfill-probe-check.ps1`
+- new exported surfaces make the refill boundary explicit rather than implicit:
+  - `/dev/cpu/ap-backfill`
+  - `/sys/cpu/ap-backfill`
+- the dedicated live proof is explicit:
+  - BIOS firmware boot under `-smp 5`
+  - 4 resident AP slots
+  - initial full 16-task scheduler-table saturation
+  - live termination of 4 older tasks
+  - refill of the freed scheduler slots with 4 new higher-priority tasks
+  - one more rotated priority-owned dispatch round after refill
+  - `/sys/cpu/ap-ownership` plus `/sys/cpu/ap-backfill` plus `/sys/cpu/smp` render/readback
+- the dedicated live results are explicit:
+  - `BAREMETAL_I386_QEMU_FIRMWARE_SMP_PRIORITY_BACKFILL_PROBE_CODE=0x84`
+  - `I386_AP_EXECUTION_OBSERVED=1`
+  - `I386_AP_BACKFILL_TOTAL_TASK_COUNT=32`
+  - `I386_AP_BACKFILL_TOTAL_DISPATCH_COUNT=8`
+  - `I386_AP_BACKFILL_TOTAL_ACCUMULATOR=336`
+  - `I386_AP_BACKFILL_TOTAL_REDISTRIBUTED_TASK_COUNT=12`
+  - `I386_AP_BACKFILL_TOTAL_BACKFILLED_TASK_COUNT=4`
+  - `I386_AP_BACKFILL_LAST_BACKFILLED_TASK_COUNT=4`
+  - `I386_AP_BACKFILL_TOTAL_TERMINATED_TASK_COUNT=4`
+  - `I386_AP_BACKFILL_LAST_TERMINATED_TASK_COUNT=4`
+- hosted `zig-ci` and `release-preview` now also execute:
+  - `scripts/baremetal-qemu-i386-firmware-smp-priority-backfill-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-firmware-smp-priority-backfill-probe-check.ps1 -MemoryMiB 1024`
+
 ## ZigOS Follow-On Work
 
 - next adoption analysis is stored in:
@@ -885,6 +917,7 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the i386 freestanding runtime now also has a real BIOS firmware-boot full-table priority-saturation scheduler lane that proves sixteen scheduler-created ready tasks can be owned across four resident AP slots under the `priority` policy over four rounds with rotated start slots, while exporting peak/last-round slot telemetry plus cumulative redistribution totals through `/dev/cpu/ap-ownership` and `/sys/cpu/ap-ownership`, with cumulative totals `64/16/544`, `48` migrated tasks, and an explicit seventeenth-task `result_no_space` saturation boundary
 - the i386 freestanding runtime now also has a real BIOS firmware-boot saturated-reprioritization scheduler lane that proves the same sixteen scheduler-created ready tasks can remain fully saturated across two additional rounds after live full-table reprioritization, while reusing the existing ownership surfaces to export cumulative redistribution plus last-round slot telemetry through `/dev/cpu/ap-ownership` and `/sys/cpu/ap-ownership`, with cumulative totals `96/24/816`, `72` migrated tasks, and the same explicit seventeenth-task `result_no_space` saturation boundary
 - the i386 freestanding runtime now also has a real BIOS firmware-boot AP-slot failover scheduler lane that proves the same sixteen scheduler-created ready tasks can start fully saturated across four resident AP slots, retire one live AP slot, rebalance across the remaining three slots for two more rounds, export retired-slot plus failed-over-task telemetry through `/dev/cpu/ap-failover` and `/sys/cpu/ap-failover`, and finish with cumulative totals `96/22/816`, `77` redistributed tasks, `4` explicit failed-over tasks, and the same explicit seventeenth-task `result_no_space` saturation boundary
+- the i386 freestanding runtime now also has a real BIOS firmware-boot AP backfill/refill scheduler lane that proves the same four-slot firmware scheduler can terminate four older tasks after saturated ownership waves, refill the freed scheduler slots with four new higher-priority tasks, export backfilled-task plus terminated-task telemetry through `/dev/cpu/ap-backfill` and `/sys/cpu/ap-backfill`, and finish with cumulative totals `32/8/336`, `12` redistributed tasks, `4` backfilled tasks, and `4` terminated tasks at both default memory and `1024 MiB`
 - the i386 freestanding runtime now has bounded IOAPIC export plus live MMIO proof with `/dev/cpu/ioapic` and `/sys/cpu/ioapic` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded legacy PIC export plus live remap/control-plane proof with `/dev/cpu/pic` and `/sys/cpu/pic` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded PIT export plus live latch/readback proof with `/dev/cpu/pit` and `/sys/cpu/pit` visibility on the i386 platform lane
@@ -930,7 +963,8 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - bounded full-table priority saturation is now observed on the BIOS firmware-boot path
   - bounded saturated reprioritization is now observed on the BIOS firmware-boot path
   - bounded AP-slot failover redistribution is now observed on the BIOS firmware-boot path
-  - that moves the next real closure step to broader SMP bring-up beyond bounded concurrent/owned/redistributed/priority-aware/priority-rotation/priority-fanout/full-table-saturation/saturated-reprioritization/failover AP slot dispatch
+  - bounded termination backfill/refill is now observed on the BIOS firmware-boot path
+  - that moves the next real closure step to broader SMP bring-up beyond bounded concurrent/owned/redistributed/priority-aware/priority-rotation/priority-fanout/full-table-saturation/saturated-reprioritization/failover/backfill AP slot dispatch
 
 ## Next Steps
 
