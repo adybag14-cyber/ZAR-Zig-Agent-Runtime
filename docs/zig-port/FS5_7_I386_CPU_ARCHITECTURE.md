@@ -883,6 +883,7 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the i386 freestanding runtime now also has a real BIOS firmware-boot priority-owned scheduler lane that proves the same five scheduler-created ready tasks can be owned by resident AP slots under the `priority` policy, then migrate after live task reprioritization on the next owned round, while exporting the active policy plus cumulative redistribution telemetry through `/dev/cpu/ap-ownership` and `/sys/cpu/ap-ownership`, with cumulative totals `10/4/30` and `4` migrated tasks
 - the i386 freestanding runtime now also has a real BIOS firmware-boot three-slot priority-rotation scheduler lane that proves eight scheduler-created ready tasks can be owned across three resident AP slots under the `priority` policy over three rounds with rotated start slots and live reprioritization, while exporting peak/last-round slot telemetry plus cumulative redistribution totals through `/dev/cpu/ap-ownership` and `/sys/cpu/ap-ownership`, with cumulative totals `24/9/108` and `14` migrated tasks
 - the i386 freestanding runtime now also has a real BIOS firmware-boot full-table priority-saturation scheduler lane that proves sixteen scheduler-created ready tasks can be owned across four resident AP slots under the `priority` policy over four rounds with rotated start slots, while exporting peak/last-round slot telemetry plus cumulative redistribution totals through `/dev/cpu/ap-ownership` and `/sys/cpu/ap-ownership`, with cumulative totals `64/16/544`, `48` migrated tasks, and an explicit seventeenth-task `result_no_space` saturation boundary
+- the i386 freestanding runtime now also has a real BIOS firmware-boot saturated-reprioritization scheduler lane that proves the same sixteen scheduler-created ready tasks can remain fully saturated across two additional rounds after live full-table reprioritization, while reusing the existing ownership surfaces to export cumulative redistribution plus last-round slot telemetry through `/dev/cpu/ap-ownership` and `/sys/cpu/ap-ownership`, with cumulative totals `96/24/816`, `72` migrated tasks, and the same explicit seventeenth-task `result_no_space` saturation boundary
 - the i386 freestanding runtime now has bounded IOAPIC export plus live MMIO proof with `/dev/cpu/ioapic` and `/sys/cpu/ioapic` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded legacy PIC export plus live remap/control-plane proof with `/dev/cpu/pic` and `/sys/cpu/pic` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded PIT export plus live latch/readback proof with `/dev/cpu/pit` and `/sys/cpu/pit` visibility on the i386 platform lane
@@ -902,8 +903,8 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - the direct `-kernel` platform lane still has bounded synthetic ACPI fallback when firmware tables are unavailable or insufficient there
   - a separate BIOS firmware-boot lane now proves real ACPI end to end
   - a separate BIOS firmware-boot lane now also proves actual AP execution, bounded AP command control, bounded AP batch-work execution, bounded two-AP aggregate coordination, and bounded concurrent two-AP slot-targeted dispatch end to end
-  - a separate BIOS firmware-boot lane now also proves bounded scheduler-owned dispatch, bounded multi-round redistribution, bounded priority-aware ownership, bounded three-slot/three-round priority rotation, bounded four-slot/four-round priority fanout, and bounded full-table priority saturation on top of those resident AP slots
-  - broader SMP bring-up beyond bounded concurrent/owned/redistributed/priority-aware/priority-rotation/priority-fanout/full-table-saturation multi-AP dispatch and broader platform-controller hardening remain the next `FS5.7` steps
+  - a separate BIOS firmware-boot lane now also proves bounded scheduler-owned dispatch, bounded multi-round redistribution, bounded priority-aware ownership, bounded three-slot/three-round priority rotation, bounded four-slot/four-round priority fanout, bounded full-table priority saturation, and bounded saturated reprioritization on top of those resident AP slots
+  - broader SMP bring-up beyond bounded concurrent/owned/redistributed/priority-aware/priority-rotation/priority-fanout/full-table-saturation/saturated-reprioritization multi-AP dispatch and broader platform-controller hardening remain the next `FS5.7` steps
 - the i386 freestanding runtime now has live `virtio-gpu` display proof on the i386 controller path with reused output/interface/mode/profile matrix coverage from the shared broad display probe
 
 ## Current Boundary
@@ -926,7 +927,8 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - bounded priority-aware ownership after live reprioritization is now observed on the BIOS firmware-boot path
   - bounded three-slot priority rotation after live reprioritization is now observed on the BIOS firmware-boot path
   - bounded full-table priority saturation is now observed on the BIOS firmware-boot path
-  - that moves the next real closure step to broader SMP bring-up beyond bounded concurrent/owned/redistributed/priority-aware/priority-rotation/priority-fanout/full-table-saturation AP slot dispatch
+  - bounded saturated reprioritization is now observed on the BIOS firmware-boot path
+  - that moves the next real closure step to broader SMP bring-up beyond bounded concurrent/owned/redistributed/priority-aware/priority-rotation/priority-fanout/full-table-saturation/saturated-reprioritization AP slot dispatch
 
 ## Next Steps
 
