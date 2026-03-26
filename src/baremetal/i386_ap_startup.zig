@@ -51,11 +51,28 @@ pub const Error = error{
     InvalidWorkBatch,
 };
 
+pub const OwnershipError = Error || error{
+    NoReadyTask,
+    TooManyOwnedTasks,
+};
+
 var state: abi.BaremetalApStartupState = zeroState();
 var multi_state: abi.BaremetalApMultiState = zeroMultiState();
 var multi_entries: [max_multi_ap_entries]abi.BaremetalApMultiEntry = std.mem.zeroes([max_multi_ap_entries]abi.BaremetalApMultiEntry);
 var slot_state: abi.BaremetalApSlotState = zeroSlotState();
 var slot_entries: [max_ap_command_slots]abi.BaremetalApSlotEntry = std.mem.zeroes([max_ap_command_slots]abi.BaremetalApSlotEntry);
+var ownership_state: abi.BaremetalApOwnershipState = zeroOwnershipState();
+var ownership_entries: [max_ap_command_slots]abi.BaremetalApOwnershipEntry = std.mem.zeroes([max_ap_command_slots]abi.BaremetalApOwnershipEntry);
+var ownership_dispatch_round_count: u32 = 0;
+const OwnershipStorage = struct {
+    var owned_task_ids: [max_ap_command_slots][max_task_batch_entries]u32 = [_][max_task_batch_entries]u32{[_]u32{0} ** max_task_batch_entries} ** max_ap_command_slots;
+    var owned_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var dispatch_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_task_id: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_priority: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_budget_ticks: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_batch_accumulator: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+};
 const DiagnosticsState = struct {
     warm_reset_programmed: u8 = 0,
     warm_reset_vector_segment: u16 = 0,
@@ -386,6 +403,26 @@ fn zeroSlotState() abi.BaremetalApSlotState {
     };
 }
 
+fn zeroOwnershipState() abi.BaremetalApOwnershipState {
+    return .{
+        .magic = abi.ap_ownership_magic,
+        .api_version = abi.api_version,
+        .present = 0,
+        .policy = abi.ap_ownership_policy_round_robin,
+        .exported_count = 0,
+        .active_count = 0,
+        .reserved0 = 0,
+        .requested_cpu_count = 0,
+        .logical_processor_count = 0,
+        .reserved1 = 0,
+        .bsp_apic_id = 0,
+        .total_owned_task_count = 0,
+        .total_dispatch_count = 0,
+        .total_accumulator = 0,
+        .dispatch_round_count = 0,
+    };
+}
+
 fn resetSingleState() void {
     state = zeroState();
     diagnostics = .{};
@@ -439,9 +476,26 @@ fn resetSlotEntry(slot_index: usize) void {
     writeStateVar(slotLastBatchAccumulatorPtr(slot_index), 0);
 }
 
+fn resetOwnershipSlot(slot_index: usize) void {
+    OwnershipStorage.owned_task_count[slot_index] = 0;
+    OwnershipStorage.dispatch_count[slot_index] = 0;
+    OwnershipStorage.last_task_id[slot_index] = 0;
+    OwnershipStorage.last_priority[slot_index] = 0;
+    OwnershipStorage.last_budget_ticks[slot_index] = 0;
+    OwnershipStorage.last_batch_accumulator[slot_index] = 0;
+    @memset(&OwnershipStorage.owned_task_ids[slot_index], 0);
+}
+
 pub fn resetMultiState() void {
     multi_state = zeroMultiState();
     @memset(&multi_entries, std.mem.zeroes(abi.BaremetalApMultiEntry));
+}
+
+pub fn resetOwnershipState() void {
+    ownership_state = zeroOwnershipState();
+    @memset(&ownership_entries, std.mem.zeroes(abi.BaremetalApOwnershipEntry));
+    ownership_dispatch_round_count = 0;
+    for (0..max_ap_command_slots) |slot_index| resetOwnershipSlot(slot_index);
 }
 
 pub fn resetSlotState() void {
@@ -449,6 +503,7 @@ pub fn resetSlotState() void {
     @memset(&slot_entries, std.mem.zeroes(abi.BaremetalApSlotEntry));
     writeStateVar(sharedBootSlotIndexPtr(), 0);
     for (0..max_ap_command_slots) |slot_index| resetSlotEntry(slot_index);
+    resetOwnershipState();
 }
 
 pub fn resetForTest() void {
@@ -499,6 +554,22 @@ pub fn slotEntry(index: u16) abi.BaremetalApSlotEntry {
     refreshState();
     if (index >= slot_state.exported_count) return std.mem.zeroes(abi.BaremetalApSlotEntry);
     return slot_entries[index];
+}
+
+pub fn ownershipStatePtr() *const abi.BaremetalApOwnershipState {
+    refreshState();
+    return &ownership_state;
+}
+
+pub fn ownershipEntryCount() u16 {
+    refreshState();
+    return ownership_state.exported_count;
+}
+
+pub fn ownershipEntry(index: u16) abi.BaremetalApOwnershipEntry {
+    refreshState();
+    if (index >= ownership_state.exported_count) return std.mem.zeroes(abi.BaremetalApOwnershipEntry);
+    return ownership_entries[index];
 }
 
 pub fn startupSingleAp() Error!void {
@@ -659,6 +730,67 @@ pub fn dispatchWorkBatchToApSlot(slot_index: u16, values: []const u32) Error!u32
         if (readStateVar(slotTaskValuePtr(slot_usize, index)) != value) return error.CommandTimeout;
     }
     return readStateVar(slotLastBatchAccumulatorPtr(slot_usize));
+}
+
+fn activeOwnershipSlots(slot_indices: *[max_ap_command_slots]u16) usize {
+    var count: usize = 0;
+    for (0..max_ap_command_slots) |slot_index| {
+        if (readStateVar(slotStartedPtr(slot_index)) == 0) continue;
+        if (readStateVar(slotHaltedPtr(slot_index)) != 0) continue;
+        if (readStateVar(slotTargetApicIdPtr(slot_index)) == 0) continue;
+        slot_indices[count] = @as(u16, @intCast(slot_index));
+        count += 1;
+    }
+    return count;
+}
+
+fn clearOwnershipTelemetry() void {
+    ownership_state = zeroOwnershipState();
+    @memset(&ownership_entries, std.mem.zeroes(abi.BaremetalApOwnershipEntry));
+    for (0..max_ap_command_slots) |slot_index| resetOwnershipSlot(slot_index);
+}
+
+pub fn dispatchOwnedSchedulerTasksRoundRobin(tasks: []const abi.BaremetalTask) OwnershipError!u32 {
+    var active_slots: [max_ap_command_slots]u16 = undefined;
+    const active_slot_count = activeOwnershipSlots(&active_slots);
+    if (active_slot_count == 0) return error.ApNotStarted;
+
+    clearOwnershipTelemetry();
+    ownership_dispatch_round_count +%= 1;
+
+    var slot_cursor: usize = 0;
+    var assigned_count: usize = 0;
+    for (tasks) |task| {
+        if (task.task_id == 0) continue;
+        if (task.state != abi.task_state_ready and task.state != abi.task_state_running) continue;
+
+        const slot_index = @as(usize, active_slots[slot_cursor]);
+        const owned_count = @as(usize, OwnershipStorage.owned_task_count[slot_index]);
+        if (owned_count >= max_task_batch_entries) return error.TooManyOwnedTasks;
+
+        OwnershipStorage.owned_task_ids[slot_index][owned_count] = task.task_id;
+        OwnershipStorage.owned_task_count[slot_index] = @as(u32, @intCast(owned_count + 1));
+        OwnershipStorage.last_task_id[slot_index] = task.task_id;
+        OwnershipStorage.last_priority[slot_index] = @as(u32, task.priority);
+        OwnershipStorage.last_budget_ticks[slot_index] = task.budget_ticks;
+        assigned_count += 1;
+        slot_cursor = (slot_cursor + 1) % active_slot_count;
+    }
+    if (assigned_count == 0) return error.NoReadyTask;
+
+    var total_accumulator: u32 = 0;
+    var active_slot_cursor: usize = 0;
+    while (active_slot_cursor < active_slot_count) : (active_slot_cursor += 1) {
+        const slot_index = @as(usize, active_slots[active_slot_cursor]);
+        const owned_count = @as(usize, OwnershipStorage.owned_task_count[slot_index]);
+        if (owned_count == 0) continue;
+        const accumulator = try dispatchWorkBatchToApSlot(active_slots[active_slot_cursor], OwnershipStorage.owned_task_ids[slot_index][0..owned_count]);
+        OwnershipStorage.dispatch_count[slot_index] +%= 1;
+        OwnershipStorage.last_batch_accumulator[slot_index] = accumulator;
+        total_accumulator +%= accumulator;
+    }
+    refreshState();
+    return total_accumulator;
 }
 
 pub fn haltApSlot(slot_index: u16) Error!void {
@@ -902,6 +1034,61 @@ pub fn renderSlotsAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]
     return allocator.dupe(u8, buffer[0..used]);
 }
 
+pub fn renderOwnershipAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
+    refreshState();
+    var buffer: [2048]u8 = undefined;
+    var used: usize = 0;
+    const head = std.fmt.bufPrint(
+        buffer[used..],
+        "present={d}\npolicy={d}\nexported_count={d}\nactive_count={d}\nrequested_cpu_count={d}\nlogical_processor_count={d}\nbsp_apic_id={d}\ntotal_owned_task_count={d}\ntotal_dispatch_count={d}\ntotal_accumulator={d}\ndispatch_round_count={d}\n",
+        .{
+            ownership_state.present,
+            ownership_state.policy,
+            ownership_state.exported_count,
+            ownership_state.active_count,
+            ownership_state.requested_cpu_count,
+            ownership_state.logical_processor_count,
+            ownership_state.bsp_apic_id,
+            ownership_state.total_owned_task_count,
+            ownership_state.total_dispatch_count,
+            ownership_state.total_accumulator,
+            ownership_state.dispatch_round_count,
+        },
+    ) catch unreachable;
+    used += head.len;
+    var entry_index: u16 = 0;
+    while (entry_index < ownership_state.exported_count) : (entry_index += 1) {
+        const entry = ownership_entries[entry_index];
+        const line = std.fmt.bufPrint(
+            buffer[used..],
+            "slot[{d}].target_apic_id={d}\nslot[{d}].dispatch_count={d}\nslot[{d}].owned_task_count={d}\nslot[{d}].last_task_id={d}\nslot[{d}].last_priority={d}\nslot[{d}].last_budget_ticks={d}\nslot[{d}].last_batch_accumulator={d}\nslot[{d}].started={d}\nslot[{d}].halted={d}\nslot[{d}].slot_index={d}\n",
+            .{
+                entry_index, entry.target_apic_id,
+                entry_index, entry.dispatch_count,
+                entry_index, entry.owned_task_count,
+                entry_index, entry.last_task_id,
+                entry_index, entry.last_priority,
+                entry_index, entry.last_budget_ticks,
+                entry_index, entry.last_batch_accumulator,
+                entry_index, entry.started,
+                entry_index, entry.halted,
+                entry_index, entry.slot_index,
+            },
+        ) catch unreachable;
+        used += line.len;
+        const task_count = @min(@as(usize, @intCast(entry.owned_task_count)), max_task_batch_entries);
+        for (0..task_count) |task_index| {
+            const task_line = std.fmt.bufPrint(
+                buffer[used..],
+                "slot[{d}].task[{d}]={d}\n",
+                .{ entry_index, task_index, OwnershipStorage.owned_task_ids[entry.slot_index][task_index] },
+            ) catch unreachable;
+            used += task_line.len;
+        }
+    }
+    return allocator.dupe(u8, buffer[0..used]);
+}
+
 fn refreshState() void {
     const topology = acpi.cpuTopologyStatePtr().*;
     const lapic_state = lapic.statePtr().*;
@@ -990,6 +1177,44 @@ fn refreshState() void {
         slot_state.total_accumulator +%= slot_entries[exported_index].last_batch_accumulator;
     }
     if (slot_state.exported_count != 0) slot_state.present = 1;
+
+    ownership_state = zeroOwnershipState();
+    ownership_state.present = if (state.supported != 0) 1 else 0;
+    ownership_state.policy = abi.ap_ownership_policy_round_robin;
+    ownership_state.requested_cpu_count = topology.enabled_count;
+    ownership_state.logical_processor_count = lapic_state.logical_processor_count;
+    ownership_state.bsp_apic_id = lapic_state.current_apic_id;
+    ownership_state.dispatch_round_count = ownership_dispatch_round_count;
+    @memset(&ownership_entries, std.mem.zeroes(abi.BaremetalApOwnershipEntry));
+    slot_index = 0;
+    while (slot_index < max_ap_command_slots) : (slot_index += 1) {
+        const target_apic_id = readStateVar(slotTargetApicIdPtr(slot_index));
+        const started = if (readStateVar(slotStartedPtr(slot_index)) != 0) @as(u8, 1) else @as(u8, 0);
+        const halted = if (readStateVar(slotHaltedPtr(slot_index)) != 0) @as(u8, 1) else @as(u8, 0);
+        const owned_task_count = OwnershipStorage.owned_task_count[slot_index];
+        const dispatch_count = OwnershipStorage.dispatch_count[slot_index];
+        if (target_apic_id == 0 and owned_task_count == 0 and dispatch_count == 0 and started == 0 and halted == 0) continue;
+        const exported_index = ownership_state.exported_count;
+        ownership_entries[exported_index] = .{
+            .target_apic_id = target_apic_id,
+            .dispatch_count = dispatch_count,
+            .owned_task_count = owned_task_count,
+            .last_task_id = OwnershipStorage.last_task_id[slot_index],
+            .last_priority = OwnershipStorage.last_priority[slot_index],
+            .last_budget_ticks = OwnershipStorage.last_budget_ticks[slot_index],
+            .last_batch_accumulator = OwnershipStorage.last_batch_accumulator[slot_index],
+            .started = started,
+            .halted = halted,
+            .slot_index = @as(u8, @intCast(slot_index)),
+            .reserved0 = 0,
+        };
+        ownership_state.exported_count += 1;
+        if (started != 0 and halted == 0) ownership_state.active_count +%= 1;
+        ownership_state.total_owned_task_count +%= owned_task_count;
+        ownership_state.total_dispatch_count +%= dispatch_count;
+        ownership_state.total_accumulator +%= OwnershipStorage.last_batch_accumulator[slot_index];
+    }
+    if (ownership_state.exported_count != 0) ownership_state.present = 1;
 }
 
 fn findSecondaryApicId(current_apic_id: u32) ?u32 {
@@ -1534,6 +1759,87 @@ test "i386 ap startup drives bounded concurrent slot telemetry" {
     snapshot = slotStatePtr().*;
     try std.testing.expectEqual(@as(u16, 0), snapshot.active_count);
     try std.testing.expectEqual(@as(u16, 2), snapshot.halted_count);
+}
+
+test "i386 ap startup maps scheduler-owned tasks onto concurrent slots" {
+    resetForTest();
+    acpi.resetForTest();
+    try acpi.probeSyntheticImage(true);
+
+    writeStateVar(slotStartedPtr(0), 1);
+    writeStateVar(slotStagePtr(0), 4);
+    writeStateVar(slotReportedApicIdPtr(0), 1);
+    writeStateVar(slotTargetApicIdPtr(0), 1);
+    writeStateVar(slotHeartbeatPtr(0), 1);
+
+    writeStateVar(slotStartedPtr(1), 1);
+    writeStateVar(slotStagePtr(1), 4);
+    writeStateVar(slotReportedApicIdPtr(1), 2);
+    writeStateVar(slotTargetApicIdPtr(1), 2);
+    writeStateVar(slotHeartbeatPtr(1), 1);
+
+    const responder0 = try std.Thread.spawn(.{}, testApSlotResponder, .{0});
+    defer responder0.join();
+    const responder1 = try std.Thread.spawn(.{}, testApSlotResponder, .{1});
+    defer responder1.join();
+    errdefer {
+        _ = haltApSlot(1) catch {};
+        _ = haltApSlot(0) catch {};
+    }
+
+    const tasks = [_]abi.BaremetalTask{
+        .{ .task_id = 1, .state = abi.task_state_ready, .priority = 1, .reserved0 = 0, .run_count = 0, .budget_ticks = 5, .budget_remaining = 5, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 2, .state = abi.task_state_ready, .priority = 5, .reserved0 = 0, .run_count = 0, .budget_ticks = 7, .budget_remaining = 7, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 3, .state = abi.task_state_ready, .priority = 9, .reserved0 = 0, .run_count = 0, .budget_ticks = 9, .budget_remaining = 9, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 4, .state = abi.task_state_ready, .priority = 3, .reserved0 = 0, .run_count = 0, .budget_ticks = 11, .budget_remaining = 11, .created_tick = 0, .last_run_tick = 0 },
+        .{ .task_id = 5, .state = abi.task_state_ready, .priority = 7, .reserved0 = 0, .run_count = 0, .budget_ticks = 13, .budget_remaining = 13, .created_tick = 0, .last_run_tick = 0 },
+    };
+
+    const total_accumulator = try dispatchOwnedSchedulerTasksRoundRobin(tasks[0..]);
+    try std.testing.expectEqual(@as(u32, 15), total_accumulator);
+
+    var snapshot = ownershipStatePtr().*;
+    try std.testing.expectEqual(@as(u8, 1), snapshot.present);
+    try std.testing.expectEqual(@as(u8, abi.ap_ownership_policy_round_robin), snapshot.policy);
+    try std.testing.expectEqual(@as(u8, 2), snapshot.exported_count);
+    try std.testing.expectEqual(@as(u8, 2), snapshot.active_count);
+    try std.testing.expectEqual(@as(u32, 5), snapshot.total_owned_task_count);
+    try std.testing.expectEqual(@as(u32, 2), snapshot.total_dispatch_count);
+    try std.testing.expectEqual(@as(u32, 15), snapshot.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 1), snapshot.dispatch_round_count);
+
+    const first_entry = ownershipEntry(0);
+    const second_entry = ownershipEntry(1);
+    try std.testing.expectEqual(@as(u32, 1), first_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 3), first_entry.owned_task_count);
+    try std.testing.expectEqual(@as(u32, 1), first_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 5), first_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 7), first_entry.last_priority);
+    try std.testing.expectEqual(@as(u32, 13), first_entry.last_budget_ticks);
+    try std.testing.expectEqual(@as(u32, 9), first_entry.last_batch_accumulator);
+    try std.testing.expectEqual(@as(u32, 2), second_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 2), second_entry.owned_task_count);
+    try std.testing.expectEqual(@as(u32, 1), second_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 4), second_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 3), second_entry.last_priority);
+    try std.testing.expectEqual(@as(u32, 11), second_entry.last_budget_ticks);
+    try std.testing.expectEqual(@as(u32, 6), second_entry.last_batch_accumulator);
+
+    const ownership_render = try renderOwnershipAlloc(std.testing.allocator);
+    defer std.testing.allocator.free(ownership_render);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "dispatch_round_count=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[0].target_apic_id=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[0].owned_task_count=3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[0].task[0]=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[0].task[1]=3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[0].task[2]=5") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[1].task[0]=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ownership_render, "slot[1].task[1]=4") != null);
+
+    try haltApSlot(0);
+    try haltApSlot(1);
+    snapshot = ownershipStatePtr().*;
+    try std.testing.expectEqual(@as(u8, 0), snapshot.active_count);
 }
 
 test "i386 ap startup warm reset programming records bounded diagnostics" {

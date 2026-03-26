@@ -24,6 +24,7 @@ pub const pm_timer_magic: u32 = 0x4f43504d; // "OCPM"
 pub const ap_startup_magic: u32 = 0x4f434153; // "OCAS"
 pub const ap_multi_magic: u32 = 0x4f43414d; // "OCAM"
 pub const ap_slot_magic: u32 = 0x4f43534c; // "OCSL"
+pub const ap_ownership_magic: u32 = 0x4f43414f; // "OCAO"
 
 pub const api_version: u16 = 2;
 
@@ -190,6 +191,7 @@ pub const scheduler_state_disabled: u8 = 0;
 pub const scheduler_state_enabled: u8 = 1;
 pub const scheduler_policy_round_robin: u8 = 0;
 pub const scheduler_policy_priority: u8 = 1;
+pub const ap_ownership_policy_round_robin: u8 = 0;
 
 pub const task_state_unused: u8 = 0;
 pub const task_state_ready: u8 = 1;
@@ -659,6 +661,38 @@ pub const BaremetalApSlotEntry = extern struct {
     halted: u8,
     last_stage: u8,
     slot_index: u8,
+};
+
+pub const BaremetalApOwnershipState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    policy: u8,
+    exported_count: u8,
+    active_count: u8,
+    reserved0: u16,
+    requested_cpu_count: u16,
+    logical_processor_count: u16,
+    reserved1: u16,
+    bsp_apic_id: u32,
+    total_owned_task_count: u32,
+    total_dispatch_count: u32,
+    total_accumulator: u32,
+    dispatch_round_count: u32,
+};
+
+pub const BaremetalApOwnershipEntry = extern struct {
+    target_apic_id: u32,
+    dispatch_count: u32,
+    owned_task_count: u32,
+    last_task_id: u32,
+    last_priority: u32,
+    last_budget_ticks: u32,
+    last_batch_accumulator: u32,
+    started: u8,
+    halted: u8,
+    slot_index: u8,
+    reserved0: u8,
 };
 
 pub const BaremetalDisplayOutputEntry = extern struct {
