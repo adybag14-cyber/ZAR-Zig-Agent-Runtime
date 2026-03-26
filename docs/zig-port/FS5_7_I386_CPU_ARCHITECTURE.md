@@ -606,6 +606,90 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - `scripts/baremetal-qemu-i386-firmware-smp-work-probe-check.ps1`
   - `scripts/baremetal-qemu-i386-firmware-smp-work-probe-check.ps1 -MemoryMiB 1024`
 
+### Slice 23: i386 Firmware AP Batch-Work Proof
+
+- new firmware-only SMP batch-work lane:
+  - `baremetal-i386-smp-batch-probe`
+  - `scripts/baremetal-qemu-i386-firmware-smp-batch-probe-check.ps1`
+- `src/baremetal/i386_ap_startup.zig` now extends the bounded AP-control protocol with:
+  - `task_count`
+  - `batch_count`
+  - `last_batch_count`
+  - `last_batch_accumulator`
+  - `dispatchWorkBatchToStartedAp(values)`
+- `scripts/baremetal/i386_ap_trampoline.S` now handles a dedicated bounded `batch_work` command that:
+  - reads the BSP-staged bounded task array
+  - computes the batch accumulator on the AP
+  - records the last batch count
+  - records the last batch accumulator
+  - increments the batch count
+  - acknowledges completion through the existing response sequence
+- the AP batch state is now exported through:
+  - `/dev/cpu/ap-tasks`
+  - `/sys/cpu/ap-tasks`
+- `src/baremetal_main.zig` now carries a dedicated firmware-only `i386_smp_batch_probe` lane that requires:
+  - real firmware ACPI with no synthetic fallback
+  - live AP execution
+  - two bounded BSP-dispatched AP task batches (`[3,7]`, then `[11,13,17]`)
+  - correct AP-owned batch telemetry
+  - bounded `ping` and `halt` control after batch completion
+  - `/sys/cpu/ap-startup`, `/sys/cpu/ap-work`, `/sys/cpu/ap-tasks`, and `/sys/cpu/smp` render/readback
+- the current live firmware result is explicit:
+  - `BAREMETAL_I386_QEMU_FIRMWARE_SMP_BATCH_PROBE_CODE=0x79`
+  - `I386_AP_EXECUTION_OBSERVED=1`
+  - `I386_AP_TASK_COUNT=3`
+  - `I386_AP_BATCH_COUNT=2`
+  - `I386_AP_LAST_BATCH_COUNT=3`
+  - `I386_AP_LAST_BATCH_ACCUMULATOR=41`
+- hosted `zig-ci` and `release-preview` now also execute:
+  - `scripts/baremetal-qemu-i386-firmware-smp-batch-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-firmware-smp-batch-probe-check.ps1 -MemoryMiB 1024`
+
+### Slice 24: i386 Firmware Scheduler-Owned AP Dispatch Proof
+
+- new firmware-only owned-dispatch lane:
+  - `baremetal-i386-smp-owned-probe`
+  - `scripts/baremetal-qemu-i386-firmware-smp-owned-probe-check.ps1`
+- `src/baremetal/i386_ap_startup.zig` now widens the concurrent slot seam with bounded ownership state:
+  - `BaremetalApOwnershipState`
+  - `BaremetalApOwnershipEntry`
+  - `/dev/cpu/ap-ownership`
+  - `/sys/cpu/ap-ownership`
+  - `dispatchOwnedSchedulerTasksRoundRobin(tasks)`
+- the ownership export now records:
+  - `policy`
+  - `exported_count`
+  - `active_count`
+  - `requested_cpu_count`
+  - `logical_processor_count`
+  - `bsp_apic_id`
+  - `total_owned_task_count`
+  - `total_dispatch_count`
+  - `total_accumulator`
+  - `dispatch_round_count`
+  - per-slot owned task ids and last-task telemetry
+- `src/baremetal_main.zig` now adds `submitCommandSync(...)` so the firmware owned probe drains scheduler mailbox commands synchronously instead of relying on incidental `oc_tick()` / PIT wake behavior
+- the dedicated firmware-only `i386_smp_owned_probe` lane now requires:
+  - real firmware ACPI with no synthetic fallback
+  - live AP execution on two secondary AP slots
+  - synchronous scheduler disable + round-robin policy apply
+  - synchronous creation of five ready tasks
+  - round-robin ownership across the two resident AP slots
+  - `/sys/cpu/ap-slots`, `/sys/cpu/ap-ownership`, and `/sys/cpu/smp` render/readback
+  - bounded halt of both resident AP slots after ownership dispatch
+- the current live firmware result is explicit:
+  - `BAREMETAL_I386_QEMU_FIRMWARE_SMP_OWNED_PROBE_CODE=0x76`
+  - `I386_AP_EXECUTION_OBSERVED=1`
+  - `I386_AP_OWNERSHIP_EXPORTED_COUNT=2`
+  - `I386_AP_OWNERSHIP_ACTIVE_COUNT=0`
+  - `I386_AP_OWNERSHIP_TOTAL_TASK_COUNT=5`
+  - `I386_AP_OWNERSHIP_TOTAL_DISPATCH_COUNT=2`
+  - `I386_AP_OWNERSHIP_TOTAL_ACCUMULATOR=15`
+  - `I386_AP_OWNERSHIP_DISPATCH_ROUNDS=1`
+- hosted `zig-ci` and `release-preview` now also execute:
+  - `scripts/baremetal-qemu-i386-firmware-smp-owned-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-firmware-smp-owned-probe-check.ps1 -MemoryMiB 1024`
+
 ## ZigOS Follow-On Work
 
 - next adoption analysis is stored in:
@@ -643,6 +727,11 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the i386 freestanding runtime now has a dedicated live AP-startup control diagnostic proof with `/dev/cpu/ap-startup` and `/sys/cpu/ap-startup` visibility, a high-page trampoline, verified BSP-side INIT / deassert / SIPI / SIPI sequencing, bounded command/response/heartbeat telemetry, hardened startup timing/ESR handling, and explicit live AP-execution observation reporting on the current direct-loader QEMU path
 - the i386 freestanding runtime now also proves that the warm-reset vector is programmed correctly and that the BSP-side startup IPIs complete without APIC delivery or accept errors on the current direct-loader path, with the live AP debug trace preserved for inspection
 - the i386 freestanding runtime now also has a real BIOS firmware-boot AP-startup lane that observes actual AP execution and bounded ping/halt control on the live i386 path
+- the i386 freestanding runtime now also has a real BIOS firmware-boot AP batch-work lane that proves bounded multi-dispatch AP-owned task execution with `/dev/cpu/ap-tasks` and `/sys/cpu/ap-tasks` visibility
+- the i386 freestanding runtime now also has a real BIOS firmware-boot multi-AP coordination lane that proves two distinct secondary APs can be started sequentially under `-smp 3`, execute bounded batch work, halt cleanly, and export aggregate totals plus per-AP entries through `/dev/cpu/ap-multi` and `/sys/cpu/ap-multi`
+- the i386 freestanding runtime now also has a real BIOS firmware-boot concurrent multi-AP slot lane that proves two secondary APs can remain resident concurrently under `-smp 3`, receive targeted bounded batch work on separate slot-indexed mailboxes, and export independent per-slot state through `/dev/cpu/ap-slots` and `/sys/cpu/ap-slots`
+- the i386 freestanding runtime now also has a real BIOS firmware-boot scheduler-owned AP-dispatch lane that proves two resident AP slots can receive round-robin ownership of five scheduler-created ready tasks, export per-slot ownership lists through `/dev/cpu/ap-ownership` and `/sys/cpu/ap-ownership`, and complete the owned dispatch without relying on incidental timer ticks
+- the i386 freestanding runtime now also has a real BIOS firmware-boot scheduler-redistribution lane that proves the same five scheduler-created ready tasks can be redistributed across those resident AP slots over two owned rounds, exports cumulative and per-round redistribution telemetry through `/dev/cpu/ap-ownership`, `/sys/cpu/ap-ownership`, `/dev/cpu/ap-redistribution`, and `/sys/cpu/ap-redistribution`, and completes the second rotated round with cumulative totals `10/4/30` and `5` migrated tasks
 - the i386 freestanding runtime now has bounded IOAPIC export plus live MMIO proof with `/dev/cpu/ioapic` and `/sys/cpu/ioapic` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded legacy PIC export plus live remap/control-plane proof with `/dev/cpu/pic` and `/sys/cpu/pic` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded PIT export plus live latch/readback proof with `/dev/cpu/pit` and `/sys/cpu/pit` visibility on the i386 platform lane
@@ -661,8 +750,9 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - live i386 timer/interrupt/device/display/storage/NIC proof breadth is broad
   - the direct `-kernel` platform lane still has bounded synthetic ACPI fallback when firmware tables are unavailable or insufficient there
   - a separate BIOS firmware-boot lane now proves real ACPI end to end
-  - a separate BIOS firmware-boot lane now also proves actual AP execution and bounded AP command control end to end
-  - broader SMP bring-up beyond one AP heartbeat/ping/halt loop and broader platform-controller hardening remain the next `FS5.7` steps
+  - a separate BIOS firmware-boot lane now also proves actual AP execution, bounded AP command control, bounded AP batch-work execution, bounded two-AP aggregate coordination, and bounded concurrent two-AP slot-targeted dispatch end to end
+  - a separate BIOS firmware-boot lane now also proves bounded scheduler-owned dispatch and bounded multi-round redistribution on top of those resident AP slots
+  - broader SMP bring-up beyond bounded concurrent/owned/redistributed multi-AP dispatch and broader platform-controller hardening remain the next `FS5.7` steps
 - the i386 freestanding runtime now has live `virtio-gpu` display proof on the i386 controller path with reused output/interface/mode/profile matrix coverage from the shared broad display probe
 
 ## Current Boundary
@@ -678,12 +768,16 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - INIT + SIPI delivery completes cleanly
   - AP execution is still not observed on the direct-loader path
   - actual AP execution is now observed on the BIOS firmware-boot path
-  - that moves the next real closure step to broader SMP bring-up beyond the first firmware-backed AP execution loop
+  - bounded AP batch execution is now observed on the BIOS firmware-boot path
+  - bounded concurrent two-AP targeted dispatch is now observed on the BIOS firmware-boot path
+  - bounded scheduler-owned dispatch is now observed on the BIOS firmware-boot path
+  - that moves the next real closure step to broader SMP bring-up beyond bounded concurrent/owned AP slot dispatch
 
 ## Next Steps
 
 1. widen the current firmware-backed AP execution lane into broader SMP bring-up:
-   - more than one bounded AP command
-   - AP-owned work dispatch
+   - more than two bounded resident AP slots
+   - AP-owned work dispatch beyond the current targeted owned and redistributed round-robin model
+   - scheduler behavior beyond the current two-round ownership/redistribution map
 2. then lift that broader SMP model back toward the direct-loader path where possible
 3. only after that, widen timer / interrupt hardening around the real multi-core path
