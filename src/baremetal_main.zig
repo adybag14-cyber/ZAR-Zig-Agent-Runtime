@@ -175,6 +175,7 @@ const qemu_i386_firmware_smp_batch_probe_ok_code: u8 = 0x79;
 const qemu_i386_firmware_smp_multi_probe_ok_code: u8 = 0x78;
 const qemu_i386_firmware_smp_concurrent_probe_ok_code: u8 = 0x77;
 const qemu_i386_firmware_smp_owned_probe_ok_code: u8 = 0x76;
+const qemu_i386_firmware_smp_redistribution_probe_ok_code: u8 = 0x75;
 const build_options = if (builtin.is_test)
     struct {
         pub const qemu_smoke: bool = false;
@@ -233,6 +234,7 @@ const build_options = if (builtin.is_test)
         pub const i386_smp_multi_probe: bool = false;
         pub const i386_smp_concurrent_probe: bool = false;
         pub const i386_smp_owned_probe: bool = false;
+        pub const i386_smp_redistribution_probe: bool = false;
     }
 else
     @import("build_options");
@@ -293,6 +295,7 @@ const i386_smp_batch_probe_enabled: bool = if (@hasDecl(build_options, "i386_smp
 const i386_smp_multi_probe_enabled: bool = if (@hasDecl(build_options, "i386_smp_multi_probe")) build_options.i386_smp_multi_probe else false;
 const i386_smp_concurrent_probe_enabled: bool = if (@hasDecl(build_options, "i386_smp_concurrent_probe")) build_options.i386_smp_concurrent_probe else false;
 const i386_smp_owned_probe_enabled: bool = if (@hasDecl(build_options, "i386_smp_owned_probe")) build_options.i386_smp_owned_probe else false;
+const i386_smp_redistribution_probe_enabled: bool = if (@hasDecl(build_options, "i386_smp_redistribution_probe")) build_options.i386_smp_redistribution_probe else false;
 
 const ata_probe_raw_lba: u32 = 300;
 const ata_probe_raw_block_count: u32 = 2;
@@ -661,6 +664,24 @@ const I386SmpOwnedProbeError = error{
     ExecutionFailed,
     SchedulerMismatch,
     OwnershipRenderMismatch,
+    SmpRenderMismatch,
+};
+
+const I386SmpRedistributionProbeError = error{
+    UnsupportedPlatform,
+    AcpiProbeFailed,
+    CpuTopologyMissing,
+    CpuTopologySmpMissing,
+    LapicProbeFailed,
+    LapicNotPresent,
+    LapicDisabled,
+    StartupFailed,
+    StartupTargetMismatch,
+    DuplicateTargetMismatch,
+    ExecutionFailed,
+    SchedulerMismatch,
+    OwnershipRenderMismatch,
+    RedistributionRenderMismatch,
     SmpRenderMismatch,
 };
 
@@ -3243,6 +3264,10 @@ fn baremetalStart() callconv(.c) noreturn {
     if (i386_smp_owned_probe_enabled) {
         runI386FirmwareSmpOwnedProbe() catch |err| qemuExit(i386SmpOwnedProbeFailureCode(err));
         qemuExit(qemu_i386_firmware_smp_owned_probe_ok_code);
+    }
+    if (i386_smp_redistribution_probe_enabled) {
+        runI386FirmwareSmpRedistributionProbe() catch |err| qemuExit(i386SmpRedistributionProbeFailureCode(err));
+        qemuExit(qemu_i386_firmware_smp_redistribution_probe_ok_code);
     }
     if (i386_smp_work_probe_enabled) {
         runI386FirmwareSmpWorkProbe() catch |err| qemuExit(i386SmpWorkProbeFailureCode(err));
@@ -18974,6 +18999,254 @@ fn runI386FirmwareSmpOwnedProbe() I386SmpOwnedProbeError!void {
     qemuDebugWriteValue("I386_AP_OWNERSHIP_SECOND_APIC_ID", second_apic_id);
 }
 
+fn runI386FirmwareSmpRedistributionProbe() I386SmpRedistributionProbeError!void {
+    if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86) return error.UnsupportedPlatform;
+
+    qemuDebugWriteValue("I386_AP_REDISTRIBUTION_STAGE", 1);
+    resetBaremetalRuntimeForTest();
+    acpi.probeLive() catch return error.AcpiProbeFailed;
+    const acpi_state = oc_acpi_state_ptr().*;
+    if (acpi_state.present == 0 or
+        (acpi_state.flags & abi.acpi_flag_live_low_memory) == 0 or
+        (acpi_state.flags & abi.acpi_flag_synthetic_image) != 0)
+    {
+        return error.AcpiProbeFailed;
+    }
+    lapic.probe() catch return error.LapicProbeFailed;
+
+    const cpu_state = oc_cpu_topology_state_ptr().*;
+    if (cpu_state.present != 1 or cpu_state.enabled_count == 0) return error.CpuTopologyMissing;
+    if (cpu_state.supports_smp != 1 or cpu_state.enabled_count < 3) return error.CpuTopologySmpMissing;
+
+    const lapic_state = oc_lapic_state_ptr().*;
+    if (lapic_state.present != 1 or lapic_state.apic_supported != 1) return error.LapicNotPresent;
+    if (lapic_state.enabled != 1 or lapic_state.local_apic_addr == 0) return error.LapicDisabled;
+
+    const first_apic_id = i386_ap_startup.secondaryApicIdAt(0, lapic_state.current_apic_id) orelse return error.CpuTopologySmpMissing;
+    const second_apic_id = i386_ap_startup.secondaryApicIdAt(1, lapic_state.current_apic_id) orelse return error.CpuTopologySmpMissing;
+    if (first_apic_id == second_apic_id) return error.DuplicateTargetMismatch;
+
+    qemuDebugWriteValue("I386_AP_REDISTRIBUTION_STAGE", 2);
+    i386_ap_startup.resetSlotState();
+    i386_ap_startup.resetMultiState();
+    i386_ap_startup.resetOwnershipState();
+
+    i386_ap_startup.startupApInSlot(first_apic_id, 0) catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.CpuTopologyMissing, error.NoSecondaryCpu => return error.CpuTopologySmpMissing,
+        error.LapicUnavailable => return error.LapicDisabled,
+        error.DeliveryTimeout, error.StartupTimeout => return error.StartupFailed,
+        error.WrongCpuStarted => return error.StartupTargetMismatch,
+        error.ApNotStarted, error.CommandTimeout, error.InvalidWorkBatch => return error.ExecutionFailed,
+    };
+    i386_ap_startup.startupApInSlot(second_apic_id, 1) catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.CpuTopologyMissing, error.NoSecondaryCpu => return error.CpuTopologySmpMissing,
+        error.LapicUnavailable => return error.LapicDisabled,
+        error.DeliveryTimeout, error.StartupTimeout => return error.StartupFailed,
+        error.WrongCpuStarted => return error.StartupTargetMismatch,
+        error.ApNotStarted, error.CommandTimeout, error.InvalidWorkBatch => return error.ExecutionFailed,
+    };
+
+    var heartbeat_wait: usize = 4_000_000;
+    const first_entry_start = oc_i386_ap_slot_entry(0);
+    const second_entry_start = oc_i386_ap_slot_entry(1);
+    while (heartbeat_wait > 0) : (heartbeat_wait -= 1) {
+        const first_live = oc_i386_ap_slot_entry(0);
+        const second_live = oc_i386_ap_slot_entry(1);
+        if (first_live.heartbeat_count > first_entry_start.heartbeat_count and
+            second_live.heartbeat_count > second_entry_start.heartbeat_count)
+        {
+            break;
+        }
+        std.atomic.spinLoopHint();
+    }
+    if (heartbeat_wait == 0) return error.ExecutionFailed;
+
+    qemuDebugWriteValue("I386_AP_REDISTRIBUTION_STAGE", 3);
+    oc_scheduler_reset();
+    if (submitCommandSync(abi.command_scheduler_disable, 0, 0) != abi.result_ok) return error.SchedulerMismatch;
+    if (submitCommandSync(abi.command_scheduler_set_policy, abi.scheduler_policy_round_robin, 0) != abi.result_ok) return error.SchedulerMismatch;
+    const task_specs = [_]struct { budget: u64, priority: u64 }{
+        .{ .budget = 5, .priority = 1 },
+        .{ .budget = 7, .priority = 5 },
+        .{ .budget = 9, .priority = 9 },
+        .{ .budget = 11, .priority = 3 },
+        .{ .budget = 13, .priority = 7 },
+    };
+    for (task_specs) |spec| {
+        if (submitCommandSync(abi.command_task_create, spec.budget, spec.priority) != abi.result_ok) return error.SchedulerMismatch;
+    }
+    if (oc_scheduler_policy() != abi.scheduler_policy_round_robin or oc_scheduler_task_count() != task_specs.len) {
+        return error.SchedulerMismatch;
+    }
+
+    var task_table: [scheduler_task_capacity]BaremetalTask = undefined;
+    var ready_count: usize = 0;
+    for (0..scheduler_task_capacity) |idx| {
+        const task = oc_scheduler_task(@as(u32, @intCast(idx)));
+        if (task.task_id == 0) continue;
+        if (task.state != abi.task_state_ready and task.state != abi.task_state_running) continue;
+        task_table[ready_count] = task;
+        ready_count += 1;
+    }
+    if (ready_count != task_specs.len) return error.SchedulerMismatch;
+
+    qemuDebugWriteValue("I386_AP_REDISTRIBUTION_STAGE", 4);
+    if ((i386_ap_startup.dispatchOwnedSchedulerTasksRoundRobin(task_table[0..ready_count]) catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.CpuTopologyMissing, error.NoSecondaryCpu => return error.CpuTopologySmpMissing,
+        error.LapicUnavailable => return error.LapicDisabled,
+        error.DeliveryTimeout, error.StartupTimeout => return error.StartupFailed,
+        error.WrongCpuStarted => return error.StartupTargetMismatch,
+        error.ApNotStarted, error.CommandTimeout, error.InvalidWorkBatch, error.NoReadyTask, error.TooManyOwnedTasks => return error.ExecutionFailed,
+    }) != 15) return error.ExecutionFailed;
+
+    qemuDebugWriteValue("I386_AP_REDISTRIBUTION_STAGE", 5);
+    if ((i386_ap_startup.dispatchOwnedSchedulerTasksRoundRobinFromOffset(task_table[0..ready_count], 1) catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.CpuTopologyMissing, error.NoSecondaryCpu => return error.CpuTopologySmpMissing,
+        error.LapicUnavailable => return error.LapicDisabled,
+        error.DeliveryTimeout, error.StartupTimeout => return error.StartupFailed,
+        error.WrongCpuStarted => return error.StartupTargetMismatch,
+        error.ApNotStarted, error.CommandTimeout, error.InvalidWorkBatch, error.NoReadyTask, error.TooManyOwnedTasks => return error.ExecutionFailed,
+    }) != 15) return error.ExecutionFailed;
+
+    qemuDebugWriteValue("I386_AP_REDISTRIBUTION_STAGE", 6);
+    var ownership = oc_i386_ap_ownership_state_ptr().*;
+    if (ownership.present != 1 or
+        ownership.policy != abi.ap_ownership_policy_round_robin or
+        ownership.exported_count != 2 or
+        ownership.active_count != 2 or
+        ownership.requested_cpu_count < 3 or
+        ownership.logical_processor_count < 3 or
+        ownership.bsp_apic_id != lapic_state.current_apic_id or
+        ownership.total_owned_task_count != 10 or
+        ownership.total_dispatch_count != 4 or
+        ownership.total_accumulator != 30 or
+        ownership.dispatch_round_count != 2 or
+        ownership.last_round_owned_task_count != 5 or
+        ownership.last_round_dispatch_count != 2 or
+        ownership.last_round_accumulator != 15 or
+        ownership.total_redistributed_task_count != 5 or
+        ownership.last_redistributed_task_count != 5 or
+        ownership.last_start_slot_index != 1)
+    {
+        return error.ExecutionFailed;
+    }
+
+    const first_owned = oc_i386_ap_ownership_entry(0);
+    const second_owned = oc_i386_ap_ownership_entry(1);
+    if (first_owned.target_apic_id != first_apic_id or
+        first_owned.dispatch_count != 2 or
+        first_owned.owned_task_count != 2 or
+        first_owned.total_owned_task_count != 5 or
+        first_owned.redistributed_task_count != 2 or
+        first_owned.total_redistributed_task_count != 2 or
+        first_owned.last_task_id != 4 or
+        first_owned.last_priority != 3 or
+        first_owned.last_budget_ticks != 11 or
+        first_owned.last_batch_accumulator != 6 or
+        first_owned.total_accumulator != 15 or
+        first_owned.started != 1 or
+        first_owned.halted != 0 or
+        second_owned.target_apic_id != second_apic_id or
+        second_owned.dispatch_count != 2 or
+        second_owned.owned_task_count != 3 or
+        second_owned.total_owned_task_count != 5 or
+        second_owned.redistributed_task_count != 3 or
+        second_owned.total_redistributed_task_count != 3 or
+        second_owned.last_task_id != 5 or
+        second_owned.last_priority != 7 or
+        second_owned.last_budget_ticks != 13 or
+        second_owned.last_batch_accumulator != 9 or
+        second_owned.total_accumulator != 15 or
+        second_owned.started != 1 or
+        second_owned.halted != 0)
+    {
+        return error.ExecutionFailed;
+    }
+
+    qemuDebugWriteValue("I386_AP_REDISTRIBUTION_STAGE", 7);
+    var ownership_render_buffer: [3072]u8 = undefined;
+    var ownership_fba = std.heap.FixedBufferAllocator.init(&ownership_render_buffer);
+    const ownership_render = virtual_fs.readFileAlloc(ownership_fba.allocator(), "/sys/cpu/ap-ownership", ownership_render_buffer.len) catch {
+        return error.OwnershipRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, ownership_render, 1, "total_owned_task_count=10") or
+        !std.mem.containsAtLeast(u8, ownership_render, 1, "total_dispatch_count=4") or
+        !std.mem.containsAtLeast(u8, ownership_render, 1, "total_accumulator=30") or
+        !std.mem.containsAtLeast(u8, ownership_render, 1, "dispatch_round_count=2") or
+        !std.mem.containsAtLeast(u8, ownership_render, 1, "last_round_owned_task_count=5") or
+        !std.mem.containsAtLeast(u8, ownership_render, 1, "last_round_dispatch_count=2") or
+        !std.mem.containsAtLeast(u8, ownership_render, 1, "last_round_accumulator=15") or
+        !std.mem.containsAtLeast(u8, ownership_render, 1, "total_redistributed_task_count=5") or
+        !std.mem.containsAtLeast(u8, ownership_render, 1, "last_redistributed_task_count=5") or
+        !std.mem.containsAtLeast(u8, ownership_render, 1, "last_start_slot_index=1") or
+        !std.mem.containsAtLeast(u8, ownership_render, 1, "slot[0].task[0]=2") or
+        !std.mem.containsAtLeast(u8, ownership_render, 1, "slot[0].task[1]=4") or
+        !std.mem.containsAtLeast(u8, ownership_render, 1, "slot[1].task[0]=1") or
+        !std.mem.containsAtLeast(u8, ownership_render, 1, "slot[1].task[1]=3") or
+        !std.mem.containsAtLeast(u8, ownership_render, 1, "slot[1].task[2]=5"))
+    {
+        return error.OwnershipRenderMismatch;
+    }
+
+    qemuDebugWriteValue("I386_AP_REDISTRIBUTION_STAGE", 8);
+    var redistribution_render_buffer: [3072]u8 = undefined;
+    var redistribution_fba = std.heap.FixedBufferAllocator.init(&redistribution_render_buffer);
+    const redistribution_render = virtual_fs.readFileAlloc(redistribution_fba.allocator(), "/sys/cpu/ap-redistribution", redistribution_render_buffer.len) catch {
+        return error.RedistributionRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, redistribution_render, 1, "total_redistributed_task_count=5") or
+        !std.mem.containsAtLeast(u8, redistribution_render, 1, "slot[0].redistributed_task_count=2") or
+        !std.mem.containsAtLeast(u8, redistribution_render, 1, "slot[1].redistributed_task_count=3"))
+    {
+        return error.RedistributionRenderMismatch;
+    }
+
+    qemuDebugWriteValue("I386_AP_REDISTRIBUTION_STAGE", 9);
+    var smp_render_buffer: [512]u8 = undefined;
+    var smp_fba = std.heap.FixedBufferAllocator.init(&smp_render_buffer);
+    const smp_render = virtual_fs.readFileAlloc(smp_fba.allocator(), "/sys/cpu/smp", smp_render_buffer.len) catch {
+        return error.SmpRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, smp_render, 1, "supports_smp=1") or
+        !std.mem.containsAtLeast(u8, smp_render, 1, "requested_cpu_count=3"))
+    {
+        return error.SmpRenderMismatch;
+    }
+
+    qemuDebugWriteValue("I386_AP_REDISTRIBUTION_STAGE", 10);
+    i386_ap_startup.haltApSlot(1) catch return error.ExecutionFailed;
+    i386_ap_startup.haltApSlot(0) catch return error.ExecutionFailed;
+    ownership = oc_i386_ap_ownership_state_ptr().*;
+    if (ownership.active_count != 0 or
+        ownership.exported_count != 2 or
+        ownership.total_owned_task_count != 10 or
+        ownership.total_dispatch_count != 4 or
+        ownership.total_accumulator != 30 or
+        ownership.total_redistributed_task_count != 5 or
+        ownership.dispatch_round_count != 2)
+    {
+        return error.ExecutionFailed;
+    }
+
+    qemuDebugWriteValue("I386_AP_REDISTRIBUTION_STAGE", 11);
+    qemuDebugWriteValue("I386_AP_EXECUTION_OBSERVED", 1);
+    qemuDebugWriteValue("I386_AP_OWNERSHIP_EXPORTED_COUNT", ownership.exported_count);
+    qemuDebugWriteValue("I386_AP_OWNERSHIP_ACTIVE_COUNT", ownership.active_count);
+    qemuDebugWriteValue("I386_AP_OWNERSHIP_TOTAL_TASK_COUNT", ownership.total_owned_task_count);
+    qemuDebugWriteValue("I386_AP_OWNERSHIP_TOTAL_DISPATCH_COUNT", ownership.total_dispatch_count);
+    qemuDebugWriteValue("I386_AP_OWNERSHIP_TOTAL_ACCUMULATOR", ownership.total_accumulator);
+    qemuDebugWriteValue("I386_AP_OWNERSHIP_DISPATCH_ROUNDS", ownership.dispatch_round_count);
+    qemuDebugWriteValue("I386_AP_OWNERSHIP_TOTAL_REDISTRIBUTED_TASK_COUNT", ownership.total_redistributed_task_count);
+    qemuDebugWriteValue("I386_AP_OWNERSHIP_LAST_REDISTRIBUTED_TASK_COUNT", ownership.last_redistributed_task_count);
+    qemuDebugWriteValue("I386_AP_OWNERSHIP_LAST_START_SLOT_INDEX", ownership.last_start_slot_index);
+    qemuDebugWriteValue("I386_AP_OWNERSHIP_FIRST_APIC_ID", first_apic_id);
+    qemuDebugWriteValue("I386_AP_OWNERSHIP_SECOND_APIC_ID", second_apic_id);
+}
+
 fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
     resetBaremetalRuntimeForTest();
     const result = virtio_gpu.probeAndPresentPattern() catch |err| switch (err) {
@@ -19951,6 +20224,26 @@ fn i386SmpOwnedProbeFailureCode(err: I386SmpOwnedProbeError) u8 {
         error.OwnershipRenderMismatch => 0xA3,
         error.SmpRenderMismatch => 0xA4,
         error.DuplicateTargetMismatch => 0xA5,
+    };
+}
+
+fn i386SmpRedistributionProbeFailureCode(err: I386SmpRedistributionProbeError) u8 {
+    return switch (err) {
+        error.UnsupportedPlatform => 0x8C,
+        error.AcpiProbeFailed => 0x8D,
+        error.CpuTopologyMissing => 0x8E,
+        error.CpuTopologySmpMissing => 0x8F,
+        error.LapicProbeFailed => 0x90,
+        error.LapicNotPresent => 0x91,
+        error.LapicDisabled => 0x92,
+        error.StartupFailed => 0x93,
+        error.ExecutionFailed => 0x94,
+        error.StartupTargetMismatch => 0x95,
+        error.SchedulerMismatch => 0x96,
+        error.OwnershipRenderMismatch => 0x97,
+        error.RedistributionRenderMismatch => 0x98,
+        error.SmpRenderMismatch => 0x99,
+        error.DuplicateTargetMismatch => 0x9A,
     };
 }
 
