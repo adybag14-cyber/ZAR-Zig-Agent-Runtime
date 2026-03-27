@@ -21,14 +21,16 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 
 ## Summary
 
-- Total methods: **187**
-- Prefix groups: **35**
+- Total methods: **193**
+- Prefix groups: **37**
+- Runtime portability note: `tools.catalog` now reports `runtimeTarget` plus per-tool `kind`, `approvalSensitive`, `supportedOnHosted`, `supportedOnBaremetal`, and `currentRuntimeSupported` metadata; `acp.describe` plus `tasks.list|get|events|search` expose the shared polling-based delegated-task contract through both hosted `/rpc` and bare-metal `RUNTIMECALL`.
 
 ## Prefix Overview
 
 | Prefix | Count |
 | --- | ---: |
-| (root) | 14 |
+| (root) | 15 |
+| acp | 1 |
 | agent | 2 |
 | agents | 7 |
 | auth | 6 |
@@ -56,6 +58,7 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 | skills | 4 |
 | system | 12 |
 | talk | 2 |
+| tasks | 4 |
 | tools | 1 |
 | tts | 6 |
 | update | 3 |
@@ -70,6 +73,7 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 
 - agent
 - connect
+- delegate_task
 - doctor
 - execute_code
 - health
@@ -82,6 +86,10 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 - system-event
 - system-presence
 - wake
+
+### acp
+
+- acp.describe
 
 ### agent
 
@@ -312,6 +320,13 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 
 - talk.config
 - talk.mode
+
+### tasks
+
+- tasks.events
+- tasks.get
+- tasks.list
+- tasks.search
 
 ### tools
 

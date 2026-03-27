@@ -6441,8 +6441,173 @@ test "baremetal tool service bridges persisted runtime queries and rpc calls" {
     const state_payload = try filesystem.readFileAlloc(std.testing.allocator, "/runtime/state/runtime-state.json", 2048);
     defer std.testing.allocator.free(state_payload);
     try std.testing.expect(std.mem.indexOf(u8, state_payload, "svc-runtime") != null);
-}
 
+    const runtime_catalog_frame =
+        "{\"id\":\"svc-catalog\",\"method\":\"tools.catalog\",\"params\":{}}";
+    const runtime_catalog_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 63 RUNTIMECALL {d}\n{s}",
+        .{ runtime_catalog_frame.len, runtime_catalog_frame },
+    );
+    defer std.testing.allocator.free(runtime_catalog_request);
+
+    const runtime_catalog_response = try handleFramedRequest(std.testing.allocator, runtime_catalog_request, 512, 256, 16384);
+    defer std.testing.allocator.free(runtime_catalog_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_catalog_response, "RESP 63 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_catalog_response, "\"runtimeTarget\":\"hosted\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_catalog_response, "\"tool\":\"delegate_task\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_catalog_response, "\"tool\":\"sessions.history\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_catalog_response, "\"supportedOnBaremetal\":false") != null);
+
+    const runtime_delegate_frame =
+        "{\"id\":\"svc-delegate\",\"method\":\"delegate_task\",\"params\":{\"goal\":\"service delegate file flow\",\"sessionId\":\"svc-delegate\",\"toolsets\":[\"file\"],\"steps\":[{\"tool\":\"file.write\",\"path\":\"/runtime/tmp/service-delegate.txt\",\"content\":\"svc-delegate-data\"},{\"tool\":\"file.read\",\"path\":\"/runtime/tmp/service-delegate.txt\"}]}}";
+    const runtime_delegate_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 64 RUNTIMECALL {d}\n{s}",
+        .{ runtime_delegate_frame.len, runtime_delegate_frame },
+    );
+    defer std.testing.allocator.free(runtime_delegate_request);
+
+    const runtime_delegate_response = try handleFramedRequest(std.testing.allocator, runtime_delegate_request, 512, 256, 16384);
+    defer std.testing.allocator.free(runtime_delegate_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_delegate_response, "RESP 64 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_delegate_response, "\"status\":\"completed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_delegate_response, "svc-delegate-data") != null);
+
+    const runtime_delegate_payload_index = std.mem.indexOfScalar(u8, runtime_delegate_response, '\n').?;
+    var runtime_delegate_parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        std.testing.allocator,
+        runtime_delegate_response[runtime_delegate_payload_index + 1 ..],
+        .{},
+    );
+    defer runtime_delegate_parsed.deinit();
+    const runtime_delegate_result = runtime_delegate_parsed.value.object.get("result").?;
+    const runtime_task_id = runtime_delegate_result.object.get("results").?.array.items[0].object.get("taskId").?.string;
+
+    const runtime_acp_frame =
+        "{\"id\":\"svc-acp\",\"method\":\"acp.describe\",\"params\":{}}";
+    const runtime_acp_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 65 RUNTIMECALL {d}\n{s}",
+        .{ runtime_acp_frame.len, runtime_acp_frame },
+    );
+    defer std.testing.allocator.free(runtime_acp_request);
+
+    const runtime_acp_response = try handleFramedRequest(std.testing.allocator, runtime_acp_request, 512, 256, 16384);
+    defer std.testing.allocator.free(runtime_acp_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_acp_response, "RESP 65 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "\"schemaVersion\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "\"mode\":\"poll\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "tasks.events") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "\"taskReceipts\":true") != null);
+
+    const runtime_task_list_frame =
+        "{\"id\":\"svc-task-list\",\"method\":\"tasks.list\",\"params\":{\"sessionId\":\"svc-delegate\",\"limit\":10}}";
+    const runtime_task_list_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 66 RUNTIMECALL {d}\n{s}",
+        .{ runtime_task_list_frame.len, runtime_task_list_frame },
+    );
+    defer std.testing.allocator.free(runtime_task_list_request);
+
+    const runtime_task_list_response = try handleFramedRequest(std.testing.allocator, runtime_task_list_request, 512, 256, 16384);
+    defer std.testing.allocator.free(runtime_task_list_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_task_list_response, "RESP 66 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_task_list_response, runtime_task_id) != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_task_list_response, "\"count\":1") != null);
+
+    const runtime_task_get_frame = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "{{\"id\":\"svc-task-get\",\"method\":\"tasks.get\",\"params\":{{\"taskId\":\"{s}\"}}}}",
+        .{runtime_task_id},
+    );
+    defer std.testing.allocator.free(runtime_task_get_frame);
+    const runtime_task_get_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 67 RUNTIMECALL {d}\n{s}",
+        .{ runtime_task_get_frame.len, runtime_task_get_frame },
+    );
+    defer std.testing.allocator.free(runtime_task_get_request);
+
+    const runtime_task_get_response = try handleFramedRequest(std.testing.allocator, runtime_task_get_request, 512, 256, 16384);
+    defer std.testing.allocator.free(runtime_task_get_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_task_get_response, "RESP 67 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_task_get_response, runtime_task_id) != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_task_get_response, "service delegate file flow") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_task_get_response, "\"latestEventId\":") != null);
+
+    const runtime_task_events_frame = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "{{\"id\":\"svc-task-events\",\"method\":\"tasks.events\",\"params\":{{\"taskId\":\"{s}\",\"limit\":10}}}}",
+        .{runtime_task_id},
+    );
+    defer std.testing.allocator.free(runtime_task_events_frame);
+    const runtime_task_events_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 68 RUNTIMECALL {d}\n{s}",
+        .{ runtime_task_events_frame.len, runtime_task_events_frame },
+    );
+    defer std.testing.allocator.free(runtime_task_events_request);
+
+    const runtime_task_events_response = try handleFramedRequest(std.testing.allocator, runtime_task_events_request, 512, 256, 16384);
+    defer std.testing.allocator.free(runtime_task_events_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_task_events_response, "RESP 68 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_task_events_response, "\"count\":6") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_task_events_response, "task.start") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_task_events_response, "task.complete") != null);
+
+    const runtime_task_search_frame =
+        "{\"id\":\"svc-task-search\",\"method\":\"tasks.search\",\"params\":{\"query\":\"service delegate\",\"sessionId\":\"svc-delegate\",\"limit\":5}}";
+    const runtime_task_search_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 69 RUNTIMECALL {d}\n{s}",
+        .{ runtime_task_search_frame.len, runtime_task_search_frame },
+    );
+    defer std.testing.allocator.free(runtime_task_search_request);
+
+    const runtime_task_search_response = try handleFramedRequest(std.testing.allocator, runtime_task_search_request, 512, 256, 16384);
+    defer std.testing.allocator.free(runtime_task_search_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_task_search_response, "RESP 69 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_task_search_response, runtime_task_id) != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_task_search_response, "\"count\":1") != null);
+
+    const runtime_history_frame =
+        "{\"id\":\"svc-history\",\"method\":\"sessions.history\",\"params\":{\"sessionId\":\"svc-delegate\",\"limit\":10}}";
+    const runtime_history_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 70 RUNTIMECALL {d}\n{s}",
+        .{ runtime_history_frame.len, runtime_history_frame },
+    );
+    defer std.testing.allocator.free(runtime_history_request);
+
+    const runtime_history_response = try handleFramedRequest(std.testing.allocator, runtime_history_request, 512, 256, 4096);
+    defer std.testing.allocator.free(runtime_history_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_history_response, "RESP 70 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_history_response, "\"sessionId\":\"svc-delegate\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_history_response, "file.read") != null);
+
+    const runtime_search_frame =
+        "{\"id\":\"svc-search\",\"method\":\"sessions.search\",\"params\":{\"query\":\"svc-delegate\",\"limit\":5}}";
+    const runtime_search_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 71 RUNTIMECALL {d}\n{s}",
+        .{ runtime_search_frame.len, runtime_search_frame },
+    );
+    defer std.testing.allocator.free(runtime_search_request);
+
+    const runtime_search_response = try handleFramedRequest(std.testing.allocator, runtime_search_request, 512, 256, 4096);
+    defer std.testing.allocator.free(runtime_search_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_search_response, "RESP 71 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_search_response, "\"sessionId\":\"svc-delegate\"") != null);
+
+    const state_payload_after = try filesystem.readFileAlloc(std.testing.allocator, "/runtime/state/runtime-state.json", 8192);
+    defer std.testing.allocator.free(state_payload_after);
+    try std.testing.expect(std.mem.indexOf(u8, state_payload_after, "svc-delegate") != null);
+    try std.testing.expect(std.mem.indexOf(u8, state_payload_after, runtime_task_id) != null);
+    try std.testing.expect(std.mem.indexOf(u8, state_payload_after, "task.complete") != null);
+
+}
 test "baremetal tool service installs default runtime layout and returns manifest" {
     resetPersistentStateForTest();
 

@@ -11,11 +11,14 @@ const sessionId = process.env.ZAR_SMOKE_SESSION_ID ?? `hermes-port-${Date.now()}
 const messageNeedle = `Hermes port smoke message ${Date.now()}`;
 const filePath = path.join(workRoot, "coding-agent.txt");
 const jsArtifactPath = path.join(workRoot, "execute-code-js.txt");
+const delegateFilePath = path.join(workRoot, "delegate-task.txt");
 const zigBinary = process.env.ZAR_ZIG_BIN ?? "";
 const nodeBinary = process.execPath;
 const requireHostedProcessSupport =
   process.env.ZAR_HERMES_REQUIRE_PROCESS === "1" ||
   (process.env.ZAR_HERMES_REQUIRE_PROCESS !== "0" && process.platform !== "win32");
+const approvalPromptNodeId = "node-hermes-approval";
+const approvalDenyNodeId = "node-hermes-deny";
 
 
 function startMockWebServer() {
@@ -98,7 +101,10 @@ async function rpc(method, params = {}, id = method) {
 try {
 const catalog = await rpc("tools.catalog", {}, "catalog");
 const catalogJson = JSON.stringify(catalog);
+assert.match(catalogJson, /tools\.catalog/);
+assert.match(catalogJson, /acp\.describe/);
 assert.match(catalogJson, /execute_code/);
+assert.match(catalogJson, /delegate_task/);
 assert.match(catalogJson, /file\.search/);
 assert.match(catalogJson, /file\.patch/);
 assert.match(catalogJson, /web\.search/);
@@ -109,7 +115,124 @@ assert.match(catalogJson, /process\.poll/);
 assert.match(catalogJson, /process\.read/);
 assert.match(catalogJson, /process\.wait/);
 assert.match(catalogJson, /process\.kill/);
+assert.match(catalogJson, /sessions\.history/);
 assert.match(catalogJson, /sessions\.search/);
+assert.match(catalogJson, /tasks\.list/);
+assert.match(catalogJson, /tasks\.get/);
+assert.match(catalogJson, /tasks\.events/);
+assert.match(catalogJson, /tasks\.search/);
+assert.match(catalogJson, /"runtimeTarget":"hosted"/);
+assert.match(catalogJson, /"kind":"execute"/);
+assert.match(catalogJson, /"approvalSensitive":true/);
+assert.match(catalogJson, /"supportedOnBaremetal":false/);
+assert.match(catalogJson, /"currentRuntimeSupported":true/);
+
+const acpDescribeResult = await rpc("acp.describe", {}, "acp-describe");
+assert.equal(acpDescribeResult.schemaVersion, 1);
+assert.equal(acpDescribeResult.eventDelivery.mode, "poll");
+assert.equal(acpDescribeResult.eventDelivery.eventsMethod, "tasks.events");
+assert.equal(acpDescribeResult.eventDelivery.receiptsMethod, "tasks.get");
+assert.equal(acpDescribeResult.capabilities.delegateTask, true);
+assert.equal(acpDescribeResult.capabilities.taskReceipts, true);
+assert.equal(acpDescribeResult.capabilities.taskEvents, true);
+assert.match(JSON.stringify(acpDescribeResult.tools), /tasks\.events/);
+
+const approvalsAllowResult = await rpc(
+  "exec.approvals.set",
+  {
+    mode: "allow",
+  },
+  "approvals-allow",
+);
+assert.equal(approvalsAllowResult.approvals.mode, "allow");
+
+const approvalPromptModeResult = await rpc(
+  "exec.approvals.node.set",
+  {
+    nodeId: approvalPromptNodeId,
+    mode: "prompt",
+  },
+  "approvals-node-prompt",
+);
+assert.equal(approvalPromptModeResult.approvals.mode, "prompt");
+
+const approvalRequiredResult = await rpc(
+  "execute_code",
+  {
+    sessionId,
+    nodeId: approvalPromptNodeId,
+    language: "javascript",
+    runtimePath: nodeBinary,
+    cwd: workRoot,
+    code: 'console.log("approval-required-js")',
+  },
+  "approval-required",
+);
+assert.equal(approvalRequiredResult.ok, false);
+assert.equal(approvalRequiredResult.state, "approval_required");
+assert.equal(approvalRequiredResult.approval.mode, "prompt");
+assert.match(approvalRequiredResult.approval.reason, /Approval required/);
+const approvalId = approvalRequiredResult.approval.approvalId;
+assert.match(approvalId, /^approval-/);
+
+const approvalPendingResult = await rpc(
+  "exec.approval.waitDecision",
+  {
+    approvalId,
+    timeoutMs: 10,
+  },
+  "approval-wait",
+);
+assert.equal(approvalPendingResult.approval.status, "pending");
+
+const approvalResolvedResult = await rpc(
+  "exec.approval.resolve",
+  {
+    approvalId,
+    status: "approved",
+  },
+  "approval-resolve",
+);
+assert.equal(approvalResolvedResult.approval.status, "approved");
+
+const approvalGrantedResult = await rpc(
+  "execute_code",
+  {
+    sessionId,
+    nodeId: approvalPromptNodeId,
+    approvalId,
+    language: "javascript",
+    runtimePath: nodeBinary,
+    cwd: workRoot,
+    code: 'console.log("approval-granted-js")',
+  },
+  "approval-granted",
+);
+assert.equal(approvalGrantedResult.ok, true);
+assert.match(approvalGrantedResult.stdout, /approval-granted-js/);
+
+const approvalDenyModeResult = await rpc(
+  "exec.approvals.node.set",
+  {
+    nodeId: approvalDenyNodeId,
+    mode: "deny",
+  },
+  "approvals-node-deny",
+);
+assert.equal(approvalDenyModeResult.approvals.mode, "deny");
+
+const approvalDeniedResult = await rpc(
+  "process.start",
+  {
+    sessionId,
+    nodeId: approvalDenyNodeId,
+    cwd: workRoot,
+    command: "printf denied-should-not-run",
+  },
+  "approval-denied",
+);
+assert.equal(approvalDeniedResult.ok, false);
+assert.equal(approvalDeniedResult.state, "approval_denied");
 
 const writeResult = await rpc(
   "file.write",
@@ -126,6 +249,86 @@ const writeResult = await rpc(
   "write",
 );
 assert.equal(writeResult.ok, true);
+
+const delegateTaskSessionId = `${sessionId}-delegate`;
+const delegateTaskResult = await rpc(
+  "delegate_task",
+  {
+    goal: "delegate file flow",
+    sessionId: delegateTaskSessionId,
+    toolsets: ["file"],
+    steps: [
+      { tool: "file.write", path: delegateFilePath, content: "delegate-needle" },
+      { tool: "file.search", path: workRoot, query: "delegate-needle", maxResults: 5 },
+      { tool: "file.patch", path: delegateFilePath, oldText: "delegate-needle", newText: "delegate-patched" },
+      { tool: "file.read", path: delegateFilePath },
+    ],
+  },
+  "delegate-task",
+);
+assert.equal(delegateTaskResult.ok, true);
+assert.equal(delegateTaskResult.kind, "delegate_task");
+assert.equal(delegateTaskResult.count, 1);
+assert.equal(delegateTaskResult.results[0].status, "completed");
+assert.equal(delegateTaskResult.results[0].successCount, 4);
+assert.match(JSON.stringify(delegateTaskResult.results[0].events), /task\.start/);
+assert.match(JSON.stringify(delegateTaskResult.results[0].events), /delegate file flow/);
+assert.match(JSON.stringify(delegateTaskResult.results[0].events), /tool\.call\.start/);
+assert.match(JSON.stringify(delegateTaskResult.results[0].steps), /delegate-patched/);
+const delegateTaskId = delegateTaskResult.results[0].taskId;
+assert.match(delegateTaskId, /^delegate-task-/);
+
+const taskListResult = await rpc(
+  "tasks.list",
+  {
+    sessionId: delegateTaskSessionId,
+    limit: 10,
+  },
+  "task-list",
+);
+assert.equal(taskListResult.count, 1);
+assert.equal(taskListResult.items[0].taskId, delegateTaskId);
+assert.equal(taskListResult.items[0].eventCount, 10);
+
+const taskGetResult = await rpc(
+  "tasks.get",
+  {
+    taskId: delegateTaskId,
+  },
+  "task-get",
+);
+assert.equal(taskGetResult.task.taskId, delegateTaskId);
+assert.equal(taskGetResult.task.status, "completed");
+assert.equal(taskGetResult.task.eventCount, 10);
+assert.equal(taskGetResult.latestEventId > 0, true);
+assert.match(taskGetResult.task.goal, /delegate file flow/);
+
+const taskEventsResult = await rpc(
+  "tasks.events",
+  {
+    taskId: delegateTaskId,
+    limit: 20,
+  },
+  "task-events",
+);
+assert.equal(taskEventsResult.count, 10);
+assert.equal(taskEventsResult.items[0].taskId, delegateTaskId);
+assert.equal(taskEventsResult.cursor > 0, true);
+assert.match(JSON.stringify(taskEventsResult.items), /task\.start/);
+assert.match(JSON.stringify(taskEventsResult.items), /task\.complete/);
+assert.match(JSON.stringify(taskEventsResult.items), /delegate-patched/);
+
+const taskSearchResult = await rpc(
+  "tasks.search",
+  {
+    query: "delegate file flow",
+    sessionId: delegateTaskSessionId,
+    limit: 5,
+  },
+  "task-search",
+);
+assert.equal(taskSearchResult.count, 1);
+assert.equal(taskSearchResult.items[0].taskId, delegateTaskId);
 
 const searchResult = await rpc(
   "file.search",
@@ -200,6 +403,7 @@ let executeCodeZigResult = null;
 let processListResult = null;
 let processWaitResult = null;
 let processKillWaitResult = null;
+let delegateTaskApprovalResult = null;
 
 if (requireHostedProcessSupport) {
   assert.ok(zigBinary, "ZAR_ZIG_BIN is required for execute_code zig smoke");
@@ -270,6 +474,33 @@ if (requireHostedProcessSupport) {
   assert.equal(executeCodeZigResult.ok, true);
   assert.equal(executeCodeZigResult.language, "zig");
   assert.match(`${executeCodeZigResult.stdout}\n${executeCodeZigResult.stderr}`, /execute-code-zig/);
+
+  delegateTaskApprovalResult = await rpc(
+    "delegate_task",
+    {
+      goal: "delegate approval flow",
+      sessionId: `${sessionId}-delegate-approval`,
+      toolsets: ["terminal"],
+      steps: [
+        {
+          tool: "execute_code",
+          nodeId: approvalPromptNodeId,
+          language: "javascript",
+          runtimePath: nodeBinary,
+          cwd: workRoot,
+          code: 'console.log("delegate-approval-js")',
+        },
+      ],
+    },
+    "delegate-task-approval",
+  );
+  assert.equal(delegateTaskApprovalResult.ok, false);
+  assert.equal(delegateTaskApprovalResult.kind, "delegate_task");
+  assert.equal(delegateTaskApprovalResult.results[0].status, "blocked");
+  assert.equal(delegateTaskApprovalResult.results[0].approvalRequiredCount, 1);
+  assert.equal(delegateTaskApprovalResult.results[0].steps[0].state, "approval_required");
+  assert.match(JSON.stringify(delegateTaskApprovalResult.results[0].events), /task\.start/);
+  assert.match(JSON.stringify(delegateTaskApprovalResult.results[0].events), /delegate approval flow/);
 
   const processStartResult = await rpc(
     "process.start",
@@ -408,7 +639,10 @@ console.log(JSON.stringify({
   zigBinary,
   verified: {
     toolsCatalog: [
+      "tools.catalog",
+      "acp.describe",
       "execute_code",
+      "delegate_task",
       "file.search",
       "file.patch",
       "web.search",
@@ -419,12 +653,41 @@ console.log(JSON.stringify({
       "process.read",
       "process.wait",
       "process.kill",
+      "sessions.history",
       "sessions.search",
+      "tasks.list",
+      "tasks.get",
+      "tasks.events",
+      "tasks.search",
     ],
+    toolsCatalogRuntimeTarget: catalog.runtimeTarget,
+    toolsCatalogHasKinds: /"kind":"execute"/.test(catalogJson),
+    toolsCatalogHasApprovalMetadata: /"approvalSensitive":true/.test(catalogJson),
+    toolsCatalogHasBaremetalMetadata: /"supportedOnBaremetal":false/.test(catalogJson),
+    toolsCatalogHasCurrentRuntimeMetadata: /"currentRuntimeSupported":true/.test(catalogJson),
+    acpDescribeSchemaVersion: acpDescribeResult.schemaVersion,
+    acpDescribeEventsMethod: acpDescribeResult.eventDelivery.eventsMethod,
+    acpDescribeReceiptsMethod: acpDescribeResult.eventDelivery.receiptsMethod,
+    acpDescribeTaskReceipts: acpDescribeResult.capabilities.taskReceipts,
+    acpDescribeTaskEvents: acpDescribeResult.capabilities.taskEvents,
+    globalApprovalMode: approvalsAllowResult.approvals.mode,
+    approvalPromptState: approvalRequiredResult.state,
+    approvalApprovedOk: approvalGrantedResult.ok,
+    approvalDeniedState: approvalDeniedResult.state,
     hostedProcessSupportRequired: requireHostedProcessSupport,
     executeCodeJsOk: executeCodeJsResult?.ok ?? null,
     executeCodeZigOk: executeCodeZigResult?.ok ?? null,
     executeCodeJsArtifact: executeCodeJsArtifactRead?.content ?? null,
+    delegateTaskOk: delegateTaskResult.ok,
+    delegateTaskId,
+    delegateTaskStepCount: delegateTaskResult.results[0]?.steps?.length ?? null,
+    delegateTaskEventCount: delegateTaskResult.results[0]?.events?.length ?? null,
+    delegateTaskApprovalState: delegateTaskApprovalResult?.results?.[0]?.steps?.[0]?.state ?? null,
+    taskListCount: taskListResult.count,
+    taskGetLatestEventId: taskGetResult.latestEventId,
+    taskEventsCount: taskEventsResult.count,
+    taskEventsCursor: taskEventsResult.cursor,
+    taskSearchCount: taskSearchResult.count,
     fileWrite: writeResult.ok,
     fileSearchCount: searchResult.count,
     filePatchApplied: patchResult.applied,

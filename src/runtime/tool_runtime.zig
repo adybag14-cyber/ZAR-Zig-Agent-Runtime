@@ -4,8 +4,11 @@ const config = @import("../config.zig");
 const pal = @import("../pal/mod.zig");
 const envelope = @import("../protocol/envelope.zig");
 const state = @import("state.zig");
+const task_receipts = @import("task_receipts.zig");
 const process_registry = @import("process_registry.zig");
 const web_tools = @import("web_tools.zig");
+const tool_contract = @import("tool_contract.zig");
+const delegate_task = @import("../gateway/delegate_task.zig");
 const time_util = @import("../util/time.zig");
 
 pub const InputError = error{
@@ -16,6 +19,7 @@ pub const InputError = error{
     MissingQuery,
     MissingOldText,
     MissingSessionId,
+    MissingTaskId,
     MissingProcessId,
     MissingUrl,
     MissingLanguage,
@@ -26,6 +30,7 @@ pub const InputError = error{
     PathTraversalDetected,
     PathSymlinkDisallowed,
     SessionNotFound,
+    TaskNotFound,
     ProcessNotFound,
     ProcessManagementUnsupported,
     WebFetchUnsupported,
@@ -310,10 +315,159 @@ pub const ProcessStatusResult = struct {
     }
 };
 
+pub const SessionHistoryItem = struct {
+    sessionId: []const u8,
+    createdAtMs: i64,
+    updatedAtMs: i64,
+    lastMessage: []const u8,
+
+    pub fn deinit(self: *SessionHistoryItem, allocator: std.mem.Allocator) void {
+        allocator.free(self.sessionId);
+        allocator.free(self.lastMessage);
+    }
+};
+
+pub const SessionHistoryResult = struct {
+    sessionId: []const u8,
+    count: usize,
+    items: []SessionHistoryItem,
+
+    pub fn deinit(self: *SessionHistoryResult, allocator: std.mem.Allocator) void {
+        allocator.free(self.sessionId);
+        for (self.items) |*item| item.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
+pub const SessionSearchItem = struct {
+    sessionId: []const u8,
+    createdAtMs: i64,
+    updatedAtMs: i64,
+    lastMessage: []const u8,
+    preview: []const u8,
+    score: f64,
+
+    pub fn deinit(self: *SessionSearchItem, allocator: std.mem.Allocator) void {
+        allocator.free(self.sessionId);
+        allocator.free(self.lastMessage);
+        allocator.free(self.preview);
+    }
+};
+
+pub const SessionSearchResult = struct {
+    query: []const u8,
+    count: usize,
+    items: []SessionSearchItem,
+    neighborCount: usize,
+    neighbors: []SessionSearchItem,
+
+    pub fn deinit(self: *SessionSearchResult, allocator: std.mem.Allocator) void {
+        allocator.free(self.query);
+        for (self.items) |*item| item.deinit(allocator);
+        allocator.free(self.items);
+        for (self.neighbors) |*item| item.deinit(allocator);
+        allocator.free(self.neighbors);
+    }
+};
+
+pub const TaskListItem = struct {
+    taskId: []const u8,
+    sessionId: []const u8,
+    status: []const u8,
+    goal: []const u8,
+    summary: []const u8,
+    createdAtMs: i64,
+    updatedAtMs: i64,
+    totalSteps: usize,
+    completedSteps: usize,
+    successCount: usize,
+    failureCount: usize,
+    approvalRequiredCount: usize,
+    eventCount: usize,
+};
+
+pub const TaskListResult = struct {
+    sessionId: []const u8,
+    status: []const u8,
+    count: usize,
+    items: []TaskListItem,
+
+    pub fn deinit(self: *TaskListResult, allocator: std.mem.Allocator) void {
+        allocator.free(self.sessionId);
+        allocator.free(self.status);
+        allocator.free(self.items);
+    }
+};
+
+pub const TaskGetResult = struct {
+    task: TaskListItem,
+    context: []const u8,
+    cwd: []const u8,
+    latestEventId: u64,
+
+    pub fn deinit(self: *TaskGetResult, allocator: std.mem.Allocator) void {
+        allocator.free(self.context);
+        allocator.free(self.cwd);
+    }
+};
+
+pub const TaskEventItem = struct {
+    eventId: u64,
+    taskId: []const u8,
+    sessionId: []const u8,
+    atMs: i64,
+    kind: []const u8,
+    stepIndex: ?usize = null,
+    toolCallId: ?[]const u8 = null,
+    tool: ?[]const u8 = null,
+    status: ?[]const u8 = null,
+    preview: ?[]const u8 = null,
+};
+
+pub const TaskEventsResult = struct {
+    taskId: []const u8,
+    sessionId: []const u8,
+    count: usize,
+    cursor: u64,
+    hasMore: bool,
+    items: []TaskEventItem,
+
+    pub fn deinit(self: *TaskEventsResult, allocator: std.mem.Allocator) void {
+        allocator.free(self.taskId);
+        allocator.free(self.sessionId);
+        allocator.free(self.items);
+    }
+};
+
+pub const TaskSearchItem = struct {
+    taskId: []const u8,
+    sessionId: []const u8,
+    status: []const u8,
+    goal: []const u8,
+    summary: []const u8,
+    score: f64,
+    updatedAtMs: i64,
+};
+
+pub const TaskSearchResult = struct {
+    query: []const u8,
+    sessionId: []const u8,
+    count: usize,
+    items: []TaskSearchItem,
+
+    pub fn deinit(self: *TaskSearchResult, allocator: std.mem.Allocator) void {
+        allocator.free(self.query);
+        allocator.free(self.sessionId);
+        allocator.free(self.items);
+    }
+};
+
 pub const Snapshot = struct {
     statePath: []const u8,
     persisted: bool,
     sessions: usize,
+    tasks: usize,
+    taskEvents: usize,
     queueDepth: usize,
     leasedJobs: usize,
     recoveryBacklog: usize,
@@ -369,6 +523,8 @@ pub const ToolRuntime = struct {
             .statePath = runtime_snapshot.statePath,
             .persisted = runtime_snapshot.persisted,
             .sessions = runtime_snapshot.sessions,
+            .tasks = runtime_snapshot.tasks,
+            .taskEvents = runtime_snapshot.taskEvents,
             .queueDepth = runtime_snapshot.pendingJobs,
             .leasedJobs = runtime_snapshot.leasedJobs,
             .recoveryBacklog = runtime_snapshot.recoveryBacklog,
@@ -379,11 +535,13 @@ pub const ToolRuntime = struct {
         const runtime_snapshot = self.snapshot();
         return std.fmt.allocPrint(
             allocator,
-            "state_path={s}\npersisted={d}\nsessions={d}\nqueue_depth={d}\nleased_jobs={d}\nrecovery_backlog={d}\n",
+            "state_path={s}\npersisted={d}\nsessions={d}\ntasks={d}\ntask_events={d}\nqueue_depth={d}\nleased_jobs={d}\nrecovery_backlog={d}\n",
             .{
                 runtime_snapshot.statePath,
                 @intFromBool(runtime_snapshot.persisted),
                 runtime_snapshot.sessions,
+                runtime_snapshot.tasks,
+                runtime_snapshot.taskEvents,
                 runtime_snapshot.queueDepth,
                 runtime_snapshot.leasedJobs,
                 runtime_snapshot.recoveryBacklog,
@@ -671,6 +829,411 @@ pub const ToolRuntime = struct {
         return self.processKill(allocator, process_id);
     }
 
+    fn sessionsHistory(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        scope: []const u8,
+        limit: usize,
+    ) !SessionHistoryResult {
+        var items: std.ArrayList(SessionHistoryItem) = .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+
+        var iterator = self.runtime_state.sessions.iterator();
+        while (iterator.next()) |entry| {
+            const session_id = entry.key_ptr.*;
+            const session = entry.value_ptr.*;
+            if (scope.len > 0 and !std.mem.eql(u8, session_id, scope)) continue;
+            try items.append(allocator, .{
+                .sessionId = try allocator.dupe(u8, session_id),
+                .createdAtMs = session.created_unix_ms,
+                .updatedAtMs = session.updated_unix_ms,
+                .lastMessage = try allocator.dupe(u8, session.last_message),
+            });
+        }
+
+        std.mem.sort(SessionHistoryItem, items.items, {}, struct {
+            fn lessThan(_: void, lhs: SessionHistoryItem, rhs: SessionHistoryItem) bool {
+                if (lhs.updatedAtMs == rhs.updatedAtMs) return std.mem.lessThan(u8, lhs.sessionId, rhs.sessionId);
+                return lhs.updatedAtMs > rhs.updatedAtMs;
+            }
+        }.lessThan);
+
+        const capped_limit = if (limit == 0) 50 else limit;
+        if (items.items.len > capped_limit) {
+            for (items.items[capped_limit..]) |*item| item.deinit(allocator);
+            items.items.len = capped_limit;
+        }
+
+        return .{
+            .sessionId = try allocator.dupe(u8, scope),
+            .count = items.items.len,
+            .items = try items.toOwnedSlice(allocator),
+        };
+    }
+
+    fn sessionsHistoryFromFrame(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        frame_json: []const u8,
+    ) !SessionHistoryResult {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+
+        const params = try getParamsObject(parsed.value);
+        const scope = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "sessionId", "scope" }, ""), " \t\r\n");
+        const limit = @as(usize, @intCast(getOptionalU32(params, "limit", 50)));
+        return self.sessionsHistory(allocator, scope, limit);
+    }
+
+    fn sessionsSearch(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        query: []const u8,
+        limit: usize,
+    ) !SessionSearchResult {
+        var items: std.ArrayList(SessionSearchItem) = .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+
+        var iterator = self.runtime_state.sessions.iterator();
+        while (iterator.next()) |entry| {
+            const session_id = entry.key_ptr.*;
+            const session = entry.value_ptr.*;
+            const score = sessionSearchScore(session_id, session.last_message, query);
+            if (score <= 0) continue;
+            try items.append(allocator, .{
+                .sessionId = try allocator.dupe(u8, session_id),
+                .createdAtMs = session.created_unix_ms,
+                .updatedAtMs = session.updated_unix_ms,
+                .lastMessage = try allocator.dupe(u8, session.last_message),
+                .preview = try allocator.dupe(u8, previewSlice(session.last_message)),
+                .score = score,
+            });
+        }
+
+        std.mem.sort(SessionSearchItem, items.items, {}, struct {
+            fn lessThan(_: void, lhs: SessionSearchItem, rhs: SessionSearchItem) bool {
+                if (lhs.score == rhs.score) {
+                    if (lhs.updatedAtMs == rhs.updatedAtMs) return std.mem.lessThan(u8, lhs.sessionId, rhs.sessionId);
+                    return lhs.updatedAtMs > rhs.updatedAtMs;
+                }
+                return lhs.score > rhs.score;
+            }
+        }.lessThan);
+
+        const capped_limit = if (limit == 0) 5 else limit;
+        if (items.items.len > capped_limit) {
+            for (items.items[capped_limit..]) |*item| item.deinit(allocator);
+            items.items.len = capped_limit;
+        }
+
+        return .{
+            .query = try allocator.dupe(u8, query),
+            .count = items.items.len,
+            .items = try items.toOwnedSlice(allocator),
+            .neighborCount = 0,
+            .neighbors = try allocator.alloc(SessionSearchItem, 0),
+        };
+    }
+
+    fn sessionsSearchFromFrame(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        frame_json: []const u8,
+    ) !SessionSearchResult {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+
+        const params = try getParamsObject(parsed.value);
+        const query = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "query", "text" }, ""), " \t\r\n");
+        if (query.len == 0) return error.MissingQuery;
+        const limit = @as(usize, @intCast(getOptionalU32(params, "limit", 5)));
+        return self.sessionsSearch(allocator, query, limit);
+    }
+
+    fn taskEventCountForTask(self: *const ToolRuntime, task_id: []const u8) usize {
+        var count: usize = 0;
+        for (self.runtime_state.task_events.items) |entry| {
+            if (std.mem.eql(u8, entry.task_id, task_id)) count += 1;
+        }
+        return count;
+    }
+
+    fn latestTaskEventId(self: *const ToolRuntime, task_id: []const u8) u64 {
+        var latest: u64 = 0;
+        for (self.runtime_state.task_events.items) |entry| {
+            if (!std.mem.eql(u8, entry.task_id, task_id)) continue;
+            if (entry.event_id > latest) latest = entry.event_id;
+        }
+        return latest;
+    }
+
+    fn buildTaskListItem(self: *const ToolRuntime, receipt: *const state.TaskReceipt) TaskListItem {
+        return .{
+            .taskId = receipt.task_id,
+            .sessionId = receipt.session_id,
+            .status = receipt.status,
+            .goal = receipt.goal,
+            .summary = receipt.summary,
+            .createdAtMs = receipt.created_unix_ms,
+            .updatedAtMs = receipt.updated_unix_ms,
+            .totalSteps = receipt.total_steps,
+            .completedSteps = receipt.completed_steps,
+            .successCount = receipt.success_count,
+            .failureCount = receipt.failure_count,
+            .approvalRequiredCount = receipt.approval_required_count,
+            .eventCount = self.taskEventCountForTask(receipt.task_id),
+        };
+    }
+
+    fn tasksList(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        session_scope: []const u8,
+        status_filter: []const u8,
+        limit: usize,
+    ) !TaskListResult {
+        var items: std.ArrayList(TaskListItem) = .empty;
+        defer items.deinit(allocator);
+
+        for (self.runtime_state.task_receipts.items) |*entry| {
+            if (session_scope.len > 0 and !std.mem.eql(u8, entry.session_id, session_scope)) continue;
+            if (status_filter.len > 0 and !std.ascii.eqlIgnoreCase(entry.status, status_filter)) continue;
+            try items.append(allocator, self.buildTaskListItem(entry));
+        }
+
+        std.mem.sort(TaskListItem, items.items, {}, struct {
+            fn lessThan(_: void, lhs: TaskListItem, rhs: TaskListItem) bool {
+                if (lhs.updatedAtMs == rhs.updatedAtMs) return std.mem.lessThan(u8, lhs.taskId, rhs.taskId);
+                return lhs.updatedAtMs > rhs.updatedAtMs;
+            }
+        }.lessThan);
+
+        const capped_limit = if (limit == 0) 25 else limit;
+        if (items.items.len > capped_limit) items.items.len = capped_limit;
+
+        return .{
+            .sessionId = try allocator.dupe(u8, session_scope),
+            .status = try allocator.dupe(u8, status_filter),
+            .count = items.items.len,
+            .items = try items.toOwnedSlice(allocator),
+        };
+    }
+
+    fn tasksListFromFrame(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        frame_json: []const u8,
+    ) !TaskListResult {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+
+        const params = try getParamsObject(parsed.value);
+        const session_scope = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "sessionId", "scope" }, ""), " \t\r\n");
+        const status_filter = std.mem.trim(u8, getOptionalString(params, "status", ""), " \t\r\n");
+        const limit = @as(usize, @intCast(getOptionalU32(params, "limit", 25)));
+        return self.tasksList(allocator, session_scope, status_filter, limit);
+    }
+
+    fn tasksGet(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        task_id: []const u8,
+    ) !TaskGetResult {
+        const receipt = self.runtime_state.getTaskReceipt(task_id) orelse return error.TaskNotFound;
+        return .{
+            .task = .{
+                .taskId = receipt.task_id,
+                .sessionId = receipt.session_id,
+                .status = receipt.status,
+                .goal = receipt.goal,
+                .summary = receipt.summary,
+                .createdAtMs = receipt.created_unix_ms,
+                .updatedAtMs = receipt.updated_unix_ms,
+                .totalSteps = receipt.total_steps,
+                .completedSteps = receipt.completed_steps,
+                .successCount = receipt.success_count,
+                .failureCount = receipt.failure_count,
+                .approvalRequiredCount = receipt.approval_required_count,
+                .eventCount = self.taskEventCountForTask(receipt.task_id),
+            },
+            .context = try allocator.dupe(u8, receipt.context),
+            .cwd = try allocator.dupe(u8, receipt.cwd),
+            .latestEventId = self.latestTaskEventId(receipt.task_id),
+        };
+    }
+
+    fn tasksGetFromFrame(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        frame_json: []const u8,
+    ) !TaskGetResult {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+
+        const params = try getParamsObject(parsed.value);
+        const task_id = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "taskId", "id" }, ""), " \t\r\n");
+        if (task_id.len == 0) return error.MissingTaskId;
+        return self.tasksGet(allocator, task_id);
+    }
+
+    fn tasksEvents(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        task_id: []const u8,
+        session_scope: []const u8,
+        after_event_id: u64,
+        limit: usize,
+    ) !TaskEventsResult {
+        if (task_id.len == 0 and session_scope.len == 0) return error.InvalidParamsFrame;
+
+        var items: std.ArrayList(TaskEventItem) = .empty;
+        defer items.deinit(allocator);
+
+        const capped_limit = if (limit == 0) 100 else limit;
+        var cursor = after_event_id;
+        var has_more = false;
+
+        for (self.runtime_state.task_events.items) |entry| {
+            if (task_id.len > 0 and !std.mem.eql(u8, entry.task_id, task_id)) continue;
+            if (session_scope.len > 0 and !std.mem.eql(u8, entry.session_id, session_scope)) continue;
+            if (entry.event_id <= after_event_id) continue;
+
+            if (items.items.len < capped_limit) {
+                try items.append(allocator, .{
+                    .eventId = entry.event_id,
+                    .taskId = entry.task_id,
+                    .sessionId = entry.session_id,
+                    .atMs = entry.at_unix_ms,
+                    .kind = entry.kind,
+                    .stepIndex = entry.step_index,
+                    .toolCallId = entry.tool_call_id,
+                    .tool = entry.tool,
+                    .status = entry.status,
+                    .preview = entry.preview,
+                });
+                cursor = entry.event_id;
+            } else {
+                has_more = true;
+                break;
+            }
+        }
+
+        return .{
+            .taskId = try allocator.dupe(u8, task_id),
+            .sessionId = try allocator.dupe(u8, session_scope),
+            .count = items.items.len,
+            .cursor = cursor,
+            .hasMore = has_more,
+            .items = try items.toOwnedSlice(allocator),
+        };
+    }
+
+    fn tasksEventsFromFrame(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        frame_json: []const u8,
+    ) !TaskEventsResult {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+
+        const params = try getParamsObject(parsed.value);
+        const task_id = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "taskId", "id" }, ""), " \t\r\n");
+        const session_scope = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "sessionId", "scope" }, ""), " \t\r\n");
+        const after_event_id = getOptionalU64(params, "afterEventId", getOptionalU64(params, "cursor", 0));
+        const limit = @as(usize, @intCast(getOptionalU32(params, "limit", 100)));
+        return self.tasksEvents(allocator, task_id, session_scope, after_event_id, limit);
+    }
+
+    fn tasksSearchScore(receipt: *const state.TaskReceipt, query: []const u8) f64 {
+        const trimmed = std.mem.trim(u8, query, " \t\r\n");
+        if (trimmed.len == 0) return 0;
+
+        var score: f64 = 0;
+        if (std.ascii.indexOfIgnoreCase(receipt.goal, trimmed) != null) score += 3.0;
+        if (std.ascii.indexOfIgnoreCase(receipt.summary, trimmed) != null) score += 2.5;
+        if (std.ascii.indexOfIgnoreCase(receipt.context, trimmed) != null) score += 2.0;
+        if (std.ascii.indexOfIgnoreCase(receipt.session_id, trimmed) != null) score += 1.0;
+        if (std.ascii.indexOfIgnoreCase(receipt.status, trimmed) != null) score += 0.5;
+
+        var token_it = std.mem.tokenizeAny(u8, trimmed, " \t\r\n");
+        while (token_it.next()) |token| {
+            if (token.len == 0 or std.mem.eql(u8, token, trimmed)) continue;
+            if (std.ascii.indexOfIgnoreCase(receipt.goal, token) != null) score += 0.75;
+            if (std.ascii.indexOfIgnoreCase(receipt.summary, token) != null) score += 0.5;
+            if (std.ascii.indexOfIgnoreCase(receipt.context, token) != null) score += 0.25;
+            if (std.ascii.indexOfIgnoreCase(receipt.session_id, token) != null) score += 0.25;
+        }
+        return score;
+    }
+
+    fn tasksSearch(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        query: []const u8,
+        session_scope: []const u8,
+        limit: usize,
+    ) !TaskSearchResult {
+        var items: std.ArrayList(TaskSearchItem) = .empty;
+        defer items.deinit(allocator);
+
+        for (self.runtime_state.task_receipts.items) |*entry| {
+            if (session_scope.len > 0 and !std.mem.eql(u8, entry.session_id, session_scope)) continue;
+            const score = tasksSearchScore(entry, query);
+            if (score <= 0) continue;
+            try items.append(allocator, .{
+                .taskId = entry.task_id,
+                .sessionId = entry.session_id,
+                .status = entry.status,
+                .goal = entry.goal,
+                .summary = entry.summary,
+                .score = score,
+                .updatedAtMs = entry.updated_unix_ms,
+            });
+        }
+
+        std.mem.sort(TaskSearchItem, items.items, {}, struct {
+            fn lessThan(_: void, lhs: TaskSearchItem, rhs: TaskSearchItem) bool {
+                if (lhs.score == rhs.score) {
+                    if (lhs.updatedAtMs == rhs.updatedAtMs) return std.mem.lessThan(u8, lhs.taskId, rhs.taskId);
+                    return lhs.updatedAtMs > rhs.updatedAtMs;
+                }
+                return lhs.score > rhs.score;
+            }
+        }.lessThan);
+
+        const capped_limit = if (limit == 0) 10 else limit;
+        if (items.items.len > capped_limit) items.items.len = capped_limit;
+
+        return .{
+            .query = try allocator.dupe(u8, query),
+            .sessionId = try allocator.dupe(u8, session_scope),
+            .count = items.items.len,
+            .items = try items.toOwnedSlice(allocator),
+        };
+    }
+
+    fn tasksSearchFromFrame(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        frame_json: []const u8,
+    ) !TaskSearchResult {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+
+        const params = try getParamsObject(parsed.value);
+        const query = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "query", "text" }, ""), " \t\r\n");
+        if (query.len == 0) return error.MissingQuery;
+        const session_scope = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "sessionId", "scope" }, ""), " \t\r\n");
+        const limit = @as(usize, @intCast(getOptionalU32(params, "limit", 10)));
+        return self.tasksSearch(allocator, query, session_scope, limit);
+    }
+
     pub fn handleRpcFrameAlloc(
         self: *ToolRuntime,
         allocator: std.mem.Allocator,
@@ -683,6 +1246,76 @@ pub const ToolRuntime = struct {
             });
         };
         defer request.deinit(allocator);
+
+        if (std.mem.eql(u8, request.method, "acp.describe")) {
+            const tools = tool_contract.runtimeCatalogEntries(builtin.os.tag);
+            const distribution_args = [_][]const u8{"--serve"};
+            return envelope.encodeResult(allocator, request.id, .{
+                .schemaVersion = 1,
+                .agent = .{
+                    .name = "openclaw-zig",
+                    .displayName = "ZAR / OpenClaw Zig Runtime",
+                    .description = "Hermes-guided ACP bridge metadata, delegated task receipts, and polling-based event delivery for the Zig runtime.",
+                    .distribution = .{
+                        .type = "command",
+                        .command = "openclaw-zig",
+                        .args = distribution_args[0..],
+                    },
+                },
+                .runtimeTarget = tool_contract.currentRuntimeTargetLabel(builtin.os.tag),
+                .eventDelivery = .{
+                    .mode = "poll",
+                    .eventsMethod = "tasks.events",
+                    .receiptsMethod = "tasks.get",
+                },
+                .capabilities = .{
+                    .toolsCatalog = true,
+                    .delegateTask = true,
+                    .taskReceipts = true,
+                    .taskEvents = true,
+                    .sessionHistory = true,
+                    .sessionSearch = true,
+                    .approvals = true,
+                    .runtimeSupportMetadata = true,
+                },
+                .tools = tools,
+                .count = tools.len,
+            });
+        }
+
+        if (std.mem.eql(u8, request.method, "tools.catalog")) {
+            const tools = tool_contract.runtimeCatalogEntries(builtin.os.tag);
+            return envelope.encodeResult(allocator, request.id, .{
+                .runtimeTarget = tool_contract.currentRuntimeTargetLabel(builtin.os.tag),
+                .tools = tools,
+                .count = tools.len,
+            });
+        }
+
+        if (std.mem.eql(u8, request.method, "delegate_task")) {
+            var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+            defer parsed.deinit();
+            const params = getParamsObjectOrNull(parsed.value);
+            const delegate_invoke = struct {
+                fn call(runtime: *ToolRuntime, allocator_inner: std.mem.Allocator, frame_inner: []const u8) anyerror![]u8 {
+                    return runtime.handleRpcFrameAlloc(allocator_inner, frame_inner);
+                }
+            }.call;
+            var delegate_result = delegate_task.run(allocator, params, self, delegate_invoke) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{
+                    .code = rpcErrorCode(err),
+                    .message = @errorName(err),
+                });
+            };
+            defer delegate_result.deinit(allocator);
+            task_receipts.recordBatch(&self.runtime_state, &delegate_result) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{
+                    .code = rpcErrorCode(err),
+                    .message = @errorName(err),
+                });
+            };
+            return envelope.encodeResult(allocator, request.id, delegate_result);
+        }
 
         if (std.mem.eql(u8, request.method, "exec.run")) {
             var exec_result = self.execRunFromFrame(allocator, frame_json) catch |err| {
@@ -1006,12 +1639,80 @@ pub const ToolRuntime = struct {
             });
         }
 
+        if (std.mem.eql(u8, request.method, "sessions.history")) {
+            var history_result = self.sessionsHistoryFromFrame(allocator, frame_json) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{
+                    .code = rpcErrorCode(err),
+                    .message = @errorName(err),
+                });
+            };
+            defer history_result.deinit(allocator);
+            return envelope.encodeResult(allocator, request.id, history_result);
+        }
+
+        if (std.mem.eql(u8, request.method, "sessions.search")) {
+            var search_result = self.sessionsSearchFromFrame(allocator, frame_json) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{
+                    .code = rpcErrorCode(err),
+                    .message = @errorName(err),
+                });
+            };
+            defer search_result.deinit(allocator);
+            return envelope.encodeResult(allocator, request.id, search_result);
+        }
+
+        if (std.mem.eql(u8, request.method, "tasks.list")) {
+            var list_result = self.tasksListFromFrame(allocator, frame_json) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{
+                    .code = rpcErrorCode(err),
+                    .message = @errorName(err),
+                });
+            };
+            defer list_result.deinit(allocator);
+            return envelope.encodeResult(allocator, request.id, list_result);
+        }
+
+        if (std.mem.eql(u8, request.method, "tasks.get")) {
+            var get_result = self.tasksGetFromFrame(allocator, frame_json) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{
+                    .code = rpcErrorCode(err),
+                    .message = @errorName(err),
+                });
+            };
+            defer get_result.deinit(allocator);
+            return envelope.encodeResult(allocator, request.id, get_result);
+        }
+
+        if (std.mem.eql(u8, request.method, "tasks.events")) {
+            var events_result = self.tasksEventsFromFrame(allocator, frame_json) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{
+                    .code = rpcErrorCode(err),
+                    .message = @errorName(err),
+                });
+            };
+            defer events_result.deinit(allocator);
+            return envelope.encodeResult(allocator, request.id, events_result);
+        }
+
+        if (std.mem.eql(u8, request.method, "tasks.search")) {
+            var task_search_result = self.tasksSearchFromFrame(allocator, frame_json) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{
+                    .code = rpcErrorCode(err),
+                    .message = @errorName(err),
+                });
+            };
+            defer task_search_result.deinit(allocator);
+            return envelope.encodeResult(allocator, request.id, task_search_result);
+        }
+
         if (std.mem.eql(u8, request.method, "runtime.snapshot")) {
             const runtime_snapshot = self.snapshot();
             return envelope.encodeResult(allocator, request.id, .{
                 .statePath = runtime_snapshot.statePath,
                 .persisted = runtime_snapshot.persisted,
                 .sessions = runtime_snapshot.sessions,
+                .tasks = runtime_snapshot.tasks,
+                .taskEvents = runtime_snapshot.taskEvents,
                 .queueDepth = runtime_snapshot.queueDepth,
                 .leasedJobs = runtime_snapshot.leasedJobs,
                 .recoveryBacklog = runtime_snapshot.recoveryBacklog,
@@ -2164,6 +2865,23 @@ fn previewSlice(line: []const u8) []const u8 {
     return if (line.len <= max_preview_bytes) line else line[0..max_preview_bytes];
 }
 
+fn sessionSearchScore(session_id: []const u8, last_message: []const u8, query: []const u8) f64 {
+    const trimmed = std.mem.trim(u8, query, " \t\r\n");
+    if (trimmed.len == 0) return 0;
+
+    var score: f64 = 0;
+    if (std.ascii.indexOfIgnoreCase(last_message, trimmed) != null) score += 2.0;
+    if (std.ascii.indexOfIgnoreCase(session_id, trimmed) != null) score += 1.0;
+
+    var token_it = std.mem.tokenizeAny(u8, trimmed, " \t\r\n");
+    while (token_it.next()) |token| {
+        if (token.len == 0 or std.mem.eql(u8, token, trimmed)) continue;
+        if (std.ascii.indexOfIgnoreCase(last_message, token) != null) score += 0.5;
+        if (std.ascii.indexOfIgnoreCase(session_id, token) != null) score += 0.25;
+    }
+    return score;
+}
+
 fn countOccurrences(haystack: []const u8, needle: []const u8) usize {
     if (needle.len == 0) return 0;
     var count: usize = 0;
@@ -2258,6 +2976,13 @@ fn getParamsObject(frame: std.json.Value) !std.json.Value {
     return params_value;
 }
 
+fn getParamsObjectOrNull(frame: std.json.Value) ?std.json.ObjectMap {
+    if (frame != .object) return null;
+    const params_value = frame.object.get("params") orelse return null;
+    if (params_value != .object) return null;
+    return params_value.object;
+}
+
 fn getRequiredString(
     params: std.json.Value,
     key: []const u8,
@@ -2320,6 +3045,30 @@ fn getOptionalU32(
             const trimmed = std.mem.trim(u8, raw, " \t\r\n");
             if (trimmed.len > 0) {
                 const parsed = std.fmt.parseInt(u32, trimmed, 10) catch return default_value;
+                if (parsed > 0) return parsed;
+            }
+        },
+        else => {},
+    };
+    return default_value;
+}
+
+fn getOptionalU64(
+    params: std.json.Value,
+    key: []const u8,
+    default_value: u64,
+) u64 {
+    if (params.object.get(key)) |value| switch (value) {
+        .integer => |raw| {
+            if (raw > 0) return @as(u64, @intCast(raw));
+        },
+        .float => |raw| {
+            if (raw > 0 and raw <= @as(f64, @floatFromInt(std.math.maxInt(u64)))) return @as(u64, @intFromFloat(raw));
+        },
+        .string => |raw| {
+            const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+            if (trimmed.len > 0) {
+                const parsed = std.fmt.parseInt(u64, trimmed, 10) catch return default_value;
                 if (parsed > 0) return parsed;
             }
         },
@@ -2536,6 +3285,7 @@ fn rpcErrorCode(err: anyerror) i64 {
         error.MissingQuery,
         error.MissingOldText,
         error.MissingSessionId,
+        error.MissingTaskId,
         error.MissingProcessId,
         error.MissingUrl,
         error.MissingLanguage,
@@ -2550,6 +3300,7 @@ fn rpcErrorCode(err: anyerror) i64 {
         error.ProcessManagementUnsupported => -32012,
         error.WebFetchUnsupported => -32013,
         error.SessionNotFound => -32044,
+        error.TaskNotFound => -32046,
         error.ProcessNotFound => -32045,
         else => -32000,
     };
@@ -2943,13 +3694,111 @@ test "tool runtime RPC frame bridge serves file exec and session methods" {
     try std.testing.expect(std.mem.indexOf(u8, exec_response, "\"id\":\"rt-exec\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, exec_response, "rpc-bridge") != null);
 
+    const catalog_response = try runtime.handleRpcFrameAlloc(
+        allocator,
+        "{\"id\":\"rt-catalog\",\"method\":\"tools.catalog\",\"params\":{}}",
+    );
+    defer allocator.free(catalog_response);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"runtimeTarget\":\"hosted\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"tool\":\"delegate_task\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"tool\":\"sessions.history\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"supportedOnBaremetal\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"currentRuntimeSupported\":true") != null);
+
+    const acp_response = try runtime.handleRpcFrameAlloc(
+        allocator,
+        "{\"id\":\"rt-acp\",\"method\":\"acp.describe\",\"params\":{}}",
+    );
+    defer allocator.free(acp_response);
+    try std.testing.expect(std.mem.indexOf(u8, acp_response, "\"schemaVersion\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_response, "\"mode\":\"poll\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_response, "tasks.events") != null);
+
+    const delegate_test_path = try std.fs.path.join(allocator, &.{ root, "runtime-delegate.txt" });
+    defer allocator.free(delegate_test_path);
+    const json_delegate_test_path = try std.mem.replaceOwned(u8, allocator, delegate_test_path, "\\", "\\\\");
+    defer allocator.free(json_delegate_test_path);
+    const delegate_frame = try std.fmt.allocPrint(
+        allocator,
+        "{{\"id\":\"rt-delegate\",\"method\":\"delegate_task\",\"params\":{{\"goal\":\"runtime delegate file flow\",\"sessionId\":\"sess-rpc-delegate\",\"toolsets\":[\"file\"],\"steps\":[{{\"tool\":\"file.write\",\"path\":\"{s}\",\"content\":\"delegate-rpc-data\"}},{{\"tool\":\"file.read\",\"path\":\"{s}\"}}]}}}}",
+        .{ json_delegate_test_path, json_delegate_test_path },
+    );
+    defer allocator.free(delegate_frame);
+    const delegate_response = try runtime.handleRpcFrameAlloc(allocator, delegate_frame);
+    defer allocator.free(delegate_response);
+    try std.testing.expect(std.mem.indexOf(u8, delegate_response, "\"id\":\"rt-delegate\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, delegate_response, "\"status\":\"completed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, delegate_response, "delegate-rpc-data") != null);
+
+    var delegate_parsed = try std.json.parseFromSlice(std.json.Value, allocator, delegate_response, .{});
+    defer delegate_parsed.deinit();
+    const delegate_result = delegate_parsed.value.object.get("result").?;
+    const task_id = delegate_result.object.get("results").?.array.items[0].object.get("taskId").?.string;
+
+    const tasks_list_response = try runtime.handleRpcFrameAlloc(
+        allocator,
+        "{\"id\":\"rt-tasks-list\",\"method\":\"tasks.list\",\"params\":{\"sessionId\":\"sess-rpc-delegate\",\"limit\":10}}",
+    );
+    defer allocator.free(tasks_list_response);
+    try std.testing.expect(std.mem.indexOf(u8, tasks_list_response, task_id) != null);
+    try std.testing.expect(std.mem.indexOf(u8, tasks_list_response, "\"count\":1") != null);
+
+    const tasks_get_frame = try std.fmt.allocPrint(
+        allocator,
+        "{{\"id\":\"rt-task-get\",\"method\":\"tasks.get\",\"params\":{{\"taskId\":\"{s}\"}}}}",
+        .{task_id},
+    );
+    defer allocator.free(tasks_get_frame);
+    const tasks_get_response = try runtime.handleRpcFrameAlloc(allocator, tasks_get_frame);
+    defer allocator.free(tasks_get_response);
+    try std.testing.expect(std.mem.indexOf(u8, tasks_get_response, "\"latestEventId\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tasks_get_response, "runtime delegate file flow") != null);
+
+    const tasks_events_frame = try std.fmt.allocPrint(
+        allocator,
+        "{{\"id\":\"rt-task-events\",\"method\":\"tasks.events\",\"params\":{{\"taskId\":\"{s}\",\"limit\":10}}}}",
+        .{task_id},
+    );
+    defer allocator.free(tasks_events_frame);
+    const tasks_events_response = try runtime.handleRpcFrameAlloc(allocator, tasks_events_frame);
+    defer allocator.free(tasks_events_response);
+    try std.testing.expect(std.mem.indexOf(u8, tasks_events_response, "\"count\":6") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tasks_events_response, "task.start") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tasks_events_response, "task.complete") != null);
+
+    const tasks_search_response = try runtime.handleRpcFrameAlloc(
+        allocator,
+        "{\"id\":\"rt-task-search\",\"method\":\"tasks.search\",\"params\":{\"query\":\"runtime delegate\",\"sessionId\":\"sess-rpc-delegate\",\"limit\":5}}",
+    );
+    defer allocator.free(tasks_search_response);
+    try std.testing.expect(std.mem.indexOf(u8, tasks_search_response, task_id) != null);
+    try std.testing.expect(std.mem.indexOf(u8, tasks_search_response, "\"count\":1") != null);
+
+    const history_response = try runtime.handleRpcFrameAlloc(
+        allocator,
+        "{\"id\":\"rt-history\",\"method\":\"sessions.history\",\"params\":{\"sessionId\":\"sess-rpc-delegate\",\"limit\":10}}",
+    );
+    defer allocator.free(history_response);
+    try std.testing.expect(std.mem.indexOf(u8, history_response, "\"count\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, history_response, "\"sessionId\":\"sess-rpc-delegate\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, history_response, "file.read") != null);
+
+    const session_search_response = try runtime.handleRpcFrameAlloc(
+        allocator,
+        "{\"id\":\"rt-session-search\",\"method\":\"sessions.search\",\"params\":{\"query\":\"sess-rpc-delegate\",\"limit\":5}}",
+    );
+    defer allocator.free(session_search_response);
+    try std.testing.expect(std.mem.indexOf(u8, session_search_response, "\"sessionId\":\"sess-rpc-delegate\"") != null);
+
     const snapshot_response = try runtime.handleRpcFrameAlloc(
         allocator,
         "{\"id\":\"rt-snapshot\",\"method\":\"runtime.snapshot\",\"params\":{}}",
     );
     defer allocator.free(snapshot_response);
     try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"id\":\"rt-snapshot\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"sessions\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"sessions\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"tasks\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"taskEvents\":6") != null);
 
     const list_response = try runtime.handleRpcFrameAlloc(
         allocator,
