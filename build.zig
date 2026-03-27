@@ -40,6 +40,7 @@ pub fn build(b: *std.Build) void {
     const baremetal_i386_smp_priority_admission_probe = b.option(bool, "baremetal-i386-smp-priority-admission-probe", "Enable the BIOS firmware i386 scheduler live admission on carried-debt validation path in the freestanding image") orelse false;
     const baremetal_i386_smp_priority_aging_probe = b.option(bool, "baremetal-i386-smp-priority-aging-probe", "Enable the BIOS firmware i386 scheduler priority-aging validation path in the freestanding image") orelse false;
     const baremetal_i386_smp_priority_fairshare_probe = b.option(bool, "baremetal-i386-smp-priority-fairshare-probe", "Enable the BIOS firmware i386 scheduler broader priority-fairshare validation path in the freestanding image") orelse false;
+    const baremetal_i386_smp_priority_quota_probe = b.option(bool, "baremetal-i386-smp-priority-quota-probe", "Enable the BIOS firmware i386 scheduler bounded priority-quota validation path in the freestanding image") orelse false;
     const baremetal_e1000_probe = b.option(bool, "baremetal-e1000-probe", "Enable the E1000 Ethernet validation path in the freestanding image") orelse false;
     const baremetal_e1000_arp_probe = b.option(bool, "baremetal-e1000-arp-probe", "Enable the E1000 ARP validation path in the freestanding image") orelse false;
     const baremetal_e1000_ipv4_probe = b.option(bool, "baremetal-e1000-ipv4-probe", "Enable the E1000 IPv4 validation path in the freestanding image") orelse false;
@@ -216,6 +217,7 @@ pub fn build(b: *std.Build) void {
     baremetal_options.addOption(bool, "i386_smp_priority_admission_probe", baremetal_i386_smp_priority_admission_probe);
     baremetal_options.addOption(bool, "i386_smp_priority_aging_probe", baremetal_i386_smp_priority_aging_probe);
     baremetal_options.addOption(bool, "i386_smp_priority_fairshare_probe", baremetal_i386_smp_priority_fairshare_probe);
+    baremetal_options.addOption(bool, "i386_smp_priority_quota_probe", baremetal_i386_smp_priority_quota_probe);
     baremetal_options.addOption(bool, "e1000_probe", baremetal_e1000_probe);
     baremetal_options.addOption(bool, "e1000_arp_probe", baremetal_e1000_arp_probe);
     baremetal_options.addOption(bool, "e1000_ipv4_probe", baremetal_e1000_ipv4_probe);
