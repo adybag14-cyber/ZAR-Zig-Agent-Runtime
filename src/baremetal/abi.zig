@@ -29,6 +29,7 @@ pub const ap_failover_magic: u32 = 0x4f434146; // "OCAF"
 pub const ap_backfill_magic: u32 = 0x4f434142; // "OCAB"
 pub const ap_window_magic: u32 = 0x4f434157; // "OCAW"
 pub const ap_fairness_magic: u32 = 0x4f434652; // "OCFR"
+pub const ap_rebalance_magic: u32 = 0x4f435242; // "OCRB"
 
 pub const api_version: u16 = 2;
 
@@ -861,6 +862,59 @@ pub const BaremetalApFairnessEntry = extern struct {
     last_budget_ticks: u32,
     last_batch_accumulator: u32,
     total_accumulator: u32,
+    started: u8,
+    halted: u8,
+    slot_index: u8,
+    reserved0: u8,
+};
+
+pub const BaremetalApRebalanceState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    policy: u8,
+    exported_count: u8,
+    active_count: u8,
+    peak_active_slot_count: u8,
+    last_round_active_slot_count: u8,
+    requested_cpu_count: u16,
+    logical_processor_count: u16,
+    reserved0: u16,
+    bsp_apic_id: u32,
+    total_rebalanced_task_count: u32,
+    total_dispatch_count: u32,
+    total_accumulator: u32,
+    drain_round_count: u32,
+    last_round_rebalanced_task_count: u32,
+    initial_pending_task_count: u32,
+    last_pending_task_count: u32,
+    peak_pending_task_count: u32,
+    rebalance_task_budget: u32,
+    initial_min_slot_task_count: u32,
+    initial_max_slot_task_count: u32,
+    initial_task_balance_gap: u32,
+    final_min_slot_task_count: u32,
+    final_max_slot_task_count: u32,
+    final_task_balance_gap: u32,
+    total_compensated_task_count: u32,
+    last_round_compensated_task_count: u32,
+    last_start_slot_index: u32,
+};
+
+pub const BaremetalApRebalanceEntry = extern struct {
+    target_apic_id: u32,
+    dispatch_count: u32,
+    rebalanced_task_count: u32,
+    total_rebalanced_task_count: u32,
+    seed_task_count: u32,
+    final_task_count: u32,
+    last_task_id: u32,
+    last_priority: u32,
+    last_budget_ticks: u32,
+    last_batch_accumulator: u32,
+    total_accumulator: u32,
+    compensated_task_count: u32,
+    total_compensated_task_count: u32,
     started: u8,
     halted: u8,
     slot_index: u8,

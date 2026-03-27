@@ -71,6 +71,8 @@ var window_state: abi.BaremetalApWindowState = zeroWindowState();
 var window_entries: [max_ap_command_slots]abi.BaremetalApWindowEntry = std.mem.zeroes([max_ap_command_slots]abi.BaremetalApWindowEntry);
 var fairness_state: abi.BaremetalApFairnessState = zeroFairnessState();
 var fairness_entries: [max_ap_command_slots]abi.BaremetalApFairnessEntry = std.mem.zeroes([max_ap_command_slots]abi.BaremetalApFairnessEntry);
+var rebalance_state: abi.BaremetalApRebalanceState = zeroRebalanceState();
+var rebalance_entries: [max_ap_command_slots]abi.BaremetalApRebalanceEntry = std.mem.zeroes([max_ap_command_slots]abi.BaremetalApRebalanceEntry);
 var ownership_dispatch_round_count: u32 = 0;
 var ownership_policy: u8 = abi.ap_ownership_policy_round_robin;
 var ownership_peak_active_slot_count: u8 = 0;
@@ -116,6 +118,24 @@ var fairness_last_start_slot_index: u32 = 0;
 var fairness_min_slot_task_count: u32 = 0;
 var fairness_max_slot_task_count: u32 = 0;
 var fairness_task_balance_gap: u32 = 0;
+var rebalance_drain_round_count: u32 = 0;
+var rebalance_policy: u8 = abi.ap_ownership_policy_round_robin;
+var rebalance_peak_active_slot_count: u8 = 0;
+var rebalance_last_round_active_slot_count: u8 = 0;
+var rebalance_last_round_task_count: u32 = 0;
+var rebalance_initial_pending_task_count: u32 = 0;
+var rebalance_last_pending_task_count: u32 = 0;
+var rebalance_peak_pending_task_count: u32 = 0;
+var rebalance_task_budget: u32 = 0;
+var rebalance_initial_min_slot_task_count: u32 = 0;
+var rebalance_initial_max_slot_task_count: u32 = 0;
+var rebalance_initial_task_balance_gap: u32 = 0;
+var rebalance_final_min_slot_task_count: u32 = 0;
+var rebalance_final_max_slot_task_count: u32 = 0;
+var rebalance_final_task_balance_gap: u32 = 0;
+var rebalance_total_compensated_task_count: u32 = 0;
+var rebalance_last_round_compensated_task_count: u32 = 0;
+var rebalance_last_start_slot_index: u32 = 0;
 const max_backfill_seen_tasks: usize = 128;
 const OwnershipStorage = struct {
     var owned_task_ids: [max_ap_command_slots][max_task_batch_entries]u32 = [_][max_task_batch_entries]u32{[_]u32{0} ** max_task_batch_entries} ** max_ap_command_slots;
@@ -155,6 +175,21 @@ const FairnessStorage = struct {
     var last_budget_ticks: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var last_batch_accumulator: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var total_accumulator: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+};
+const RebalanceStorage = struct {
+    var task_ids: [max_ap_command_slots][max_task_batch_entries]u32 = [_][max_task_batch_entries]u32{[_]u32{0} ** max_task_batch_entries} ** max_ap_command_slots;
+    var task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var dispatch_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var total_rebalanced_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var seed_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var final_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_task_id: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_priority: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_budget_ticks: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_batch_accumulator: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var total_accumulator: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var compensated_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var total_compensated_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
 };
 const DiagnosticsState = struct {
     warm_reset_programmed: u8 = 0,
@@ -625,6 +660,41 @@ fn zeroFairnessState() abi.BaremetalApFairnessState {
     };
 }
 
+fn zeroRebalanceState() abi.BaremetalApRebalanceState {
+    return .{
+        .magic = abi.ap_rebalance_magic,
+        .api_version = abi.api_version,
+        .present = 0,
+        .policy = abi.ap_ownership_policy_round_robin,
+        .exported_count = 0,
+        .active_count = 0,
+        .peak_active_slot_count = 0,
+        .last_round_active_slot_count = 0,
+        .requested_cpu_count = 0,
+        .logical_processor_count = 0,
+        .reserved0 = 0,
+        .bsp_apic_id = 0,
+        .total_rebalanced_task_count = 0,
+        .total_dispatch_count = 0,
+        .total_accumulator = 0,
+        .drain_round_count = 0,
+        .last_round_rebalanced_task_count = 0,
+        .initial_pending_task_count = 0,
+        .last_pending_task_count = 0,
+        .peak_pending_task_count = 0,
+        .rebalance_task_budget = 0,
+        .initial_min_slot_task_count = 0,
+        .initial_max_slot_task_count = 0,
+        .initial_task_balance_gap = 0,
+        .final_min_slot_task_count = 0,
+        .final_max_slot_task_count = 0,
+        .final_task_balance_gap = 0,
+        .total_compensated_task_count = 0,
+        .last_round_compensated_task_count = 0,
+        .last_start_slot_index = 0,
+    };
+}
+
 fn resetSingleState() void {
     state = zeroState();
     diagnostics = .{};
@@ -766,6 +836,46 @@ fn resetFairnessState() void {
     for (0..max_ap_command_slots) |slot_index| resetFairnessSlot(slot_index);
 }
 
+fn resetRebalanceSlot(slot_index: usize) void {
+    RebalanceStorage.task_count[slot_index] = 0;
+    RebalanceStorage.dispatch_count[slot_index] = 0;
+    RebalanceStorage.total_rebalanced_task_count[slot_index] = 0;
+    RebalanceStorage.seed_task_count[slot_index] = 0;
+    RebalanceStorage.final_task_count[slot_index] = 0;
+    RebalanceStorage.last_task_id[slot_index] = 0;
+    RebalanceStorage.last_priority[slot_index] = 0;
+    RebalanceStorage.last_budget_ticks[slot_index] = 0;
+    RebalanceStorage.last_batch_accumulator[slot_index] = 0;
+    RebalanceStorage.total_accumulator[slot_index] = 0;
+    RebalanceStorage.compensated_task_count[slot_index] = 0;
+    RebalanceStorage.total_compensated_task_count[slot_index] = 0;
+    @memset(&RebalanceStorage.task_ids[slot_index], 0);
+}
+
+fn resetRebalanceState() void {
+    rebalance_state = zeroRebalanceState();
+    @memset(&rebalance_entries, std.mem.zeroes(abi.BaremetalApRebalanceEntry));
+    rebalance_drain_round_count = 0;
+    rebalance_policy = abi.ap_ownership_policy_round_robin;
+    rebalance_peak_active_slot_count = 0;
+    rebalance_last_round_active_slot_count = 0;
+    rebalance_last_round_task_count = 0;
+    rebalance_initial_pending_task_count = 0;
+    rebalance_last_pending_task_count = 0;
+    rebalance_peak_pending_task_count = 0;
+    rebalance_task_budget = 0;
+    rebalance_initial_min_slot_task_count = 0;
+    rebalance_initial_max_slot_task_count = 0;
+    rebalance_initial_task_balance_gap = 0;
+    rebalance_final_min_slot_task_count = 0;
+    rebalance_final_max_slot_task_count = 0;
+    rebalance_final_task_balance_gap = 0;
+    rebalance_total_compensated_task_count = 0;
+    rebalance_last_round_compensated_task_count = 0;
+    rebalance_last_start_slot_index = 0;
+    for (0..max_ap_command_slots) |slot_index| resetRebalanceSlot(slot_index);
+}
+
 pub fn resetMultiState() void {
     multi_state = zeroMultiState();
     @memset(&multi_entries, std.mem.zeroes(abi.BaremetalApMultiEntry));
@@ -777,6 +887,7 @@ pub fn resetOwnershipState() void {
     backfill_state = zeroBackfillState();
     resetWindowState();
     resetFairnessState();
+    resetRebalanceState();
     @memset(&ownership_entries, std.mem.zeroes(abi.BaremetalApOwnershipEntry));
     @memset(&backfill_entries, std.mem.zeroes(abi.BaremetalApBackfillEntry));
     ownership_dispatch_round_count = 0;
@@ -926,6 +1037,22 @@ pub fn fairnessEntry(index: u16) abi.BaremetalApFairnessEntry {
     refreshState();
     if (index >= fairness_state.exported_count) return std.mem.zeroes(abi.BaremetalApFairnessEntry);
     return fairness_entries[index];
+}
+
+pub fn rebalanceStatePtr() *const abi.BaremetalApRebalanceState {
+    refreshState();
+    return &rebalance_state;
+}
+
+pub fn rebalanceEntryCount() u16 {
+    refreshState();
+    return rebalance_state.exported_count;
+}
+
+pub fn rebalanceEntry(index: u16) abi.BaremetalApRebalanceEntry {
+    refreshState();
+    if (index >= rebalance_state.exported_count) return std.mem.zeroes(abi.BaremetalApRebalanceEntry);
+    return rebalance_entries[index];
 }
 
 pub fn startupSingleAp() Error!void {
@@ -1501,6 +1628,143 @@ pub fn dispatchWindowedSchedulerTasksPriorityUntilDrainedFromOffset(
     return total_accumulator;
 }
 
+fn clearRebalanceRoundTelemetry() void {
+    for (0..max_ap_command_slots) |slot_index| {
+        RebalanceStorage.task_count[slot_index] = 0;
+        RebalanceStorage.compensated_task_count[slot_index] = 0;
+        @memset(&RebalanceStorage.task_ids[slot_index], 0);
+    }
+}
+
+fn snapshotRebalanceLoadRange(active_slots: []const u16, final: bool) void {
+    var min_slot_task_count: u32 = std.math.maxInt(u32);
+    var max_slot_task_count: u32 = 0;
+    var have_active_slot = false;
+    for (active_slots) |slot| {
+        const slot_index = @as(usize, slot);
+        const load = if (final) RebalanceStorage.final_task_count[slot_index] else RebalanceStorage.seed_task_count[slot_index];
+        if (load < min_slot_task_count) min_slot_task_count = load;
+        if (load > max_slot_task_count) max_slot_task_count = load;
+        have_active_slot = true;
+    }
+    const min_value = if (have_active_slot) min_slot_task_count else 0;
+    const gap_value = if (have_active_slot) max_slot_task_count - min_value else 0;
+    if (final) {
+        rebalance_final_min_slot_task_count = min_value;
+        rebalance_final_max_slot_task_count = max_slot_task_count;
+        rebalance_final_task_balance_gap = gap_value;
+    } else {
+        rebalance_initial_min_slot_task_count = min_value;
+        rebalance_initial_max_slot_task_count = max_slot_task_count;
+        rebalance_initial_task_balance_gap = gap_value;
+    }
+}
+
+fn selectLeastLoadedRebalanceSlot(active_slots: []const u16, start_offset: usize) u16 {
+    var best_slot = active_slots[start_offset % active_slots.len];
+    var best_load = RebalanceStorage.final_task_count[@as(usize, best_slot)];
+    var offset: usize = 1;
+    while (offset < active_slots.len) : (offset += 1) {
+        const slot = active_slots[(start_offset + offset) % active_slots.len];
+        const load = RebalanceStorage.final_task_count[@as(usize, slot)];
+        if (load < best_load) {
+            best_slot = slot;
+            best_load = load;
+        }
+    }
+    return best_slot;
+}
+
+pub fn dispatchRebalancedSchedulerTasksPriorityUntilDrainedFromOffset(
+    tasks: []const abi.BaremetalTask,
+    start_slot_offset: usize,
+    task_budget: usize,
+) OwnershipError!u32 {
+    if (task_budget == 0) return error.InvalidWorkBatch;
+
+    var active_slots: [max_ap_command_slots]u16 = undefined;
+    const active_slot_count = activeOwnershipSlots(&active_slots);
+    if (active_slot_count == 0) return error.ApNotStarted;
+
+    var ordered_tasks_storage: [max_owned_dispatch_entries]abi.BaremetalTask = undefined;
+    const ordered_tasks = try collectOwnedRunnableTasksOrdered(tasks, abi.ap_ownership_policy_priority, &ordered_tasks_storage);
+
+    resetRebalanceState();
+    rebalance_policy = abi.ap_ownership_policy_priority;
+    rebalance_last_round_active_slot_count = @as(u8, @intCast(active_slot_count));
+    rebalance_peak_active_slot_count = rebalance_last_round_active_slot_count;
+    rebalance_initial_pending_task_count = @as(u32, @intCast(ordered_tasks.len));
+    rebalance_last_pending_task_count = rebalance_initial_pending_task_count;
+    rebalance_peak_pending_task_count = rebalance_initial_pending_task_count;
+    rebalance_task_budget = @as(u32, @intCast(task_budget));
+
+    for (active_slots[0..active_slot_count]) |slot| {
+        const slot_index = @as(usize, slot);
+        const seed_task_count = WindowStorage.total_window_task_count[slot_index];
+        RebalanceStorage.seed_task_count[slot_index] = seed_task_count;
+        RebalanceStorage.final_task_count[slot_index] = seed_task_count;
+    }
+    snapshotRebalanceLoadRange(active_slots[0..active_slot_count], false);
+    snapshotRebalanceLoadRange(active_slots[0..active_slot_count], true);
+
+    var total_accumulator: u32 = 0;
+    var task_cursor: usize = 0;
+    var round_index: usize = 0;
+    while (task_cursor < ordered_tasks.len) : (round_index += 1) {
+        clearRebalanceRoundTelemetry();
+        const round_start_slot = (start_slot_offset + round_index) % active_slot_count;
+        const remaining_task_count = ordered_tasks.len - task_cursor;
+        const round_task_count = @min(task_budget, remaining_task_count);
+        const selected_tasks = ordered_tasks[task_cursor .. task_cursor + round_task_count];
+        rebalance_drain_round_count +%= 1;
+        rebalance_last_round_task_count = @as(u32, @intCast(round_task_count));
+        rebalance_last_start_slot_index = @as(u32, @intCast(round_start_slot));
+        rebalance_last_round_compensated_task_count = 0;
+
+        for (selected_tasks, 0..) |task, task_index| {
+            const slot = selectLeastLoadedRebalanceSlot(active_slots[0..active_slot_count], round_start_slot + task_index);
+            const slot_index = @as(usize, slot);
+            const current_count = @as(usize, RebalanceStorage.task_count[slot_index]);
+            if (current_count >= max_task_batch_entries) return error.TooManyOwnedTasks;
+            const load_before = RebalanceStorage.final_task_count[slot_index];
+            RebalanceStorage.task_ids[slot_index][current_count] = task.task_id;
+            RebalanceStorage.task_count[slot_index] = @as(u32, @intCast(current_count + 1));
+            RebalanceStorage.total_rebalanced_task_count[slot_index] +%= 1;
+            RebalanceStorage.final_task_count[slot_index] +%= 1;
+            RebalanceStorage.last_task_id[slot_index] = task.task_id;
+            RebalanceStorage.last_priority[slot_index] = @as(u32, task.priority);
+            RebalanceStorage.last_budget_ticks[slot_index] = task.budget_ticks;
+            if (load_before < rebalance_initial_max_slot_task_count) {
+                RebalanceStorage.compensated_task_count[slot_index] +%= 1;
+                RebalanceStorage.total_compensated_task_count[slot_index] +%= 1;
+                rebalance_total_compensated_task_count +%= 1;
+                rebalance_last_round_compensated_task_count +%= 1;
+            }
+        }
+
+        var round_accumulator: u32 = 0;
+        for (active_slots[0..active_slot_count]) |slot| {
+            const slot_index = @as(usize, slot);
+            const owned_count = @as(usize, RebalanceStorage.task_count[slot_index]);
+            if (owned_count == 0) continue;
+            const accumulator = try dispatchWorkBatchToApSlot(slot, RebalanceStorage.task_ids[slot_index][0..owned_count]);
+            RebalanceStorage.dispatch_count[slot_index] +%= 1;
+            RebalanceStorage.last_batch_accumulator[slot_index] = accumulator;
+            RebalanceStorage.total_accumulator[slot_index] +%= accumulator;
+            round_accumulator +%= accumulator;
+        }
+
+        total_accumulator +%= round_accumulator;
+        task_cursor += round_task_count;
+        rebalance_last_pending_task_count = @as(u32, @intCast(ordered_tasks.len - task_cursor));
+        snapshotRebalanceLoadRange(active_slots[0..active_slot_count], true);
+    }
+
+    snapshotRebalanceLoadRange(active_slots[0..active_slot_count], true);
+    refreshState();
+    return total_accumulator;
+}
+
 pub fn haltApSlot(slot_index: u16) Error!void {
     const slot_usize: usize = slot_index;
     if (slot_usize >= max_ap_command_slots) return error.NoSecondaryCpu;
@@ -2072,6 +2336,90 @@ pub fn renderFairnessAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error
     return allocator.dupe(u8, buffer[0..used]);
 }
 
+pub fn renderRebalanceAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
+    refreshState();
+    var buffer: [4096]u8 = undefined;
+    var used: usize = 0;
+    const head = std.fmt.bufPrint(
+        buffer[used..],
+        "present={d}\npolicy={d}\nexported_count={d}\nactive_count={d}\npeak_active_slot_count={d}\nlast_round_active_slot_count={d}\nrequested_cpu_count={d}\nlogical_processor_count={d}\nbsp_apic_id={d}\ntotal_rebalanced_task_count={d}\ntotal_dispatch_count={d}\ntotal_accumulator={d}\ndrain_round_count={d}\n",
+        .{
+            rebalance_state.present,
+            rebalance_state.policy,
+            rebalance_state.exported_count,
+            rebalance_state.active_count,
+            rebalance_state.peak_active_slot_count,
+            rebalance_state.last_round_active_slot_count,
+            rebalance_state.requested_cpu_count,
+            rebalance_state.logical_processor_count,
+            rebalance_state.bsp_apic_id,
+            rebalance_state.total_rebalanced_task_count,
+            rebalance_state.total_dispatch_count,
+            rebalance_state.total_accumulator,
+            rebalance_state.drain_round_count,
+        },
+    ) catch unreachable;
+    used += head.len;
+    const tail = std.fmt.bufPrint(
+        buffer[used..],
+        "last_round_rebalanced_task_count={d}\ninitial_pending_task_count={d}\nlast_pending_task_count={d}\npeak_pending_task_count={d}\nrebalance_task_budget={d}\ninitial_min_slot_task_count={d}\ninitial_max_slot_task_count={d}\ninitial_task_balance_gap={d}\nfinal_min_slot_task_count={d}\nfinal_max_slot_task_count={d}\nfinal_task_balance_gap={d}\ntotal_compensated_task_count={d}\nlast_round_compensated_task_count={d}\nlast_start_slot_index={d}\n",
+        .{
+            rebalance_state.last_round_rebalanced_task_count,
+            rebalance_state.initial_pending_task_count,
+            rebalance_state.last_pending_task_count,
+            rebalance_state.peak_pending_task_count,
+            rebalance_state.rebalance_task_budget,
+            rebalance_state.initial_min_slot_task_count,
+            rebalance_state.initial_max_slot_task_count,
+            rebalance_state.initial_task_balance_gap,
+            rebalance_state.final_min_slot_task_count,
+            rebalance_state.final_max_slot_task_count,
+            rebalance_state.final_task_balance_gap,
+            rebalance_state.total_compensated_task_count,
+            rebalance_state.last_round_compensated_task_count,
+            rebalance_state.last_start_slot_index,
+        },
+    ) catch unreachable;
+    used += tail.len;
+    var entry_index: u16 = 0;
+    while (entry_index < rebalance_state.exported_count) : (entry_index += 1) {
+        const entry = rebalance_entries[entry_index];
+        const line = std.fmt.bufPrint(
+            buffer[used..],
+            "slot[{d}].target_apic_id={d}\nslot[{d}].dispatch_count={d}\nslot[{d}].rebalanced_task_count={d}\nslot[{d}].total_rebalanced_task_count={d}\nslot[{d}].seed_task_count={d}\nslot[{d}].final_task_count={d}\nslot[{d}].last_task_id={d}\nslot[{d}].last_priority={d}\nslot[{d}].last_budget_ticks={d}\nslot[{d}].last_batch_accumulator={d}\nslot[{d}].total_accumulator={d}\nslot[{d}].compensated_task_count={d}\nslot[{d}].total_compensated_task_count={d}\nslot[{d}].started={d}\nslot[{d}].halted={d}\nslot[{d}].slot_index={d}\n",
+            .{
+                entry_index, entry.target_apic_id,
+                entry_index, entry.dispatch_count,
+                entry_index, entry.rebalanced_task_count,
+                entry_index, entry.total_rebalanced_task_count,
+                entry_index, entry.seed_task_count,
+                entry_index, entry.final_task_count,
+                entry_index, entry.last_task_id,
+                entry_index, entry.last_priority,
+                entry_index, entry.last_budget_ticks,
+                entry_index, entry.last_batch_accumulator,
+                entry_index, entry.total_accumulator,
+                entry_index, entry.compensated_task_count,
+                entry_index, entry.total_compensated_task_count,
+                entry_index, entry.started,
+                entry_index, entry.halted,
+                entry_index, entry.slot_index,
+            },
+        ) catch unreachable;
+        used += line.len;
+        const task_count = @min(@as(usize, @intCast(entry.rebalanced_task_count)), max_task_batch_entries);
+        for (0..task_count) |task_index| {
+            const task_line = std.fmt.bufPrint(
+                buffer[used..],
+                "slot[{d}].task[{d}]={d}\n",
+                .{ entry_index, task_index, RebalanceStorage.task_ids[entry.slot_index][task_index] },
+            ) catch unreachable;
+            used += task_line.len;
+        }
+    }
+    return allocator.dupe(u8, buffer[0..used]);
+}
+
 fn refreshState() void {
     const topology = acpi.cpuTopologyStatePtr().*;
     const lapic_state = lapic.statePtr().*;
@@ -2435,6 +2783,88 @@ fn refreshState() void {
     fairness_state.peak_active_slot_count = fairness_peak_active_slot_count;
     if (fairness_state.exported_count != 0 or fairness_state.drain_round_count != 0) {
         fairness_state.present = 1;
+    }
+
+    rebalance_state = zeroRebalanceState();
+    rebalance_state.present = if (state.supported != 0) 1 else 0;
+    rebalance_state.policy = rebalance_policy;
+    rebalance_state.requested_cpu_count = topology.enabled_count;
+    rebalance_state.logical_processor_count = lapic_state.logical_processor_count;
+    rebalance_state.bsp_apic_id = lapic_state.current_apic_id;
+    rebalance_state.peak_active_slot_count = rebalance_peak_active_slot_count;
+    rebalance_state.last_round_active_slot_count = rebalance_last_round_active_slot_count;
+    rebalance_state.drain_round_count = rebalance_drain_round_count;
+    rebalance_state.last_round_rebalanced_task_count = rebalance_last_round_task_count;
+    rebalance_state.initial_pending_task_count = rebalance_initial_pending_task_count;
+    rebalance_state.last_pending_task_count = rebalance_last_pending_task_count;
+    rebalance_state.peak_pending_task_count = rebalance_peak_pending_task_count;
+    rebalance_state.rebalance_task_budget = rebalance_task_budget;
+    rebalance_state.initial_min_slot_task_count = rebalance_initial_min_slot_task_count;
+    rebalance_state.initial_max_slot_task_count = rebalance_initial_max_slot_task_count;
+    rebalance_state.initial_task_balance_gap = rebalance_initial_task_balance_gap;
+    rebalance_state.final_min_slot_task_count = rebalance_final_min_slot_task_count;
+    rebalance_state.final_max_slot_task_count = rebalance_final_max_slot_task_count;
+    rebalance_state.final_task_balance_gap = rebalance_final_task_balance_gap;
+    rebalance_state.total_compensated_task_count = rebalance_total_compensated_task_count;
+    rebalance_state.last_round_compensated_task_count = rebalance_last_round_compensated_task_count;
+    rebalance_state.last_start_slot_index = rebalance_last_start_slot_index;
+    @memset(&rebalance_entries, std.mem.zeroes(abi.BaremetalApRebalanceEntry));
+    slot_index = 0;
+    while (slot_index < max_ap_command_slots) : (slot_index += 1) {
+        const target_apic_id = readStateVar(slotTargetApicIdPtr(slot_index));
+        const started = if (readStateVar(slotStartedPtr(slot_index)) != 0) @as(u8, 1) else @as(u8, 0);
+        const halted = if (readStateVar(slotHaltedPtr(slot_index)) != 0) @as(u8, 1) else @as(u8, 0);
+        const rebalanced_task_count = RebalanceStorage.task_count[slot_index];
+        const total_rebalanced_task_count = RebalanceStorage.total_rebalanced_task_count[slot_index];
+        const seed_task_count = RebalanceStorage.seed_task_count[slot_index];
+        const final_task_count = RebalanceStorage.final_task_count[slot_index];
+        const total_accumulator = RebalanceStorage.total_accumulator[slot_index];
+        const total_compensated_task_count = RebalanceStorage.total_compensated_task_count[slot_index];
+        if (target_apic_id == 0 and
+            rebalanced_task_count == 0 and
+            total_rebalanced_task_count == 0 and
+            seed_task_count == 0 and
+            final_task_count == 0 and
+            total_accumulator == 0 and
+            total_compensated_task_count == 0 and
+            started == 0 and
+            halted == 0)
+        {
+            continue;
+        }
+        const dispatch_count = RebalanceStorage.dispatch_count[slot_index];
+        const exported_index = rebalance_state.exported_count;
+        rebalance_entries[exported_index] = .{
+            .target_apic_id = target_apic_id,
+            .dispatch_count = dispatch_count,
+            .rebalanced_task_count = rebalanced_task_count,
+            .total_rebalanced_task_count = total_rebalanced_task_count,
+            .seed_task_count = seed_task_count,
+            .final_task_count = final_task_count,
+            .last_task_id = RebalanceStorage.last_task_id[slot_index],
+            .last_priority = RebalanceStorage.last_priority[slot_index],
+            .last_budget_ticks = RebalanceStorage.last_budget_ticks[slot_index],
+            .last_batch_accumulator = RebalanceStorage.last_batch_accumulator[slot_index],
+            .total_accumulator = total_accumulator,
+            .compensated_task_count = RebalanceStorage.compensated_task_count[slot_index],
+            .total_compensated_task_count = total_compensated_task_count,
+            .started = started,
+            .halted = halted,
+            .slot_index = @as(u8, @intCast(slot_index)),
+            .reserved0 = 0,
+        };
+        rebalance_state.exported_count += 1;
+        if (started != 0 and halted == 0) rebalance_state.active_count +%= 1;
+        rebalance_state.total_rebalanced_task_count +%= total_rebalanced_task_count;
+        rebalance_state.total_dispatch_count +%= dispatch_count;
+        rebalance_state.total_accumulator +%= total_accumulator;
+    }
+    if (rebalance_state.active_count > rebalance_peak_active_slot_count) {
+        rebalance_peak_active_slot_count = rebalance_state.active_count;
+    }
+    rebalance_state.peak_active_slot_count = rebalance_peak_active_slot_count;
+    if (rebalance_state.exported_count != 0 or rebalance_state.drain_round_count != 0) {
+        rebalance_state.present = 1;
     }
 }
 
@@ -4527,6 +4957,174 @@ test "i386 ap startup drains bounded priority windows fairly across four slots" 
     try std.testing.expect(std.mem.indexOf(u8, fairness_render, "last_pending_task_count=0") != null);
     try std.testing.expect(std.mem.indexOf(u8, fairness_render, "task_balance_gap=0") != null);
     try std.testing.expect(std.mem.indexOf(u8, fairness_render, "slot[3].task[0]=1") != null);
+
+    try haltApSlot(3);
+    try haltApSlot(2);
+    try haltApSlot(1);
+    try haltApSlot(0);
+}
+
+test "i386 ap startup rebalances bounded priority backlog from skewed seed totals" {
+    resetForTest();
+    acpi.resetForTest();
+    try acpi.probeSyntheticImage(true);
+
+    for (0..4) |slot_index| {
+        writeStateVar(slotStartedPtr(slot_index), 1);
+        writeStateVar(slotStagePtr(slot_index), 4);
+        writeStateVar(slotReportedApicIdPtr(slot_index), @as(u32, @intCast(slot_index + 1)));
+        writeStateVar(slotTargetApicIdPtr(slot_index), @as(u32, @intCast(slot_index + 1)));
+        writeStateVar(slotHeartbeatPtr(slot_index), 1);
+    }
+
+    const responder0 = try std.Thread.spawn(.{}, testApSlotResponder, .{0});
+    defer responder0.join();
+    const responder1 = try std.Thread.spawn(.{}, testApSlotResponder, .{1});
+    defer responder1.join();
+    const responder2 = try std.Thread.spawn(.{}, testApSlotResponder, .{2});
+    defer responder2.join();
+    const responder3 = try std.Thread.spawn(.{}, testApSlotResponder, .{3});
+    defer responder3.join();
+    errdefer {
+        _ = haltApSlot(3) catch {};
+        _ = haltApSlot(2) catch {};
+        _ = haltApSlot(1) catch {};
+        _ = haltApSlot(0) catch {};
+    }
+
+    var preload_tasks: [10]abi.BaremetalTask = undefined;
+    for (&preload_tasks, 0..) |*task, index| {
+        const task_id = @as(u32, @intCast(index + 7));
+        const budget_ticks = @as(u32, @intCast((task_id - 1) * 2 + 5));
+        task.* = .{
+            .task_id = task_id,
+            .state = abi.task_state_ready,
+            .priority = @as(u8, @intCast(task_id)),
+            .reserved0 = 0,
+            .run_count = 0,
+            .budget_ticks = budget_ticks,
+            .budget_remaining = budget_ticks,
+            .created_tick = 0,
+            .last_run_tick = 0,
+        };
+    }
+
+    var rebalance_tasks: [6]abi.BaremetalTask = undefined;
+    for (&rebalance_tasks, 0..) |*task, index| {
+        const task_id = @as(u32, @intCast(index + 1));
+        const budget_ticks = @as(u32, @intCast(index * 2 + 5));
+        task.* = .{
+            .task_id = task_id,
+            .state = abi.task_state_ready,
+            .priority = @as(u8, @intCast(task_id)),
+            .reserved0 = 0,
+            .run_count = 0,
+            .budget_ticks = budget_ticks,
+            .budget_remaining = budget_ticks,
+            .created_tick = 0,
+            .last_run_tick = 0,
+        };
+    }
+
+    resetWindowState();
+    try std.testing.expectEqual(@as(u32, 70), try dispatchWindowedSchedulerTasksPriorityFromOffset(preload_tasks[0..], 0, 5));
+    try std.testing.expectEqual(@as(u32, 45), try dispatchWindowedSchedulerTasksPriorityFromOffset(preload_tasks[0..], 0, 5));
+    try std.testing.expectEqual(@as(u32, 21), try dispatchRebalancedSchedulerTasksPriorityUntilDrainedFromOffset(rebalance_tasks[0..], 0, 4));
+
+    const snapshot = rebalanceStatePtr().*;
+    try std.testing.expectEqual(@as(u8, 1), snapshot.present);
+    try std.testing.expectEqual(@as(u8, abi.ap_ownership_policy_priority), snapshot.policy);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.exported_count);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.active_count);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.peak_active_slot_count);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.last_round_active_slot_count);
+    try std.testing.expectEqual(@as(u32, 6), snapshot.total_rebalanced_task_count);
+    try std.testing.expectEqual(@as(u32, 5), snapshot.total_dispatch_count);
+    try std.testing.expectEqual(@as(u32, 21), snapshot.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 2), snapshot.drain_round_count);
+    try std.testing.expectEqual(@as(u32, 2), snapshot.last_round_rebalanced_task_count);
+    try std.testing.expectEqual(@as(u32, 6), snapshot.initial_pending_task_count);
+    try std.testing.expectEqual(@as(u32, 0), snapshot.last_pending_task_count);
+    try std.testing.expectEqual(@as(u32, 6), snapshot.peak_pending_task_count);
+    try std.testing.expectEqual(@as(u32, 4), snapshot.rebalance_task_budget);
+    try std.testing.expectEqual(@as(u32, 2), snapshot.initial_min_slot_task_count);
+    try std.testing.expectEqual(@as(u32, 4), snapshot.initial_max_slot_task_count);
+    try std.testing.expectEqual(@as(u32, 2), snapshot.initial_task_balance_gap);
+    try std.testing.expectEqual(@as(u32, 4), snapshot.final_min_slot_task_count);
+    try std.testing.expectEqual(@as(u32, 4), snapshot.final_max_slot_task_count);
+    try std.testing.expectEqual(@as(u32, 0), snapshot.final_task_balance_gap);
+    try std.testing.expectEqual(@as(u32, 6), snapshot.total_compensated_task_count);
+    try std.testing.expectEqual(@as(u32, 2), snapshot.last_round_compensated_task_count);
+    try std.testing.expectEqual(@as(u32, 1), snapshot.last_start_slot_index);
+
+    try std.testing.expectEqual(@as(u16, 4), rebalanceEntryCount());
+    const first_entry = rebalanceEntry(0);
+    const second_entry = rebalanceEntry(1);
+    const third_entry = rebalanceEntry(2);
+    const fourth_entry = rebalanceEntry(3);
+    try std.testing.expectEqual(@as(u32, 1), first_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 0), first_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 0), first_entry.rebalanced_task_count);
+    try std.testing.expectEqual(@as(u32, 0), first_entry.total_rebalanced_task_count);
+    try std.testing.expectEqual(@as(u32, 4), first_entry.seed_task_count);
+    try std.testing.expectEqual(@as(u32, 4), first_entry.final_task_count);
+    try std.testing.expectEqual(@as(u32, 0), first_entry.total_compensated_task_count);
+
+    try std.testing.expectEqual(@as(u32, 2), second_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 2), second_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 1), second_entry.rebalanced_task_count);
+    try std.testing.expectEqual(@as(u32, 2), second_entry.total_rebalanced_task_count);
+    try std.testing.expectEqual(@as(u32, 2), second_entry.seed_task_count);
+    try std.testing.expectEqual(@as(u32, 4), second_entry.final_task_count);
+    try std.testing.expectEqual(@as(u32, 2), second_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 2), second_entry.last_priority);
+    try std.testing.expectEqual(@as(u32, 7), second_entry.last_budget_ticks);
+    try std.testing.expectEqual(@as(u32, 2), second_entry.last_batch_accumulator);
+    try std.testing.expectEqual(@as(u32, 8), second_entry.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 1), second_entry.compensated_task_count);
+    try std.testing.expectEqual(@as(u32, 2), second_entry.total_compensated_task_count);
+
+    try std.testing.expectEqual(@as(u32, 3), third_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 2), third_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 1), third_entry.rebalanced_task_count);
+    try std.testing.expectEqual(@as(u32, 2), third_entry.total_rebalanced_task_count);
+    try std.testing.expectEqual(@as(u32, 2), third_entry.seed_task_count);
+    try std.testing.expectEqual(@as(u32, 4), third_entry.final_task_count);
+    try std.testing.expectEqual(@as(u32, 1), third_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 1), third_entry.last_priority);
+    try std.testing.expectEqual(@as(u32, 5), third_entry.last_budget_ticks);
+    try std.testing.expectEqual(@as(u32, 1), third_entry.last_batch_accumulator);
+    try std.testing.expectEqual(@as(u32, 6), third_entry.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 1), third_entry.compensated_task_count);
+    try std.testing.expectEqual(@as(u32, 2), third_entry.total_compensated_task_count);
+
+    try std.testing.expectEqual(@as(u32, 4), fourth_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 1), fourth_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 0), fourth_entry.rebalanced_task_count);
+    try std.testing.expectEqual(@as(u32, 2), fourth_entry.total_rebalanced_task_count);
+    try std.testing.expectEqual(@as(u32, 2), fourth_entry.seed_task_count);
+    try std.testing.expectEqual(@as(u32, 4), fourth_entry.final_task_count);
+    try std.testing.expectEqual(@as(u32, 3), fourth_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 3), fourth_entry.last_priority);
+    try std.testing.expectEqual(@as(u32, 9), fourth_entry.last_budget_ticks);
+    try std.testing.expectEqual(@as(u32, 7), fourth_entry.last_batch_accumulator);
+    try std.testing.expectEqual(@as(u32, 7), fourth_entry.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 0), fourth_entry.compensated_task_count);
+    try std.testing.expectEqual(@as(u32, 2), fourth_entry.total_compensated_task_count);
+
+    try std.testing.expectEqual(@as(u32, 2), RebalanceStorage.task_ids[@as(usize, second_entry.slot_index)][0]);
+    try std.testing.expectEqual(@as(u32, 1), RebalanceStorage.task_ids[@as(usize, third_entry.slot_index)][0]);
+
+    const rebalance_render = try renderRebalanceAlloc(std.testing.allocator);
+    defer std.testing.allocator.free(rebalance_render);
+    try std.testing.expect(std.mem.indexOf(u8, rebalance_render, "total_rebalanced_task_count=6") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rebalance_render, "total_dispatch_count=5") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rebalance_render, "initial_task_balance_gap=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rebalance_render, "final_task_balance_gap=0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rebalance_render, "total_compensated_task_count=6") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rebalance_render, "slot[0].seed_task_count=4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rebalance_render, "slot[1].task[0]=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rebalance_render, "slot[2].task[0]=1") != null);
 
     try haltApSlot(3);
     try haltApSlot(2);
