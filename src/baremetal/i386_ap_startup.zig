@@ -67,6 +67,8 @@ var ownership_entries: [max_ap_command_slots]abi.BaremetalApOwnershipEntry = std
 var failover_state: abi.BaremetalApFailoverState = zeroFailoverState();
 var backfill_state: abi.BaremetalApBackfillState = zeroBackfillState();
 var backfill_entries: [max_ap_command_slots]abi.BaremetalApBackfillEntry = std.mem.zeroes([max_ap_command_slots]abi.BaremetalApBackfillEntry);
+var window_state: abi.BaremetalApWindowState = zeroWindowState();
+var window_entries: [max_ap_command_slots]abi.BaremetalApWindowEntry = std.mem.zeroes([max_ap_command_slots]abi.BaremetalApWindowEntry);
 var ownership_dispatch_round_count: u32 = 0;
 var ownership_policy: u8 = abi.ap_ownership_policy_round_robin;
 var ownership_peak_active_slot_count: u8 = 0;
@@ -84,6 +86,19 @@ var backfill_last_backfilled_task_count: u32 = 0;
 var backfill_total_terminated_task_count: u32 = 0;
 var backfill_last_terminated_task_count: u32 = 0;
 var backfill_total_round_count: u32 = 0;
+var window_dispatch_round_count: u32 = 0;
+var window_policy: u8 = abi.ap_ownership_policy_round_robin;
+var window_peak_active_slot_count: u8 = 0;
+var window_last_round_active_slot_count: u8 = 0;
+var window_last_round_task_count: u32 = 0;
+var window_last_round_dispatch_count: u32 = 0;
+var window_last_round_accumulator: u32 = 0;
+var window_total_deferred_task_count: u32 = 0;
+var window_last_deferred_task_count: u32 = 0;
+var window_task_budget: u32 = 0;
+var window_task_cursor: u32 = 0;
+var window_wrap_count: u32 = 0;
+var window_last_start_slot_index: u32 = 0;
 const max_backfill_seen_tasks: usize = 128;
 const OwnershipStorage = struct {
     var owned_task_ids: [max_ap_command_slots][max_task_batch_entries]u32 = [_][max_task_batch_entries]u32{[_]u32{0} ** max_task_batch_entries} ** max_ap_command_slots;
@@ -101,6 +116,17 @@ const OwnershipStorage = struct {
     var total_accumulator: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var seen_task_ids: [max_backfill_seen_tasks]u32 = [_]u32{0} ** max_backfill_seen_tasks;
     var seen_task_count: usize = 0;
+};
+const WindowStorage = struct {
+    var task_ids: [max_ap_command_slots][max_task_batch_entries]u32 = [_][max_task_batch_entries]u32{[_]u32{0} ** max_task_batch_entries} ** max_ap_command_slots;
+    var task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var dispatch_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var total_window_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_task_id: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_priority: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_budget_ticks: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_batch_accumulator: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var total_accumulator: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
 };
 const DiagnosticsState = struct {
     warm_reset_programmed: u8 = 0,
@@ -511,6 +537,34 @@ fn zeroBackfillState() abi.BaremetalApBackfillState {
     };
 }
 
+fn zeroWindowState() abi.BaremetalApWindowState {
+    return .{
+        .magic = abi.ap_window_magic,
+        .api_version = abi.api_version,
+        .present = 0,
+        .policy = abi.ap_ownership_policy_round_robin,
+        .exported_count = 0,
+        .active_count = 0,
+        .peak_active_slot_count = 0,
+        .last_round_active_slot_count = 0,
+        .requested_cpu_count = 0,
+        .logical_processor_count = 0,
+        .reserved0 = 0,
+        .bsp_apic_id = 0,
+        .total_window_task_count = 0,
+        .total_dispatch_count = 0,
+        .total_accumulator = 0,
+        .dispatch_round_count = 0,
+        .last_round_window_task_count = 0,
+        .total_deferred_task_count = 0,
+        .last_deferred_task_count = 0,
+        .window_task_budget = 0,
+        .task_cursor = 0,
+        .wrap_count = 0,
+        .last_start_slot_index = 0,
+    };
+}
+
 fn resetSingleState() void {
     state = zeroState();
     diagnostics = .{};
@@ -575,6 +629,15 @@ fn clearOwnershipRoundSlot(slot_index: usize) void {
     @memset(&OwnershipStorage.owned_task_ids[slot_index], 0);
 }
 
+fn clearWindowRoundSlot(slot_index: usize) void {
+    WindowStorage.task_count[slot_index] = 0;
+    WindowStorage.last_task_id[slot_index] = 0;
+    WindowStorage.last_priority[slot_index] = 0;
+    WindowStorage.last_budget_ticks[slot_index] = 0;
+    WindowStorage.last_batch_accumulator[slot_index] = 0;
+    @memset(&WindowStorage.task_ids[slot_index], 0);
+}
+
 fn resetOwnershipSlot(slot_index: usize) void {
     clearOwnershipRoundSlot(slot_index);
     OwnershipStorage.dispatch_count[slot_index] = 0;
@@ -582,6 +645,13 @@ fn resetOwnershipSlot(slot_index: usize) void {
     OwnershipStorage.total_redistributed_task_count[slot_index] = 0;
     OwnershipStorage.total_backfilled_task_count[slot_index] = 0;
     OwnershipStorage.total_accumulator[slot_index] = 0;
+}
+
+fn resetWindowSlot(slot_index: usize) void {
+    clearWindowRoundSlot(slot_index);
+    WindowStorage.dispatch_count[slot_index] = 0;
+    WindowStorage.total_window_task_count[slot_index] = 0;
+    WindowStorage.total_accumulator[slot_index] = 0;
 }
 
 pub fn resetMultiState() void {
@@ -593,8 +663,10 @@ pub fn resetOwnershipState() void {
     ownership_state = zeroOwnershipState();
     failover_state = zeroFailoverState();
     backfill_state = zeroBackfillState();
+    window_state = zeroWindowState();
     @memset(&ownership_entries, std.mem.zeroes(abi.BaremetalApOwnershipEntry));
     @memset(&backfill_entries, std.mem.zeroes(abi.BaremetalApBackfillEntry));
+    @memset(&window_entries, std.mem.zeroes(abi.BaremetalApWindowEntry));
     ownership_dispatch_round_count = 0;
     ownership_policy = abi.ap_ownership_policy_round_robin;
     ownership_peak_active_slot_count = 0;
@@ -612,7 +684,21 @@ pub fn resetOwnershipState() void {
     backfill_total_terminated_task_count = 0;
     backfill_last_terminated_task_count = 0;
     backfill_total_round_count = 0;
+    window_dispatch_round_count = 0;
+    window_policy = abi.ap_ownership_policy_round_robin;
+    window_peak_active_slot_count = 0;
+    window_last_round_active_slot_count = 0;
+    window_last_round_task_count = 0;
+    window_last_round_dispatch_count = 0;
+    window_last_round_accumulator = 0;
+    window_total_deferred_task_count = 0;
+    window_last_deferred_task_count = 0;
+    window_task_budget = 0;
+    window_task_cursor = 0;
+    window_wrap_count = 0;
+    window_last_start_slot_index = 0;
     for (0..max_ap_command_slots) |slot_index| resetOwnershipSlot(slot_index);
+    for (0..max_ap_command_slots) |slot_index| resetWindowSlot(slot_index);
     @memset(&OwnershipStorage.seen_task_ids, 0);
     OwnershipStorage.seen_task_count = 0;
 }
@@ -690,6 +776,11 @@ pub fn backfillStatePtr() *const abi.BaremetalApBackfillState {
     return &backfill_state;
 }
 
+pub fn windowStatePtr() *const abi.BaremetalApWindowState {
+    refreshState();
+    return &window_state;
+}
+
 pub fn ownershipEntryCount() u16 {
     refreshState();
     return ownership_state.exported_count;
@@ -710,6 +801,17 @@ pub fn backfillEntry(index: u16) abi.BaremetalApBackfillEntry {
     refreshState();
     if (index >= backfill_state.exported_count) return std.mem.zeroes(abi.BaremetalApBackfillEntry);
     return backfill_entries[index];
+}
+
+pub fn windowEntryCount() u16 {
+    refreshState();
+    return window_state.exported_count;
+}
+
+pub fn windowEntry(index: u16) abi.BaremetalApWindowEntry {
+    refreshState();
+    if (index >= window_state.exported_count) return std.mem.zeroes(abi.BaremetalApWindowEntry);
+    return window_entries[index];
 }
 
 pub fn startupSingleAp() Error!void {
@@ -894,6 +996,18 @@ fn clearOwnershipRoundTelemetry() void {
     ownership_last_redistributed_task_count = 0;
     ownership_last_start_slot_index = 0;
     for (0..max_ap_command_slots) |slot_index| clearOwnershipRoundSlot(slot_index);
+}
+
+fn clearWindowRoundTelemetry() void {
+    window_state = zeroWindowState();
+    @memset(&window_entries, std.mem.zeroes(abi.BaremetalApWindowEntry));
+    window_last_round_active_slot_count = 0;
+    window_last_round_task_count = 0;
+    window_last_round_dispatch_count = 0;
+    window_last_round_accumulator = 0;
+    window_last_deferred_task_count = 0;
+    window_last_start_slot_index = 0;
+    for (0..max_ap_command_slots) |slot_index| clearWindowRoundSlot(slot_index);
 }
 
 fn previousTaskOwner(
@@ -1096,6 +1210,92 @@ pub fn dispatchOwnedSchedulerTasksPriority(tasks: []const abi.BaremetalTask) Own
 
 pub fn dispatchOwnedSchedulerTasksPriorityFromOffset(tasks: []const abi.BaremetalTask, start_slot_offset: usize) OwnershipError!u32 {
     return dispatchOwnedSchedulerTasksByPolicyFromOffset(tasks, abi.ap_ownership_policy_priority, start_slot_offset);
+}
+
+fn dispatchWindowedSchedulerTasksByPolicyFromOffset(
+    tasks: []const abi.BaremetalTask,
+    policy: u8,
+    start_slot_offset: usize,
+    task_budget: usize,
+) OwnershipError!u32 {
+    if (task_budget == 0) return error.InvalidWorkBatch;
+
+    var active_slots: [max_ap_command_slots]u16 = undefined;
+    const active_slot_count = activeOwnershipSlots(&active_slots);
+    if (active_slot_count == 0) return error.ApNotStarted;
+
+    var ordered_tasks_storage: [max_owned_dispatch_entries]abi.BaremetalTask = undefined;
+    const ordered_tasks = try collectOwnedRunnableTasksOrdered(tasks, policy, &ordered_tasks_storage);
+
+    clearWindowRoundTelemetry();
+    window_policy = policy;
+    window_dispatch_round_count +%= 1;
+    window_last_round_active_slot_count = @as(u8, @intCast(active_slot_count));
+    if (window_peak_active_slot_count < window_last_round_active_slot_count) {
+        window_peak_active_slot_count = window_last_round_active_slot_count;
+    }
+
+    const initial_slot_cursor = start_slot_offset % active_slot_count;
+    window_last_start_slot_index = @as(u32, @intCast(initial_slot_cursor));
+    var task_cursor = @as(usize, @intCast(window_task_cursor));
+    if (task_cursor >= ordered_tasks.len) task_cursor = 0;
+    const selected_count = @min(task_budget, ordered_tasks.len - task_cursor);
+    const selected_tasks = ordered_tasks[task_cursor .. task_cursor + selected_count];
+    const deferred_count = @as(u32, @intCast(ordered_tasks.len - selected_tasks.len));
+    window_last_round_task_count = @as(u32, @intCast(selected_tasks.len));
+    window_last_deferred_task_count = deferred_count;
+    window_total_deferred_task_count +%= deferred_count;
+    window_task_budget = @as(u32, @intCast(task_budget));
+
+    var slot_cursor: usize = initial_slot_cursor;
+    for (selected_tasks) |task| {
+        const slot_index = @as(usize, active_slots[slot_cursor]);
+        const current_count = @as(usize, WindowStorage.task_count[slot_index]);
+        if (current_count >= max_task_batch_entries) return error.TooManyOwnedTasks;
+        WindowStorage.task_ids[slot_index][current_count] = task.task_id;
+        WindowStorage.task_count[slot_index] = @as(u32, @intCast(current_count + 1));
+        WindowStorage.total_window_task_count[slot_index] +%= 1;
+        WindowStorage.last_task_id[slot_index] = task.task_id;
+        WindowStorage.last_priority[slot_index] = @as(u32, task.priority);
+        WindowStorage.last_budget_ticks[slot_index] = task.budget_ticks;
+        slot_cursor = (slot_cursor + 1) % active_slot_count;
+    }
+
+    var total_accumulator: u32 = 0;
+    var round_dispatch_count: u32 = 0;
+    var active_slot_cursor: usize = 0;
+    while (active_slot_cursor < active_slot_count) : (active_slot_cursor += 1) {
+        const slot_index = @as(usize, active_slots[active_slot_cursor]);
+        const owned_count = @as(usize, WindowStorage.task_count[slot_index]);
+        if (owned_count == 0) continue;
+        const accumulator = try dispatchWorkBatchToApSlot(
+            active_slots[active_slot_cursor],
+            WindowStorage.task_ids[slot_index][0..owned_count],
+        );
+        WindowStorage.dispatch_count[slot_index] +%= 1;
+        WindowStorage.last_batch_accumulator[slot_index] = accumulator;
+        WindowStorage.total_accumulator[slot_index] +%= accumulator;
+        total_accumulator +%= accumulator;
+        round_dispatch_count +%= 1;
+    }
+    window_last_round_dispatch_count = round_dispatch_count;
+    window_last_round_accumulator = total_accumulator;
+    task_cursor += selected_tasks.len;
+    if (task_cursor >= ordered_tasks.len) {
+        task_cursor = 0;
+        window_wrap_count +%= 1;
+    }
+    window_task_cursor = @as(u32, @intCast(task_cursor));
+    refreshState();
+    return total_accumulator;
+}
+
+pub fn dispatchWindowedSchedulerTasksPriorityFromOffset(
+    tasks: []const abi.BaremetalTask,
+    start_slot_offset: usize,
+    task_budget: usize,
+) OwnershipError!u32 {
+    return dispatchWindowedSchedulerTasksByPolicyFromOffset(tasks, abi.ap_ownership_policy_priority, start_slot_offset, task_budget);
 }
 
 pub fn haltApSlot(slot_index: u16) Error!void {
@@ -1519,6 +1719,79 @@ pub fn renderBackfillAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error
     return allocator.dupe(u8, buffer[0..used]);
 }
 
+pub fn renderWindowAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
+    refreshState();
+    var buffer: [4096]u8 = undefined;
+    var used: usize = 0;
+    const head = std.fmt.bufPrint(
+        buffer[used..],
+        "present={d}\npolicy={d}\nexported_count={d}\nactive_count={d}\npeak_active_slot_count={d}\nlast_round_active_slot_count={d}\nrequested_cpu_count={d}\nlogical_processor_count={d}\nbsp_apic_id={d}\ntotal_window_task_count={d}\ntotal_dispatch_count={d}\ntotal_accumulator={d}\ndispatch_round_count={d}\n",
+        .{
+            window_state.present,
+            window_state.policy,
+            window_state.exported_count,
+            window_state.active_count,
+            window_state.peak_active_slot_count,
+            window_state.last_round_active_slot_count,
+            window_state.requested_cpu_count,
+            window_state.logical_processor_count,
+            window_state.bsp_apic_id,
+            window_state.total_window_task_count,
+            window_state.total_dispatch_count,
+            window_state.total_accumulator,
+            window_state.dispatch_round_count,
+        },
+    ) catch unreachable;
+    used += head.len;
+    const tail = std.fmt.bufPrint(
+        buffer[used..],
+        "last_round_window_task_count={d}\ntotal_deferred_task_count={d}\nlast_deferred_task_count={d}\nwindow_task_budget={d}\ntask_cursor={d}\nwrap_count={d}\nlast_start_slot_index={d}\n",
+        .{
+            window_state.last_round_window_task_count,
+            window_state.total_deferred_task_count,
+            window_state.last_deferred_task_count,
+            window_state.window_task_budget,
+            window_state.task_cursor,
+            window_state.wrap_count,
+            window_state.last_start_slot_index,
+        },
+    ) catch unreachable;
+    used += tail.len;
+    var entry_index: u16 = 0;
+    while (entry_index < window_state.exported_count) : (entry_index += 1) {
+        const entry = window_entries[entry_index];
+        const line = std.fmt.bufPrint(
+            buffer[used..],
+            "slot[{d}].target_apic_id={d}\nslot[{d}].dispatch_count={d}\nslot[{d}].window_task_count={d}\nslot[{d}].total_window_task_count={d}\nslot[{d}].last_task_id={d}\nslot[{d}].last_priority={d}\nslot[{d}].last_budget_ticks={d}\nslot[{d}].last_batch_accumulator={d}\nslot[{d}].total_accumulator={d}\nslot[{d}].started={d}\nslot[{d}].halted={d}\nslot[{d}].slot_index={d}\n",
+            .{
+                entry_index, entry.target_apic_id,
+                entry_index, entry.dispatch_count,
+                entry_index, entry.window_task_count,
+                entry_index, entry.total_window_task_count,
+                entry_index, entry.last_task_id,
+                entry_index, entry.last_priority,
+                entry_index, entry.last_budget_ticks,
+                entry_index, entry.last_batch_accumulator,
+                entry_index, entry.total_accumulator,
+                entry_index, entry.started,
+                entry_index, entry.halted,
+                entry_index, entry.slot_index,
+            },
+        ) catch unreachable;
+        used += line.len;
+        const task_count = @min(@as(usize, @intCast(entry.window_task_count)), max_task_batch_entries);
+        for (0..task_count) |task_index| {
+            const task_line = std.fmt.bufPrint(
+                buffer[used..],
+                "slot[{d}].task[{d}]={d}\n",
+                .{ entry_index, task_index, WindowStorage.task_ids[entry.slot_index][task_index] },
+            ) catch unreachable;
+            used += task_line.len;
+        }
+    }
+    return allocator.dupe(u8, buffer[0..used]);
+}
+
 fn refreshState() void {
     const topology = acpi.cpuTopologyStatePtr().*;
     const lapic_state = lapic.statePtr().*;
@@ -1746,6 +2019,72 @@ fn refreshState() void {
     }
     if (backfill_state.total_backfilled_task_count != 0 or backfill_state.total_terminated_task_count != 0) {
         backfill_state.present = 1;
+    }
+
+    window_state = zeroWindowState();
+    window_state.present = if (state.supported != 0) 1 else 0;
+    window_state.policy = window_policy;
+    window_state.requested_cpu_count = topology.enabled_count;
+    window_state.logical_processor_count = lapic_state.logical_processor_count;
+    window_state.bsp_apic_id = lapic_state.current_apic_id;
+    window_state.peak_active_slot_count = window_peak_active_slot_count;
+    window_state.last_round_active_slot_count = window_last_round_active_slot_count;
+    window_state.dispatch_round_count = window_dispatch_round_count;
+    window_state.last_round_window_task_count = window_last_round_task_count;
+    window_state.total_deferred_task_count = window_total_deferred_task_count;
+    window_state.last_deferred_task_count = window_last_deferred_task_count;
+    window_state.window_task_budget = window_task_budget;
+    window_state.task_cursor = window_task_cursor;
+    window_state.wrap_count = window_wrap_count;
+    window_state.last_start_slot_index = window_last_start_slot_index;
+    @memset(&window_entries, std.mem.zeroes(abi.BaremetalApWindowEntry));
+    slot_index = 0;
+    while (slot_index < max_ap_command_slots) : (slot_index += 1) {
+        const target_apic_id = readStateVar(slotTargetApicIdPtr(slot_index));
+        const started = if (readStateVar(slotStartedPtr(slot_index)) != 0) @as(u8, 1) else @as(u8, 0);
+        const halted = if (readStateVar(slotHaltedPtr(slot_index)) != 0) @as(u8, 1) else @as(u8, 0);
+        const window_task_count = WindowStorage.task_count[slot_index];
+        const dispatch_count = WindowStorage.dispatch_count[slot_index];
+        const total_window_task_count = WindowStorage.total_window_task_count[slot_index];
+        const total_accumulator = WindowStorage.total_accumulator[slot_index];
+        if (target_apic_id == 0 and
+            window_task_count == 0 and
+            dispatch_count == 0 and
+            total_window_task_count == 0 and
+            total_accumulator == 0 and
+            started == 0 and
+            halted == 0)
+        {
+            continue;
+        }
+        const exported_index = window_state.exported_count;
+        window_entries[exported_index] = .{
+            .target_apic_id = target_apic_id,
+            .dispatch_count = dispatch_count,
+            .window_task_count = window_task_count,
+            .total_window_task_count = total_window_task_count,
+            .last_task_id = WindowStorage.last_task_id[slot_index],
+            .last_priority = WindowStorage.last_priority[slot_index],
+            .last_budget_ticks = WindowStorage.last_budget_ticks[slot_index],
+            .last_batch_accumulator = WindowStorage.last_batch_accumulator[slot_index],
+            .total_accumulator = total_accumulator,
+            .started = started,
+            .halted = halted,
+            .slot_index = @as(u8, @intCast(slot_index)),
+            .reserved0 = 0,
+        };
+        window_state.exported_count += 1;
+        if (started != 0 and halted == 0) window_state.active_count +%= 1;
+        window_state.total_window_task_count +%= total_window_task_count;
+        window_state.total_dispatch_count +%= dispatch_count;
+        window_state.total_accumulator +%= total_accumulator;
+    }
+    if (window_state.active_count > window_peak_active_slot_count) {
+        window_peak_active_slot_count = window_state.active_count;
+    }
+    window_state.peak_active_slot_count = window_peak_active_slot_count;
+    if (window_state.exported_count != 0 or window_state.total_deferred_task_count != 0 or window_state.wrap_count != 0) {
+        window_state.present = 1;
     }
 }
 
@@ -3589,6 +3928,129 @@ test "i386 ap startup fails over saturated priority-owned tasks after slot retir
     try std.testing.expectEqual(@as(u32, 816), ownership_snapshot.total_accumulator);
     try std.testing.expectEqual(@as(u32, 77), ownership_snapshot.total_redistributed_task_count);
     try std.testing.expectEqual(@as(u32, 4), failoverStatePtr().*.total_failed_over_task_count);
+}
+
+test "i386 ap startup dispatches bounded priority window tasks across four slots" {
+    resetForTest();
+    acpi.resetForTest();
+    try acpi.probeSyntheticImage(true);
+
+    for (0..4) |slot_index| {
+        writeStateVar(slotStartedPtr(slot_index), 1);
+        writeStateVar(slotStagePtr(slot_index), 4);
+        writeStateVar(slotReportedApicIdPtr(slot_index), @as(u32, @intCast(slot_index + 1)));
+        writeStateVar(slotTargetApicIdPtr(slot_index), @as(u32, @intCast(slot_index + 1)));
+        writeStateVar(slotHeartbeatPtr(slot_index), 1);
+    }
+
+    const responder0 = try std.Thread.spawn(.{}, testApSlotResponder, .{0});
+    defer responder0.join();
+    const responder1 = try std.Thread.spawn(.{}, testApSlotResponder, .{1});
+    defer responder1.join();
+    const responder2 = try std.Thread.spawn(.{}, testApSlotResponder, .{2});
+    defer responder2.join();
+    const responder3 = try std.Thread.spawn(.{}, testApSlotResponder, .{3});
+    defer responder3.join();
+    errdefer {
+        _ = haltApSlot(3) catch {};
+        _ = haltApSlot(2) catch {};
+        _ = haltApSlot(1) catch {};
+        _ = haltApSlot(0) catch {};
+    }
+
+    var tasks: [16]abi.BaremetalTask = undefined;
+    for (&tasks, 0..) |*task, index| {
+        const task_id = @as(u32, @intCast(index + 1));
+        const budget_ticks = @as(u32, @intCast(index * 2 + 5));
+        task.* = .{
+            .task_id = task_id,
+            .state = abi.task_state_ready,
+            .priority = @as(u8, @intCast(index + 1)),
+            .reserved0 = 0,
+            .run_count = 0,
+            .budget_ticks = budget_ticks,
+            .budget_remaining = budget_ticks,
+            .created_tick = 0,
+            .last_run_tick = 0,
+        };
+    }
+
+    try std.testing.expectEqual(@as(u32, 81), try dispatchWindowedSchedulerTasksPriorityFromOffset(tasks[0..], 0, 6));
+    try std.testing.expectEqual(@as(u32, 45), try dispatchWindowedSchedulerTasksPriorityFromOffset(tasks[0..], 1, 6));
+    try std.testing.expectEqual(@as(u32, 10), try dispatchWindowedSchedulerTasksPriorityFromOffset(tasks[0..], 2, 6));
+
+    const snapshot = windowStatePtr().*;
+    try std.testing.expectEqual(@as(u8, 1), snapshot.present);
+    try std.testing.expectEqual(@as(u8, abi.ap_ownership_policy_priority), snapshot.policy);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.exported_count);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.active_count);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.peak_active_slot_count);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.last_round_active_slot_count);
+    try std.testing.expectEqual(@as(u32, 16), snapshot.total_window_task_count);
+    try std.testing.expectEqual(@as(u32, 12), snapshot.total_dispatch_count);
+    try std.testing.expectEqual(@as(u32, 136), snapshot.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 3), snapshot.dispatch_round_count);
+    try std.testing.expectEqual(@as(u32, 4), snapshot.last_round_window_task_count);
+    try std.testing.expectEqual(@as(u32, 32), snapshot.total_deferred_task_count);
+    try std.testing.expectEqual(@as(u32, 12), snapshot.last_deferred_task_count);
+    try std.testing.expectEqual(@as(u32, 6), snapshot.window_task_budget);
+    try std.testing.expectEqual(@as(u32, 0), snapshot.task_cursor);
+    try std.testing.expectEqual(@as(u32, 1), snapshot.wrap_count);
+    try std.testing.expectEqual(@as(u32, 2), snapshot.last_start_slot_index);
+
+    try std.testing.expectEqual(@as(u16, 4), windowEntryCount());
+    const first_entry = windowEntry(0);
+    const second_entry = windowEntry(1);
+    const third_entry = windowEntry(2);
+    const fourth_entry = windowEntry(3);
+    try std.testing.expectEqual(@as(u32, 1), first_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 3), first_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 1), first_entry.window_task_count);
+    try std.testing.expectEqual(@as(u32, 4), first_entry.total_window_task_count);
+    try std.testing.expectEqual(@as(u32, 2), first_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 37), first_entry.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 2), WindowStorage.task_ids[@as(usize, first_entry.slot_index)][0]);
+
+    try std.testing.expectEqual(@as(u32, 2), second_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 3), second_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 1), second_entry.window_task_count);
+    try std.testing.expectEqual(@as(u32, 5), second_entry.total_window_task_count);
+    try std.testing.expectEqual(@as(u32, 1), second_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 43), second_entry.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 1), WindowStorage.task_ids[@as(usize, second_entry.slot_index)][0]);
+
+    try std.testing.expectEqual(@as(u32, 3), third_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 3), third_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 1), third_entry.window_task_count);
+    try std.testing.expectEqual(@as(u32, 4), third_entry.total_window_task_count);
+    try std.testing.expectEqual(@as(u32, 4), third_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 32), third_entry.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 4), WindowStorage.task_ids[@as(usize, third_entry.slot_index)][0]);
+
+    try std.testing.expectEqual(@as(u32, 4), fourth_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 3), fourth_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 1), fourth_entry.window_task_count);
+    try std.testing.expectEqual(@as(u32, 3), fourth_entry.total_window_task_count);
+    try std.testing.expectEqual(@as(u32, 3), fourth_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 24), fourth_entry.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 3), WindowStorage.task_ids[@as(usize, fourth_entry.slot_index)][0]);
+
+    const window_render = try renderWindowAlloc(std.testing.allocator);
+    defer std.testing.allocator.free(window_render);
+    try std.testing.expect(std.mem.indexOf(u8, window_render, "total_window_task_count=16") != null);
+    try std.testing.expect(std.mem.indexOf(u8, window_render, "total_deferred_task_count=32") != null);
+    try std.testing.expect(std.mem.indexOf(u8, window_render, "last_deferred_task_count=12") != null);
+    try std.testing.expect(std.mem.indexOf(u8, window_render, "window_task_budget=6") != null);
+    try std.testing.expect(std.mem.indexOf(u8, window_render, "wrap_count=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, window_render, "slot[0].task[0]=2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, window_render, "slot[1].task[0]=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, window_render, "slot[2].task[0]=4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, window_render, "slot[3].task[0]=3") != null);
+
+    try haltApSlot(3);
+    try haltApSlot(2);
+    try haltApSlot(1);
+    try haltApSlot(0);
 }
 
 test "i386 ap startup warm reset programming records bounded diagnostics" {

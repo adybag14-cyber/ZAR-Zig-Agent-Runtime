@@ -73,6 +73,7 @@ const dev_cpu_ap_ownership_path = "/dev/cpu/ap-ownership";
 const dev_cpu_ap_redistribution_path = "/dev/cpu/ap-redistribution";
 const dev_cpu_ap_failover_path = "/dev/cpu/ap-failover";
 const dev_cpu_ap_backfill_path = "/dev/cpu/ap-backfill";
+const dev_cpu_ap_window_path = "/dev/cpu/ap-window";
 const dev_net_path = "/dev/net";
 const dev_net_state_path = "/dev/net/state";
 const dev_net_route_path = "/dev/net/route";
@@ -101,6 +102,7 @@ const sys_cpu_ap_ownership_path = "/sys/cpu/ap-ownership";
 const sys_cpu_ap_redistribution_path = "/sys/cpu/ap-redistribution";
 const sys_cpu_ap_failover_path = "/sys/cpu/ap-failover";
 const sys_cpu_ap_backfill_path = "/sys/cpu/ap-backfill";
+const sys_cpu_ap_window_path = "/sys/cpu/ap-window";
 const sys_storage_state_path = "/sys/storage/state";
 const sys_storage_backends_path = "/sys/storage/backends";
 const sys_storage_filesystems_path = "/sys/storage/filesystems";
@@ -230,6 +232,7 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
         try appendFileLine(allocator, &out, "ap-redistribution", dev_cpu_ap_redistribution_path, max_bytes);
         try appendFileLine(allocator, &out, "ap-failover", dev_cpu_ap_failover_path, max_bytes);
         try appendFileLine(allocator, &out, "ap-backfill", dev_cpu_ap_backfill_path, max_bytes);
+        try appendFileLine(allocator, &out, "ap-window", dev_cpu_ap_window_path, max_bytes);
         return out.toOwnedSlice(allocator);
     }
     if (std.mem.eql(u8, path, dev_display_outputs_path)) {
@@ -296,6 +299,7 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
         try appendFileLine(allocator, &out, "ap-redistribution", sys_cpu_ap_redistribution_path, max_bytes);
         try appendFileLine(allocator, &out, "ap-failover", sys_cpu_ap_failover_path, max_bytes);
         try appendFileLine(allocator, &out, "ap-backfill", sys_cpu_ap_backfill_path, max_bytes);
+        try appendFileLine(allocator, &out, "ap-window", sys_cpu_ap_window_path, max_bytes);
         return out.toOwnedSlice(allocator);
     }
     if (std.mem.eql(u8, path, "/sys/storage")) {
@@ -437,6 +441,7 @@ fn isFilePath(path: []const u8) bool {
     if (std.mem.eql(u8, path, dev_cpu_ap_ownership_path)) return true;
     if (std.mem.eql(u8, path, dev_cpu_ap_redistribution_path)) return true;
     if (std.mem.eql(u8, path, dev_cpu_ap_backfill_path)) return true;
+    if (std.mem.eql(u8, path, dev_cpu_ap_window_path)) return true;
     if (std.mem.eql(u8, path, dev_net_state_path)) return true;
     if (std.mem.eql(u8, path, dev_net_route_path)) return true;
     if (std.mem.eql(u8, path, sys_kernel_version_path)) return true;
@@ -460,6 +465,7 @@ fn isFilePath(path: []const u8) bool {
     if (std.mem.eql(u8, path, sys_cpu_ap_ownership_path)) return true;
     if (std.mem.eql(u8, path, sys_cpu_ap_redistribution_path)) return true;
     if (std.mem.eql(u8, path, sys_cpu_ap_backfill_path)) return true;
+    if (std.mem.eql(u8, path, sys_cpu_ap_window_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_state_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_backends_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_filesystems_path)) return true;
@@ -566,6 +572,9 @@ fn renderFileAlloc(allocator: std.mem.Allocator, path: []const u8) Error![]u8 {
     }
     if (std.mem.eql(u8, path, dev_cpu_ap_backfill_path) or std.mem.eql(u8, path, sys_cpu_ap_backfill_path)) {
         return i386_ap_startup.renderBackfillAlloc(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_cpu_ap_window_path) or std.mem.eql(u8, path, sys_cpu_ap_window_path)) {
+        return i386_ap_startup.renderWindowAlloc(allocator);
     }
     if (std.mem.eql(u8, path, dev_net_state_path)) {
         return renderNetStateAlloc(allocator);
