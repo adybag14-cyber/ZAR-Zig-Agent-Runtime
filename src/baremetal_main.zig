@@ -77,6 +77,8 @@ const BaremetalApFairnessState = abi.BaremetalApFairnessState;
 const BaremetalApFairnessEntry = abi.BaremetalApFairnessEntry;
 const BaremetalApRebalanceState = abi.BaremetalApRebalanceState;
 const BaremetalApRebalanceEntry = abi.BaremetalApRebalanceEntry;
+const BaremetalApFairshareState = abi.BaremetalApFairshareState;
+const BaremetalApFairshareEntry = abi.BaremetalApFairshareEntry;
 const BaremetalLapicState = abi.BaremetalLapicState;
 const BaremetalIoApicState = abi.BaremetalIoApicState;
 const BaremetalPicState = abi.BaremetalPicState;
@@ -188,6 +190,7 @@ const qemu_i386_firmware_smp_priority_rebalance_probe_ok_code: u8 = 0x95;
 const qemu_i386_firmware_smp_priority_debt_probe_ok_code: u8 = 0x96;
 const qemu_i386_firmware_smp_priority_admission_probe_ok_code: u8 = 0x97;
 const qemu_i386_firmware_smp_priority_aging_probe_ok_code: u8 = 0x98;
+const qemu_i386_firmware_smp_priority_fairshare_probe_ok_code: u8 = 0x99;
 const qemu_i386_firmware_smp_work_probe_ok_code: u8 = 0x7B;
 const qemu_i386_firmware_smp_batch_probe_ok_code: u8 = 0x79;
 const qemu_i386_firmware_smp_multi_probe_ok_code: u8 = 0x78;
@@ -269,6 +272,7 @@ const build_options = if (builtin.is_test)
         pub const i386_smp_priority_debt_probe: bool = false;
         pub const i386_smp_priority_admission_probe: bool = false;
         pub const i386_smp_priority_aging_probe: bool = false;
+        pub const i386_smp_priority_fairshare_probe: bool = false;
     }
 else
     @import("build_options");
@@ -343,6 +347,7 @@ const i386_smp_priority_rebalance_probe_enabled: bool = if (@hasDecl(build_optio
 const i386_smp_priority_debt_probe_enabled: bool = if (@hasDecl(build_options, "i386_smp_priority_debt_probe")) build_options.i386_smp_priority_debt_probe else false;
 const i386_smp_priority_admission_probe_enabled: bool = if (@hasDecl(build_options, "i386_smp_priority_admission_probe")) build_options.i386_smp_priority_admission_probe else false;
 const i386_smp_priority_aging_probe_enabled: bool = if (@hasDecl(build_options, "i386_smp_priority_aging_probe")) build_options.i386_smp_priority_aging_probe else false;
+const i386_smp_priority_fairshare_probe_enabled: bool = if (@hasDecl(build_options, "i386_smp_priority_fairshare_probe")) build_options.i386_smp_priority_fairshare_probe else false;
 
 const ata_probe_raw_lba: u32 = 300;
 const ata_probe_raw_block_count: u32 = 2;
@@ -952,6 +957,23 @@ const I386SmpPriorityAgingProbeError = error{
     ExecutionFailed,
     SchedulerMismatch,
     AgingRenderMismatch,
+    SmpRenderMismatch,
+};
+
+const I386SmpPriorityFairshareProbeError = error{
+    UnsupportedPlatform,
+    AcpiProbeFailed,
+    CpuTopologyMissing,
+    CpuTopologySmpMissing,
+    LapicProbeFailed,
+    LapicNotPresent,
+    LapicDisabled,
+    StartupFailed,
+    StartupTargetMismatch,
+    DuplicateTargetMismatch,
+    ExecutionFailed,
+    SchedulerMismatch,
+    FairshareRenderMismatch,
     SmpRenderMismatch,
 };
 
@@ -2505,6 +2527,18 @@ pub export fn oc_i386_ap_aging_entry(index: u16) abi.BaremetalApAgingEntry {
     return i386_ap_startup.agingEntry(index);
 }
 
+pub export fn oc_i386_ap_fairshare_state_ptr() *const abi.BaremetalApFairshareState {
+    return i386_ap_startup.fairshareStatePtr();
+}
+
+pub export fn oc_i386_ap_fairshare_entry_count() u16 {
+    return i386_ap_startup.fairshareEntryCount();
+}
+
+pub export fn oc_i386_ap_fairshare_entry(index: u16) abi.BaremetalApFairshareEntry {
+    return i386_ap_startup.fairshareEntry(index);
+}
+
 pub export fn oc_display_output_state_ptr() *const BaremetalDisplayOutputState {
     return display_output.statePtr();
 }
@@ -3678,6 +3712,10 @@ fn baremetalStart() callconv(.c) noreturn {
     if (i386_smp_priority_aging_probe_enabled) {
         runI386FirmwareSmpPriorityAgingProbe() catch |err| qemuExit(i386SmpPriorityAgingProbeFailureCode(err));
         qemuExit(qemu_i386_firmware_smp_priority_aging_probe_ok_code);
+    }
+    if (i386_smp_priority_fairshare_probe_enabled) {
+        runI386FirmwareSmpPriorityFairshareProbe() catch |err| qemuExit(i386SmpPriorityFairshareProbeFailureCode(err));
+        qemuExit(qemu_i386_firmware_smp_priority_fairshare_probe_ok_code);
     }
     if (i386_smp_work_probe_enabled) {
         runI386FirmwareSmpWorkProbe() catch |err| qemuExit(i386SmpWorkProbeFailureCode(err));
@@ -24095,6 +24133,323 @@ fn runI386FirmwareSmpPriorityAgingProbe() I386SmpPriorityAgingProbeError!void {
     qemuDebugWriteValue("I386_AP_AGING_PEAK_EFFECTIVE_PRIORITY", aging.peak_effective_priority);
 }
 
+fn runI386FirmwareSmpPriorityFairshareProbe() I386SmpPriorityFairshareProbeError!void {
+    if (builtin.os.tag != .freestanding or builtin.cpu.arch != .x86) return error.UnsupportedPlatform;
+
+    qemuDebugWriteValue("I386_AP_PRIORITY_FAIRSHARE_STAGE", 1);
+    resetBaremetalRuntimeForTest();
+    acpi.probeLive() catch return error.AcpiProbeFailed;
+    const acpi_state = oc_acpi_state_ptr().*;
+    if (acpi_state.present == 0 or
+        (acpi_state.flags & abi.acpi_flag_live_low_memory) == 0 or
+        (acpi_state.flags & abi.acpi_flag_synthetic_image) != 0)
+    {
+        return error.AcpiProbeFailed;
+    }
+    lapic.probe() catch return error.LapicProbeFailed;
+
+    const cpu_state = oc_cpu_topology_state_ptr().*;
+    if (cpu_state.present != 1 or cpu_state.enabled_count == 0) return error.CpuTopologyMissing;
+    if (cpu_state.supports_smp != 1 or cpu_state.enabled_count < 5) return error.CpuTopologySmpMissing;
+
+    const lapic_state = oc_lapic_state_ptr().*;
+    if (lapic_state.present != 1 or lapic_state.apic_supported != 1) return error.LapicNotPresent;
+    if (lapic_state.enabled != 1 or lapic_state.local_apic_addr == 0) return error.LapicDisabled;
+
+    const first_apic_id = i386_ap_startup.secondaryApicIdAt(0, lapic_state.current_apic_id) orelse return error.CpuTopologySmpMissing;
+    const second_apic_id = i386_ap_startup.secondaryApicIdAt(1, lapic_state.current_apic_id) orelse return error.CpuTopologySmpMissing;
+    const third_apic_id = i386_ap_startup.secondaryApicIdAt(2, lapic_state.current_apic_id) orelse return error.CpuTopologySmpMissing;
+    const fourth_apic_id = i386_ap_startup.secondaryApicIdAt(3, lapic_state.current_apic_id) orelse return error.CpuTopologySmpMissing;
+    if (first_apic_id == second_apic_id or
+        first_apic_id == third_apic_id or
+        first_apic_id == fourth_apic_id or
+        second_apic_id == third_apic_id or
+        second_apic_id == fourth_apic_id or
+        third_apic_id == fourth_apic_id)
+    {
+        return error.DuplicateTargetMismatch;
+    }
+
+    qemuDebugWriteValue("I386_AP_PRIORITY_FAIRSHARE_STAGE", 2);
+    i386_ap_startup.resetSlotState();
+    i386_ap_startup.resetMultiState();
+    i386_ap_startup.resetOwnershipState();
+
+    inline for ([_]struct { apic_id: u32, slot: u16 }{
+        .{ .apic_id = first_apic_id, .slot = 0 },
+        .{ .apic_id = second_apic_id, .slot = 1 },
+        .{ .apic_id = third_apic_id, .slot = 2 },
+        .{ .apic_id = fourth_apic_id, .slot = 3 },
+    }) |entry| {
+        i386_ap_startup.startupApInSlot(entry.apic_id, entry.slot) catch |err| switch (err) {
+            error.UnsupportedPlatform => return error.UnsupportedPlatform,
+            error.CpuTopologyMissing, error.NoSecondaryCpu => return error.CpuTopologySmpMissing,
+            error.LapicUnavailable => return error.LapicDisabled,
+            error.DeliveryTimeout, error.StartupTimeout => return error.StartupFailed,
+            error.WrongCpuStarted => return error.StartupTargetMismatch,
+            error.ApNotStarted, error.CommandTimeout, error.InvalidWorkBatch => return error.ExecutionFailed,
+        };
+    }
+
+    var heartbeat_wait: usize = 4_000_000;
+    const first_entry_start = oc_i386_ap_slot_entry(0);
+    const second_entry_start = oc_i386_ap_slot_entry(1);
+    const third_entry_start = oc_i386_ap_slot_entry(2);
+    const fourth_entry_start = oc_i386_ap_slot_entry(3);
+    while (heartbeat_wait > 0) : (heartbeat_wait -= 1) {
+        const first_live = oc_i386_ap_slot_entry(0);
+        const second_live = oc_i386_ap_slot_entry(1);
+        const third_live = oc_i386_ap_slot_entry(2);
+        const fourth_live = oc_i386_ap_slot_entry(3);
+        if (first_live.heartbeat_count > first_entry_start.heartbeat_count and
+            second_live.heartbeat_count > second_entry_start.heartbeat_count and
+            third_live.heartbeat_count > third_entry_start.heartbeat_count and
+            fourth_live.heartbeat_count > fourth_entry_start.heartbeat_count)
+        {
+            break;
+        }
+        std.atomic.spinLoopHint();
+    }
+    if (heartbeat_wait == 0) return error.ExecutionFailed;
+
+    qemuDebugWriteValue("I386_AP_PRIORITY_FAIRSHARE_STAGE", 3);
+    oc_scheduler_reset();
+    if (submitCommandSync(abi.command_scheduler_disable, 0, 0) != abi.result_ok) return error.SchedulerMismatch;
+    if (submitCommandSync(abi.command_scheduler_set_policy, abi.scheduler_policy_priority, 0) != abi.result_ok) return error.SchedulerMismatch;
+
+    const task_capacity = oc_scheduler_task_capacity();
+    if (task_capacity != scheduler_task_capacity) return error.SchedulerMismatch;
+    for (0..scheduler_task_capacity) |index| {
+        const budget = @as(u64, @intCast(index * 2 + 5));
+        const priority = @as(u64, @intCast(index + 1));
+        if (submitCommandSync(abi.command_task_create, budget, priority) != abi.result_ok) return error.SchedulerMismatch;
+        const task = oc_scheduler_task(@as(u32, @intCast(index)));
+        if (task.task_id == 0 or task.priority != priority) return error.SchedulerMismatch;
+    }
+    if (submitCommandSync(abi.command_task_create, 99, 99) != abi.result_no_space) return error.SchedulerMismatch;
+    if (oc_scheduler_policy() != abi.scheduler_policy_priority or oc_scheduler_task_count() != scheduler_task_capacity) {
+        return error.SchedulerMismatch;
+    }
+
+    var preload_tasks: [5]BaremetalTask = undefined;
+    var debt_tasks: [3]BaremetalTask = undefined;
+    var waiting_tasks: [8]BaremetalTask = undefined;
+    var preload_count: usize = 0;
+    var debt_count: usize = 0;
+    var waiting_count: usize = 0;
+    for (0..scheduler_task_capacity) |idx| {
+        const task = oc_scheduler_task(@as(u32, @intCast(idx)));
+        if (task.task_id == 0) continue;
+        if (task.state != abi.task_state_ready and task.state != abi.task_state_running) continue;
+        if (task.task_id >= 12 and task.task_id <= 16) {
+            preload_tasks[preload_count] = task;
+            preload_count += 1;
+        } else if (task.task_id >= 9 and task.task_id <= 11) {
+            debt_tasks[debt_count] = task;
+            debt_count += 1;
+        } else if (task.task_id >= 1 and task.task_id <= 8) {
+            waiting_tasks[waiting_count] = task;
+            waiting_count += 1;
+        }
+    }
+    if (preload_count != preload_tasks.len or debt_count != debt_tasks.len or waiting_count != waiting_tasks.len) {
+        return error.SchedulerMismatch;
+    }
+
+    qemuDebugWriteValue("I386_AP_PRIORITY_FAIRSHARE_STAGE", 4);
+    i386_ap_startup.resetOwnershipState();
+    if ((i386_ap_startup.dispatchWindowedSchedulerTasksPriorityFromOffset(preload_tasks[0..preload_count], 0, 5) catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.CpuTopologyMissing, error.NoSecondaryCpu => return error.CpuTopologySmpMissing,
+        error.LapicUnavailable => return error.LapicDisabled,
+        error.DeliveryTimeout, error.StartupTimeout => return error.StartupFailed,
+        error.WrongCpuStarted => return error.StartupTargetMismatch,
+        error.ApNotStarted, error.CommandTimeout, error.InvalidWorkBatch, error.NoReadyTask, error.TooManyOwnedTasks => return error.ExecutionFailed,
+    }) != 70) return error.ExecutionFailed;
+
+    const preload_window = oc_i386_ap_window_state_ptr().*;
+    if (preload_window.present != 1 or
+        preload_window.exported_count != 4 or
+        preload_window.active_count != 4 or
+        preload_window.total_window_task_count != 5 or
+        preload_window.total_dispatch_count != 4 or
+        preload_window.total_accumulator != 70 or
+        preload_window.last_round_window_task_count != 5 or
+        preload_window.window_task_budget != 5 or
+        preload_window.last_start_slot_index != 0)
+    {
+        return error.ExecutionFailed;
+    }
+    if (oc_i386_ap_window_entry(0).total_window_task_count != 2 or
+        oc_i386_ap_window_entry(1).total_window_task_count != 1 or
+        oc_i386_ap_window_entry(2).total_window_task_count != 1 or
+        oc_i386_ap_window_entry(3).total_window_task_count != 1)
+    {
+        return error.ExecutionFailed;
+    }
+
+    qemuDebugWriteValue("I386_AP_PRIORITY_FAIRSHARE_STAGE", 5);
+    const task_budget: usize = 2;
+    const aging_step: u32 = 2;
+    if ((i386_ap_startup.dispatchDebtAwareSchedulerTasksPriorityWithFairshareFromOffset(
+        debt_tasks[0..debt_count],
+        waiting_tasks[0..waiting_count],
+        0,
+        task_budget,
+        aging_step,
+    ) catch |err| switch (err) {
+        error.UnsupportedPlatform => return error.UnsupportedPlatform,
+        error.CpuTopologyMissing, error.NoSecondaryCpu => return error.CpuTopologySmpMissing,
+        error.LapicUnavailable => return error.LapicDisabled,
+        error.DeliveryTimeout, error.StartupTimeout => return error.StartupFailed,
+        error.WrongCpuStarted => return error.StartupTargetMismatch,
+        error.ApNotStarted, error.CommandTimeout, error.InvalidWorkBatch, error.NoReadyTask, error.TooManyOwnedTasks => return error.ExecutionFailed,
+    }) != 66) return error.ExecutionFailed;
+
+    qemuDebugWriteValue("I386_AP_PRIORITY_FAIRSHARE_STAGE", 6);
+    const fairshare = oc_i386_ap_fairshare_state_ptr().*;
+    if (fairshare.present != 1 or
+        fairshare.policy != abi.ap_ownership_policy_priority or
+        fairshare.exported_count != 4 or
+        fairshare.active_count != 4 or
+        fairshare.peak_active_slot_count != 4 or
+        fairshare.last_round_active_slot_count != 4 or
+        fairshare.requested_cpu_count < 5 or
+        fairshare.logical_processor_count < 5 or
+        fairshare.bsp_apic_id != lapic_state.current_apic_id or
+        fairshare.total_waiting_task_count != 8 or
+        fairshare.total_debt_task_count != 3 or
+        fairshare.total_dispatch_count != 11 or
+        fairshare.total_accumulator != 66 or
+        fairshare.drain_round_count != 6 or
+        fairshare.aging_round_count != 5 or
+        fairshare.fairshare_round_count != 4 or
+        fairshare.last_round_waiting_task_count != 1 or
+        fairshare.last_round_debt_task_count != 0 or
+        fairshare.last_round_fairshare_task_count != 1 or
+        fairshare.initial_pending_task_count != 11 or
+        fairshare.last_pending_task_count != 0 or
+        fairshare.peak_pending_task_count != 11 or
+        fairshare.task_budget != task_budget or
+        fairshare.aging_step != aging_step or
+        fairshare.initial_min_slot_task_count != 1 or
+        fairshare.initial_max_slot_task_count != 2 or
+        fairshare.initial_task_balance_gap != 1 or
+        fairshare.final_min_slot_task_count != 4 or
+        fairshare.final_max_slot_task_count != 4 or
+        fairshare.final_task_balance_gap != 0 or
+        fairshare.initial_total_debt != 3 or
+        fairshare.remaining_total_debt != 0 or
+        fairshare.total_compensated_task_count != 3 or
+        fairshare.last_round_compensated_task_count != 0 or
+        fairshare.total_aged_task_count != 24 or
+        fairshare.last_round_aged_task_count != 0 or
+        fairshare.total_promoted_task_count != 8 or
+        fairshare.total_fairshare_task_count != 7 or
+        fairshare.peak_effective_priority != 11 or
+        fairshare.last_start_slot_index != 1)
+    {
+        return error.ExecutionFailed;
+    }
+
+    if (oc_i386_ap_fairshare_entry_count() != 4) return error.ExecutionFailed;
+    const first_fairshare = oc_i386_ap_fairshare_entry(0);
+    const second_fairshare = oc_i386_ap_fairshare_entry(1);
+    const third_fairshare = oc_i386_ap_fairshare_entry(2);
+    const fourth_fairshare = oc_i386_ap_fairshare_entry(3);
+    if (first_fairshare.target_apic_id != first_apic_id or
+        first_fairshare.dispatch_count != 2 or
+        first_fairshare.seed_task_count != 2 or
+        first_fairshare.final_task_count != 4 or
+        first_fairshare.initial_debt != 0 or
+        first_fairshare.remaining_debt != 0 or
+        first_fairshare.started != 1 or
+        first_fairshare.halted != 0 or
+        second_fairshare.target_apic_id != second_apic_id or
+        second_fairshare.dispatch_count != 3 or
+        second_fairshare.seed_task_count != 1 or
+        second_fairshare.final_task_count != 4 or
+        second_fairshare.initial_debt != 1 or
+        second_fairshare.remaining_debt != 0 or
+        second_fairshare.started != 1 or
+        second_fairshare.halted != 0 or
+        third_fairshare.target_apic_id != third_apic_id or
+        third_fairshare.dispatch_count != 3 or
+        third_fairshare.seed_task_count != 1 or
+        third_fairshare.final_task_count != 4 or
+        third_fairshare.initial_debt != 1 or
+        third_fairshare.remaining_debt != 0 or
+        third_fairshare.started != 1 or
+        third_fairshare.halted != 0 or
+        fourth_fairshare.target_apic_id != fourth_apic_id or
+        fourth_fairshare.dispatch_count != 3 or
+        fourth_fairshare.waiting_task_count != 1 or
+        fourth_fairshare.fairshare_task_count != 1 or
+        fourth_fairshare.seed_task_count != 1 or
+        fourth_fairshare.final_task_count != 4 or
+        fourth_fairshare.initial_debt != 1 or
+        fourth_fairshare.remaining_debt != 0 or
+        fourth_fairshare.last_task_id != 1 or
+        fourth_fairshare.aged_task_count != 1 or
+        fourth_fairshare.started != 1 or
+        fourth_fairshare.halted != 0)
+    {
+        return error.ExecutionFailed;
+    }
+
+    qemuDebugWriteValue("I386_AP_PRIORITY_FAIRSHARE_STAGE", 7);
+    var fairshare_render_buffer: [4096]u8 = undefined;
+    var fairshare_fba = std.heap.FixedBufferAllocator.init(&fairshare_render_buffer);
+    const fairshare_render = virtual_fs.readFileAlloc(fairshare_fba.allocator(), "/sys/cpu/ap-fairshare", fairshare_render_buffer.len) catch {
+        return error.FairshareRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, fairshare_render, 1, "total_waiting_task_count=8") or
+        !std.mem.containsAtLeast(u8, fairshare_render, 1, "total_debt_task_count=3") or
+        !std.mem.containsAtLeast(u8, fairshare_render, 1, "total_dispatch_count=11") or
+        !std.mem.containsAtLeast(u8, fairshare_render, 1, "total_accumulator=66") or
+        !std.mem.containsAtLeast(u8, fairshare_render, 1, "aging_round_count=5") or
+        !std.mem.containsAtLeast(u8, fairshare_render, 1, "fairshare_round_count=4") or
+        !std.mem.containsAtLeast(u8, fairshare_render, 1, "total_aged_task_count=24") or
+        !std.mem.containsAtLeast(u8, fairshare_render, 1, "total_promoted_task_count=8") or
+        !std.mem.containsAtLeast(u8, fairshare_render, 1, "total_fairshare_task_count=7") or
+        !std.mem.containsAtLeast(u8, fairshare_render, 1, "final_task_balance_gap=0") or
+        !std.mem.containsAtLeast(u8, fairshare_render, 1, "slot[3].task[0]=1"))
+    {
+        return error.FairshareRenderMismatch;
+    }
+
+    qemuDebugWriteValue("I386_AP_PRIORITY_FAIRSHARE_STAGE", 8);
+    var smp_render_buffer: [512]u8 = undefined;
+    var smp_fba = std.heap.FixedBufferAllocator.init(&smp_render_buffer);
+    const smp_render = virtual_fs.readFileAlloc(smp_fba.allocator(), "/sys/cpu/smp", smp_render_buffer.len) catch {
+        return error.SmpRenderMismatch;
+    };
+    if (!std.mem.containsAtLeast(u8, smp_render, 1, "supports_smp=1") or
+        !std.mem.containsAtLeast(u8, smp_render, 1, "requested_cpu_count=5"))
+    {
+        return error.SmpRenderMismatch;
+    }
+
+    qemuDebugWriteValue("I386_AP_PRIORITY_FAIRSHARE_STAGE", 9);
+    i386_ap_startup.haltApSlot(3) catch return error.ExecutionFailed;
+    i386_ap_startup.haltApSlot(2) catch return error.ExecutionFailed;
+    i386_ap_startup.haltApSlot(1) catch return error.ExecutionFailed;
+    i386_ap_startup.haltApSlot(0) catch return error.ExecutionFailed;
+
+    qemuDebugWriteValue("I386_AP_PRIORITY_FAIRSHARE_STAGE", 10);
+    qemuDebugWriteValue("I386_AP_EXECUTION_OBSERVED", 1);
+    qemuDebugWriteValue("I386_AP_FAIRSHARE_TOTAL_WAITING_TASK_COUNT", fairshare.total_waiting_task_count);
+    qemuDebugWriteValue("I386_AP_FAIRSHARE_TOTAL_DEBT_TASK_COUNT", fairshare.total_debt_task_count);
+    qemuDebugWriteValue("I386_AP_FAIRSHARE_TOTAL_DISPATCH_COUNT", fairshare.total_dispatch_count);
+    qemuDebugWriteValue("I386_AP_FAIRSHARE_TOTAL_ACCUMULATOR", fairshare.total_accumulator);
+    qemuDebugWriteValue("I386_AP_FAIRSHARE_AGING_ROUND_COUNT", fairshare.aging_round_count);
+    qemuDebugWriteValue("I386_AP_FAIRSHARE_FAIRSHARE_ROUND_COUNT", fairshare.fairshare_round_count);
+    qemuDebugWriteValue("I386_AP_FAIRSHARE_TOTAL_AGED_TASK_COUNT", fairshare.total_aged_task_count);
+    qemuDebugWriteValue("I386_AP_FAIRSHARE_TOTAL_PROMOTED_TASK_COUNT", fairshare.total_promoted_task_count);
+    qemuDebugWriteValue("I386_AP_FAIRSHARE_TOTAL_FAIRSHARE_TASK_COUNT", fairshare.total_fairshare_task_count);
+    qemuDebugWriteValue("I386_AP_FAIRSHARE_FINAL_GAP", fairshare.final_task_balance_gap);
+}
+
 fn runVirtioGpuDisplayProbe() VirtioGpuDisplayProbeError!void {
     resetBaremetalRuntimeForTest();
     const result = virtio_gpu.probeAndPresentPattern() catch |err| switch (err) {
@@ -25341,6 +25696,25 @@ fn i386SmpPriorityAgingProbeFailureCode(err: I386SmpPriorityAgingProbeError) u8 
         error.AgingRenderMismatch => 0xF5,
         error.SmpRenderMismatch => 0xF6,
         error.DuplicateTargetMismatch => 0xF7,
+    };
+}
+
+fn i386SmpPriorityFairshareProbeFailureCode(err: I386SmpPriorityFairshareProbeError) u8 {
+    return switch (err) {
+        error.UnsupportedPlatform => 0x9A,
+        error.AcpiProbeFailed => 0x9B,
+        error.CpuTopologyMissing => 0x9C,
+        error.CpuTopologySmpMissing => 0x9D,
+        error.LapicProbeFailed => 0x9E,
+        error.LapicNotPresent => 0x9F,
+        error.LapicDisabled => 0xA0,
+        error.StartupFailed => 0xA1,
+        error.ExecutionFailed => 0xA2,
+        error.StartupTargetMismatch => 0xA3,
+        error.SchedulerMismatch => 0xA4,
+        error.FairshareRenderMismatch => 0xA5,
+        error.SmpRenderMismatch => 0xA6,
+        error.DuplicateTargetMismatch => 0xA7,
     };
 }
 

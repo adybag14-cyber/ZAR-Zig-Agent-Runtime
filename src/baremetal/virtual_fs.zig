@@ -79,6 +79,7 @@ const dev_cpu_ap_rebalance_path = "/dev/cpu/ap-rebalance";
 const dev_cpu_ap_debt_path = "/dev/cpu/ap-debt";
 const dev_cpu_ap_admission_path = "/dev/cpu/ap-admission";
 const dev_cpu_ap_aging_path = "/dev/cpu/ap-aging";
+const dev_cpu_ap_fairshare_path = "/dev/cpu/ap-fairshare";
 const dev_net_path = "/dev/net";
 const dev_net_state_path = "/dev/net/state";
 const dev_net_route_path = "/dev/net/route";
@@ -113,6 +114,7 @@ const sys_cpu_ap_rebalance_path = "/sys/cpu/ap-rebalance";
 const sys_cpu_ap_debt_path = "/sys/cpu/ap-debt";
 const sys_cpu_ap_admission_path = "/sys/cpu/ap-admission";
 const sys_cpu_ap_aging_path = "/sys/cpu/ap-aging";
+const sys_cpu_ap_fairshare_path = "/sys/cpu/ap-fairshare";
 const sys_storage_state_path = "/sys/storage/state";
 const sys_storage_backends_path = "/sys/storage/backends";
 const sys_storage_filesystems_path = "/sys/storage/filesystems";
@@ -248,6 +250,7 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
         try appendFileLine(allocator, &out, "ap-debt", dev_cpu_ap_debt_path, max_bytes);
         try appendFileLine(allocator, &out, "ap-admission", dev_cpu_ap_admission_path, max_bytes);
         try appendFileLine(allocator, &out, "ap-aging", dev_cpu_ap_aging_path, max_bytes);
+        try appendFileLine(allocator, &out, "ap-fairshare", dev_cpu_ap_fairshare_path, max_bytes);
         return out.toOwnedSlice(allocator);
     }
     if (std.mem.eql(u8, path, dev_display_outputs_path)) {
@@ -320,6 +323,7 @@ pub fn listDirectoryAlloc(allocator: std.mem.Allocator, path: []const u8, max_by
         try appendFileLine(allocator, &out, "ap-debt", sys_cpu_ap_debt_path, max_bytes);
         try appendFileLine(allocator, &out, "ap-admission", sys_cpu_ap_admission_path, max_bytes);
         try appendFileLine(allocator, &out, "ap-aging", sys_cpu_ap_aging_path, max_bytes);
+        try appendFileLine(allocator, &out, "ap-fairshare", sys_cpu_ap_fairshare_path, max_bytes);
         return out.toOwnedSlice(allocator);
     }
     if (std.mem.eql(u8, path, "/sys/storage")) {
@@ -467,6 +471,7 @@ fn isFilePath(path: []const u8) bool {
     if (std.mem.eql(u8, path, dev_cpu_ap_debt_path)) return true;
     if (std.mem.eql(u8, path, dev_cpu_ap_admission_path)) return true;
     if (std.mem.eql(u8, path, dev_cpu_ap_aging_path)) return true;
+    if (std.mem.eql(u8, path, dev_cpu_ap_fairshare_path)) return true;
     if (std.mem.eql(u8, path, dev_net_state_path)) return true;
     if (std.mem.eql(u8, path, dev_net_route_path)) return true;
     if (std.mem.eql(u8, path, sys_kernel_version_path)) return true;
@@ -496,6 +501,7 @@ fn isFilePath(path: []const u8) bool {
     if (std.mem.eql(u8, path, sys_cpu_ap_debt_path)) return true;
     if (std.mem.eql(u8, path, sys_cpu_ap_admission_path)) return true;
     if (std.mem.eql(u8, path, sys_cpu_ap_aging_path)) return true;
+    if (std.mem.eql(u8, path, sys_cpu_ap_fairshare_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_state_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_backends_path)) return true;
     if (std.mem.eql(u8, path, sys_storage_filesystems_path)) return true;
@@ -620,6 +626,9 @@ fn renderFileAlloc(allocator: std.mem.Allocator, path: []const u8) Error![]u8 {
     }
     if (std.mem.eql(u8, path, dev_cpu_ap_aging_path) or std.mem.eql(u8, path, sys_cpu_ap_aging_path)) {
         return i386_ap_startup.renderAgingAlloc(allocator);
+    }
+    if (std.mem.eql(u8, path, dev_cpu_ap_fairshare_path) or std.mem.eql(u8, path, sys_cpu_ap_fairshare_path)) {
+        return i386_ap_startup.renderFairshareAlloc(allocator);
     }
     if (std.mem.eql(u8, path, dev_net_state_path)) {
         return renderNetStateAlloc(allocator);

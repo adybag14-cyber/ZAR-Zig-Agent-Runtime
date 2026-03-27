@@ -79,6 +79,8 @@ var admission_state: abi.BaremetalApAdmissionState = zeroAdmissionState();
 var admission_entries: [max_ap_command_slots]abi.BaremetalApAdmissionEntry = std.mem.zeroes([max_ap_command_slots]abi.BaremetalApAdmissionEntry);
 var aging_state: abi.BaremetalApAgingState = zeroAgingState();
 var aging_entries: [max_ap_command_slots]abi.BaremetalApAgingEntry = std.mem.zeroes([max_ap_command_slots]abi.BaremetalApAgingEntry);
+var fairshare_state: abi.BaremetalApFairshareState = zeroFairshareState();
+var fairshare_entries: [max_ap_command_slots]abi.BaremetalApFairshareEntry = std.mem.zeroes([max_ap_command_slots]abi.BaremetalApFairshareEntry);
 var ownership_dispatch_round_count: u32 = 0;
 var ownership_policy: u8 = abi.ap_ownership_policy_round_robin;
 var ownership_peak_active_slot_count: u8 = 0;
@@ -210,6 +212,36 @@ var aging_last_round_aged_task_count: u32 = 0;
 var aging_total_promoted_task_count: u32 = 0;
 var aging_peak_effective_priority: u32 = 0;
 var aging_last_start_slot_index: u32 = 0;
+var fairshare_drain_round_count: u32 = 0;
+var fairshare_aging_round_count: u32 = 0;
+var fairshare_fairshare_round_count: u32 = 0;
+var fairshare_policy: u8 = abi.ap_ownership_policy_round_robin;
+var fairshare_peak_active_slot_count: u8 = 0;
+var fairshare_last_round_active_slot_count: u8 = 0;
+var fairshare_last_round_waiting_task_count: u32 = 0;
+var fairshare_last_round_debt_task_count: u32 = 0;
+var fairshare_last_round_fairshare_task_count: u32 = 0;
+var fairshare_initial_pending_task_count: u32 = 0;
+var fairshare_last_pending_task_count: u32 = 0;
+var fairshare_peak_pending_task_count: u32 = 0;
+var fairshare_task_budget: u32 = 0;
+var fairshare_aging_step_value: u32 = 0;
+var fairshare_initial_min_slot_task_count: u32 = 0;
+var fairshare_initial_max_slot_task_count: u32 = 0;
+var fairshare_initial_task_balance_gap: u32 = 0;
+var fairshare_final_min_slot_task_count: u32 = 0;
+var fairshare_final_max_slot_task_count: u32 = 0;
+var fairshare_final_task_balance_gap: u32 = 0;
+var fairshare_initial_total_debt: u32 = 0;
+var fairshare_remaining_total_debt: u32 = 0;
+var fairshare_total_compensated_task_count: u32 = 0;
+var fairshare_last_round_compensated_task_count: u32 = 0;
+var fairshare_total_aged_task_count: u32 = 0;
+var fairshare_last_round_aged_task_count: u32 = 0;
+var fairshare_total_promoted_task_count: u32 = 0;
+var fairshare_total_fairshare_task_count: u32 = 0;
+var fairshare_peak_effective_priority: u32 = 0;
+var fairshare_last_start_slot_index: u32 = 0;
 const max_backfill_seen_tasks: usize = 128;
 const OwnershipStorage = struct {
     var owned_task_ids: [max_ap_command_slots][max_task_batch_entries]u32 = [_][max_task_batch_entries]u32{[_]u32{0} ** max_task_batch_entries} ** max_ap_command_slots;
@@ -309,6 +341,32 @@ const AgingStorage = struct {
     var total_waiting_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var debt_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var total_debt_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var dispatch_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var seed_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var final_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var initial_debt: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var remaining_debt: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_task_id: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_priority: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_effective_priority: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var peak_effective_priority: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_budget_ticks: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_batch_accumulator: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var total_accumulator: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var compensated_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var total_compensated_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var aged_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var total_aged_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+};
+const FairshareStorage = struct {
+    var task_ids: [max_ap_command_slots][max_task_batch_entries]u32 = [_][max_task_batch_entries]u32{[_]u32{0} ** max_task_batch_entries} ** max_ap_command_slots;
+    var task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var waiting_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var total_waiting_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var debt_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var total_debt_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var fairshare_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var total_fairshare_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var dispatch_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var seed_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var final_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
@@ -951,6 +1009,54 @@ fn zeroAgingState() abi.BaremetalApAgingState {
     };
 }
 
+fn zeroFairshareState() abi.BaremetalApFairshareState {
+    return .{
+        .magic = abi.ap_fairshare_magic,
+        .api_version = abi.api_version,
+        .present = 0,
+        .policy = abi.ap_ownership_policy_round_robin,
+        .exported_count = 0,
+        .active_count = 0,
+        .peak_active_slot_count = 0,
+        .last_round_active_slot_count = 0,
+        .requested_cpu_count = 0,
+        .logical_processor_count = 0,
+        .reserved0 = 0,
+        .bsp_apic_id = 0,
+        .total_waiting_task_count = 0,
+        .total_debt_task_count = 0,
+        .total_dispatch_count = 0,
+        .total_accumulator = 0,
+        .drain_round_count = 0,
+        .aging_round_count = 0,
+        .fairshare_round_count = 0,
+        .last_round_waiting_task_count = 0,
+        .last_round_debt_task_count = 0,
+        .last_round_fairshare_task_count = 0,
+        .initial_pending_task_count = 0,
+        .last_pending_task_count = 0,
+        .peak_pending_task_count = 0,
+        .task_budget = 0,
+        .aging_step = 0,
+        .initial_min_slot_task_count = 0,
+        .initial_max_slot_task_count = 0,
+        .initial_task_balance_gap = 0,
+        .final_min_slot_task_count = 0,
+        .final_max_slot_task_count = 0,
+        .final_task_balance_gap = 0,
+        .initial_total_debt = 0,
+        .remaining_total_debt = 0,
+        .total_compensated_task_count = 0,
+        .last_round_compensated_task_count = 0,
+        .total_aged_task_count = 0,
+        .last_round_aged_task_count = 0,
+        .total_promoted_task_count = 0,
+        .total_fairshare_task_count = 0,
+        .peak_effective_priority = 0,
+        .last_start_slot_index = 0,
+    };
+}
+
 fn resetSingleState() void {
     state = zeroState();
     diagnostics = .{};
@@ -1196,6 +1302,33 @@ fn resetAgingSlot(slot_index: usize) void {
     @memset(&AgingStorage.task_ids[slot_index], 0);
 }
 
+fn resetFairshareSlot(slot_index: usize) void {
+    FairshareStorage.task_count[slot_index] = 0;
+    FairshareStorage.waiting_task_count[slot_index] = 0;
+    FairshareStorage.total_waiting_task_count[slot_index] = 0;
+    FairshareStorage.debt_task_count[slot_index] = 0;
+    FairshareStorage.total_debt_task_count[slot_index] = 0;
+    FairshareStorage.fairshare_task_count[slot_index] = 0;
+    FairshareStorage.total_fairshare_task_count[slot_index] = 0;
+    FairshareStorage.dispatch_count[slot_index] = 0;
+    FairshareStorage.seed_task_count[slot_index] = 0;
+    FairshareStorage.final_task_count[slot_index] = 0;
+    FairshareStorage.initial_debt[slot_index] = 0;
+    FairshareStorage.remaining_debt[slot_index] = 0;
+    FairshareStorage.last_task_id[slot_index] = 0;
+    FairshareStorage.last_priority[slot_index] = 0;
+    FairshareStorage.last_effective_priority[slot_index] = 0;
+    FairshareStorage.peak_effective_priority[slot_index] = 0;
+    FairshareStorage.last_budget_ticks[slot_index] = 0;
+    FairshareStorage.last_batch_accumulator[slot_index] = 0;
+    FairshareStorage.total_accumulator[slot_index] = 0;
+    FairshareStorage.compensated_task_count[slot_index] = 0;
+    FairshareStorage.total_compensated_task_count[slot_index] = 0;
+    FairshareStorage.aged_task_count[slot_index] = 0;
+    FairshareStorage.total_aged_task_count[slot_index] = 0;
+    @memset(&FairshareStorage.task_ids[slot_index], 0);
+}
+
 fn resetDebtState() void {
     debt_state = zeroDebtState();
     @memset(&debt_entries, std.mem.zeroes(abi.BaremetalApDebtEntry));
@@ -1282,6 +1415,42 @@ fn resetAgingState() void {
     for (0..max_ap_command_slots) |slot_index| resetAgingSlot(slot_index);
 }
 
+fn resetFairshareState() void {
+    fairshare_state = zeroFairshareState();
+    @memset(&fairshare_entries, std.mem.zeroes(abi.BaremetalApFairshareEntry));
+    fairshare_drain_round_count = 0;
+    fairshare_aging_round_count = 0;
+    fairshare_fairshare_round_count = 0;
+    fairshare_policy = abi.ap_ownership_policy_round_robin;
+    fairshare_peak_active_slot_count = 0;
+    fairshare_last_round_active_slot_count = 0;
+    fairshare_last_round_waiting_task_count = 0;
+    fairshare_last_round_debt_task_count = 0;
+    fairshare_last_round_fairshare_task_count = 0;
+    fairshare_initial_pending_task_count = 0;
+    fairshare_last_pending_task_count = 0;
+    fairshare_peak_pending_task_count = 0;
+    fairshare_task_budget = 0;
+    fairshare_aging_step_value = 0;
+    fairshare_initial_min_slot_task_count = 0;
+    fairshare_initial_max_slot_task_count = 0;
+    fairshare_initial_task_balance_gap = 0;
+    fairshare_final_min_slot_task_count = 0;
+    fairshare_final_max_slot_task_count = 0;
+    fairshare_final_task_balance_gap = 0;
+    fairshare_initial_total_debt = 0;
+    fairshare_remaining_total_debt = 0;
+    fairshare_total_compensated_task_count = 0;
+    fairshare_last_round_compensated_task_count = 0;
+    fairshare_total_aged_task_count = 0;
+    fairshare_last_round_aged_task_count = 0;
+    fairshare_total_promoted_task_count = 0;
+    fairshare_total_fairshare_task_count = 0;
+    fairshare_peak_effective_priority = 0;
+    fairshare_last_start_slot_index = 0;
+    for (0..max_ap_command_slots) |slot_index| resetFairshareSlot(slot_index);
+}
+
 pub fn resetMultiState() void {
     multi_state = zeroMultiState();
     @memset(&multi_entries, std.mem.zeroes(abi.BaremetalApMultiEntry));
@@ -1297,6 +1466,7 @@ pub fn resetOwnershipState() void {
     resetDebtState();
     resetAdmissionState();
     resetAgingState();
+    resetFairshareState();
     @memset(&ownership_entries, std.mem.zeroes(abi.BaremetalApOwnershipEntry));
     @memset(&backfill_entries, std.mem.zeroes(abi.BaremetalApBackfillEntry));
     ownership_dispatch_round_count = 0;
@@ -1510,6 +1680,22 @@ pub fn agingEntry(index: u16) abi.BaremetalApAgingEntry {
     refreshState();
     if (index >= aging_state.exported_count) return std.mem.zeroes(abi.BaremetalApAgingEntry);
     return aging_entries[index];
+}
+
+pub fn fairshareStatePtr() *const abi.BaremetalApFairshareState {
+    refreshState();
+    return &fairshare_state;
+}
+
+pub fn fairshareEntryCount() u16 {
+    refreshState();
+    return fairshare_state.exported_count;
+}
+
+pub fn fairshareEntry(index: u16) abi.BaremetalApFairshareEntry {
+    refreshState();
+    if (index >= fairshare_state.exported_count) return std.mem.zeroes(abi.BaremetalApFairshareEntry);
+    return fairshare_entries[index];
 }
 
 pub fn startupSingleAp() Error!void {
@@ -2767,6 +2953,288 @@ pub fn dispatchDebtAwareSchedulerTasksPriorityWithAgingFromOffset(
     return total_accumulator;
 }
 
+fn clearFairshareRoundTelemetry() void {
+    for (0..max_ap_command_slots) |slot_index| {
+        FairshareStorage.task_count[slot_index] = 0;
+        FairshareStorage.waiting_task_count[slot_index] = 0;
+        FairshareStorage.debt_task_count[slot_index] = 0;
+        FairshareStorage.fairshare_task_count[slot_index] = 0;
+        FairshareStorage.compensated_task_count[slot_index] = 0;
+        FairshareStorage.aged_task_count[slot_index] = 0;
+        @memset(&FairshareStorage.task_ids[slot_index], 0);
+    }
+}
+
+fn snapshotFairshareLoadRange(active_slots: []const u16, final: bool) void {
+    var min_slot_task_count: u32 = std.math.maxInt(u32);
+    var max_slot_task_count: u32 = 0;
+    var have_active_slot = false;
+    for (active_slots) |slot| {
+        const slot_index = @as(usize, slot);
+        const load = if (final) FairshareStorage.final_task_count[slot_index] else FairshareStorage.seed_task_count[slot_index];
+        if (load < min_slot_task_count) min_slot_task_count = load;
+        if (load > max_slot_task_count) max_slot_task_count = load;
+        have_active_slot = true;
+    }
+    const min_value = if (have_active_slot) min_slot_task_count else 0;
+    const gap_value = if (have_active_slot) max_slot_task_count - min_value else 0;
+    if (final) {
+        fairshare_final_min_slot_task_count = min_value;
+        fairshare_final_max_slot_task_count = max_slot_task_count;
+        fairshare_final_task_balance_gap = gap_value;
+    } else {
+        fairshare_initial_min_slot_task_count = min_value;
+        fairshare_initial_max_slot_task_count = max_slot_task_count;
+        fairshare_initial_task_balance_gap = gap_value;
+    }
+}
+
+fn selectHighestFairshareDebtSlot(active_slots: []const u16, start_offset: usize) u16 {
+    var best_slot = active_slots[start_offset % active_slots.len];
+    var best_debt = FairshareStorage.remaining_debt[@as(usize, best_slot)];
+    var best_load = FairshareStorage.final_task_count[@as(usize, best_slot)];
+    var best_waiting = FairshareStorage.total_waiting_task_count[@as(usize, best_slot)];
+    var offset: usize = 1;
+    while (offset < active_slots.len) : (offset += 1) {
+        const slot = active_slots[(start_offset + offset) % active_slots.len];
+        const slot_index = @as(usize, slot);
+        const debt = FairshareStorage.remaining_debt[slot_index];
+        const load = FairshareStorage.final_task_count[slot_index];
+        const waiting = FairshareStorage.total_waiting_task_count[slot_index];
+        if (debt > best_debt or
+            (debt == best_debt and load < best_load) or
+            (debt == best_debt and load == best_load and waiting < best_waiting))
+        {
+            best_slot = slot;
+            best_debt = debt;
+            best_load = load;
+            best_waiting = waiting;
+        }
+    }
+    return best_slot;
+}
+
+pub fn dispatchDebtAwareSchedulerTasksPriorityWithFairshareFromOffset(
+    debt_tasks: []const abi.BaremetalTask,
+    waiting_tasks: []const abi.BaremetalTask,
+    start_slot_offset: usize,
+    task_budget: usize,
+    aging_step: u32,
+) OwnershipError!u32 {
+    if (task_budget == 0 or aging_step == 0) return error.InvalidWorkBatch;
+    if (debt_tasks.len + waiting_tasks.len > max_owned_dispatch_entries) return error.TooManyOwnedTasks;
+
+    var active_slots: [max_ap_command_slots]u16 = undefined;
+    const active_slot_count = activeOwnershipSlots(&active_slots);
+    if (active_slot_count == 0) return error.ApNotStarted;
+
+    var debt_storage: [max_owned_dispatch_entries]abi.BaremetalTask = undefined;
+    var debt_count: usize = 0;
+    for (debt_tasks) |task| {
+        if (task.task_id == 0) continue;
+        if (task.state != abi.task_state_ready and task.state != abi.task_state_running) continue;
+        if (debt_count >= debt_storage.len) return error.TooManyOwnedTasks;
+        debt_storage[debt_count] = task;
+        debt_count += 1;
+    }
+
+    var waiting_storage: [max_owned_dispatch_entries]abi.BaremetalTask = undefined;
+    var waiting_count: usize = 0;
+    for (waiting_tasks) |task| {
+        if (task.task_id == 0) continue;
+        if (task.state != abi.task_state_ready and task.state != abi.task_state_running) continue;
+        if (waiting_count >= waiting_storage.len) return error.TooManyOwnedTasks;
+        waiting_storage[waiting_count] = task;
+        waiting_count += 1;
+    }
+    if (debt_count + waiting_count == 0) return error.NoReadyTask;
+
+    var ordered_debt_storage: [max_owned_dispatch_entries]abi.BaremetalTask = undefined;
+    var ordered_waiting_storage: [max_owned_dispatch_entries]abi.BaremetalTask = undefined;
+    const ordered_debt = if (debt_count == 0)
+        debt_storage[0..0]
+    else
+        try collectOwnedRunnableTasksOrdered(debt_storage[0..debt_count], abi.ap_ownership_policy_priority, &ordered_debt_storage);
+    const ordered_waiting = if (waiting_count == 0)
+        waiting_storage[0..0]
+    else
+        try collectOwnedRunnableTasksOrdered(waiting_storage[0..waiting_count], abi.ap_ownership_policy_priority, &ordered_waiting_storage);
+
+    var remaining_debt_storage: [max_owned_dispatch_entries]abi.BaremetalTask = undefined;
+    std.mem.copyForwards(abi.BaremetalTask, remaining_debt_storage[0..ordered_debt.len], ordered_debt);
+    var remaining_debt_count = ordered_debt.len;
+
+    var remaining_waiting_storage: [max_owned_dispatch_entries]abi.BaremetalTask = undefined;
+    std.mem.copyForwards(abi.BaremetalTask, remaining_waiting_storage[0..ordered_waiting.len], ordered_waiting);
+    var waiting_age_rounds: [max_owned_dispatch_entries]u32 = [_]u32{0} ** max_owned_dispatch_entries;
+    var remaining_waiting_count = ordered_waiting.len;
+
+    resetFairshareState();
+    fairshare_policy = abi.ap_ownership_policy_priority;
+    fairshare_last_round_active_slot_count = @as(u8, @intCast(active_slot_count));
+    fairshare_peak_active_slot_count = fairshare_last_round_active_slot_count;
+    fairshare_initial_pending_task_count = @as(u32, @intCast(remaining_debt_count + remaining_waiting_count));
+    fairshare_last_pending_task_count = fairshare_initial_pending_task_count;
+    fairshare_peak_pending_task_count = fairshare_initial_pending_task_count;
+    fairshare_task_budget = @as(u32, @intCast(task_budget));
+    fairshare_aging_step_value = aging_step;
+
+    for (active_slots[0..active_slot_count]) |slot| {
+        const slot_index = @as(usize, slot);
+        const seed_task_count = WindowStorage.total_window_task_count[slot_index];
+        FairshareStorage.seed_task_count[slot_index] = seed_task_count;
+        FairshareStorage.final_task_count[slot_index] = seed_task_count;
+    }
+    snapshotFairshareLoadRange(active_slots[0..active_slot_count], false);
+    for (active_slots[0..active_slot_count]) |slot| {
+        const slot_index = @as(usize, slot);
+        const initial_debt = fairshare_initial_max_slot_task_count - FairshareStorage.seed_task_count[slot_index];
+        FairshareStorage.initial_debt[slot_index] = initial_debt;
+        FairshareStorage.remaining_debt[slot_index] = initial_debt;
+        fairshare_initial_total_debt +%= initial_debt;
+        fairshare_remaining_total_debt +%= initial_debt;
+    }
+    snapshotFairshareLoadRange(active_slots[0..active_slot_count], true);
+
+    var total_accumulator: u32 = 0;
+    var round_index: usize = 0;
+    while (remaining_debt_count != 0 or remaining_waiting_count != 0) : (round_index += 1) {
+        clearFairshareRoundTelemetry();
+        const round_start_slot = (start_slot_offset + round_index) % active_slot_count;
+        const round_is_fairshare = fairshare_remaining_total_debt == 0;
+        const candidate_count = remaining_debt_count + remaining_waiting_count;
+        var candidates: [max_owned_dispatch_entries]AgingCandidate = undefined;
+        var built_count: usize = 0;
+        for (remaining_debt_storage[0..remaining_debt_count]) |task| {
+            candidates[built_count] = .{
+                .task = task,
+                .effective_priority = @as(u32, task.priority),
+                .waiting_age_rounds = 0,
+                .kind = .debt,
+            };
+            built_count += 1;
+        }
+        for (remaining_waiting_storage[0..remaining_waiting_count], 0..) |task, waiting_index| {
+            const rounds = waiting_age_rounds[waiting_index];
+            const effective_priority = @as(u32, task.priority) +| (rounds * aging_step);
+            candidates[built_count] = .{
+                .task = task,
+                .effective_priority = effective_priority,
+                .waiting_age_rounds = rounds,
+                .kind = .waiting,
+            };
+            if (fairshare_peak_effective_priority < effective_priority) fairshare_peak_effective_priority = effective_priority;
+            built_count += 1;
+        }
+        std.debug.assert(built_count == candidate_count);
+        sortAgingCandidates(candidates[0..candidate_count]);
+
+        const round_task_count = @min(task_budget, candidate_count);
+        const selected_candidates = candidates[0..round_task_count];
+        fairshare_drain_round_count +%= 1;
+        fairshare_last_round_waiting_task_count = 0;
+        fairshare_last_round_debt_task_count = 0;
+        fairshare_last_round_fairshare_task_count = 0;
+        fairshare_last_round_compensated_task_count = 0;
+        fairshare_last_round_aged_task_count = 0;
+        fairshare_last_start_slot_index = @as(u32, @intCast(round_start_slot));
+
+        for (selected_candidates, 0..) |candidate, task_index| {
+            const slot = selectHighestFairshareDebtSlot(active_slots[0..active_slot_count], round_start_slot + task_index);
+            const slot_index = @as(usize, slot);
+            const current_count = @as(usize, FairshareStorage.task_count[slot_index]);
+            if (current_count >= max_task_batch_entries) return error.TooManyOwnedTasks;
+            const debt_before = FairshareStorage.remaining_debt[slot_index];
+            const aged = candidate.waiting_age_rounds != 0;
+            FairshareStorage.task_ids[slot_index][current_count] = candidate.task.task_id;
+            FairshareStorage.task_count[slot_index] = @as(u32, @intCast(current_count + 1));
+            FairshareStorage.final_task_count[slot_index] +%= 1;
+            FairshareStorage.last_task_id[slot_index] = candidate.task.task_id;
+            FairshareStorage.last_priority[slot_index] = @as(u32, candidate.task.priority);
+            FairshareStorage.last_effective_priority[slot_index] = candidate.effective_priority;
+            FairshareStorage.last_budget_ticks[slot_index] = candidate.task.budget_ticks;
+            if (FairshareStorage.peak_effective_priority[slot_index] < candidate.effective_priority) {
+                FairshareStorage.peak_effective_priority[slot_index] = candidate.effective_priority;
+            }
+            if (candidate.kind == .waiting) {
+                FairshareStorage.waiting_task_count[slot_index] +%= 1;
+                FairshareStorage.total_waiting_task_count[slot_index] +%= 1;
+                fairshare_last_round_waiting_task_count +%= 1;
+                if (aged) {
+                    FairshareStorage.aged_task_count[slot_index] +%= 1;
+                    FairshareStorage.total_aged_task_count[slot_index] +%= 1;
+                    fairshare_total_promoted_task_count +%= 1;
+                }
+                if (round_is_fairshare) {
+                    FairshareStorage.fairshare_task_count[slot_index] +%= 1;
+                    FairshareStorage.total_fairshare_task_count[slot_index] +%= 1;
+                    fairshare_total_fairshare_task_count +%= 1;
+                    fairshare_last_round_fairshare_task_count +%= 1;
+                }
+            } else {
+                FairshareStorage.debt_task_count[slot_index] +%= 1;
+                FairshareStorage.total_debt_task_count[slot_index] +%= 1;
+                fairshare_last_round_debt_task_count +%= 1;
+            }
+            if (debt_before != 0) {
+                FairshareStorage.remaining_debt[slot_index] = debt_before - 1;
+                FairshareStorage.compensated_task_count[slot_index] +%= 1;
+                FairshareStorage.total_compensated_task_count[slot_index] +%= 1;
+                fairshare_remaining_total_debt -%= 1;
+                fairshare_total_compensated_task_count +%= 1;
+                fairshare_last_round_compensated_task_count +%= 1;
+            }
+        }
+        if (round_is_fairshare and fairshare_last_round_fairshare_task_count != 0) {
+            fairshare_fairshare_round_count +%= 1;
+        }
+
+        var round_accumulator: u32 = 0;
+        for (active_slots[0..active_slot_count]) |slot| {
+            const slot_index = @as(usize, slot);
+            const owned_count = @as(usize, FairshareStorage.task_count[slot_index]);
+            if (owned_count == 0) continue;
+            const accumulator = try dispatchWorkBatchToApSlot(slot, FairshareStorage.task_ids[slot_index][0..owned_count]);
+            FairshareStorage.dispatch_count[slot_index] +%= 1;
+            FairshareStorage.last_batch_accumulator[slot_index] = accumulator;
+            FairshareStorage.total_accumulator[slot_index] +%= accumulator;
+            round_accumulator +%= accumulator;
+        }
+        total_accumulator +%= round_accumulator;
+
+        var next_debt_count: usize = 0;
+        for (remaining_debt_storage[0..remaining_debt_count]) |task| {
+            if (containsAgingCandidateTaskId(selected_candidates, task.task_id)) continue;
+            remaining_debt_storage[next_debt_count] = task;
+            next_debt_count += 1;
+        }
+        remaining_debt_count = next_debt_count;
+
+        var next_waiting_count: usize = 0;
+        var aged_this_round: u32 = 0;
+        for (remaining_waiting_storage[0..remaining_waiting_count], 0..) |task, waiting_index| {
+            if (containsAgingCandidateTaskId(selected_candidates, task.task_id)) continue;
+            remaining_waiting_storage[next_waiting_count] = task;
+            waiting_age_rounds[next_waiting_count] = waiting_age_rounds[waiting_index] + 1;
+            next_waiting_count += 1;
+            aged_this_round +%= 1;
+        }
+        remaining_waiting_count = next_waiting_count;
+        if (aged_this_round != 0) {
+            fairshare_aging_round_count +%= 1;
+            fairshare_total_aged_task_count +%= aged_this_round;
+            fairshare_last_round_aged_task_count = aged_this_round;
+        }
+
+        fairshare_last_pending_task_count = @as(u32, @intCast(remaining_debt_count + remaining_waiting_count));
+        snapshotFairshareLoadRange(active_slots[0..active_slot_count], true);
+    }
+
+    snapshotFairshareLoadRange(active_slots[0..active_slot_count], true);
+    refreshState();
+    return total_accumulator;
+}
+
 pub fn dispatchDebtAwareSchedulerTasksPriorityUntilDrainedFromOffset(
     tasks: []const abi.BaremetalTask,
     start_slot_offset: usize,
@@ -3825,6 +4293,120 @@ pub fn renderAgingAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]
     return allocator.dupe(u8, buffer[0..used]);
 }
 
+pub fn renderFairshareAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
+    refreshState();
+    var buffer: [5632]u8 = undefined;
+    var used: usize = 0;
+    const head = std.fmt.bufPrint(
+        buffer[used..],
+        "present={d}\npolicy={d}\nexported_count={d}\nactive_count={d}\npeak_active_slot_count={d}\nlast_round_active_slot_count={d}\nrequested_cpu_count={d}\nlogical_processor_count={d}\nbsp_apic_id={d}\ntotal_waiting_task_count={d}\ntotal_debt_task_count={d}\ntotal_dispatch_count={d}\ntotal_accumulator={d}\ndrain_round_count={d}\naging_round_count={d}\nfairshare_round_count={d}\n",
+        .{
+            fairshare_state.present,
+            fairshare_state.policy,
+            fairshare_state.exported_count,
+            fairshare_state.active_count,
+            fairshare_state.peak_active_slot_count,
+            fairshare_state.last_round_active_slot_count,
+            fairshare_state.requested_cpu_count,
+            fairshare_state.logical_processor_count,
+            fairshare_state.bsp_apic_id,
+            fairshare_state.total_waiting_task_count,
+            fairshare_state.total_debt_task_count,
+            fairshare_state.total_dispatch_count,
+            fairshare_state.total_accumulator,
+            fairshare_state.drain_round_count,
+            fairshare_state.aging_round_count,
+            fairshare_state.fairshare_round_count,
+        },
+    ) catch unreachable;
+    used += head.len;
+    const tail = std.fmt.bufPrint(
+        buffer[used..],
+        "last_round_waiting_task_count={d}\nlast_round_debt_task_count={d}\nlast_round_fairshare_task_count={d}\ninitial_pending_task_count={d}\nlast_pending_task_count={d}\npeak_pending_task_count={d}\ntask_budget={d}\naging_step={d}\ninitial_min_slot_task_count={d}\ninitial_max_slot_task_count={d}\ninitial_task_balance_gap={d}\nfinal_min_slot_task_count={d}\nfinal_max_slot_task_count={d}\nfinal_task_balance_gap={d}\ninitial_total_debt={d}\nremaining_total_debt={d}\ntotal_compensated_task_count={d}\nlast_round_compensated_task_count={d}\ntotal_aged_task_count={d}\nlast_round_aged_task_count={d}\ntotal_promoted_task_count={d}\ntotal_fairshare_task_count={d}\npeak_effective_priority={d}\nlast_start_slot_index={d}\n",
+        .{
+            fairshare_state.last_round_waiting_task_count,
+            fairshare_state.last_round_debt_task_count,
+            fairshare_state.last_round_fairshare_task_count,
+            fairshare_state.initial_pending_task_count,
+            fairshare_state.last_pending_task_count,
+            fairshare_state.peak_pending_task_count,
+            fairshare_state.task_budget,
+            fairshare_state.aging_step,
+            fairshare_state.initial_min_slot_task_count,
+            fairshare_state.initial_max_slot_task_count,
+            fairshare_state.initial_task_balance_gap,
+            fairshare_state.final_min_slot_task_count,
+            fairshare_state.final_max_slot_task_count,
+            fairshare_state.final_task_balance_gap,
+            fairshare_state.initial_total_debt,
+            fairshare_state.remaining_total_debt,
+            fairshare_state.total_compensated_task_count,
+            fairshare_state.last_round_compensated_task_count,
+            fairshare_state.total_aged_task_count,
+            fairshare_state.last_round_aged_task_count,
+            fairshare_state.total_promoted_task_count,
+            fairshare_state.total_fairshare_task_count,
+            fairshare_state.peak_effective_priority,
+            fairshare_state.last_start_slot_index,
+        },
+    ) catch unreachable;
+    used += tail.len;
+    var entry_index: u16 = 0;
+    while (entry_index < fairshare_state.exported_count) : (entry_index += 1) {
+        const entry = fairshare_entries[entry_index];
+        const line_a = std.fmt.bufPrint(
+            buffer[used..],
+            "slot[{d}].target_apic_id={d}\nslot[{d}].dispatch_count={d}\nslot[{d}].waiting_task_count={d}\nslot[{d}].total_waiting_task_count={d}\nslot[{d}].debt_task_count={d}\nslot[{d}].total_debt_task_count={d}\nslot[{d}].fairshare_task_count={d}\nslot[{d}].total_fairshare_task_count={d}\nslot[{d}].seed_task_count={d}\nslot[{d}].final_task_count={d}\nslot[{d}].initial_debt={d}\nslot[{d}].remaining_debt={d}\nslot[{d}].last_task_id={d}\nslot[{d}].last_priority={d}\n",
+            .{
+                entry_index, entry.target_apic_id,
+                entry_index, entry.dispatch_count,
+                entry_index, entry.waiting_task_count,
+                entry_index, entry.total_waiting_task_count,
+                entry_index, entry.debt_task_count,
+                entry_index, entry.total_debt_task_count,
+                entry_index, entry.fairshare_task_count,
+                entry_index, entry.total_fairshare_task_count,
+                entry_index, entry.seed_task_count,
+                entry_index, entry.final_task_count,
+                entry_index, entry.initial_debt,
+                entry_index, entry.remaining_debt,
+                entry_index, entry.last_task_id,
+                entry_index, entry.last_priority,
+            },
+        ) catch unreachable;
+        used += line_a.len;
+        const line_b = std.fmt.bufPrint(
+            buffer[used..],
+            "slot[{d}].last_effective_priority={d}\nslot[{d}].peak_effective_priority={d}\nslot[{d}].last_budget_ticks={d}\nslot[{d}].last_batch_accumulator={d}\nslot[{d}].total_accumulator={d}\nslot[{d}].compensated_task_count={d}\nslot[{d}].total_compensated_task_count={d}\nslot[{d}].aged_task_count={d}\nslot[{d}].total_aged_task_count={d}\nslot[{d}].started={d}\nslot[{d}].halted={d}\nslot[{d}].slot_index={d}\n",
+            .{
+                entry_index, entry.last_effective_priority,
+                entry_index, entry.peak_effective_priority,
+                entry_index, entry.last_budget_ticks,
+                entry_index, entry.last_batch_accumulator,
+                entry_index, entry.total_accumulator,
+                entry_index, entry.compensated_task_count,
+                entry_index, entry.total_compensated_task_count,
+                entry_index, entry.aged_task_count,
+                entry_index, entry.total_aged_task_count,
+                entry_index, entry.started,
+                entry_index, entry.halted,
+                entry_index, entry.slot_index,
+            },
+        ) catch unreachable;
+        used += line_b.len;
+        const task_count = @min(@as(usize, @intCast(entry.waiting_task_count + entry.debt_task_count)), max_task_batch_entries);
+        for (0..task_count) |task_index| {
+            const task_line = std.fmt.bufPrint(
+                buffer[used..],
+                "slot[{d}].task[{d}]={d}\n",
+                .{ entry_index, task_index, FairshareStorage.task_ids[entry.slot_index][task_index] },
+            ) catch unreachable;
+            used += task_line.len;
+        }
+    }
+    return allocator.dupe(u8, buffer[0..used]);
+}
+
 fn refreshState() void {
     const topology = acpi.cpuTopologyStatePtr().*;
     const lapic_state = lapic.statePtr().*;
@@ -4571,6 +5153,128 @@ fn refreshState() void {
         aging_state.total_aged_task_count != 0)
     {
         aging_state.present = 1;
+    }
+
+    fairshare_state = zeroFairshareState();
+    fairshare_state.present = if (state.supported != 0) 1 else 0;
+    fairshare_state.policy = fairshare_policy;
+    fairshare_state.requested_cpu_count = topology.enabled_count;
+    fairshare_state.logical_processor_count = lapic_state.logical_processor_count;
+    fairshare_state.bsp_apic_id = lapic_state.current_apic_id;
+    fairshare_state.peak_active_slot_count = fairshare_peak_active_slot_count;
+    fairshare_state.last_round_active_slot_count = fairshare_last_round_active_slot_count;
+    fairshare_state.drain_round_count = fairshare_drain_round_count;
+    fairshare_state.aging_round_count = fairshare_aging_round_count;
+    fairshare_state.fairshare_round_count = fairshare_fairshare_round_count;
+    fairshare_state.last_round_waiting_task_count = fairshare_last_round_waiting_task_count;
+    fairshare_state.last_round_debt_task_count = fairshare_last_round_debt_task_count;
+    fairshare_state.last_round_fairshare_task_count = fairshare_last_round_fairshare_task_count;
+    fairshare_state.initial_pending_task_count = fairshare_initial_pending_task_count;
+    fairshare_state.last_pending_task_count = fairshare_last_pending_task_count;
+    fairshare_state.peak_pending_task_count = fairshare_peak_pending_task_count;
+    fairshare_state.task_budget = fairshare_task_budget;
+    fairshare_state.aging_step = fairshare_aging_step_value;
+    fairshare_state.initial_min_slot_task_count = fairshare_initial_min_slot_task_count;
+    fairshare_state.initial_max_slot_task_count = fairshare_initial_max_slot_task_count;
+    fairshare_state.initial_task_balance_gap = fairshare_initial_task_balance_gap;
+    fairshare_state.final_min_slot_task_count = fairshare_final_min_slot_task_count;
+    fairshare_state.final_max_slot_task_count = fairshare_final_max_slot_task_count;
+    fairshare_state.final_task_balance_gap = fairshare_final_task_balance_gap;
+    fairshare_state.initial_total_debt = fairshare_initial_total_debt;
+    fairshare_state.remaining_total_debt = fairshare_remaining_total_debt;
+    fairshare_state.total_compensated_task_count = fairshare_total_compensated_task_count;
+    fairshare_state.last_round_compensated_task_count = fairshare_last_round_compensated_task_count;
+    fairshare_state.total_aged_task_count = fairshare_total_aged_task_count;
+    fairshare_state.last_round_aged_task_count = fairshare_last_round_aged_task_count;
+    fairshare_state.total_promoted_task_count = fairshare_total_promoted_task_count;
+    fairshare_state.total_fairshare_task_count = fairshare_total_fairshare_task_count;
+    fairshare_state.peak_effective_priority = fairshare_peak_effective_priority;
+    fairshare_state.last_start_slot_index = fairshare_last_start_slot_index;
+    @memset(&fairshare_entries, std.mem.zeroes(abi.BaremetalApFairshareEntry));
+    slot_index = 0;
+    while (slot_index < max_ap_command_slots) : (slot_index += 1) {
+        const target_apic_id = readStateVar(slotTargetApicIdPtr(slot_index));
+        const started = if (readStateVar(slotStartedPtr(slot_index)) != 0) @as(u8, 1) else @as(u8, 0);
+        const halted = if (readStateVar(slotHaltedPtr(slot_index)) != 0) @as(u8, 1) else @as(u8, 0);
+        const waiting_task_count = FairshareStorage.waiting_task_count[slot_index];
+        const total_waiting_task_count = FairshareStorage.total_waiting_task_count[slot_index];
+        const debt_task_count = FairshareStorage.debt_task_count[slot_index];
+        const total_debt_task_count = FairshareStorage.total_debt_task_count[slot_index];
+        const fairshare_task_count = FairshareStorage.fairshare_task_count[slot_index];
+        const total_fairshare_task_count = FairshareStorage.total_fairshare_task_count[slot_index];
+        const seed_task_count = FairshareStorage.seed_task_count[slot_index];
+        const final_task_count = FairshareStorage.final_task_count[slot_index];
+        const total_accumulator = FairshareStorage.total_accumulator[slot_index];
+        const total_compensated_task_count = FairshareStorage.total_compensated_task_count[slot_index];
+        const total_aged_task_count = FairshareStorage.total_aged_task_count[slot_index];
+        const remaining_debt = FairshareStorage.remaining_debt[slot_index];
+        if (target_apic_id == 0 and
+            waiting_task_count == 0 and
+            total_waiting_task_count == 0 and
+            debt_task_count == 0 and
+            total_debt_task_count == 0 and
+            fairshare_task_count == 0 and
+            total_fairshare_task_count == 0 and
+            seed_task_count == 0 and
+            final_task_count == 0 and
+            total_accumulator == 0 and
+            total_compensated_task_count == 0 and
+            total_aged_task_count == 0 and
+            remaining_debt == 0 and
+            started == 0 and
+            halted == 0)
+        {
+            continue;
+        }
+        const dispatch_count = FairshareStorage.dispatch_count[slot_index];
+        const exported_index = fairshare_state.exported_count;
+        fairshare_entries[exported_index] = .{
+            .target_apic_id = target_apic_id,
+            .dispatch_count = dispatch_count,
+            .waiting_task_count = waiting_task_count,
+            .total_waiting_task_count = total_waiting_task_count,
+            .debt_task_count = debt_task_count,
+            .total_debt_task_count = total_debt_task_count,
+            .fairshare_task_count = fairshare_task_count,
+            .total_fairshare_task_count = total_fairshare_task_count,
+            .seed_task_count = seed_task_count,
+            .final_task_count = final_task_count,
+            .initial_debt = FairshareStorage.initial_debt[slot_index],
+            .remaining_debt = remaining_debt,
+            .last_task_id = FairshareStorage.last_task_id[slot_index],
+            .last_priority = FairshareStorage.last_priority[slot_index],
+            .last_effective_priority = FairshareStorage.last_effective_priority[slot_index],
+            .peak_effective_priority = FairshareStorage.peak_effective_priority[slot_index],
+            .last_budget_ticks = FairshareStorage.last_budget_ticks[slot_index],
+            .last_batch_accumulator = FairshareStorage.last_batch_accumulator[slot_index],
+            .total_accumulator = total_accumulator,
+            .compensated_task_count = FairshareStorage.compensated_task_count[slot_index],
+            .total_compensated_task_count = total_compensated_task_count,
+            .aged_task_count = FairshareStorage.aged_task_count[slot_index],
+            .total_aged_task_count = total_aged_task_count,
+            .started = started,
+            .halted = halted,
+            .slot_index = @as(u8, @intCast(slot_index)),
+            .reserved0 = 0,
+        };
+        fairshare_state.exported_count += 1;
+        if (started != 0 and halted == 0) fairshare_state.active_count +%= 1;
+        fairshare_state.total_waiting_task_count +%= total_waiting_task_count;
+        fairshare_state.total_debt_task_count +%= total_debt_task_count;
+        fairshare_state.total_dispatch_count +%= dispatch_count;
+        fairshare_state.total_accumulator +%= total_accumulator;
+    }
+    if (fairshare_state.active_count > fairshare_peak_active_slot_count) {
+        fairshare_peak_active_slot_count = fairshare_state.active_count;
+    }
+    fairshare_state.peak_active_slot_count = fairshare_peak_active_slot_count;
+    if (fairshare_state.exported_count != 0 or
+        fairshare_state.drain_round_count != 0 or
+        fairshare_state.initial_total_debt != 0 or
+        fairshare_state.total_waiting_task_count != 0 or
+        fairshare_state.total_fairshare_task_count != 0)
+    {
+        fairshare_state.present = 1;
     }
 }
 
@@ -7442,6 +8146,200 @@ test "i386 debt-aware priority scheduler ages waiting tasks into carried debt st
     try std.testing.expect(std.mem.indexOf(u8, aging_render, "remaining_total_debt=0") != null);
     try std.testing.expect(std.mem.indexOf(u8, aging_render, "slot[1].task[0]=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, aging_render, "slot[3].task[0]=2") != null);
+
+    try haltApSlot(3);
+    try haltApSlot(2);
+    try haltApSlot(1);
+    try haltApSlot(0);
+}
+
+test "i386 debt-aware priority scheduler drains broader fairshare backlog after carried debt" {
+    resetForTest();
+    acpi.resetForTest();
+    try acpi.probeSyntheticImage(true);
+
+    for (0..4) |slot_index| {
+        writeStateVar(slotStartedPtr(slot_index), 1);
+        writeStateVar(slotStagePtr(slot_index), 4);
+        writeStateVar(slotReportedApicIdPtr(slot_index), @as(u32, @intCast(slot_index + 1)));
+        writeStateVar(slotTargetApicIdPtr(slot_index), @as(u32, @intCast(slot_index + 1)));
+        writeStateVar(slotHeartbeatPtr(slot_index), 1);
+    }
+
+    const responder0 = try std.Thread.spawn(.{}, testApSlotResponder, .{0});
+    defer responder0.join();
+    const responder1 = try std.Thread.spawn(.{}, testApSlotResponder, .{1});
+    defer responder1.join();
+    const responder2 = try std.Thread.spawn(.{}, testApSlotResponder, .{2});
+    defer responder2.join();
+    const responder3 = try std.Thread.spawn(.{}, testApSlotResponder, .{3});
+    defer responder3.join();
+    errdefer {
+        _ = haltApSlot(3) catch {};
+        _ = haltApSlot(2) catch {};
+        _ = haltApSlot(1) catch {};
+        _ = haltApSlot(0) catch {};
+    }
+
+    var preload_tasks: [5]abi.BaremetalTask = undefined;
+    for (&preload_tasks, 0..) |*task, index| {
+        const task_id = @as(u32, @intCast(index + 12));
+        const budget_ticks = @as(u32, @intCast((task_id - 1) * 2 + 5));
+        task.* = .{
+            .task_id = task_id,
+            .state = abi.task_state_ready,
+            .priority = @as(u8, @intCast(task_id)),
+            .reserved0 = 0,
+            .run_count = 0,
+            .budget_ticks = budget_ticks,
+            .budget_remaining = budget_ticks,
+            .created_tick = 0,
+            .last_run_tick = 0,
+        };
+    }
+
+    var debt_tasks: [3]abi.BaremetalTask = undefined;
+    for (&debt_tasks, 0..) |*task, index| {
+        const task_id = @as(u32, @intCast(index + 9));
+        const budget_ticks = @as(u32, @intCast((task_id - 1) * 2 + 5));
+        task.* = .{
+            .task_id = task_id,
+            .state = abi.task_state_ready,
+            .priority = @as(u8, @intCast(task_id)),
+            .reserved0 = 0,
+            .run_count = 0,
+            .budget_ticks = budget_ticks,
+            .budget_remaining = budget_ticks,
+            .created_tick = 0,
+            .last_run_tick = 0,
+        };
+    }
+
+    var waiting_tasks: [8]abi.BaremetalTask = undefined;
+    for (&waiting_tasks, 0..) |*task, index| {
+        const task_id = @as(u32, @intCast(index + 1));
+        const budget_ticks = @as(u32, @intCast((task_id - 1) * 2 + 5));
+        task.* = .{
+            .task_id = task_id,
+            .state = abi.task_state_ready,
+            .priority = @as(u8, @intCast(task_id)),
+            .reserved0 = 0,
+            .run_count = 0,
+            .budget_ticks = budget_ticks,
+            .budget_remaining = budget_ticks,
+            .created_tick = 0,
+            .last_run_tick = 0,
+        };
+    }
+
+    resetWindowState();
+    try std.testing.expectEqual(@as(u32, 70), try dispatchWindowedSchedulerTasksPriorityFromOffset(preload_tasks[0..], 0, 5));
+    try std.testing.expectEqual(@as(u32, 66), try dispatchDebtAwareSchedulerTasksPriorityWithFairshareFromOffset(
+        debt_tasks[0..],
+        waiting_tasks[0..],
+        0,
+        2,
+        2,
+    ));
+
+    const snapshot = fairshareStatePtr().*;
+    try std.testing.expectEqual(@as(u8, 1), snapshot.present);
+    try std.testing.expectEqual(@as(u8, abi.ap_ownership_policy_priority), snapshot.policy);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.exported_count);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.active_count);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.peak_active_slot_count);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.last_round_active_slot_count);
+    try std.testing.expectEqual(@as(u32, 8), snapshot.total_waiting_task_count);
+    try std.testing.expectEqual(@as(u32, 3), snapshot.total_debt_task_count);
+    try std.testing.expectEqual(@as(u32, 11), snapshot.total_dispatch_count);
+    try std.testing.expectEqual(@as(u32, 66), snapshot.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 6), snapshot.drain_round_count);
+    try std.testing.expectEqual(@as(u32, 5), snapshot.aging_round_count);
+    try std.testing.expectEqual(@as(u32, 4), snapshot.fairshare_round_count);
+    try std.testing.expectEqual(@as(u32, 1), snapshot.last_round_waiting_task_count);
+    try std.testing.expectEqual(@as(u32, 0), snapshot.last_round_debt_task_count);
+    try std.testing.expectEqual(@as(u32, 1), snapshot.last_round_fairshare_task_count);
+    try std.testing.expectEqual(@as(u32, 11), snapshot.initial_pending_task_count);
+    try std.testing.expectEqual(@as(u32, 0), snapshot.last_pending_task_count);
+    try std.testing.expectEqual(@as(u32, 11), snapshot.peak_pending_task_count);
+    try std.testing.expectEqual(@as(u32, 2), snapshot.task_budget);
+    try std.testing.expectEqual(@as(u32, 2), snapshot.aging_step);
+    try std.testing.expectEqual(@as(u32, 1), snapshot.initial_min_slot_task_count);
+    try std.testing.expectEqual(@as(u32, 2), snapshot.initial_max_slot_task_count);
+    try std.testing.expectEqual(@as(u32, 1), snapshot.initial_task_balance_gap);
+    try std.testing.expectEqual(@as(u32, 4), snapshot.final_min_slot_task_count);
+    try std.testing.expectEqual(@as(u32, 4), snapshot.final_max_slot_task_count);
+    try std.testing.expectEqual(@as(u32, 0), snapshot.final_task_balance_gap);
+    try std.testing.expectEqual(@as(u32, 3), snapshot.initial_total_debt);
+    try std.testing.expectEqual(@as(u32, 0), snapshot.remaining_total_debt);
+    try std.testing.expectEqual(@as(u32, 3), snapshot.total_compensated_task_count);
+    try std.testing.expectEqual(@as(u32, 0), snapshot.last_round_compensated_task_count);
+    try std.testing.expectEqual(@as(u32, 24), snapshot.total_aged_task_count);
+    try std.testing.expectEqual(@as(u32, 0), snapshot.last_round_aged_task_count);
+    try std.testing.expectEqual(@as(u32, 8), snapshot.total_promoted_task_count);
+    try std.testing.expectEqual(@as(u32, 7), snapshot.total_fairshare_task_count);
+    try std.testing.expectEqual(@as(u32, 11), snapshot.peak_effective_priority);
+    try std.testing.expectEqual(@as(u32, 1), snapshot.last_start_slot_index);
+
+    try std.testing.expectEqual(@as(u16, 4), fairshareEntryCount());
+    const first_entry = fairshareEntry(0);
+    const second_entry = fairshareEntry(1);
+    const third_entry = fairshareEntry(2);
+    const fourth_entry = fairshareEntry(3);
+    try std.testing.expectEqual(@as(u32, 1), first_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 2), first_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 2), first_entry.seed_task_count);
+    try std.testing.expectEqual(@as(u32, 4), first_entry.final_task_count);
+    try std.testing.expectEqual(@as(u32, 0), first_entry.initial_debt);
+    try std.testing.expectEqual(@as(u32, 0), first_entry.remaining_debt);
+    try std.testing.expectEqual(@as(u32, 1), first_entry.started);
+    try std.testing.expectEqual(@as(u32, 0), first_entry.halted);
+
+    try std.testing.expectEqual(@as(u32, 2), second_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 3), second_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 1), second_entry.seed_task_count);
+    try std.testing.expectEqual(@as(u32, 4), second_entry.final_task_count);
+    try std.testing.expectEqual(@as(u32, 1), second_entry.initial_debt);
+    try std.testing.expectEqual(@as(u32, 0), second_entry.remaining_debt);
+    try std.testing.expectEqual(@as(u32, 1), second_entry.started);
+    try std.testing.expectEqual(@as(u32, 0), second_entry.halted);
+
+    try std.testing.expectEqual(@as(u32, 3), third_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 3), third_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 1), third_entry.seed_task_count);
+    try std.testing.expectEqual(@as(u32, 4), third_entry.final_task_count);
+    try std.testing.expectEqual(@as(u32, 1), third_entry.initial_debt);
+    try std.testing.expectEqual(@as(u32, 0), third_entry.remaining_debt);
+    try std.testing.expectEqual(@as(u32, 1), third_entry.started);
+    try std.testing.expectEqual(@as(u32, 0), third_entry.halted);
+
+    try std.testing.expectEqual(@as(u32, 4), fourth_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 3), fourth_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 1), fourth_entry.waiting_task_count);
+    try std.testing.expectEqual(@as(u32, 1), fourth_entry.fairshare_task_count);
+    try std.testing.expectEqual(@as(u32, 1), fourth_entry.seed_task_count);
+    try std.testing.expectEqual(@as(u32, 4), fourth_entry.final_task_count);
+    try std.testing.expectEqual(@as(u32, 1), fourth_entry.initial_debt);
+    try std.testing.expectEqual(@as(u32, 0), fourth_entry.remaining_debt);
+    try std.testing.expectEqual(@as(u32, 1), fourth_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 1), fourth_entry.aged_task_count);
+    try std.testing.expectEqual(@as(u32, 1), fourth_entry.started);
+    try std.testing.expectEqual(@as(u32, 0), fourth_entry.halted);
+
+    try std.testing.expectEqual(@as(u32, 1), FairshareStorage.task_ids[@as(usize, fourth_entry.slot_index)][0]);
+
+    const fairshare_render = try renderFairshareAlloc(std.testing.allocator);
+    defer std.testing.allocator.free(fairshare_render);
+    try std.testing.expect(std.mem.indexOf(u8, fairshare_render, "total_waiting_task_count=8") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fairshare_render, "total_debt_task_count=3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fairshare_render, "total_dispatch_count=11") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fairshare_render, "total_accumulator=66") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fairshare_render, "aging_round_count=5") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fairshare_render, "fairshare_round_count=4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fairshare_render, "total_aged_task_count=24") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fairshare_render, "total_promoted_task_count=8") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fairshare_render, "total_fairshare_task_count=7") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fairshare_render, "slot[3].task[0]=1") != null);
 
     try haltApSlot(3);
     try haltApSlot(2);
