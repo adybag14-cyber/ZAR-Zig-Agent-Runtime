@@ -113,9 +113,25 @@ const default_session_prefix = "delegate-session";
 const default_summary_preview_limit: usize = 160;
 const default_response_excerpt_limit: usize = 2048;
 
+pub const RunDefaults = struct {
+    goal: []const u8 = "",
+    session_id: []const u8 = "",
+    cwd: []const u8 = "",
+};
+
 pub fn run(
     allocator: std.mem.Allocator,
     params: ?std.json.ObjectMap,
+    invoke_ctx: anytype,
+    comptime invoke_fn: anytype,
+) anyerror!BatchResult {
+    return runWithDefaults(allocator, params, .{}, invoke_ctx, invoke_fn);
+}
+
+pub fn runWithDefaults(
+    allocator: std.mem.Allocator,
+    params: ?std.json.ObjectMap,
+    defaults: RunDefaults,
     invoke_ctx: anytype,
     comptime invoke_fn: anytype,
 ) anyerror!BatchResult {
@@ -135,12 +151,12 @@ pub fn run(
         if (items.len == 0) return error.InvalidParamsFrame;
         for (items, 0..) |item, idx| {
             if (item != .object) return error.InvalidParamsFrame;
-            try results.append(allocator, try executeTask(allocator, params, item.object, idx, now_ms, items.len > 1, invoke_ctx, invoke_fn));
+            try results.append(allocator, try executeTask(allocator, params, defaults, item.object, idx, now_ms, items.len > 1, invoke_ctx, invoke_fn));
         }
     } else {
         const root = params orelse return error.InvalidParamsFrame;
         if (getValue(root, "steps") == null and getValue(root, "actions") == null) return error.InvalidParamsFrame;
-        try results.append(allocator, try executeTask(allocator, params, root, 0, now_ms, false, invoke_ctx, invoke_fn));
+        try results.append(allocator, try executeTask(allocator, params, defaults, root, 0, now_ms, false, invoke_ctx, invoke_fn));
     }
 
     var output = BatchResult{
@@ -171,6 +187,7 @@ pub fn run(
 fn executeTask(
     allocator: std.mem.Allocator,
     root_params: ?std.json.ObjectMap,
+    defaults: RunDefaults,
     task_obj: std.json.ObjectMap,
     task_index: usize,
     now_ms: i64,
@@ -178,14 +195,15 @@ fn executeTask(
     invoke_ctx: anytype,
     comptime invoke_fn: anytype,
 ) anyerror!TaskResult {
-    const goal_raw = getString(task_obj, "goal", getString(task_obj, "title", ""));
+    const default_goal = if (defaults.goal.len > 0) defaults.goal else "";
+    const goal_raw = getString(task_obj, "goal", getString(task_obj, "title", getString(root_params, "goal", default_goal)));
     const context_raw = getString(task_obj, "context", "");
     const stop_on_error = getBool(task_obj, "stopOnError", getBool(root_params, "stopOnError", true));
-    const cwd_raw = getString(task_obj, "cwd", getString(root_params, "cwd", ""));
+    const cwd_raw = getString(task_obj, "cwd", getString(root_params, "cwd", defaults.cwd));
     const task_id = try std.fmt.allocPrint(allocator, "delegate-task-{d}-{d}", .{ now_ms, task_index + 1 });
     errdefer allocator.free(task_id);
 
-    const session_id = try buildTaskSessionId(allocator, root_params, task_obj, task_index, batch_mode, now_ms);
+    const session_id = try buildTaskSessionId(allocator, root_params, defaults, task_obj, task_index, batch_mode, now_ms);
     errdefer allocator.free(session_id);
 
     const goal = try allocator.dupe(u8, goal_raw);
@@ -536,12 +554,13 @@ fn buildSyntheticStep(
 fn buildTaskSessionId(
     allocator: std.mem.Allocator,
     root_params: ?std.json.ObjectMap,
+    defaults: RunDefaults,
     task_obj: std.json.ObjectMap,
     task_index: usize,
     batch_mode: bool,
     now_ms: i64,
 ) anyerror![]u8 {
-    const explicit = getString(task_obj, "sessionId", getString(root_params, "sessionId", ""));
+    const explicit = getString(task_obj, "sessionId", getString(root_params, "sessionId", defaults.session_id));
     if (explicit.len > 0 and (!batch_mode or getString(task_obj, "sessionId", "").len > 0)) {
         return allocator.dupe(u8, explicit);
     }

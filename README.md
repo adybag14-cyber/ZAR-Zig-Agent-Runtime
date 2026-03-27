@@ -4,7 +4,7 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
 
 ## Current Status
 
-- RPC method surface in Zig: `193`
+- RPC method surface in Zig: `199`
 - Pinned parity gate (tri-baseline, CI/docs):
   - Go baseline (`v2.14.0-go`): `134/134` covered
   - Original OpenClaw baseline (`v2026.3.13-1`): `100/100` covered
@@ -15,7 +15,7 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
   - Original OpenClaw baseline (`v2026.3.13-1`): `100/100` covered
   - Original OpenClaw beta baseline (`v2026.3.13-beta.1`): `100/100` covered
   - Union baseline: `141/141` covered (`MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> `1064 passed; 3 skipped; 0 failed`
+- Latest local validation: `zig build test --summary all` -> `1066 passed; 3 skipped; 0 failed`
 - Current edge release target tag: `v0.2.0-zig-edge.31`
 - License posture: repo-wide `GPL-2.0-only` with Linux-style SPDX headers on repo-owned source and script files
 - `FS5.7` i386 CPU-architecture support is now tracked in [`docs/zig-port/FS5_7_I386_CPU_ARCHITECTURE.md`](docs/zig-port/FS5_7_I386_CPU_ARCHITECTURE.md), with a real `x86-freestanding-none` artifact emitted by `zig build baremetal-i386`, hosted and live QEMU smoke gates, additive dual-arch descriptor/bootstrap support, broad live i386 storage/NIC/display/service proof lanes, bounded ACPI export/render, exported `/dev/cpu` + `/sys/cpu` topology/SMP-readiness derived from `MADT`, bounded IOAPIC export plus live MMIO proof through `/sys/cpu/ioapic`, bounded legacy PIC export plus live remap/control-plane proof through `/sys/cpu/pic`, bounded PIT plus ACPI PM-timer controller visibility through `/sys/cpu/pit` and `/sys/acpi/pm-timer`, a dedicated live `-smp 2` LAPIC state proof through `/sys/cpu/{lapic,smp}`, a dedicated live AP-startup control proof through `/sys/cpu/ap-startup`, bounded AP execution-control telemetry with hosted simulated ping/halt regressions, hardened INIT/SIPI timing plus LAPIC error-status clearing, warm-reset vector programming plus live AP-startup debug-trace export, explicit live AP-execution observation reporting, a real BIOS firmware-boot AP-startup lane that now observes actual AP execution plus bounded ping/halt control, and per-script isolated i386 probe build prefixes/caches so adjacent QEMU probe lanes cannot execute stale ELF artifacts
@@ -576,7 +576,7 @@ ZAR-Zig-Agent-Runtime is now distributed under `GPL-2.0-only`.
 
 - Runtime profiles:
   - OS-hosted runtime: full HTTP/RPC gateway and feature surface.
-  - Bare-metal runtime: freestanding image exporting lifecycle hooks (`_start`, `oc_tick`, `oc_tick_n`, `oc_status_ptr`) plus command/mailbox ABI (`oc_command_ptr`, `oc_submit_command`, `oc_kernel_info_ptr`), descriptor table/int-vector bootstrap exports, a Multiboot2 header for bootloader/hypervisor integration, and the same portable Zig tool contract (`tools.catalog`, `acp.describe`, `delegate_task`, `sessions.history`, `sessions.search`, `tasks.list`, `tasks.get`, `tasks.events`, `tasks.search`) through `RUNTIMECALL` that the hosted `/rpc` gateway exposes.
+  - Bare-metal runtime: freestanding image exporting lifecycle hooks (`_start`, `oc_tick`, `oc_tick_n`, `oc_status_ptr`) plus command/mailbox ABI (`oc_command_ptr`, `oc_submit_command`, `oc_kernel_info_ptr`), descriptor table/int-vector bootstrap exports, a Multiboot2 header for bootloader/hypervisor integration, and the same portable Zig tool contract (`tools.catalog`, `acp.describe`, `acp.sessions.list`, `acp.sessions.new`, `acp.sessions.get`, `acp.sessions.messages`, `acp.sessions.fork`, `acp.prompt`, `delegate_task`, `sessions.history`, `sessions.search`, `tasks.list`, `tasks.get`, `tasks.events`, `tasks.search`) through `RUNTIMECALL` that the hosted `/rpc` gateway exposes.
 - Protocol: JSON-RPC request/response envelopes with deterministic error semantics.
 - Gateway: HTTP/WebSocket server with `GET /health`, `GET /ui`, `POST /rpc`, and websocket RPC routes (`GET /ws` + root compatibility on `GET /`), graceful shutdown via RPC.
 - Dispatcher: method routing and contract handling across runtime, security, browser/auth, channels, memory, and edge domains.
@@ -607,7 +607,9 @@ All major runtime feature domains are implemented and dispatchable. Representati
 
 - Tool execution and filesystem actions:
   - `tools.catalog` now reports a shared portable runtime contract with `kind`, `approvalSensitive`, `supportedOnHosted`, `supportedOnBaremetal`, `currentRuntimeSupported`, and top-level `runtimeTarget` metadata.
-  - `acp.describe` now exposes Hermes-guided ACP metadata, capabilities, and polling posture from shared Zig runtime code on both hosted `/rpc` and bare-metal `RUNTIMECALL`.
+  - `acp.describe` now exposes Hermes-guided ACP metadata, capabilities, polling posture, session-lifecycle methods, and prompt semantics from shared Zig runtime code on both hosted `/rpc` and bare-metal `RUNTIMECALL`.
+  - `acp.sessions.list`, `acp.sessions.new`, `acp.sessions.get`, `acp.sessions.messages`, and `acp.sessions.fork` now expose shared ACP session lifecycle plus durable transcript lookup from that same Zig runtime seam.
+  - `acp.prompt` now records ACP session messages in shared Zig runtime state and can either return a direct assistant message or launch delegated work that emits the same persisted task receipts/events.
   - `delegate_task` now runs through the shared Zig runtime seam on both hosted `/rpc` and bare-metal `RUNTIMECALL` paths, rather than only the hosted gateway.
   - `tasks.list`, `tasks.get`, `tasks.events`, and `tasks.search` now expose persisted delegated task receipts/events from that same shared runtime seam.
   - `exec.run`
@@ -621,9 +623,10 @@ All major runtime feature domains are implemented and dispatchable. Representati
   - `process.start`, `process.list`, `process.poll`, `process.read`, `process.wait`, `process.kill`
   - hosted coding-agent smoke helper: `scripts/hermes-port-rpc-smoke.mjs`
   - hosted coding-agent smoke gate: `scripts/hermes-port-runtime-smoke-check.ps1` (full `execute_code` + process path on POSIX; bounded file/web/session path on Windows)
-  - bare-metal command/service proof now exercises the same catalog/delegation/session contract through `src/baremetal/tool_service.zig` tests.
+  - bare-metal command/service proof now exercises the same catalog/ACP session/prompt/delegation/task contract through `src/baremetal/tool_service.zig` tests.
   - freestanding compile proof now covers both `zig build baremetal` and `zig build baremetal-i386`.
 - Runtime and session surfaces:
+  - `acp.sessions.list`, `acp.sessions.new`, `acp.sessions.get`, `acp.sessions.messages`, `acp.sessions.fork`, `acp.prompt`
   - `sessions.list`, `sessions.preview`, `session.status`
   - `sessions.patch`, `sessions.resolve`
   - `sessions.history`, `sessions.search`, `chat.history`

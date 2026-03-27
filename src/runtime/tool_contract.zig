@@ -22,7 +22,15 @@ pub const RuntimeCatalogEntry = struct {
 };
 
 pub const portable_entries = [_]CatalogEntry{
+    .{ .tool = "acp", .provider = "builtin-runtime", .kind = "read", .approvalSensitive = false, .description = "Hermes-guided ACP bridge family (describe/sessions/prompt)" },
     .{ .tool = "acp.describe", .provider = "builtin-runtime", .kind = "read", .approvalSensitive = false, .description = "Describe the Hermes-guided ACP bridge metadata, capabilities, and event-delivery posture" },
+    .{ .tool = "acp.sessions", .provider = "builtin-runtime", .kind = "read", .approvalSensitive = false, .description = "ACP session lifecycle family (new/list/get/messages/fork)" },
+    .{ .tool = "acp.sessions.list", .provider = "builtin-runtime", .kind = "read", .approvalSensitive = false, .description = "List persisted ACP session receipts and transcript counts" },
+    .{ .tool = "acp.sessions.new", .provider = "builtin-runtime", .kind = "edit", .approvalSensitive = false, .description = "Create or update an ACP session with cwd/title metadata" },
+    .{ .tool = "acp.sessions.get", .provider = "builtin-runtime", .kind = "read", .approvalSensitive = false, .description = "Load one ACP session receipt and current transcript counters" },
+    .{ .tool = "acp.sessions.messages", .provider = "builtin-runtime", .kind = "read", .approvalSensitive = false, .description = "Read persisted ACP session transcript messages with cursor support" },
+    .{ .tool = "acp.sessions.fork", .provider = "builtin-runtime", .kind = "edit", .approvalSensitive = false, .description = "Fork an ACP session into a new session with cloned transcript state" },
+    .{ .tool = "acp.prompt", .provider = "builtin-runtime", .kind = "execute", .approvalSensitive = true, .description = "Record an ACP prompt and optionally run Hermes-style delegated steps inside the ACP session" },
     .{ .tool = "tools.catalog", .provider = "builtin-runtime", .kind = "read", .approvalSensitive = false, .description = "Describe the portable runtime tool contract and support posture" },
     .{ .tool = "exec", .provider = "builtin-runtime", .kind = "execute", .approvalSensitive = true, .description = "Exec tool family alias for command execution" },
     .{ .tool = "exec.run", .provider = "builtin-runtime", .kind = "execute", .approvalSensitive = true, .description = "Execute local process or bare-metal tool command with timeout" },
@@ -136,6 +144,10 @@ pub fn toolsetAllows(toolset: []const u8, method: []const u8) bool {
         return std.ascii.eqlIgnoreCase(method, "sessions") or
             std.ascii.eqlIgnoreCase(method, "sessions.history") or
             std.ascii.eqlIgnoreCase(method, "sessions.search") or
+            std.ascii.eqlIgnoreCase(method, "acp.sessions") or
+            std.ascii.eqlIgnoreCase(method, "acp.sessions.list") or
+            std.ascii.eqlIgnoreCase(method, "acp.sessions.get") or
+            std.ascii.eqlIgnoreCase(method, "acp.sessions.messages") or
             std.ascii.eqlIgnoreCase(method, "tasks") or
             std.ascii.eqlIgnoreCase(method, "tasks.list") or
             std.ascii.eqlIgnoreCase(method, "tasks.get") or
@@ -146,11 +158,17 @@ pub fn toolsetAllows(toolset: []const u8, method: []const u8) bool {
     }
     if (std.ascii.eqlIgnoreCase(toolset, "inspect")) {
         return std.ascii.eqlIgnoreCase(method, "tools.catalog") or
+            std.ascii.eqlIgnoreCase(method, "acp") or
             std.ascii.eqlIgnoreCase(method, "acp.describe") or
+            std.ascii.eqlIgnoreCase(method, "acp.sessions") or
+            std.ascii.eqlIgnoreCase(method, "acp.sessions.list") or
+            std.ascii.eqlIgnoreCase(method, "acp.sessions.get") or
+            std.ascii.eqlIgnoreCase(method, "acp.sessions.messages") or
             std.ascii.eqlIgnoreCase(method, "tasks") or
             std.ascii.eqlIgnoreCase(method, "tasks.list") or
             std.ascii.eqlIgnoreCase(method, "tasks.get") or
-            std.ascii.eqlIgnoreCase(method, "tasks.events");
+            std.ascii.eqlIgnoreCase(method, "tasks.events") or
+            std.ascii.eqlIgnoreCase(method, "tasks.search");
     }
     return false;
 }
@@ -164,6 +182,8 @@ fn lookupEntry(method: []const u8) ?CatalogEntry {
 
 test "tool contract marks hosted and baremetal support posture" {
     try std.testing.expect(isPortableTool("delegate_task"));
+    try std.testing.expect(isPortableTool("acp.sessions.new"));
+    try std.testing.expect(isPortableTool("acp.prompt"));
     try std.testing.expect(isSupportedOnTarget("delegate_task", .freestanding));
     try std.testing.expect(isSupportedOnTarget("exec.run", .freestanding));
     try std.testing.expect(!isSupportedOnTarget("execute_code", .freestanding));
@@ -172,4 +192,14 @@ test "tool contract marks hosted and baremetal support posture" {
     try std.testing.expect(!isSupportedOnTarget("process.start", .windows));
     try std.testing.expect(!isSupportedOnTarget("execute_code", .windows));
     try std.testing.expect(isSupportedOnTarget("sessions.search", .freestanding));
+    try std.testing.expect(isSupportedOnTarget("acp.sessions.messages", .freestanding));
+    try std.testing.expect(isSupportedOnTarget("acp.prompt", .freestanding));
+}
+
+
+test "toolset gating keeps acp prompt out of delegated memory slices" {
+    try std.testing.expect(toolsetAllows("memory", "acp.sessions.list"));
+    try std.testing.expect(toolsetAllows("inspect", "acp.sessions.messages"));
+    try std.testing.expect(!toolsetAllows("memory", "acp.prompt"));
+    try std.testing.expect(!toolsetAllows("inspect", "acp.prompt"));
 }

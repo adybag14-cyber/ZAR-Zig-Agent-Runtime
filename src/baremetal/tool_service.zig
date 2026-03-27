@@ -6456,6 +6456,8 @@ test "baremetal tool service bridges persisted runtime queries and rpc calls" {
     try std.testing.expect(std.mem.startsWith(u8, runtime_catalog_response, "RESP 63 "));
     try std.testing.expect(std.mem.indexOf(u8, runtime_catalog_response, "\"runtimeTarget\":\"hosted\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_catalog_response, "\"tool\":\"delegate_task\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_catalog_response, "\"tool\":\"acp.sessions.new\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_catalog_response, "\"tool\":\"acp.prompt\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_catalog_response, "\"tool\":\"sessions.history\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_catalog_response, "\"supportedOnBaremetal\":false") != null);
 
@@ -6500,6 +6502,8 @@ test "baremetal tool service bridges persisted runtime queries and rpc calls" {
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "\"schemaVersion\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "\"mode\":\"poll\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "tasks.events") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "acp.sessions.new") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "acp.prompt") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "\"taskReceipts\":true") != null);
 
     const runtime_task_list_frame =
@@ -6600,6 +6604,126 @@ test "baremetal tool service bridges persisted runtime queries and rpc calls" {
     defer std.testing.allocator.free(runtime_search_response);
     try std.testing.expect(std.mem.startsWith(u8, runtime_search_response, "RESP 71 "));
     try std.testing.expect(std.mem.indexOf(u8, runtime_search_response, "\"sessionId\":\"svc-delegate\"") != null);
+
+    const runtime_acp_session_new_frame =
+        "{\"id\":\"svc-acp-session-new\",\"method\":\"acp.sessions.new\",\"params\":{\"sessionId\":\"svc-acp-runtime\",\"cwd\":\"/runtime/tmp\",\"title\":\"Service ACP Session\"}}";
+    const runtime_acp_session_new_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 72 RUNTIMECALL {d}\n{s}",
+        .{ runtime_acp_session_new_frame.len, runtime_acp_session_new_frame },
+    );
+    defer std.testing.allocator.free(runtime_acp_session_new_request);
+
+    const runtime_acp_session_new_response = try handleFramedRequest(std.testing.allocator, runtime_acp_session_new_request, 512, 256, 8192);
+    defer std.testing.allocator.free(runtime_acp_session_new_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_acp_session_new_response, "RESP 72 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_session_new_response, "\"sessionId\":\"svc-acp-runtime\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_session_new_response, "\"messageCount\":0") != null);
+
+    const runtime_acp_prompt_frame =
+        "{\"id\":\"svc-acp-prompt\",\"method\":\"acp.prompt\",\"params\":{\"sessionId\":\"svc-acp-runtime\",\"content\":[{\"type\":\"text\",\"text\":\"Record a portable ACP prompt\"}]}}";
+    const runtime_acp_prompt_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 73 RUNTIMECALL {d}\n{s}",
+        .{ runtime_acp_prompt_frame.len, runtime_acp_prompt_frame },
+    );
+    defer std.testing.allocator.free(runtime_acp_prompt_request);
+
+    const runtime_acp_prompt_response = try handleFramedRequest(std.testing.allocator, runtime_acp_prompt_request, 512, 256, 8192);
+    defer std.testing.allocator.free(runtime_acp_prompt_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_acp_prompt_response, "RESP 73 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_prompt_response, "\"taskCount\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_prompt_response, "Prompt recorded in the ACP session") != null);
+
+    const runtime_acp_messages_frame =
+        "{\"id\":\"svc-acp-messages\",\"method\":\"acp.sessions.messages\",\"params\":{\"sessionId\":\"svc-acp-runtime\",\"limit\":10}}";
+    const runtime_acp_messages_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 74 RUNTIMECALL {d}\n{s}",
+        .{ runtime_acp_messages_frame.len, runtime_acp_messages_frame },
+    );
+    defer std.testing.allocator.free(runtime_acp_messages_request);
+
+    const runtime_acp_messages_response = try handleFramedRequest(std.testing.allocator, runtime_acp_messages_request, 512, 256, 8192);
+    defer std.testing.allocator.free(runtime_acp_messages_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_acp_messages_response, "RESP 74 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_messages_response, "\"count\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_messages_response, "\"role\":\"assistant\"") != null);
+
+    const runtime_acp_fork_frame =
+        "{\"id\":\"svc-acp-fork\",\"method\":\"acp.sessions.fork\",\"params\":{\"sourceSessionId\":\"svc-acp-runtime\",\"newSessionId\":\"svc-acp-runtime-fork\"}}";
+    const runtime_acp_fork_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 75 RUNTIMECALL {d}\n{s}",
+        .{ runtime_acp_fork_frame.len, runtime_acp_fork_frame },
+    );
+    defer std.testing.allocator.free(runtime_acp_fork_request);
+
+    const runtime_acp_fork_response = try handleFramedRequest(std.testing.allocator, runtime_acp_fork_request, 512, 256, 8192);
+    defer std.testing.allocator.free(runtime_acp_fork_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_acp_fork_response, "RESP 75 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_fork_response, "\"clonedMessages\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_fork_response, "\"sourceSessionId\":\"svc-acp-runtime\"") != null);
+
+    const runtime_acp_get_frame =
+        "{\"id\":\"svc-acp-get\",\"method\":\"acp.sessions.get\",\"params\":{\"sessionId\":\"svc-acp-runtime-fork\"}}";
+    const runtime_acp_get_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 76 RUNTIMECALL {d}\n{s}",
+        .{ runtime_acp_get_frame.len, runtime_acp_get_frame },
+    );
+    defer std.testing.allocator.free(runtime_acp_get_request);
+
+    const runtime_acp_get_response = try handleFramedRequest(std.testing.allocator, runtime_acp_get_request, 512, 256, 8192);
+    defer std.testing.allocator.free(runtime_acp_get_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_acp_get_response, "RESP 76 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_get_response, "\"messageCount\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_get_response, "\"sourceSessionId\":\"svc-acp-runtime\"") != null);
+
+    const runtime_acp_delegate_frame =
+        "{\"id\":\"svc-acp-delegate\",\"method\":\"acp.prompt\",\"params\":{\"sessionId\":\"svc-acp-exec\",\"goal\":\"ACP service delegated file flow\",\"prompt\":\"Write and read through ACP\",\"toolsets\":[\"file\"],\"steps\":[{\"tool\":\"file.write\",\"path\":\"/runtime/tmp/svc-acp-delegate.txt\",\"content\":\"svc-acp-data\"},{\"tool\":\"file.read\",\"path\":\"/runtime/tmp/svc-acp-delegate.txt\"}]}}";
+    const runtime_acp_delegate_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 77 RUNTIMECALL {d}\n{s}",
+        .{ runtime_acp_delegate_frame.len, runtime_acp_delegate_frame },
+    );
+    defer std.testing.allocator.free(runtime_acp_delegate_request);
+
+    const runtime_acp_delegate_response = try handleFramedRequest(std.testing.allocator, runtime_acp_delegate_request, 512, 256, 16384);
+    defer std.testing.allocator.free(runtime_acp_delegate_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_acp_delegate_response, "RESP 77 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_delegate_response, "\"taskCount\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_delegate_response, "\"kind\":\"task_summary\"") != null);
+
+    const runtime_acp_delegate_read_frame =
+        "{\"id\":\"svc-acp-read\",\"method\":\"file.read\",\"params\":{\"sessionId\":\"svc-acp-exec\",\"path\":\"/runtime/tmp/svc-acp-delegate.txt\"}}";
+    const runtime_acp_delegate_read_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 78 RUNTIMECALL {d}\n{s}",
+        .{ runtime_acp_delegate_read_frame.len, runtime_acp_delegate_read_frame },
+    );
+    defer std.testing.allocator.free(runtime_acp_delegate_read_request);
+
+    const runtime_acp_delegate_read_response = try handleFramedRequest(std.testing.allocator, runtime_acp_delegate_read_request, 512, 256, 8192);
+    defer std.testing.allocator.free(runtime_acp_delegate_read_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_acp_delegate_read_response, "RESP 78 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_delegate_read_response, "svc-acp-data") != null);
+
+    const runtime_acp_list_frame =
+        "{\"id\":\"svc-acp-list\",\"method\":\"acp.sessions.list\",\"params\":{\"limit\":10}}";
+    const runtime_acp_list_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 79 RUNTIMECALL {d}\n{s}",
+        .{ runtime_acp_list_frame.len, runtime_acp_list_frame },
+    );
+    defer std.testing.allocator.free(runtime_acp_list_request);
+
+    const runtime_acp_list_response = try handleFramedRequest(std.testing.allocator, runtime_acp_list_request, 512, 256, 8192);
+    defer std.testing.allocator.free(runtime_acp_list_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_acp_list_response, "RESP 79 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_list_response, "\"sessionId\":\"svc-acp-runtime\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_list_response, "\"sessionId\":\"svc-acp-runtime-fork\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_list_response, "\"sessionId\":\"svc-acp-exec\"") != null);
 
     const state_payload_after = try filesystem.readFileAlloc(std.testing.allocator, "/runtime/state/runtime-state.json", 8192);
     defer std.testing.allocator.free(state_payload_after);

@@ -1,21 +1,35 @@
 # ACP Setup
 
-This page documents the Hermes-inspired ACP scaffolding, delegated-task receipts/events, and polling seam now present in ZAR.
+This page documents the Hermes-inspired ACP scaffolding, shared session lifecycle, prompt/transcript seam, delegated-task receipts/events, and polling posture now present in ZAR.
 
 ## Current scope
 
-ZAR is **not** full ACP parity yet. The current slice ports the parts that fit ZAR's existing Zig runtime cleanly:
+ZAR is **not** full ACP parity yet. The current slice ports the parts that fit ZAR's Zig runtime cleanly and can stay portable across both runtime profiles:
 
 - ACP-style registry scaffold in `acp_registry/agent.json`
 - Hermes-style tool typing in `tools.catalog`
-  - each tool now advertises a `kind`
+  - each tool advertises a `kind`
   - execution-heavy tools also advertise `approvalSensitive`
-  - the catalog now also advertises `supportedOnHosted`, `supportedOnBaremetal`, `currentRuntimeSupported`, and top-level `runtimeTarget` posture so ACP-shaped adapters can reason about hosted vs bare-metal availability
+  - the catalog also advertises `supportedOnHosted`, `supportedOnBaremetal`, `currentRuntimeSupported`, and top-level `runtimeTarget` posture so ACP-shaped adapters can reason about hosted vs bare-metal availability
 - shared `acp.describe` metadata in Zig with:
   - runtime target labeling
   - polling delivery posture (`tasks.events` + `tasks.get`)
   - ACP-shaped capability flags
+  - session-lifecycle method discovery
+  - prompt/content-block capability discovery
   - shared portable tool catalog exposure
+- shared ACP session lifecycle in Zig with:
+  - `acp.sessions.new`
+  - `acp.sessions.list`
+  - `acp.sessions.get`
+  - `acp.sessions.messages`
+  - `acp.sessions.fork`
+  - durable session metadata plus transcript storage in shared runtime state
+- shared `acp.prompt` handling in Zig with:
+  - durable user/assistant transcript recording
+  - direct assistant-message replies when no delegated work is requested
+  - delegated-task execution when prompt params carry work/toolsets/cwd/session defaults
+  - task-summary replies that point back to shared task receipts/events
 - Zig-native `delegate_task` batches with:
   - isolated session scopes
   - delegated toolset gating
@@ -37,19 +51,21 @@ zig build -Doptimize=Debug
 ./zig-out/bin/openclaw-zig --serve
 ```
 
-The runtime serves JSON-RPC over HTTP on `/rpc`. The same portable runtime contract now also reaches the bare-metal service path through `RUNTIMECALL`, so catalog/ACP metadata/delegation/task receipts/session receipts stay aligned across both runtime profiles.
+The runtime serves JSON-RPC over HTTP on `/rpc`. The same portable runtime contract now also reaches the bare-metal service path through `RUNTIMECALL`, so catalog metadata, ACP session/prompt semantics, delegation, task receipts/events, and session transcripts stay aligned across both runtime profiles.
 
 ## ACP description and tool metadata
 
-`acp.describe` now returns Hermes-guided ACP metadata so an adapter or UI can discover the runtime target, polling delivery posture, and task/session capability set without guessing. `tools.catalog` returns Hermes-inspired tool categories so an ACP adapter or UI can distinguish between read/edit/search/fetch/execute style tools. It also returns per-tool support posture for hosted vs bare-metal targets plus the current runtime target label.
+`acp.describe` now returns Hermes-guided ACP metadata so an adapter or UI can discover the runtime target, polling delivery posture, task/session capability set, session lifecycle methods, and prompt capability envelope without guessing.
+
+`tools.catalog` returns Hermes-inspired tool categories so an ACP adapter or UI can distinguish between read/edit/search/fetch/execute style tools. It also returns per-tool support posture for hosted vs bare-metal targets plus the current runtime target label.
 
 Examples:
 
 - `file.read` -> `read`
 - `file.write`, `file.patch` -> `edit`
-- `file.search`, `sessions.search`, `tasks.search` -> `search`
+- `file.search`, `sessions.search`, `tasks.search`, `acp.sessions.list` -> `search`
 - `web.search`, `web.extract`, `browser.open` -> `fetch`
-- `exec.run`, `execute_code`, `process.start` -> `execute`
+- `exec.run`, `execute_code`, `process.start`, `acp.prompt` -> `execute`
 
 The shared task polling seam is:
 
@@ -57,6 +73,52 @@ The shared task polling seam is:
 - `tasks.get` -> load a delegated task receipt + latest event cursor
 - `tasks.events` -> poll delegated task events by task or session
 - `tasks.search` -> search delegated task receipts by goal/summary/session
+
+## ACP session lifecycle
+
+The shared ACP session lifecycle now lives in Zig runtime state and is available through both hosted `/rpc` and bare-metal `RUNTIMECALL`:
+
+- `acp.sessions.new` -> create a new ACP session with optional title/cwd metadata
+- `acp.sessions.list` -> list ACP sessions with message/task counters
+- `acp.sessions.get` -> fetch one ACP session plus latest transcript/task cursor state
+- `acp.sessions.messages` -> read the durable ACP transcript for one session
+- `acp.sessions.fork` -> clone an ACP session into a child session with copied transcript state
+
+Transcript messages are stored in shared runtime state with per-message ids, roles, kinds, timestamps, and content-block text payloads. Forked sessions preserve lineage through `sourceSessionId` so adapters can reconstruct parent/child flows.
+
+## Prompt flow
+
+`acp.prompt` now runs through shared Zig runtime code instead of a hosted-only shim.
+
+Two main paths exist:
+
+1. **Direct message path**
+   - append the user prompt to the ACP transcript
+   - return an assistant message immediately when the prompt carries no delegated work
+   - append that assistant message to the same durable transcript
+
+2. **Delegated work path**
+   - append the user prompt to the ACP transcript
+   - derive delegated defaults such as session id, goal, and cwd
+   - run `delegate_task` with the supplied toolsets / steps / prompt payload
+   - persist task receipts and per-step events into shared runtime state
+   - append an assistant `task_summary` transcript message that points back to the delegated task receipt
+
+This means ACP prompts, delegated work, task receipts/events, and transcript history now line up across both runtime modes.
+
+## Delegated tool gating
+
+`acp.prompt` is advertised as approval-sensitive and executable, but it is **not** delegated back into the `memory/sessions/search` or `inspect` toolsets. That is intentional.
+
+The shared tool contract allows delegated tasks to inspect ACP metadata and ACP session reads where appropriate:
+
+- `acp`
+- `acp.describe`
+- `acp.sessions.list`
+- `acp.sessions.get`
+- `acp.sessions.messages`
+
+But it does **not** allow delegated tasks to call `acp.prompt` recursively. This prevents nested capability escalation inside delegated batches while still letting delegated flows inspect ACP metadata and read transcript history.
 
 ## Approval-sensitive execution flow
 
@@ -98,20 +160,24 @@ Then re-run the original request with `approvalId` included.
 `scripts/hermes-port-rpc-smoke.mjs` now verifies:
 
 - typed `tools.catalog` metadata
-- `acp.describe` polling metadata (`tasks.events`, `tasks.get`)
+- `acp.describe` polling + session-lifecycle metadata
+- `acp.sessions.new`
+- direct-message `acp.prompt`
+- durable transcript lookup through `acp.sessions.messages`
+- session cloning through `acp.sessions.fork`
+- delegated `acp.prompt` execution that produces a persisted task receipt and transcript summary
+- persisted task receipt polling via `tasks.list|get|events|search`
 - prompt -> pending approval -> approved re-run
 - deny-mode blocking for `process.start`
-- delegated file-step execution through `delegate_task`
-- delegated approval blocking through `delegate_task`
-- persisted task receipt polling via `tasks.list|get|events|search`
 - the earlier file/web/process/session/execute coding-agent path
 
 ## What is still missing
 
-The scaffold does **not** yet include:
+The scaffold still does **not** include:
 
-- a dedicated ACP protocol adapter
+- a dedicated ACP transport adapter
 - full Hermes child-agent / LLM subagent parity
 - richer push/stream ACP delivery beyond the current polling-based delegated task envelopes
+- native bare-metal implementations for hosted-heavy tools such as `execute_code`, `web.search|extract`, and `process.*`
 
-Those remain good next slices, but the shared ACP metadata + delegated task receipt/event path is now live in Zig end to end.
+Those remain good next slices, but the shared ACP metadata + session lifecycle + prompt/transcript seam + delegated task receipt/event path is now live in Zig end to end.

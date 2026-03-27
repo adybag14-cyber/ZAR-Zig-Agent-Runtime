@@ -370,6 +370,130 @@ pub const SessionSearchResult = struct {
     }
 };
 
+pub const AcpSessionItem = struct {
+    sessionId: []const u8,
+    createdAtMs: i64,
+    updatedAtMs: i64,
+    cwd: []const u8,
+    title: []const u8,
+    sourceSessionId: ?[]const u8 = null,
+    lastMessage: []const u8,
+    messageCount: usize,
+    taskCount: usize,
+    latestMessageId: u64,
+
+    pub fn deinit(self: *AcpSessionItem, allocator: std.mem.Allocator) void {
+        allocator.free(self.sessionId);
+        allocator.free(self.cwd);
+        allocator.free(self.title);
+        if (self.sourceSessionId) |value| allocator.free(value);
+        allocator.free(self.lastMessage);
+    }
+};
+
+pub const AcpSessionsListResult = struct {
+    count: usize,
+    items: []AcpSessionItem,
+
+    pub fn deinit(self: *AcpSessionsListResult, allocator: std.mem.Allocator) void {
+        for (self.items) |*item| item.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
+pub const AcpSessionGetResult = struct {
+    session: AcpSessionItem,
+
+    pub fn deinit(self: *AcpSessionGetResult, allocator: std.mem.Allocator) void {
+        self.session.deinit(allocator);
+    }
+};
+
+pub const AcpMessageItem = struct {
+    messageId: u64,
+    sessionId: []const u8,
+    role: []const u8,
+    kind: []const u8,
+    text: []const u8,
+    taskId: ?[]const u8 = null,
+    createdAtMs: i64,
+
+    pub fn deinit(self: *AcpMessageItem, allocator: std.mem.Allocator) void {
+        allocator.free(self.sessionId);
+        allocator.free(self.role);
+        allocator.free(self.kind);
+        allocator.free(self.text);
+        if (self.taskId) |value| allocator.free(value);
+    }
+};
+
+pub const AcpSessionMessagesResult = struct {
+    sessionId: []const u8,
+    count: usize,
+    cursor: u64,
+    hasMore: bool,
+    items: []AcpMessageItem,
+
+    pub fn deinit(self: *AcpSessionMessagesResult, allocator: std.mem.Allocator) void {
+        allocator.free(self.sessionId);
+        for (self.items) |*item| item.deinit(allocator);
+        allocator.free(self.items);
+    }
+};
+
+pub const AcpSessionNewResult = struct {
+    created: bool,
+    session: AcpSessionItem,
+
+    pub fn deinit(self: *AcpSessionNewResult, allocator: std.mem.Allocator) void {
+        self.session.deinit(allocator);
+    }
+};
+
+pub const AcpSessionForkResult = struct {
+    sourceSessionId: []const u8,
+    clonedMessages: usize,
+    session: AcpSessionItem,
+
+    pub fn deinit(self: *AcpSessionForkResult, allocator: std.mem.Allocator) void {
+        allocator.free(self.sourceSessionId);
+        self.session.deinit(allocator);
+    }
+};
+
+pub const AcpContentBlock = struct {
+    type: []const u8,
+    text: []const u8,
+};
+
+pub const AcpPromptResult = struct {
+    ok: bool,
+    session: AcpSessionItem,
+    promptText: []const u8,
+    promptBlocks: usize,
+    taskCount: usize,
+    tasks: []TaskListItem,
+    assistantMessage: AcpMessageItem,
+    response: []AcpContentBlock,
+
+    pub fn deinit(self: *AcpPromptResult, allocator: std.mem.Allocator) void {
+        self.session.deinit(allocator);
+        allocator.free(self.promptText);
+        allocator.free(self.tasks);
+        self.assistantMessage.deinit(allocator);
+        allocator.free(self.response);
+    }
+};
+
+const AcpPromptText = struct {
+    text: []u8,
+    blockCount: usize,
+
+    fn deinit(self: *AcpPromptText, allocator: std.mem.Allocator) void {
+        allocator.free(self.text);
+    }
+};
+
 pub const TaskListItem = struct {
     taskId: []const u8,
     sessionId: []const u8,
@@ -466,6 +590,7 @@ pub const Snapshot = struct {
     statePath: []const u8,
     persisted: bool,
     sessions: usize,
+    sessionMessages: usize,
     tasks: usize,
     taskEvents: usize,
     queueDepth: usize,
@@ -523,6 +648,7 @@ pub const ToolRuntime = struct {
             .statePath = runtime_snapshot.statePath,
             .persisted = runtime_snapshot.persisted,
             .sessions = runtime_snapshot.sessions,
+            .sessionMessages = runtime_snapshot.sessionMessages,
             .tasks = runtime_snapshot.tasks,
             .taskEvents = runtime_snapshot.taskEvents,
             .queueDepth = runtime_snapshot.pendingJobs,
@@ -535,11 +661,12 @@ pub const ToolRuntime = struct {
         const runtime_snapshot = self.snapshot();
         return std.fmt.allocPrint(
             allocator,
-            "state_path={s}\npersisted={d}\nsessions={d}\ntasks={d}\ntask_events={d}\nqueue_depth={d}\nleased_jobs={d}\nrecovery_backlog={d}\n",
+            "state_path={s}\npersisted={d}\nsessions={d}\nsession_messages={d}\ntasks={d}\ntask_events={d}\nqueue_depth={d}\nleased_jobs={d}\nrecovery_backlog={d}\n",
             .{
                 runtime_snapshot.statePath,
                 @intFromBool(runtime_snapshot.persisted),
                 runtime_snapshot.sessions,
+                runtime_snapshot.sessionMessages,
                 runtime_snapshot.tasks,
                 runtime_snapshot.taskEvents,
                 runtime_snapshot.queueDepth,
@@ -956,6 +1083,387 @@ pub const ToolRuntime = struct {
         return self.sessionsSearch(allocator, query, limit);
     }
 
+    fn taskCountForSession(self: *const ToolRuntime, session_id: []const u8) usize {
+        var count: usize = 0;
+        for (self.runtime_state.task_receipts.items) |entry| {
+            if (std.mem.eql(u8, entry.session_id, session_id)) count += 1;
+        }
+        return count;
+    }
+
+    fn buildAcpSessionItem(
+        self: *const ToolRuntime,
+        allocator: std.mem.Allocator,
+        session_id: []const u8,
+    ) !AcpSessionItem {
+        const session = self.runtime_state.getSession(session_id) orelse return error.SessionNotFound;
+        return .{
+            .sessionId = try allocator.dupe(u8, session.id),
+            .createdAtMs = session.created_unix_ms,
+            .updatedAtMs = session.updated_unix_ms,
+            .cwd = try allocator.dupe(u8, session.cwd),
+            .title = try allocator.dupe(u8, session.title),
+            .sourceSessionId = if (session.source_session_id) |value| try allocator.dupe(u8, value) else null,
+            .lastMessage = try allocator.dupe(u8, session.last_message),
+            .messageCount = self.runtime_state.sessionMessageCount(session_id),
+            .taskCount = self.taskCountForSession(session_id),
+            .latestMessageId = self.runtime_state.latestSessionMessageId(session_id),
+        };
+    }
+
+    fn buildAcpMessageItem(
+        _: *const ToolRuntime,
+        allocator: std.mem.Allocator,
+        message: *const state.SessionMessage,
+    ) !AcpMessageItem {
+        return .{
+            .messageId = message.message_id,
+            .sessionId = try allocator.dupe(u8, message.session_id),
+            .role = try allocator.dupe(u8, message.role),
+            .kind = try allocator.dupe(u8, message.kind),
+            .text = try allocator.dupe(u8, message.text),
+            .taskId = if (message.task_id) |value| try allocator.dupe(u8, value) else null,
+            .createdAtMs = message.created_unix_ms,
+        };
+    }
+
+    fn buildTaskListItemFromSnapshot(self: *const ToolRuntime, receipt: state.TaskReceiptSnapshot) TaskListItem {
+        return .{
+            .taskId = receipt.task_id,
+            .sessionId = receipt.session_id,
+            .status = receipt.status,
+            .goal = receipt.goal,
+            .summary = receipt.summary,
+            .createdAtMs = receipt.created_unix_ms,
+            .updatedAtMs = receipt.updated_unix_ms,
+            .totalSteps = receipt.total_steps,
+            .completedSteps = receipt.completed_steps,
+            .successCount = receipt.success_count,
+            .failureCount = receipt.failure_count,
+            .approvalRequiredCount = receipt.approval_required_count,
+            .eventCount = self.taskEventCountForTask(receipt.task_id),
+        };
+    }
+
+    fn acpSessionsList(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        limit: usize,
+    ) !AcpSessionsListResult {
+        var items: std.ArrayList(AcpSessionItem) = .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+
+        var iterator = self.runtime_state.sessions.iterator();
+        while (iterator.next()) |entry| {
+            try items.append(allocator, try self.buildAcpSessionItem(allocator, entry.key_ptr.*));
+        }
+
+        std.mem.sort(AcpSessionItem, items.items, {}, struct {
+            fn lessThan(_: void, lhs: AcpSessionItem, rhs: AcpSessionItem) bool {
+                if (lhs.updatedAtMs == rhs.updatedAtMs) return std.mem.lessThan(u8, lhs.sessionId, rhs.sessionId);
+                return lhs.updatedAtMs > rhs.updatedAtMs;
+            }
+        }.lessThan);
+
+        const capped_limit = if (limit == 0) 25 else limit;
+        if (items.items.len > capped_limit) {
+            for (items.items[capped_limit..]) |*item| item.deinit(allocator);
+            items.items.len = capped_limit;
+        }
+
+        return .{
+            .count = items.items.len,
+            .items = try items.toOwnedSlice(allocator),
+        };
+    }
+
+    fn acpSessionsListFromFrame(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        frame_json: []const u8,
+    ) !AcpSessionsListResult {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+
+        const params = try getParamsObject(parsed.value);
+        const limit = @as(usize, @intCast(getOptionalU32(params, "limit", 25)));
+        return self.acpSessionsList(allocator, limit);
+    }
+
+    fn acpSessionGet(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        session_id: []const u8,
+    ) !AcpSessionGetResult {
+        return .{ .session = try self.buildAcpSessionItem(allocator, session_id) };
+    }
+
+    fn acpSessionGetFromFrame(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        frame_json: []const u8,
+    ) !AcpSessionGetResult {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+
+        const params = try getParamsObject(parsed.value);
+        const session_id = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "sessionId", "session" }, ""), " \t\r\n");
+        if (session_id.len == 0) return error.MissingSessionId;
+        return self.acpSessionGet(allocator, session_id);
+    }
+
+    fn acpSessionNewFromFrame(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        frame_json: []const u8,
+    ) !AcpSessionNewResult {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+
+        const params = try getParamsObject(parsed.value);
+        const now_ms = nowUnixMilliseconds(self.io);
+        const session_id_raw = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "sessionId", "session" }, ""), " \t\r\n");
+        const cwd = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "cwd", "workdir", "workingDirectory" }, ""), " \t\r\n");
+        const title = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "title", "sessionTitle" }, ""), " \t\r\n");
+        const session_id = if (session_id_raw.len > 0)
+            try allocator.dupe(u8, session_id_raw)
+        else
+            try generateAcpSessionIdAlloc(allocator, now_ms, self.runtime_state.next_session_message_id);
+        defer allocator.free(session_id);
+        const created = self.runtime_state.getSession(session_id) == null;
+        try self.runtime_state.ensureSessionMeta(session_id, cwd, title, null, now_ms);
+        return .{ .created = created, .session = try self.buildAcpSessionItem(allocator, session_id) };
+    }
+
+    fn acpSessionMessages(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        session_id: []const u8,
+        after_message_id: u64,
+        limit: usize,
+    ) !AcpSessionMessagesResult {
+        if (self.runtime_state.getSession(session_id) == null) return error.SessionNotFound;
+
+        var items: std.ArrayList(AcpMessageItem) = .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+
+        const capped_limit = if (limit == 0) 100 else limit;
+        var cursor = after_message_id;
+        var has_more = false;
+
+        for (self.runtime_state.session_messages.items) |*entry| {
+            if (!std.mem.eql(u8, entry.session_id, session_id)) continue;
+            if (entry.message_id <= after_message_id) continue;
+            if (items.items.len < capped_limit) {
+                try items.append(allocator, try self.buildAcpMessageItem(allocator, entry));
+                cursor = entry.message_id;
+            } else {
+                has_more = true;
+                break;
+            }
+        }
+
+        return .{
+            .sessionId = try allocator.dupe(u8, session_id),
+            .count = items.items.len,
+            .cursor = cursor,
+            .hasMore = has_more,
+            .items = try items.toOwnedSlice(allocator),
+        };
+    }
+
+    fn acpSessionMessagesFromFrame(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        frame_json: []const u8,
+    ) !AcpSessionMessagesResult {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+
+        const params = try getParamsObject(parsed.value);
+        const session_id = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "sessionId", "session" }, ""), " \t\r\n");
+        if (session_id.len == 0) return error.MissingSessionId;
+        const after_message_id = getOptionalU64(params, "afterMessageId", getOptionalU64(params, "cursor", 0));
+        const limit = @as(usize, @intCast(getOptionalU32(params, "limit", 100)));
+        return self.acpSessionMessages(allocator, session_id, after_message_id, limit);
+    }
+
+    fn acpSessionForkFromFrame(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        frame_json: []const u8,
+    ) !AcpSessionForkResult {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+
+        const params = try getParamsObject(parsed.value);
+        const source_session_id = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "sourceSessionId", "sessionId", "session" }, ""), " \t\r\n");
+        if (source_session_id.len == 0) return error.MissingSessionId;
+        const source = self.runtime_state.getSession(source_session_id) orelse return error.SessionNotFound;
+        const now_ms = nowUnixMilliseconds(self.io);
+        const dest_session_id_raw = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "newSessionId", "targetSessionId", "targetSession" }, ""), " \t\r\n");
+        const dest_session_id = if (dest_session_id_raw.len > 0)
+            try allocator.dupe(u8, dest_session_id_raw)
+        else
+            try generateAcpSessionIdAlloc(allocator, now_ms, self.runtime_state.next_session_message_id);
+        defer allocator.free(dest_session_id);
+
+        const cwd_override = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "cwd", "workdir", "workingDirectory" }, ""), " \t\r\n");
+        const title_override = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "title", "sessionTitle" }, ""), " \t\r\n");
+        const dest_cwd = if (cwd_override.len > 0) cwd_override else source.cwd;
+        var generated_title: ?[]u8 = null;
+        defer if (generated_title) |value| allocator.free(value);
+        const dest_title = if (title_override.len > 0) title_override else blk: {
+            generated_title = try std.fmt.allocPrint(allocator, "Fork of {s}", .{if (source.title.len > 0) source.title else source.id});
+            break :blk generated_title.?;
+        };
+
+        try self.runtime_state.ensureSessionMeta(dest_session_id, dest_cwd, dest_title, source_session_id, now_ms);
+
+        var source_messages: std.ArrayList(state.SessionMessageSnapshot) = .empty;
+        defer source_messages.deinit(allocator);
+        for (self.runtime_state.session_messages.items) |entry| {
+            if (!std.mem.eql(u8, entry.session_id, source_session_id)) continue;
+            try source_messages.append(allocator, .{
+                .message_id = entry.message_id,
+                .session_id = entry.session_id,
+                .role = entry.role,
+                .kind = entry.kind,
+                .text = entry.text,
+                .task_id = entry.task_id,
+                .created_unix_ms = entry.created_unix_ms,
+            });
+        }
+
+        var cloned_messages: usize = 0;
+        for (source_messages.items) |entry| {
+            _ = try self.runtime_state.appendSessionMessage(dest_session_id, entry.role, entry.kind, entry.text, entry.task_id, now_ms);
+            cloned_messages += 1;
+        }
+
+        return .{
+            .sourceSessionId = try allocator.dupe(u8, source_session_id),
+            .clonedMessages = cloned_messages,
+            .session = try self.buildAcpSessionItem(allocator, dest_session_id),
+        };
+    }
+
+    fn acpPromptFromFrame(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        frame_json: []const u8,
+    ) !AcpPromptResult {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+
+        const params = try getParamsObject(parsed.value);
+        var prompt_text = try extractAcpPromptTextAlloc(allocator, params);
+        defer prompt_text.deinit(allocator);
+        const has_delegated_work = paramsHasDelegatedWork(params);
+        const goal = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "goal", "title" }, ""), " \t\r\n");
+        if (prompt_text.text.len == 0) {
+            if (goal.len > 0) {
+                allocator.free(prompt_text.text);
+                prompt_text.text = try allocator.dupe(u8, goal);
+                if (prompt_text.blockCount == 0) prompt_text.blockCount = 1;
+            } else if (has_delegated_work) {
+                allocator.free(prompt_text.text);
+                prompt_text.text = try allocator.dupe(u8, "ACP delegated task");
+                prompt_text.blockCount = 1;
+            } else {
+                return error.MissingContent;
+            }
+        }
+
+        const now_ms = nowUnixMilliseconds(self.io);
+        const cwd = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "cwd", "workdir", "workingDirectory" }, ""), " \t\r\n");
+        const title = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "title", "sessionTitle" }, ""), " \t\r\n");
+        const session_id_raw = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "sessionId", "session" }, ""), " \t\r\n");
+        const session_id = if (session_id_raw.len > 0)
+            try allocator.dupe(u8, session_id_raw)
+        else
+            try generateAcpSessionIdAlloc(allocator, now_ms, self.runtime_state.next_session_message_id);
+        defer allocator.free(session_id);
+
+        try self.runtime_state.ensureSessionMeta(session_id, cwd, title, null, now_ms);
+        _ = try self.runtime_state.appendSessionMessage(session_id, "user", "prompt", prompt_text.text, null, now_ms);
+
+        var ok_result = true;
+        var task_items = try allocator.alloc(TaskListItem, 0);
+        var task_count: usize = 0;
+        var assistant_text = try allocator.dupe(u8, "Prompt recorded in the ACP session. Add steps/actions/toolsets to execute a Hermes-style tool flow in Zig.");
+        errdefer allocator.free(assistant_text);
+        var assistant_kind: []const u8 = "message";
+        var assistant_task_id: ?[]const u8 = null;
+
+        if (has_delegated_work) {
+            allocator.free(assistant_text);
+            const delegate_invoke = struct {
+                fn call(runtime: *ToolRuntime, allocator_inner: std.mem.Allocator, frame_inner: []const u8) anyerror![]u8 {
+                    return runtime.handleRpcFrameAlloc(allocator_inner, frame_inner);
+                }
+            }.call;
+            var delegate_result = try delegate_task.runWithDefaults(allocator, params.object, .{
+                .goal = if (goal.len > 0) goal else prompt_text.text,
+                .session_id = session_id,
+                .cwd = cwd,
+            }, self, delegate_invoke);
+            defer delegate_result.deinit(allocator);
+            try task_receipts.recordBatch(&self.runtime_state, &delegate_result);
+            ok_result = delegate_result.ok;
+            task_count = delegate_result.results.len;
+            if (task_count > 0) {
+                task_items = try allocator.alloc(TaskListItem, task_count);
+                for (delegate_result.results, 0..) |task, idx| {
+                    const receipt = self.runtime_state.getTaskReceipt(task.taskId) orelse unreachable;
+                    task_items[idx] = self.buildTaskListItemFromSnapshot(receipt);
+                }
+                assistant_kind = "task_summary";
+                assistant_task_id = delegate_result.results[0].taskId;
+                if (task_count == 1) {
+                    assistant_text = try std.fmt.allocPrint(allocator, "Delegated task {s}: {s}", .{ delegate_result.results[0].taskId, delegate_result.results[0].summary });
+                } else {
+                    assistant_text = try std.fmt.allocPrint(allocator, "Delegated {d} tasks in session {s} ({d} succeeded, {d} failed, {d} blocked).", .{ task_count, session_id, delegate_result.succeeded, delegate_result.failed, delegate_result.blocked });
+                }
+            } else {
+                assistant_text = try allocator.dupe(u8, "Delegated ACP prompt completed without recorded task receipts.");
+            }
+        }
+
+        const assistant_now_ms = nowUnixMilliseconds(self.io);
+        const assistant_message_id = try self.runtime_state.appendSessionMessage(session_id, "assistant", assistant_kind, assistant_text, assistant_task_id, assistant_now_ms);
+        const assistant_message = AcpMessageItem{
+            .messageId = assistant_message_id,
+            .sessionId = try allocator.dupe(u8, session_id),
+            .role = try allocator.dupe(u8, "assistant"),
+            .kind = try allocator.dupe(u8, assistant_kind),
+            .text = try allocator.dupe(u8, assistant_text),
+            .taskId = if (assistant_task_id) |value| try allocator.dupe(u8, value) else null,
+            .createdAtMs = assistant_now_ms,
+        };
+        allocator.free(assistant_text);
+
+        var response_blocks = try allocator.alloc(AcpContentBlock, 1);
+        response_blocks[0] = .{ .type = "text", .text = assistant_message.text };
+
+        return .{
+            .ok = ok_result,
+            .session = try self.buildAcpSessionItem(allocator, session_id),
+            .promptText = try allocator.dupe(u8, prompt_text.text),
+            .promptBlocks = prompt_text.blockCount,
+            .taskCount = task_count,
+            .tasks = task_items,
+            .assistantMessage = assistant_message,
+            .response = response_blocks,
+        };
+    }
+
     fn taskEventCountForTask(self: *const ToolRuntime, task_id: []const u8) usize {
         var count: usize = 0;
         for (self.runtime_state.task_events.items) |entry| {
@@ -1268,6 +1776,20 @@ pub const ToolRuntime = struct {
                     .eventsMethod = "tasks.events",
                     .receiptsMethod = "tasks.get",
                 },
+                .sessionLifecycle = .{
+                    .newMethod = "acp.sessions.new",
+                    .listMethod = "acp.sessions.list",
+                    .getMethod = "acp.sessions.get",
+                    .messagesMethod = "acp.sessions.messages",
+                    .forkMethod = "acp.sessions.fork",
+                    .promptMethod = "acp.prompt",
+                },
+                .contentBlocks = .{
+                    .text = true,
+                    .image = false,
+                    .audio = false,
+                    .resource = false,
+                },
                 .capabilities = .{
                     .toolsCatalog = true,
                     .delegateTask = true,
@@ -1275,12 +1797,65 @@ pub const ToolRuntime = struct {
                     .taskEvents = true,
                     .sessionHistory = true,
                     .sessionSearch = true,
+                    .sessionLifecycle = true,
+                    .sessionMessages = true,
+                    .sessionFork = true,
+                    .prompt = true,
+                    .promptBlocks = true,
                     .approvals = true,
                     .runtimeSupportMetadata = true,
                 },
                 .tools = tools,
                 .count = tools.len,
             });
+        }
+
+        if (std.mem.eql(u8, request.method, "acp.sessions.list")) {
+            var session_list_result = self.acpSessionsListFromFrame(allocator, frame_json) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{ .code = rpcErrorCode(err), .message = @errorName(err) });
+            };
+            defer session_list_result.deinit(allocator);
+            return envelope.encodeResult(allocator, request.id, session_list_result);
+        }
+
+        if (std.mem.eql(u8, request.method, "acp.sessions.new")) {
+            var session_new_result = self.acpSessionNewFromFrame(allocator, frame_json) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{ .code = rpcErrorCode(err), .message = @errorName(err) });
+            };
+            defer session_new_result.deinit(allocator);
+            return envelope.encodeResult(allocator, request.id, session_new_result);
+        }
+
+        if (std.mem.eql(u8, request.method, "acp.sessions.get")) {
+            var session_get_result = self.acpSessionGetFromFrame(allocator, frame_json) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{ .code = rpcErrorCode(err), .message = @errorName(err) });
+            };
+            defer session_get_result.deinit(allocator);
+            return envelope.encodeResult(allocator, request.id, session_get_result);
+        }
+
+        if (std.mem.eql(u8, request.method, "acp.sessions.messages")) {
+            var session_messages_result = self.acpSessionMessagesFromFrame(allocator, frame_json) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{ .code = rpcErrorCode(err), .message = @errorName(err) });
+            };
+            defer session_messages_result.deinit(allocator);
+            return envelope.encodeResult(allocator, request.id, session_messages_result);
+        }
+
+        if (std.mem.eql(u8, request.method, "acp.sessions.fork")) {
+            var session_fork_result = self.acpSessionForkFromFrame(allocator, frame_json) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{ .code = rpcErrorCode(err), .message = @errorName(err) });
+            };
+            defer session_fork_result.deinit(allocator);
+            return envelope.encodeResult(allocator, request.id, session_fork_result);
+        }
+
+        if (std.mem.eql(u8, request.method, "acp.prompt")) {
+            var prompt_result = self.acpPromptFromFrame(allocator, frame_json) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{ .code = rpcErrorCode(err), .message = @errorName(err) });
+            };
+            defer prompt_result.deinit(allocator);
+            return envelope.encodeResult(allocator, request.id, prompt_result);
         }
 
         if (std.mem.eql(u8, request.method, "tools.catalog")) {
@@ -1711,6 +2286,7 @@ pub const ToolRuntime = struct {
                 .statePath = runtime_snapshot.statePath,
                 .persisted = runtime_snapshot.persisted,
                 .sessions = runtime_snapshot.sessions,
+                .sessionMessages = runtime_snapshot.sessionMessages,
                 .tasks = runtime_snapshot.tasks,
                 .taskEvents = runtime_snapshot.taskEvents,
                 .queueDepth = runtime_snapshot.queueDepth,
@@ -1730,6 +2306,9 @@ pub const ToolRuntime = struct {
                     .created_unix_ms = entry.value_ptr.created_unix_ms,
                     .updated_unix_ms = entry.value_ptr.updated_unix_ms,
                     .last_message = entry.value_ptr.last_message,
+                    .cwd = entry.value_ptr.cwd,
+                    .title = entry.value_ptr.title,
+                    .source_session_id = entry.value_ptr.source_session_id,
                 });
             }
 
@@ -3095,6 +3674,68 @@ fn getOptionalBool(
     return default_value;
 }
 
+fn generateAcpSessionIdAlloc(allocator: std.mem.Allocator, now_ms: i64, seed: u64) ![]u8 {
+    return std.fmt.allocPrint(allocator, "acp-session-{d}-{d}", .{ now_ms, seed });
+}
+
+fn paramsHasDelegatedWork(params: std.json.Value) bool {
+    return params.object.get("steps") != null or params.object.get("actions") != null or params.object.get("tasks") != null;
+}
+
+fn extractAcpPromptTextAlloc(
+    allocator: std.mem.Allocator,
+    params: std.json.Value,
+) !AcpPromptText {
+    var parts: std.ArrayList(u8) = .empty;
+    errdefer parts.deinit(allocator);
+    var block_count: usize = 0;
+
+    if (params.object.get("prompt")) |value| {
+        if (value == .string) {
+            const trimmed = std.mem.trim(u8, value.string, " \t\r\n");
+            if (trimmed.len > 0) {
+                try parts.appendSlice(allocator, trimmed);
+                block_count += 1;
+            }
+        }
+    }
+    if (parts.items.len == 0) {
+        if (params.object.get("text")) |value| {
+            if (value == .string) {
+                const trimmed = std.mem.trim(u8, value.string, " \t\r\n");
+                if (trimmed.len > 0) {
+                    try parts.appendSlice(allocator, trimmed);
+                    block_count += 1;
+                }
+            }
+        }
+    }
+    if (params.object.get("content")) |value| {
+        if (value == .array) {
+            for (value.array.items) |entry| {
+                if (entry != .object) continue;
+                const type_value = if (entry.object.get("type")) |type_entry| switch (type_entry) {
+                    .string => type_entry.string,
+                    else => "",
+                } else "text";
+                if (!std.ascii.eqlIgnoreCase(type_value, "text")) continue;
+                const text_value = entry.object.get("text") orelse continue;
+                if (text_value != .string) continue;
+                const trimmed = std.mem.trim(u8, text_value.string, " \t\r\n");
+                if (trimmed.len == 0) continue;
+                if (parts.items.len > 0) try parts.append(allocator, '\n');
+                try parts.appendSlice(allocator, trimmed);
+                block_count += 1;
+            }
+        }
+    }
+
+    return .{
+        .text = try parts.toOwnedSlice(allocator),
+        .blockCount = block_count,
+    };
+}
+
 fn freeOwnedStringList(allocator: std.mem.Allocator, list: []const []const u8) void {
     for (list) |item| allocator.free(item);
     allocator.free(list);
@@ -3604,6 +4245,7 @@ test "tool runtime snapshot and session queries expose deterministic text" {
     defer allocator.free(snapshot_text);
     try std.testing.expect(std.mem.indexOf(u8, snapshot_text, "state_path=") != null);
     try std.testing.expect(std.mem.indexOf(u8, snapshot_text, "sessions=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, snapshot_text, "session_messages=") != null);
 
     const sessions_text = try runtime.sessionListTextAlloc(allocator);
     defer allocator.free(sessions_text);
@@ -3701,6 +4343,8 @@ test "tool runtime RPC frame bridge serves file exec and session methods" {
     defer allocator.free(catalog_response);
     try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"runtimeTarget\":\"hosted\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"tool\":\"delegate_task\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"tool\":\"acp.sessions.new\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"tool\":\"acp.prompt\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"tool\":\"sessions.history\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"supportedOnBaremetal\":false") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"currentRuntimeSupported\":true") != null);
@@ -3713,6 +4357,95 @@ test "tool runtime RPC frame bridge serves file exec and session methods" {
     try std.testing.expect(std.mem.indexOf(u8, acp_response, "\"schemaVersion\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, acp_response, "\"mode\":\"poll\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, acp_response, "tasks.events") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_response, "acp.sessions.new") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_response, "acp.prompt") != null);
+
+    const acp_session_new_frame = try std.fmt.allocPrint(
+        allocator,
+        "{{\"id\":\"rt-acp-session-new\",\"method\":\"acp.sessions.new\",\"params\":{{\"sessionId\":\"acp-runtime\",\"cwd\":\"{s}\",\"title\":\"ACP Runtime Session\"}}}}",
+        .{json_root},
+    );
+    defer allocator.free(acp_session_new_frame);
+    const acp_session_new_response = try runtime.handleRpcFrameAlloc(allocator, acp_session_new_frame);
+    defer allocator.free(acp_session_new_response);
+    try std.testing.expect(std.mem.indexOf(u8, acp_session_new_response, "\"created\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_session_new_response, "\"sessionId\":\"acp-runtime\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_session_new_response, "\"messageCount\":0") != null);
+
+    const acp_prompt_response = try runtime.handleRpcFrameAlloc(
+        allocator,
+        "{\"id\":\"rt-acp-prompt\",\"method\":\"acp.prompt\",\"params\":{\"sessionId\":\"acp-runtime\",\"content\":[{\"type\":\"text\",\"text\":\"Plan a portable ACP session flow\"}]}}",
+    );
+    defer allocator.free(acp_prompt_response);
+    try std.testing.expect(std.mem.indexOf(u8, acp_prompt_response, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_prompt_response, "\"taskCount\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_prompt_response, "Prompt recorded in the ACP session") != null);
+
+    const acp_messages_response = try runtime.handleRpcFrameAlloc(
+        allocator,
+        "{\"id\":\"rt-acp-messages\",\"method\":\"acp.sessions.messages\",\"params\":{\"sessionId\":\"acp-runtime\",\"limit\":10}}",
+    );
+    defer allocator.free(acp_messages_response);
+    try std.testing.expect(std.mem.indexOf(u8, acp_messages_response, "\"count\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_messages_response, "\"role\":\"user\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_messages_response, "\"role\":\"assistant\"") != null);
+
+    const acp_fork_response = try runtime.handleRpcFrameAlloc(
+        allocator,
+        "{\"id\":\"rt-acp-fork\",\"method\":\"acp.sessions.fork\",\"params\":{\"sourceSessionId\":\"acp-runtime\",\"newSessionId\":\"acp-runtime-fork\"}}",
+    );
+    defer allocator.free(acp_fork_response);
+    try std.testing.expect(std.mem.indexOf(u8, acp_fork_response, "\"clonedMessages\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_fork_response, "\"sourceSessionId\":\"acp-runtime\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_fork_response, "\"sessionId\":\"acp-runtime-fork\"") != null);
+
+    const acp_get_response = try runtime.handleRpcFrameAlloc(
+        allocator,
+        "{\"id\":\"rt-acp-get\",\"method\":\"acp.sessions.get\",\"params\":{\"sessionId\":\"acp-runtime-fork\"}}",
+    );
+    defer allocator.free(acp_get_response);
+    try std.testing.expect(std.mem.indexOf(u8, acp_get_response, "\"messageCount\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_get_response, "\"sourceSessionId\":\"acp-runtime\"") != null);
+
+    const acp_list_response = try runtime.handleRpcFrameAlloc(
+        allocator,
+        "{\"id\":\"rt-acp-list\",\"method\":\"acp.sessions.list\",\"params\":{\"limit\":10}}",
+    );
+    defer allocator.free(acp_list_response);
+    try std.testing.expect(std.mem.indexOf(u8, acp_list_response, "\"sessionId\":\"acp-runtime\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_list_response, "\"sessionId\":\"acp-runtime-fork\"") != null);
+
+    const acp_delegate_test_path = try std.fs.path.join(allocator, &.{ root, "acp-prompt-delegate.txt" });
+    defer allocator.free(acp_delegate_test_path);
+    const json_acp_delegate_test_path = try std.mem.replaceOwned(u8, allocator, acp_delegate_test_path, "\\", "\\\\");
+    defer allocator.free(json_acp_delegate_test_path);
+    const acp_delegate_prompt_frame = try std.fmt.allocPrint(
+        allocator,
+        "{{\"id\":\"rt-acp-prompt-delegate\",\"method\":\"acp.prompt\",\"params\":{{\"sessionId\":\"acp-runtime-exec\",\"goal\":\"ACP delegated file flow\",\"prompt\":\"Write then read a file in the ACP session\",\"toolsets\":[\"file\"],\"steps\":[{{\"tool\":\"file.write\",\"path\":\"{s}\",\"content\":\"acp-delegate-data\"}},{{\"tool\":\"file.read\",\"path\":\"{s}\"}}]}}}}",
+        .{ json_acp_delegate_test_path, json_acp_delegate_test_path },
+    );
+    defer allocator.free(acp_delegate_prompt_frame);
+    const acp_delegate_prompt_response = try runtime.handleRpcFrameAlloc(allocator, acp_delegate_prompt_frame);
+    defer allocator.free(acp_delegate_prompt_response);
+    try std.testing.expect(std.mem.indexOf(u8, acp_delegate_prompt_response, "\"taskCount\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_delegate_prompt_response, "\"kind\":\"task_summary\"") != null);
+    const acp_delegate_read_frame = try std.fmt.allocPrint(
+        allocator,
+        "{{\"id\":\"rt-acp-prompt-read\",\"method\":\"file.read\",\"params\":{{\"sessionId\":\"acp-runtime-exec\",\"path\":\"{s}\"}}}}",
+        .{json_acp_delegate_test_path},
+    );
+    defer allocator.free(acp_delegate_read_frame);
+    const acp_delegate_read_response = try runtime.handleRpcFrameAlloc(allocator, acp_delegate_read_frame);
+    defer allocator.free(acp_delegate_read_response);
+    try std.testing.expect(std.mem.indexOf(u8, acp_delegate_read_response, "acp-delegate-data") != null);
+
+    const acp_delegate_messages_response = try runtime.handleRpcFrameAlloc(
+        allocator,
+        "{\"id\":\"rt-acp-prompt-messages\",\"method\":\"acp.sessions.messages\",\"params\":{\"sessionId\":\"acp-runtime-exec\",\"limit\":10}}",
+    );
+    defer allocator.free(acp_delegate_messages_response);
+    try std.testing.expect(std.mem.indexOf(u8, acp_delegate_messages_response, "\"count\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_delegate_messages_response, "\"kind\":\"task_summary\"") != null);
 
     const delegate_test_path = try std.fs.path.join(allocator, &.{ root, "runtime-delegate.txt" });
     defer allocator.free(delegate_test_path);
@@ -3796,9 +4529,10 @@ test "tool runtime RPC frame bridge serves file exec and session methods" {
     );
     defer allocator.free(snapshot_response);
     try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"id\":\"rt-snapshot\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"sessions\":2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"tasks\":1") != null);
-    try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"taskEvents\":6") != null);
+    try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"sessions\":5") != null);
+    try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"sessionMessages\":6") != null);
+    try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"tasks\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"taskEvents\":12") != null);
 
     const list_response = try runtime.handleRpcFrameAlloc(
         allocator,

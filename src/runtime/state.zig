@@ -7,6 +7,9 @@ pub const Session = struct {
     created_unix_ms: i64,
     updated_unix_ms: i64,
     last_message: []u8,
+    cwd: []u8,
+    title: []u8,
+    source_session_id: ?[]u8 = null,
 };
 
 pub const SessionSnapshot = struct {
@@ -14,6 +17,37 @@ pub const SessionSnapshot = struct {
     created_unix_ms: i64,
     updated_unix_ms: i64,
     last_message: []const u8,
+    cwd: []const u8,
+    title: []const u8,
+    source_session_id: ?[]const u8 = null,
+};
+
+pub const SessionMessage = struct {
+    message_id: u64,
+    session_id: []u8,
+    role: []u8,
+    kind: []u8,
+    text: []u8,
+    task_id: ?[]u8 = null,
+    created_unix_ms: i64,
+
+    pub fn deinit(self: *SessionMessage, allocator: std.mem.Allocator) void {
+        allocator.free(self.session_id);
+        allocator.free(self.role);
+        allocator.free(self.kind);
+        allocator.free(self.text);
+        if (self.task_id) |value| allocator.free(value);
+    }
+};
+
+pub const SessionMessageSnapshot = struct {
+    message_id: u64,
+    session_id: []const u8,
+    role: []const u8,
+    kind: []const u8,
+    text: []const u8,
+    task_id: ?[]const u8 = null,
+    created_unix_ms: i64,
 };
 
 pub const TaskReceipt = struct {
@@ -100,6 +134,7 @@ pub const Snapshot = struct {
     statePath: []const u8,
     persisted: bool,
     sessions: usize,
+    sessionMessages: usize,
     tasks: usize,
     taskEvents: usize,
     pendingJobs: usize,
@@ -107,6 +142,7 @@ pub const Snapshot = struct {
     recoveryBacklog: usize,
     nextJobId: u64,
     nextTaskEventId: u64,
+    nextSessionMessageId: u64,
 };
 
 pub const JobKind = enum {
@@ -126,6 +162,19 @@ const PersistedSession = struct {
     createdAtMs: i64,
     updatedAtMs: i64,
     lastMessage: []const u8,
+    cwd: []const u8 = "",
+    title: []const u8 = "",
+    sourceSessionId: ?[]const u8 = null,
+};
+
+const PersistedSessionMessage = struct {
+    messageId: u64 = 0,
+    sessionId: []const u8,
+    role: []const u8,
+    kind: []const u8,
+    text: []const u8,
+    taskId: ?[]const u8 = null,
+    createdAtMs: i64,
 };
 
 const PersistedTaskReceipt = struct {
@@ -167,7 +216,9 @@ const PersistedJob = struct {
 const PersistedState = struct {
     nextJobId: u64 = 1,
     nextTaskEventId: u64 = 1,
+    nextSessionMessageId: u64 = 1,
     sessions: []PersistedSession = &.{},
+    sessionMessages: []PersistedSessionMessage = &.{},
     tasks: []PersistedTaskReceipt = &.{},
     taskEvents: []PersistedTaskEvent = &.{},
     pendingJobs: []PersistedJob = &.{},
@@ -176,10 +227,12 @@ const PersistedState = struct {
 
 const max_task_receipts: usize = 256;
 const max_task_events: usize = 2048;
+const max_session_messages: usize = 4096;
 
 pub const RuntimeState = struct {
     allocator: std.mem.Allocator,
     sessions: std.StringHashMap(Session),
+    session_messages: std.ArrayList(SessionMessage),
     task_receipts: std.ArrayList(TaskReceipt),
     task_events: std.ArrayList(TaskEvent),
     pending_jobs: std.ArrayList(Job),
@@ -187,6 +240,7 @@ pub const RuntimeState = struct {
     pending_jobs_head: usize,
     next_job_id: u64,
     next_task_event_id: u64,
+    next_session_message_id: u64,
     state_path: ?[]u8,
     persistent: bool,
 
@@ -194,6 +248,7 @@ pub const RuntimeState = struct {
         return .{
             .allocator = allocator,
             .sessions = std.StringHashMap(Session).init(allocator),
+            .session_messages = .empty,
             .task_receipts = .empty,
             .task_events = .empty,
             .pending_jobs = .empty,
@@ -201,6 +256,7 @@ pub const RuntimeState = struct {
             .pending_jobs_head = 0,
             .next_job_id = 1,
             .next_task_event_id = 1,
+            .next_session_message_id = 1,
             .state_path = null,
             .persistent = false,
         };
@@ -209,6 +265,7 @@ pub const RuntimeState = struct {
     pub fn deinit(self: *RuntimeState) void {
         self.clearState();
         self.sessions.deinit();
+        self.session_messages.deinit(self.allocator);
         self.task_receipts.deinit(self.allocator);
         self.task_events.deinit(self.allocator);
         self.pending_jobs.deinit(self.allocator);
@@ -229,7 +286,7 @@ pub const RuntimeState = struct {
 
         // Persistence configuration is expected during runtime bootstrap.
         // If state already exists in memory, keep it untouched.
-        if (self.sessions.count() == 0 and self.task_receipts.items.len == 0 and self.task_events.items.len == 0 and self.queueDepth() == 0 and self.leased_jobs.items.len == 0 and self.next_job_id == 1 and self.next_task_event_id == 1) {
+        if (self.sessions.count() == 0 and self.session_messages.items.len == 0 and self.task_receipts.items.len == 0 and self.task_events.items.len == 0 and self.queueDepth() == 0 and self.leased_jobs.items.len == 0 and self.next_job_id == 1 and self.next_task_event_id == 1 and self.next_session_message_id == 1) {
             try self.load();
         }
     }
@@ -257,8 +314,124 @@ pub const RuntimeState = struct {
             .created_unix_ms = now_unix_ms,
             .updated_unix_ms = now_unix_ms,
             .last_message = owned_message,
+            .cwd = try self.allocator.dupe(u8, ""),
+            .title = try self.allocator.dupe(u8, ""),
+            .source_session_id = null,
         });
         if (self.persistent) try self.persist();
+    }
+
+    pub fn ensureSessionMeta(
+        self: *RuntimeState,
+        session_id: []const u8,
+        cwd: []const u8,
+        title: []const u8,
+        source_session_id: ?[]const u8,
+        now_unix_ms: i64,
+    ) !void {
+        if (self.sessions.getPtr(session_id)) |existing| {
+            var changed = false;
+            if (cwd.len > 0 and !std.mem.eql(u8, existing.cwd, cwd)) {
+                self.allocator.free(existing.cwd);
+                existing.cwd = try self.allocator.dupe(u8, cwd);
+                changed = true;
+            }
+            if (title.len > 0 and !std.mem.eql(u8, existing.title, title)) {
+                self.allocator.free(existing.title);
+                existing.title = try self.allocator.dupe(u8, title);
+                changed = true;
+            }
+            if (source_session_id) |source_id| {
+                if (existing.source_session_id) |existing_source| {
+                    if (!std.mem.eql(u8, existing_source, source_id)) {
+                        self.allocator.free(existing_source);
+                        existing.source_session_id = try self.allocator.dupe(u8, source_id);
+                        changed = true;
+                    }
+                } else {
+                    existing.source_session_id = try self.allocator.dupe(u8, source_id);
+                    changed = true;
+                }
+            }
+            if (changed) {
+                existing.updated_unix_ms = now_unix_ms;
+                if (self.persistent) try self.persist();
+            }
+            return;
+        }
+
+        const owned_key = try self.allocator.dupe(u8, session_id);
+        errdefer self.allocator.free(owned_key);
+        const owned_cwd = try self.allocator.dupe(u8, cwd);
+        errdefer self.allocator.free(owned_cwd);
+        const owned_title = try self.allocator.dupe(u8, title);
+        errdefer self.allocator.free(owned_title);
+        const owned_source = if (source_session_id) |value| try self.allocator.dupe(u8, value) else null;
+        errdefer if (owned_source) |value| self.allocator.free(value);
+
+        try self.sessions.put(owned_key, .{
+            .created_unix_ms = now_unix_ms,
+            .updated_unix_ms = now_unix_ms,
+            .last_message = try self.allocator.dupe(u8, ""),
+            .cwd = owned_cwd,
+            .title = owned_title,
+            .source_session_id = owned_source,
+        });
+        if (self.persistent) try self.persist();
+    }
+
+    pub fn appendSessionMessage(
+        self: *RuntimeState,
+        session_id: []const u8,
+        role: []const u8,
+        kind: []const u8,
+        text: []const u8,
+        task_id: ?[]const u8,
+        now_unix_ms: i64,
+    ) !u64 {
+        if (self.sessions.get(session_id) == null) {
+            try self.ensureSessionMeta(session_id, "", "", null, now_unix_ms);
+        }
+        if (self.sessions.getPtr(session_id)) |existing| {
+            self.allocator.free(existing.last_message);
+            existing.last_message = try self.allocator.dupe(u8, text);
+            existing.updated_unix_ms = now_unix_ms;
+        }
+
+        const message_id = self.next_session_message_id;
+        self.next_session_message_id += 1;
+        try self.session_messages.append(self.allocator, .{
+            .message_id = message_id,
+            .session_id = try self.allocator.dupe(u8, session_id),
+            .role = try self.allocator.dupe(u8, role),
+            .kind = try self.allocator.dupe(u8, kind),
+            .text = try self.allocator.dupe(u8, text),
+            .task_id = if (task_id) |value| try self.allocator.dupe(u8, value) else null,
+            .created_unix_ms = now_unix_ms,
+        });
+        self.trimOldestSessionMessages(max_session_messages);
+        if (self.persistent) try self.persist();
+        return message_id;
+    }
+
+    pub fn sessionMessageCount(self: *const RuntimeState, session_id: []const u8) usize {
+        var count: usize = 0;
+        for (self.session_messages.items) |entry| {
+            if (std.mem.eql(u8, entry.session_id, session_id)) count += 1;
+        }
+        return count;
+    }
+
+    pub fn latestSessionMessageId(self: *const RuntimeState, session_id: []const u8) u64 {
+        var latest: u64 = 0;
+        for (self.session_messages.items) |entry| {
+            if (std.mem.eql(u8, entry.session_id, session_id) and entry.message_id > latest) latest = entry.message_id;
+        }
+        return latest;
+    }
+
+    pub fn sessionMessageTotal(self: *const RuntimeState) usize {
+        return self.session_messages.items.len;
     }
 
     pub fn getSession(self: *const RuntimeState, session_id: []const u8) ?SessionSnapshot {
@@ -268,6 +441,9 @@ pub const RuntimeState = struct {
             .created_unix_ms = value.created_unix_ms,
             .updated_unix_ms = value.updated_unix_ms,
             .last_message = value.last_message,
+            .cwd = value.cwd,
+            .title = value.title,
+            .source_session_id = value.source_session_id,
         };
     }
 
@@ -454,6 +630,7 @@ pub const RuntimeState = struct {
             .statePath = if (self.state_path) |path| path else "memory://runtime-state",
             .persisted = self.persistent,
             .sessions = self.sessionCount(),
+            .sessionMessages = self.sessionMessageTotal(),
             .tasks = self.taskCount(),
             .taskEvents = self.taskEventCount(),
             .pendingJobs = pending,
@@ -461,6 +638,7 @@ pub const RuntimeState = struct {
             .recoveryBacklog = pending + leased,
             .nextJobId = self.next_job_id,
             .nextTaskEventId = self.next_task_event_id,
+            .nextSessionMessageId = self.next_session_message_id,
         };
     }
 
@@ -483,9 +661,14 @@ pub const RuntimeState = struct {
         while (it.next()) |entry| {
             self.allocator.free(entry.key_ptr.*);
             self.allocator.free(entry.value_ptr.last_message);
+            self.allocator.free(entry.value_ptr.cwd);
+            self.allocator.free(entry.value_ptr.title);
+            if (entry.value_ptr.source_session_id) |value| self.allocator.free(value);
         }
         self.sessions.clearRetainingCapacity();
 
+        for (self.session_messages.items) |*entry| entry.deinit(self.allocator);
+        self.session_messages.clearRetainingCapacity();
         for (self.task_receipts.items) |*entry| entry.deinit(self.allocator);
         self.task_receipts.clearRetainingCapacity();
         for (self.task_events.items) |*entry| entry.deinit(self.allocator);
@@ -502,6 +685,7 @@ pub const RuntimeState = struct {
         self.pending_jobs_head = 0;
         self.next_job_id = 1;
         self.next_task_event_id = 1;
+        self.next_session_message_id = 1;
     }
 
     fn load(self: *RuntimeState) !void {
@@ -519,17 +703,40 @@ pub const RuntimeState = struct {
 
         self.clearState();
         var max_job_id: u64 = 0;
+        var max_session_message_id: u64 = 0;
 
         for (parsed.value.sessions) |entry| {
             const key = try self.allocator.dupe(u8, std.mem.trim(u8, entry.id, " \t\r\n"));
             errdefer self.allocator.free(key);
             const message = try self.allocator.dupe(u8, entry.lastMessage);
             errdefer self.allocator.free(message);
+            const cwd = try self.allocator.dupe(u8, entry.cwd);
+            errdefer self.allocator.free(cwd);
+            const title = try self.allocator.dupe(u8, entry.title);
+            errdefer self.allocator.free(title);
+            const source_session_id = if (entry.sourceSessionId) |value| try self.allocator.dupe(u8, value) else null;
+            errdefer if (source_session_id) |value| self.allocator.free(value);
             try self.sessions.put(key, .{
                 .created_unix_ms = entry.createdAtMs,
                 .updated_unix_ms = entry.updatedAtMs,
                 .last_message = message,
+                .cwd = cwd,
+                .title = title,
+                .source_session_id = source_session_id,
             });
+        }
+
+        for (parsed.value.sessionMessages) |entry| {
+            try self.session_messages.append(self.allocator, .{
+                .message_id = entry.messageId,
+                .session_id = try self.allocator.dupe(u8, entry.sessionId),
+                .role = try self.allocator.dupe(u8, entry.role),
+                .kind = try self.allocator.dupe(u8, entry.kind),
+                .text = try self.allocator.dupe(u8, entry.text),
+                .task_id = if (entry.taskId) |value| try self.allocator.dupe(u8, value) else null,
+                .created_unix_ms = entry.createdAtMs,
+            });
+            if (entry.messageId > max_session_message_id) max_session_message_id = entry.messageId;
         }
 
         for (parsed.value.tasks) |entry| {
@@ -582,6 +789,8 @@ pub const RuntimeState = struct {
         for (self.task_events.items) |entry| {
             if (self.next_task_event_id <= entry.event_id) self.next_task_event_id = entry.event_id + 1;
         }
+        self.next_session_message_id = parsed.value.nextSessionMessageId;
+        if (self.next_session_message_id <= max_session_message_id) self.next_session_message_id = max_session_message_id + 1;
         if (normalize_leased_jobs and self.persistent) {
             try self.persist();
         }
@@ -607,8 +816,25 @@ pub const RuntimeState = struct {
                 .createdAtMs = session.created_unix_ms,
                 .updatedAtMs = session.updated_unix_ms,
                 .lastMessage = session.last_message,
+                .cwd = session.cwd,
+                .title = session.title,
+                .sourceSessionId = session.source_session_id,
             };
             session_index += 1;
+        }
+
+        var persisted_session_messages = try self.allocator.alloc(PersistedSessionMessage, self.session_messages.items.len);
+        defer self.allocator.free(persisted_session_messages);
+        for (self.session_messages.items, 0..) |entry, idx| {
+            persisted_session_messages[idx] = .{
+                .messageId = entry.message_id,
+                .sessionId = entry.session_id,
+                .role = entry.role,
+                .kind = entry.kind,
+                .text = entry.text,
+                .taskId = entry.task_id,
+                .createdAtMs = entry.created_unix_ms,
+            };
         }
 
         var persisted_tasks = try self.allocator.alloc(PersistedTaskReceipt, self.task_receipts.items.len);
@@ -675,7 +901,9 @@ pub const RuntimeState = struct {
         try std.json.Stringify.value(.{
             .nextJobId = self.next_job_id,
             .nextTaskEventId = self.next_task_event_id,
+            .nextSessionMessageId = self.next_session_message_id,
             .sessions = persisted_sessions,
+            .sessionMessages = persisted_session_messages,
             .tasks = persisted_tasks,
             .taskEvents = persisted_task_events,
             .pendingJobs = persisted_jobs,
@@ -696,6 +924,20 @@ pub const RuntimeState = struct {
             .kind = kind,
             .payload = payload,
         });
+    }
+
+    fn trimOldestSessionMessages(self: *RuntimeState, max_len: usize) void {
+        if (self.session_messages.items.len <= max_len) return;
+        const to_remove = self.session_messages.items.len - max_len;
+        var idx: usize = 0;
+        while (idx < to_remove) : (idx += 1) {
+            self.session_messages.items[idx].deinit(self.allocator);
+        }
+        const remaining = self.session_messages.items.len - to_remove;
+        if (remaining > 0) {
+            std.mem.copyForwards(SessionMessage, self.session_messages.items[0..remaining], self.session_messages.items[to_remove..]);
+        }
+        self.session_messages.items.len = remaining;
     }
 
     fn trimOldestTaskReceipts(self: *RuntimeState, max_len: usize) void {

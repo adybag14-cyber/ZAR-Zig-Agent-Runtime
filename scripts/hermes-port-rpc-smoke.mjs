@@ -12,6 +12,10 @@ const messageNeedle = `Hermes port smoke message ${Date.now()}`;
 const filePath = path.join(workRoot, "coding-agent.txt");
 const jsArtifactPath = path.join(workRoot, "execute-code-js.txt");
 const delegateFilePath = path.join(workRoot, "delegate-task.txt");
+const acpDelegateFilePath = path.join(workRoot, "acp-prompt-delegate.txt");
+const acpSessionId = `${sessionId}-acp`;
+const acpForkSessionId = `${acpSessionId}-fork`;
+const acpDelegateSessionId = `${acpSessionId}-exec`;
 const zigBinary = process.env.ZAR_ZIG_BIN ?? "";
 const nodeBinary = process.execPath;
 const requireHostedProcessSupport =
@@ -103,6 +107,12 @@ const catalog = await rpc("tools.catalog", {}, "catalog");
 const catalogJson = JSON.stringify(catalog);
 assert.match(catalogJson, /tools\.catalog/);
 assert.match(catalogJson, /acp\.describe/);
+assert.match(catalogJson, /acp\.sessions\.list/);
+assert.match(catalogJson, /acp\.sessions\.new/);
+assert.match(catalogJson, /acp\.sessions\.get/);
+assert.match(catalogJson, /acp\.sessions\.messages/);
+assert.match(catalogJson, /acp\.sessions\.fork/);
+assert.match(catalogJson, /acp\.prompt/);
 assert.match(catalogJson, /execute_code/);
 assert.match(catalogJson, /delegate_task/);
 assert.match(catalogJson, /file\.search/);
@@ -135,7 +145,134 @@ assert.equal(acpDescribeResult.eventDelivery.receiptsMethod, "tasks.get");
 assert.equal(acpDescribeResult.capabilities.delegateTask, true);
 assert.equal(acpDescribeResult.capabilities.taskReceipts, true);
 assert.equal(acpDescribeResult.capabilities.taskEvents, true);
+assert.equal(acpDescribeResult.capabilities.sessionLifecycle, true);
+assert.equal(acpDescribeResult.capabilities.sessionMessages, true);
+assert.equal(acpDescribeResult.capabilities.sessionFork, true);
+assert.equal(acpDescribeResult.capabilities.prompt, true);
+assert.equal(acpDescribeResult.sessionLifecycle.newMethod, "acp.sessions.new");
+assert.equal(acpDescribeResult.sessionLifecycle.listMethod, "acp.sessions.list");
+assert.equal(acpDescribeResult.sessionLifecycle.getMethod, "acp.sessions.get");
+assert.equal(acpDescribeResult.sessionLifecycle.messagesMethod, "acp.sessions.messages");
+assert.equal(acpDescribeResult.sessionLifecycle.forkMethod, "acp.sessions.fork");
+assert.equal(acpDescribeResult.sessionLifecycle.promptMethod, "acp.prompt");
+assert.equal(acpDescribeResult.contentBlocks.text, true);
 assert.match(JSON.stringify(acpDescribeResult.tools), /tasks\.events/);
+assert.match(JSON.stringify(acpDescribeResult.tools), /acp\.prompt/);
+
+const acpSessionNewResult = await rpc(
+  "acp.sessions.new",
+  {
+    sessionId: acpSessionId,
+    cwd: workRoot,
+    title: "ACP Smoke Session",
+  },
+  "acp-session-new",
+);
+assert.equal(acpSessionNewResult.created, true);
+assert.equal(acpSessionNewResult.session.sessionId, acpSessionId);
+assert.equal(acpSessionNewResult.session.messageCount, 0);
+
+const acpPromptResult = await rpc(
+  "acp.prompt",
+  {
+    sessionId: acpSessionId,
+    content: [{ type: "text", text: "Record a portable ACP smoke prompt" }],
+  },
+  "acp-prompt",
+);
+assert.equal(acpPromptResult.ok, true);
+assert.equal(acpPromptResult.taskCount, 0);
+assert.equal(acpPromptResult.session.sessionId, acpSessionId);
+assert.equal(acpPromptResult.promptBlocks, 1);
+assert.match(JSON.stringify(acpPromptResult.response), /Prompt recorded in the ACP session/);
+
+const acpMessagesResult = await rpc(
+  "acp.sessions.messages",
+  {
+    sessionId: acpSessionId,
+    limit: 10,
+  },
+  "acp-messages",
+);
+assert.equal(acpMessagesResult.count, 2);
+assert.equal(acpMessagesResult.items[0].role, "user");
+assert.equal(acpMessagesResult.items[1].role, "assistant");
+
+const acpForkResult = await rpc(
+  "acp.sessions.fork",
+  {
+    sourceSessionId: acpSessionId,
+    newSessionId: acpForkSessionId,
+  },
+  "acp-fork",
+);
+assert.equal(acpForkResult.clonedMessages, 2);
+assert.equal(acpForkResult.session.sessionId, acpForkSessionId);
+assert.equal(acpForkResult.session.sourceSessionId, acpSessionId);
+
+const acpGetResult = await rpc(
+  "acp.sessions.get",
+  {
+    sessionId: acpForkSessionId,
+  },
+  "acp-get",
+);
+assert.equal(acpGetResult.session.sessionId, acpForkSessionId);
+assert.equal(acpGetResult.session.messageCount, 2);
+assert.equal(acpGetResult.session.sourceSessionId, acpSessionId);
+
+const acpListResult = await rpc(
+  "acp.sessions.list",
+  {
+    limit: 10,
+  },
+  "acp-list",
+);
+assert.ok(acpListResult.count >= 2);
+assert.match(JSON.stringify(acpListResult.items), new RegExp(acpSessionId));
+assert.match(JSON.stringify(acpListResult.items), new RegExp(acpForkSessionId));
+
+const acpDelegatePromptResult = await rpc(
+  "acp.prompt",
+  {
+    sessionId: acpDelegateSessionId,
+    goal: "ACP delegated smoke file flow",
+    prompt: "Write and read through ACP prompt",
+    toolsets: ["file"],
+    steps: [
+      { tool: "file.write", path: acpDelegateFilePath, content: "acp-smoke-data" },
+      { tool: "file.read", path: acpDelegateFilePath },
+    ],
+  },
+  "acp-prompt-delegate",
+);
+assert.equal(acpDelegatePromptResult.ok, true);
+assert.equal(acpDelegatePromptResult.taskCount, 1);
+assert.equal(acpDelegatePromptResult.tasks[0].status, "completed");
+assert.ok(acpDelegatePromptResult.tasks[0].eventCount >= 6);
+const acpDelegateTaskId = acpDelegatePromptResult.tasks[0].taskId;
+assert.match(acpDelegateTaskId, /^delegate-task-/);
+
+const acpDelegateReadResult = await rpc(
+  "file.read",
+  {
+    sessionId: acpDelegateSessionId,
+    path: acpDelegateFilePath,
+  },
+  "acp-delegate-read",
+);
+assert.match(acpDelegateReadResult.content, /acp-smoke-data/);
+
+const acpDelegateMessagesResult = await rpc(
+  "acp.sessions.messages",
+  {
+    sessionId: acpDelegateSessionId,
+    limit: 10,
+  },
+  "acp-delegate-messages",
+);
+assert.equal(acpDelegateMessagesResult.count, 2);
+assert.match(JSON.stringify(acpDelegateMessagesResult.items), /task_summary/);
 
 const approvalsAllowResult = await rpc(
   "exec.approvals.set",
@@ -641,6 +778,12 @@ console.log(JSON.stringify({
     toolsCatalog: [
       "tools.catalog",
       "acp.describe",
+      "acp.sessions.list",
+      "acp.sessions.new",
+      "acp.sessions.get",
+      "acp.sessions.messages",
+      "acp.sessions.fork",
+      "acp.prompt",
       "execute_code",
       "delegate_task",
       "file.search",
@@ -670,6 +813,17 @@ console.log(JSON.stringify({
     acpDescribeReceiptsMethod: acpDescribeResult.eventDelivery.receiptsMethod,
     acpDescribeTaskReceipts: acpDescribeResult.capabilities.taskReceipts,
     acpDescribeTaskEvents: acpDescribeResult.capabilities.taskEvents,
+    acpDescribeSessionNewMethod: acpDescribeResult.sessionLifecycle.newMethod,
+    acpDescribePromptMethod: acpDescribeResult.sessionLifecycle.promptMethod,
+    acpDescribeSessionLifecycle: acpDescribeResult.capabilities.sessionLifecycle,
+    acpSessionCreated: acpSessionNewResult.created,
+    acpMessagesCount: acpMessagesResult.count,
+    acpForkClonedMessages: acpForkResult.clonedMessages,
+    acpListCount: acpListResult.count,
+    acpPromptTaskCount: acpPromptResult.taskCount,
+    acpDelegateTaskId,
+    acpDelegateTaskCount: acpDelegatePromptResult.taskCount,
+    acpDelegateMessagesCount: acpDelegateMessagesResult.count,
     globalApprovalMode: approvalsAllowResult.approvals.mode,
     approvalPromptState: approvalRequiredResult.state,
     approvalApprovedOk: approvalGrantedResult.ok,
