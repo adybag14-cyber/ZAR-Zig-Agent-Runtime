@@ -870,6 +870,36 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - `scripts/baremetal-qemu-i386-firmware-smp-priority-backfill-probe-check.ps1`
   - `scripts/baremetal-qemu-i386-firmware-smp-priority-backfill-probe-check.ps1 -MemoryMiB 1024`
 
+## Firmware Priority Fairness Drain
+
+- the newest FS5.7 slice widens the same four-slot firmware scheduler lane from bounded windows into bounded backlog-drain fairness:
+  - `src/baremetal/i386_ap_startup.zig`
+  - `src/baremetal_main.zig`
+  - `scripts/baremetal-qemu-i386-firmware-smp-priority-fairness-probe-check.ps1`
+- new exported surfaces make the fairness boundary explicit instead of inferring it from the earlier window counters:
+  - `/dev/cpu/ap-fairness`
+  - `/sys/cpu/ap-fairness`
+- the dedicated live proof is explicit:
+  - BIOS firmware boot under `-smp 5`
+  - 4 resident AP slots
+  - an initial fully saturated 16-task priority table
+  - repeated bounded priority windows with budget `5`
+  - backlog drain until zero pending tasks remain
+  - preserved cumulative per-slot totals plus last-worked slot snapshots
+  - `/sys/cpu/ap-fairness` plus `/sys/cpu/ap-window` plus `/sys/cpu/smp` render/readback
+- the dedicated live results are explicit:
+  - `BAREMETAL_I386_QEMU_FIRMWARE_SMP_PRIORITY_FAIRNESS_PROBE_CODE=0x94`
+  - `I386_AP_EXECUTION_OBSERVED=1`
+  - `I386_AP_FAIRNESS_TOTAL_TASK_COUNT=16`
+  - `I386_AP_FAIRNESS_TOTAL_DISPATCH_COUNT=13`
+  - `I386_AP_FAIRNESS_TOTAL_ACCUMULATOR=136`
+  - `I386_AP_FAIRNESS_DRAIN_ROUND_COUNT=4`
+  - `I386_AP_FAIRNESS_LAST_PENDING_TASK_COUNT=0`
+  - `I386_AP_FAIRNESS_TASK_BALANCE_GAP=0`
+- hosted `zig-ci` and `release-preview` now also execute:
+  - `scripts/baremetal-qemu-i386-firmware-smp-priority-fairness-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-firmware-smp-priority-fairness-probe-check.ps1 -MemoryMiB 1024`
+
 ## ZigOS Follow-On Work
 
 - next adoption analysis is stored in:
@@ -919,6 +949,7 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the i386 freestanding runtime now also has a real BIOS firmware-boot AP-slot failover scheduler lane that proves the same sixteen scheduler-created ready tasks can start fully saturated across four resident AP slots, retire one live AP slot, rebalance across the remaining three slots for two more rounds, export retired-slot plus failed-over-task telemetry through `/dev/cpu/ap-failover` and `/sys/cpu/ap-failover`, and finish with cumulative totals `96/22/816`, `77` redistributed tasks, `4` explicit failed-over tasks, and the same explicit seventeenth-task `result_no_space` saturation boundary
 - the i386 freestanding runtime now also has a real BIOS firmware-boot AP backfill/refill scheduler lane that proves the same four-slot firmware scheduler can terminate four older tasks after saturated ownership waves, refill the freed scheduler slots with four new higher-priority tasks, export backfilled-task plus terminated-task telemetry through `/dev/cpu/ap-backfill` and `/sys/cpu/ap-backfill`, and finish with cumulative totals `32/8/336`, `12` redistributed tasks, `4` backfilled tasks, and `4` terminated tasks at both default memory and `1024 MiB`
 - the i386 freestanding runtime now also has a real BIOS firmware-boot scheduler-window lane that proves the same sixteen scheduler-created ready tasks can be dispatched through three bounded priority windows with budget `6`, exports cumulative and last-round window/deferred/cursor/wrap telemetry through `/dev/cpu/ap-window` and `/sys/cpu/ap-window`, and finishes with cumulative totals `16/12/136`, `32` deferred tasks, `12` last-round deferred tasks, and one clean cursor wrap at both default memory and `1024 MiB`
+- the i386 freestanding runtime now also has a real BIOS firmware-boot fairness-drain scheduler lane that proves the same sixteen scheduler-created ready tasks can be drained through repeated bounded priority windows with budget `5`, exports cumulative fairness and per-slot drain telemetry through `/dev/cpu/ap-fairness` and `/sys/cpu/ap-fairness`, and finishes with cumulative totals `16/13/136`, zero remaining pending tasks, one clean cursor wrap, and `task_balance_gap=0` at both default memory and `1024 MiB`
 - the i386 freestanding runtime now has bounded IOAPIC export plus live MMIO proof with `/dev/cpu/ioapic` and `/sys/cpu/ioapic` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded legacy PIC export plus live remap/control-plane proof with `/dev/cpu/pic` and `/sys/cpu/pic` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded PIT export plus live latch/readback proof with `/dev/cpu/pit` and `/sys/cpu/pit` visibility on the i386 platform lane
@@ -966,13 +997,14 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - bounded AP-slot failover redistribution is now observed on the BIOS firmware-boot path
   - bounded termination backfill/refill is now observed on the BIOS firmware-boot path
   - bounded scheduler-window dispatch with deferred-task backlog and cursor wrap is now observed on the BIOS firmware-boot path
-  - that moves the next real closure step to broader SMP bring-up beyond bounded concurrent/owned/redistributed/priority-aware/priority-rotation/priority-fanout/full-table-saturation/saturated-reprioritization/failover/backfill/windowed AP slot dispatch
+  - bounded scheduler fairness-drain with zero final pending tasks and zero slot-balance gap is now observed on the BIOS firmware-boot path
+  - that moves the next real closure step to broader SMP bring-up beyond bounded concurrent/owned/redistributed/priority-aware/priority-rotation/priority-fanout/full-table-saturation/saturated-reprioritization/failover/backfill/windowed/fairness-drain AP slot dispatch
 
 ## Next Steps
 
 1. widen the current firmware-backed AP execution lane into broader SMP bring-up:
    - more than four bounded resident AP slots
    - AP-owned work dispatch beyond the current targeted owned/redistributed/priority-aware/priority-rotation/priority-fanout model
-   - scheduler behavior beyond the current four-round ownership plus live reprioritization map
+   - scheduler behavior beyond the current four-slot backlog-drain fairness map
 2. then lift that broader SMP model back toward the direct-loader path where possible
 3. only after that, widen timer / interrupt hardening around the real multi-core path

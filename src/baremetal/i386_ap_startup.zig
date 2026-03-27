@@ -69,6 +69,8 @@ var backfill_state: abi.BaremetalApBackfillState = zeroBackfillState();
 var backfill_entries: [max_ap_command_slots]abi.BaremetalApBackfillEntry = std.mem.zeroes([max_ap_command_slots]abi.BaremetalApBackfillEntry);
 var window_state: abi.BaremetalApWindowState = zeroWindowState();
 var window_entries: [max_ap_command_slots]abi.BaremetalApWindowEntry = std.mem.zeroes([max_ap_command_slots]abi.BaremetalApWindowEntry);
+var fairness_state: abi.BaremetalApFairnessState = zeroFairnessState();
+var fairness_entries: [max_ap_command_slots]abi.BaremetalApFairnessEntry = std.mem.zeroes([max_ap_command_slots]abi.BaremetalApFairnessEntry);
 var ownership_dispatch_round_count: u32 = 0;
 var ownership_policy: u8 = abi.ap_ownership_policy_round_robin;
 var ownership_peak_active_slot_count: u8 = 0;
@@ -99,6 +101,21 @@ var window_task_budget: u32 = 0;
 var window_task_cursor: u32 = 0;
 var window_wrap_count: u32 = 0;
 var window_last_start_slot_index: u32 = 0;
+var fairness_drain_round_count: u32 = 0;
+var fairness_policy: u8 = abi.ap_ownership_policy_round_robin;
+var fairness_peak_active_slot_count: u8 = 0;
+var fairness_last_round_active_slot_count: u8 = 0;
+var fairness_last_round_task_count: u32 = 0;
+var fairness_initial_pending_task_count: u32 = 0;
+var fairness_last_pending_task_count: u32 = 0;
+var fairness_peak_pending_task_count: u32 = 0;
+var fairness_task_budget: u32 = 0;
+var fairness_task_cursor: u32 = 0;
+var fairness_wrap_count: u32 = 0;
+var fairness_last_start_slot_index: u32 = 0;
+var fairness_min_slot_task_count: u32 = 0;
+var fairness_max_slot_task_count: u32 = 0;
+var fairness_task_balance_gap: u32 = 0;
 const max_backfill_seen_tasks: usize = 128;
 const OwnershipStorage = struct {
     var owned_task_ids: [max_ap_command_slots][max_task_batch_entries]u32 = [_][max_task_batch_entries]u32{[_]u32{0} ** max_task_batch_entries} ** max_ap_command_slots;
@@ -122,6 +139,17 @@ const WindowStorage = struct {
     var task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var dispatch_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var total_window_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_task_id: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_priority: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_budget_ticks: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_batch_accumulator: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var total_accumulator: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+};
+const FairnessStorage = struct {
+    var task_ids: [max_ap_command_slots][max_task_batch_entries]u32 = [_][max_task_batch_entries]u32{[_]u32{0} ** max_task_batch_entries} ** max_ap_command_slots;
+    var task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var dispatch_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var total_drained_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var last_task_id: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var last_priority: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var last_budget_ticks: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
@@ -565,6 +593,38 @@ fn zeroWindowState() abi.BaremetalApWindowState {
     };
 }
 
+fn zeroFairnessState() abi.BaremetalApFairnessState {
+    return .{
+        .magic = abi.ap_fairness_magic,
+        .api_version = abi.api_version,
+        .present = 0,
+        .policy = abi.ap_ownership_policy_round_robin,
+        .exported_count = 0,
+        .active_count = 0,
+        .peak_active_slot_count = 0,
+        .last_round_active_slot_count = 0,
+        .requested_cpu_count = 0,
+        .logical_processor_count = 0,
+        .reserved0 = 0,
+        .bsp_apic_id = 0,
+        .total_drained_task_count = 0,
+        .total_dispatch_count = 0,
+        .total_accumulator = 0,
+        .drain_round_count = 0,
+        .last_round_drained_task_count = 0,
+        .initial_pending_task_count = 0,
+        .last_pending_task_count = 0,
+        .peak_pending_task_count = 0,
+        .drain_task_budget = 0,
+        .final_task_cursor = 0,
+        .wrap_count = 0,
+        .last_start_slot_index = 0,
+        .min_slot_task_count = 0,
+        .max_slot_task_count = 0,
+        .task_balance_gap = 0,
+    };
+}
+
 fn resetSingleState() void {
     state = zeroState();
     diagnostics = .{};
@@ -654,6 +714,58 @@ fn resetWindowSlot(slot_index: usize) void {
     WindowStorage.total_accumulator[slot_index] = 0;
 }
 
+fn resetWindowState() void {
+    window_state = zeroWindowState();
+    @memset(&window_entries, std.mem.zeroes(abi.BaremetalApWindowEntry));
+    window_dispatch_round_count = 0;
+    window_policy = abi.ap_ownership_policy_round_robin;
+    window_peak_active_slot_count = 0;
+    window_last_round_active_slot_count = 0;
+    window_last_round_task_count = 0;
+    window_last_round_dispatch_count = 0;
+    window_last_round_accumulator = 0;
+    window_total_deferred_task_count = 0;
+    window_last_deferred_task_count = 0;
+    window_task_budget = 0;
+    window_task_cursor = 0;
+    window_wrap_count = 0;
+    window_last_start_slot_index = 0;
+    for (0..max_ap_command_slots) |slot_index| resetWindowSlot(slot_index);
+}
+
+fn resetFairnessSlot(slot_index: usize) void {
+    FairnessStorage.task_count[slot_index] = 0;
+    FairnessStorage.dispatch_count[slot_index] = 0;
+    FairnessStorage.total_drained_task_count[slot_index] = 0;
+    FairnessStorage.last_task_id[slot_index] = 0;
+    FairnessStorage.last_priority[slot_index] = 0;
+    FairnessStorage.last_budget_ticks[slot_index] = 0;
+    FairnessStorage.last_batch_accumulator[slot_index] = 0;
+    FairnessStorage.total_accumulator[slot_index] = 0;
+    @memset(&FairnessStorage.task_ids[slot_index], 0);
+}
+
+fn resetFairnessState() void {
+    fairness_state = zeroFairnessState();
+    @memset(&fairness_entries, std.mem.zeroes(abi.BaremetalApFairnessEntry));
+    fairness_drain_round_count = 0;
+    fairness_policy = abi.ap_ownership_policy_round_robin;
+    fairness_peak_active_slot_count = 0;
+    fairness_last_round_active_slot_count = 0;
+    fairness_last_round_task_count = 0;
+    fairness_initial_pending_task_count = 0;
+    fairness_last_pending_task_count = 0;
+    fairness_peak_pending_task_count = 0;
+    fairness_task_budget = 0;
+    fairness_task_cursor = 0;
+    fairness_wrap_count = 0;
+    fairness_last_start_slot_index = 0;
+    fairness_min_slot_task_count = 0;
+    fairness_max_slot_task_count = 0;
+    fairness_task_balance_gap = 0;
+    for (0..max_ap_command_slots) |slot_index| resetFairnessSlot(slot_index);
+}
+
 pub fn resetMultiState() void {
     multi_state = zeroMultiState();
     @memset(&multi_entries, std.mem.zeroes(abi.BaremetalApMultiEntry));
@@ -663,10 +775,10 @@ pub fn resetOwnershipState() void {
     ownership_state = zeroOwnershipState();
     failover_state = zeroFailoverState();
     backfill_state = zeroBackfillState();
-    window_state = zeroWindowState();
+    resetWindowState();
+    resetFairnessState();
     @memset(&ownership_entries, std.mem.zeroes(abi.BaremetalApOwnershipEntry));
     @memset(&backfill_entries, std.mem.zeroes(abi.BaremetalApBackfillEntry));
-    @memset(&window_entries, std.mem.zeroes(abi.BaremetalApWindowEntry));
     ownership_dispatch_round_count = 0;
     ownership_policy = abi.ap_ownership_policy_round_robin;
     ownership_peak_active_slot_count = 0;
@@ -684,21 +796,7 @@ pub fn resetOwnershipState() void {
     backfill_total_terminated_task_count = 0;
     backfill_last_terminated_task_count = 0;
     backfill_total_round_count = 0;
-    window_dispatch_round_count = 0;
-    window_policy = abi.ap_ownership_policy_round_robin;
-    window_peak_active_slot_count = 0;
-    window_last_round_active_slot_count = 0;
-    window_last_round_task_count = 0;
-    window_last_round_dispatch_count = 0;
-    window_last_round_accumulator = 0;
-    window_total_deferred_task_count = 0;
-    window_last_deferred_task_count = 0;
-    window_task_budget = 0;
-    window_task_cursor = 0;
-    window_wrap_count = 0;
-    window_last_start_slot_index = 0;
     for (0..max_ap_command_slots) |slot_index| resetOwnershipSlot(slot_index);
-    for (0..max_ap_command_slots) |slot_index| resetWindowSlot(slot_index);
     @memset(&OwnershipStorage.seen_task_ids, 0);
     OwnershipStorage.seen_task_count = 0;
 }
@@ -812,6 +910,22 @@ pub fn windowEntry(index: u16) abi.BaremetalApWindowEntry {
     refreshState();
     if (index >= window_state.exported_count) return std.mem.zeroes(abi.BaremetalApWindowEntry);
     return window_entries[index];
+}
+
+pub fn fairnessStatePtr() *const abi.BaremetalApFairnessState {
+    refreshState();
+    return &fairness_state;
+}
+
+pub fn fairnessEntryCount() u16 {
+    refreshState();
+    return fairness_state.exported_count;
+}
+
+pub fn fairnessEntry(index: u16) abi.BaremetalApFairnessEntry {
+    refreshState();
+    if (index >= fairness_state.exported_count) return std.mem.zeroes(abi.BaremetalApFairnessEntry);
+    return fairness_entries[index];
 }
 
 pub fn startupSingleAp() Error!void {
@@ -1296,6 +1410,95 @@ pub fn dispatchWindowedSchedulerTasksPriorityFromOffset(
     task_budget: usize,
 ) OwnershipError!u32 {
     return dispatchWindowedSchedulerTasksByPolicyFromOffset(tasks, abi.ap_ownership_policy_priority, start_slot_offset, task_budget);
+}
+
+fn snapshotFairnessFromWindow(active_slots: []const u16) void {
+    fairness_policy = window_policy;
+    fairness_peak_active_slot_count = window_peak_active_slot_count;
+    fairness_last_round_active_slot_count = window_last_round_active_slot_count;
+    fairness_task_budget = window_task_budget;
+    fairness_task_cursor = window_task_cursor;
+    fairness_wrap_count = window_wrap_count;
+    fairness_last_start_slot_index = window_last_start_slot_index;
+
+    var min_slot_task_count: u32 = std.math.maxInt(u32);
+    var max_slot_task_count: u32 = 0;
+    var have_active_slot = false;
+    for (active_slots) |slot| {
+        const slot_index = @as(usize, slot);
+        const total_drained_task_count = WindowStorage.total_window_task_count[slot_index];
+        if (total_drained_task_count < min_slot_task_count) min_slot_task_count = total_drained_task_count;
+        if (total_drained_task_count > max_slot_task_count) max_slot_task_count = total_drained_task_count;
+        have_active_slot = true;
+    }
+    fairness_min_slot_task_count = if (have_active_slot) min_slot_task_count else 0;
+    fairness_max_slot_task_count = max_slot_task_count;
+    fairness_task_balance_gap = if (have_active_slot) max_slot_task_count - fairness_min_slot_task_count else 0;
+
+    for (0..max_ap_command_slots) |slot_index| {
+        FairnessStorage.task_count[slot_index] = WindowStorage.task_count[slot_index];
+        FairnessStorage.dispatch_count[slot_index] = WindowStorage.dispatch_count[slot_index];
+        FairnessStorage.total_drained_task_count[slot_index] = WindowStorage.total_window_task_count[slot_index];
+        FairnessStorage.total_accumulator[slot_index] = WindowStorage.total_accumulator[slot_index];
+        if (WindowStorage.task_count[slot_index] != 0) {
+            FairnessStorage.last_task_id[slot_index] = WindowStorage.last_task_id[slot_index];
+            FairnessStorage.last_priority[slot_index] = WindowStorage.last_priority[slot_index];
+            FairnessStorage.last_budget_ticks[slot_index] = WindowStorage.last_budget_ticks[slot_index];
+            FairnessStorage.last_batch_accumulator[slot_index] = WindowStorage.last_batch_accumulator[slot_index];
+            @memcpy(
+                FairnessStorage.task_ids[slot_index][0..],
+                WindowStorage.task_ids[slot_index][0..],
+            );
+        } else {
+            @memset(&FairnessStorage.task_ids[slot_index], 0);
+        }
+    }
+}
+
+pub fn dispatchWindowedSchedulerTasksPriorityUntilDrainedFromOffset(
+    tasks: []const abi.BaremetalTask,
+    start_slot_offset: usize,
+    task_budget: usize,
+) OwnershipError!u32 {
+    if (task_budget == 0) return error.InvalidWorkBatch;
+
+    var active_slots: [max_ap_command_slots]u16 = undefined;
+    const active_slot_count = activeOwnershipSlots(&active_slots);
+    if (active_slot_count == 0) return error.ApNotStarted;
+
+    var ordered_tasks_storage: [max_owned_dispatch_entries]abi.BaremetalTask = undefined;
+    const ordered_tasks = try collectOwnedRunnableTasksOrdered(tasks, abi.ap_ownership_policy_priority, &ordered_tasks_storage);
+
+    resetWindowState();
+    resetFairnessState();
+    fairness_policy = abi.ap_ownership_policy_priority;
+    fairness_last_round_active_slot_count = @as(u8, @intCast(active_slot_count));
+    fairness_peak_active_slot_count = fairness_last_round_active_slot_count;
+    fairness_initial_pending_task_count = @as(u32, @intCast(ordered_tasks.len));
+    fairness_last_pending_task_count = fairness_initial_pending_task_count;
+    fairness_peak_pending_task_count = fairness_initial_pending_task_count;
+    fairness_task_budget = @as(u32, @intCast(task_budget));
+
+    var total_accumulator: u32 = 0;
+    var task_cursor: usize = 0;
+    var round_index: usize = 0;
+    while (task_cursor < ordered_tasks.len) : (round_index += 1) {
+        const round_start_slot = (start_slot_offset + round_index) % active_slot_count;
+        const remaining_task_count = ordered_tasks.len - task_cursor;
+        const round_task_count = @min(task_budget, remaining_task_count);
+        const round_accumulator = try dispatchWindowedSchedulerTasksPriorityFromOffset(tasks, round_start_slot, task_budget);
+        total_accumulator +%= round_accumulator;
+        fairness_drain_round_count +%= 1;
+        fairness_last_round_task_count = @as(u32, @intCast(round_task_count));
+        fairness_last_start_slot_index = @as(u32, @intCast(round_start_slot));
+        task_cursor += round_task_count;
+        fairness_last_pending_task_count = @as(u32, @intCast(ordered_tasks.len - task_cursor));
+        snapshotFairnessFromWindow(active_slots[0..active_slot_count]);
+    }
+
+    snapshotFairnessFromWindow(active_slots[0..active_slot_count]);
+    refreshState();
+    return total_accumulator;
 }
 
 pub fn haltApSlot(slot_index: u16) Error!void {
@@ -1792,6 +1995,83 @@ pub fn renderWindowAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![
     return allocator.dupe(u8, buffer[0..used]);
 }
 
+pub fn renderFairnessAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
+    refreshState();
+    var buffer: [4096]u8 = undefined;
+    var used: usize = 0;
+    const head = std.fmt.bufPrint(
+        buffer[used..],
+        "present={d}\npolicy={d}\nexported_count={d}\nactive_count={d}\npeak_active_slot_count={d}\nlast_round_active_slot_count={d}\nrequested_cpu_count={d}\nlogical_processor_count={d}\nbsp_apic_id={d}\ntotal_drained_task_count={d}\ntotal_dispatch_count={d}\ntotal_accumulator={d}\ndrain_round_count={d}\n",
+        .{
+            fairness_state.present,
+            fairness_state.policy,
+            fairness_state.exported_count,
+            fairness_state.active_count,
+            fairness_state.peak_active_slot_count,
+            fairness_state.last_round_active_slot_count,
+            fairness_state.requested_cpu_count,
+            fairness_state.logical_processor_count,
+            fairness_state.bsp_apic_id,
+            fairness_state.total_drained_task_count,
+            fairness_state.total_dispatch_count,
+            fairness_state.total_accumulator,
+            fairness_state.drain_round_count,
+        },
+    ) catch unreachable;
+    used += head.len;
+    const tail = std.fmt.bufPrint(
+        buffer[used..],
+        "last_round_drained_task_count={d}\ninitial_pending_task_count={d}\nlast_pending_task_count={d}\npeak_pending_task_count={d}\ndrain_task_budget={d}\nfinal_task_cursor={d}\nwrap_count={d}\nlast_start_slot_index={d}\nmin_slot_task_count={d}\nmax_slot_task_count={d}\ntask_balance_gap={d}\n",
+        .{
+            fairness_state.last_round_drained_task_count,
+            fairness_state.initial_pending_task_count,
+            fairness_state.last_pending_task_count,
+            fairness_state.peak_pending_task_count,
+            fairness_state.drain_task_budget,
+            fairness_state.final_task_cursor,
+            fairness_state.wrap_count,
+            fairness_state.last_start_slot_index,
+            fairness_state.min_slot_task_count,
+            fairness_state.max_slot_task_count,
+            fairness_state.task_balance_gap,
+        },
+    ) catch unreachable;
+    used += tail.len;
+    var entry_index: u16 = 0;
+    while (entry_index < fairness_state.exported_count) : (entry_index += 1) {
+        const entry = fairness_entries[entry_index];
+        const line = std.fmt.bufPrint(
+            buffer[used..],
+            "slot[{d}].target_apic_id={d}\nslot[{d}].dispatch_count={d}\nslot[{d}].drained_task_count={d}\nslot[{d}].total_drained_task_count={d}\nslot[{d}].last_task_id={d}\nslot[{d}].last_priority={d}\nslot[{d}].last_budget_ticks={d}\nslot[{d}].last_batch_accumulator={d}\nslot[{d}].total_accumulator={d}\nslot[{d}].started={d}\nslot[{d}].halted={d}\nslot[{d}].slot_index={d}\n",
+            .{
+                entry_index, entry.target_apic_id,
+                entry_index, entry.dispatch_count,
+                entry_index, entry.drained_task_count,
+                entry_index, entry.total_drained_task_count,
+                entry_index, entry.last_task_id,
+                entry_index, entry.last_priority,
+                entry_index, entry.last_budget_ticks,
+                entry_index, entry.last_batch_accumulator,
+                entry_index, entry.total_accumulator,
+                entry_index, entry.started,
+                entry_index, entry.halted,
+                entry_index, entry.slot_index,
+            },
+        ) catch unreachable;
+        used += line.len;
+        const task_count = @min(@as(usize, @intCast(entry.drained_task_count)), max_task_batch_entries);
+        for (0..task_count) |task_index| {
+            const task_line = std.fmt.bufPrint(
+                buffer[used..],
+                "slot[{d}].task[{d}]={d}\n",
+                .{ entry_index, task_index, FairnessStorage.task_ids[entry.slot_index][task_index] },
+            ) catch unreachable;
+            used += task_line.len;
+        }
+    }
+    return allocator.dupe(u8, buffer[0..used]);
+}
+
 fn refreshState() void {
     const topology = acpi.cpuTopologyStatePtr().*;
     const lapic_state = lapic.statePtr().*;
@@ -2085,6 +2365,76 @@ fn refreshState() void {
     window_state.peak_active_slot_count = window_peak_active_slot_count;
     if (window_state.exported_count != 0 or window_state.total_deferred_task_count != 0 or window_state.wrap_count != 0) {
         window_state.present = 1;
+    }
+
+    fairness_state = zeroFairnessState();
+    fairness_state.present = if (state.supported != 0) 1 else 0;
+    fairness_state.policy = fairness_policy;
+    fairness_state.requested_cpu_count = topology.enabled_count;
+    fairness_state.logical_processor_count = lapic_state.logical_processor_count;
+    fairness_state.bsp_apic_id = lapic_state.current_apic_id;
+    fairness_state.peak_active_slot_count = fairness_peak_active_slot_count;
+    fairness_state.last_round_active_slot_count = fairness_last_round_active_slot_count;
+    fairness_state.drain_round_count = fairness_drain_round_count;
+    fairness_state.last_round_drained_task_count = fairness_last_round_task_count;
+    fairness_state.initial_pending_task_count = fairness_initial_pending_task_count;
+    fairness_state.last_pending_task_count = fairness_last_pending_task_count;
+    fairness_state.peak_pending_task_count = fairness_peak_pending_task_count;
+    fairness_state.drain_task_budget = fairness_task_budget;
+    fairness_state.final_task_cursor = fairness_task_cursor;
+    fairness_state.wrap_count = fairness_wrap_count;
+    fairness_state.last_start_slot_index = fairness_last_start_slot_index;
+    fairness_state.min_slot_task_count = fairness_min_slot_task_count;
+    fairness_state.max_slot_task_count = fairness_max_slot_task_count;
+    fairness_state.task_balance_gap = fairness_task_balance_gap;
+    @memset(&fairness_entries, std.mem.zeroes(abi.BaremetalApFairnessEntry));
+    slot_index = 0;
+    while (slot_index < max_ap_command_slots) : (slot_index += 1) {
+        const target_apic_id = readStateVar(slotTargetApicIdPtr(slot_index));
+        const started = if (readStateVar(slotStartedPtr(slot_index)) != 0) @as(u8, 1) else @as(u8, 0);
+        const halted = if (readStateVar(slotHaltedPtr(slot_index)) != 0) @as(u8, 1) else @as(u8, 0);
+        const drained_task_count = FairnessStorage.task_count[slot_index];
+        const dispatch_count = FairnessStorage.dispatch_count[slot_index];
+        const total_drained_task_count = FairnessStorage.total_drained_task_count[slot_index];
+        const total_accumulator = FairnessStorage.total_accumulator[slot_index];
+        if (target_apic_id == 0 and
+            drained_task_count == 0 and
+            dispatch_count == 0 and
+            total_drained_task_count == 0 and
+            total_accumulator == 0 and
+            started == 0 and
+            halted == 0)
+        {
+            continue;
+        }
+        const exported_index = fairness_state.exported_count;
+        fairness_entries[exported_index] = .{
+            .target_apic_id = target_apic_id,
+            .dispatch_count = dispatch_count,
+            .drained_task_count = drained_task_count,
+            .total_drained_task_count = total_drained_task_count,
+            .last_task_id = FairnessStorage.last_task_id[slot_index],
+            .last_priority = FairnessStorage.last_priority[slot_index],
+            .last_budget_ticks = FairnessStorage.last_budget_ticks[slot_index],
+            .last_batch_accumulator = FairnessStorage.last_batch_accumulator[slot_index],
+            .total_accumulator = total_accumulator,
+            .started = started,
+            .halted = halted,
+            .slot_index = @as(u8, @intCast(slot_index)),
+            .reserved0 = 0,
+        };
+        fairness_state.exported_count += 1;
+        if (started != 0 and halted == 0) fairness_state.active_count +%= 1;
+        fairness_state.total_drained_task_count +%= total_drained_task_count;
+        fairness_state.total_dispatch_count +%= dispatch_count;
+        fairness_state.total_accumulator +%= total_accumulator;
+    }
+    if (fairness_state.active_count > fairness_peak_active_slot_count) {
+        fairness_peak_active_slot_count = fairness_state.active_count;
+    }
+    fairness_state.peak_active_slot_count = fairness_peak_active_slot_count;
+    if (fairness_state.exported_count != 0 or fairness_state.drain_round_count != 0) {
+        fairness_state.present = 1;
     }
 }
 
@@ -4046,6 +4396,137 @@ test "i386 ap startup dispatches bounded priority window tasks across four slots
     try std.testing.expect(std.mem.indexOf(u8, window_render, "slot[1].task[0]=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, window_render, "slot[2].task[0]=4") != null);
     try std.testing.expect(std.mem.indexOf(u8, window_render, "slot[3].task[0]=3") != null);
+
+    try haltApSlot(3);
+    try haltApSlot(2);
+    try haltApSlot(1);
+    try haltApSlot(0);
+}
+
+test "i386 ap startup drains bounded priority windows fairly across four slots" {
+    resetForTest();
+    acpi.resetForTest();
+    try acpi.probeSyntheticImage(true);
+
+    for (0..4) |slot_index| {
+        writeStateVar(slotStartedPtr(slot_index), 1);
+        writeStateVar(slotStagePtr(slot_index), 4);
+        writeStateVar(slotReportedApicIdPtr(slot_index), @as(u32, @intCast(slot_index + 1)));
+        writeStateVar(slotTargetApicIdPtr(slot_index), @as(u32, @intCast(slot_index + 1)));
+        writeStateVar(slotHeartbeatPtr(slot_index), 1);
+    }
+
+    const responder0 = try std.Thread.spawn(.{}, testApSlotResponder, .{0});
+    defer responder0.join();
+    const responder1 = try std.Thread.spawn(.{}, testApSlotResponder, .{1});
+    defer responder1.join();
+    const responder2 = try std.Thread.spawn(.{}, testApSlotResponder, .{2});
+    defer responder2.join();
+    const responder3 = try std.Thread.spawn(.{}, testApSlotResponder, .{3});
+    defer responder3.join();
+    errdefer {
+        _ = haltApSlot(3) catch {};
+        _ = haltApSlot(2) catch {};
+        _ = haltApSlot(1) catch {};
+        _ = haltApSlot(0) catch {};
+    }
+
+    var tasks: [16]abi.BaremetalTask = undefined;
+    for (&tasks, 0..) |*task, index| {
+        const task_id = @as(u32, @intCast(index + 1));
+        const budget_ticks = @as(u32, @intCast(index * 2 + 5));
+        task.* = .{
+            .task_id = task_id,
+            .state = abi.task_state_ready,
+            .priority = @as(u8, @intCast(index + 1)),
+            .reserved0 = 0,
+            .run_count = 0,
+            .budget_ticks = budget_ticks,
+            .budget_remaining = budget_ticks,
+            .created_tick = 0,
+            .last_run_tick = 0,
+        };
+    }
+
+    try std.testing.expectEqual(@as(u32, 136), try dispatchWindowedSchedulerTasksPriorityUntilDrainedFromOffset(tasks[0..], 0, 5));
+
+    const snapshot = fairnessStatePtr().*;
+    try std.testing.expectEqual(@as(u8, 1), snapshot.present);
+    try std.testing.expectEqual(@as(u8, abi.ap_ownership_policy_priority), snapshot.policy);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.exported_count);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.active_count);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.peak_active_slot_count);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.last_round_active_slot_count);
+    try std.testing.expectEqual(@as(u32, 16), snapshot.total_drained_task_count);
+    try std.testing.expectEqual(@as(u32, 13), snapshot.total_dispatch_count);
+    try std.testing.expectEqual(@as(u32, 136), snapshot.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 4), snapshot.drain_round_count);
+    try std.testing.expectEqual(@as(u32, 1), snapshot.last_round_drained_task_count);
+    try std.testing.expectEqual(@as(u32, 16), snapshot.initial_pending_task_count);
+    try std.testing.expectEqual(@as(u32, 0), snapshot.last_pending_task_count);
+    try std.testing.expectEqual(@as(u32, 16), snapshot.peak_pending_task_count);
+    try std.testing.expectEqual(@as(u32, 5), snapshot.drain_task_budget);
+    try std.testing.expectEqual(@as(u32, 0), snapshot.final_task_cursor);
+    try std.testing.expectEqual(@as(u32, 1), snapshot.wrap_count);
+    try std.testing.expectEqual(@as(u32, 3), snapshot.last_start_slot_index);
+    try std.testing.expectEqual(@as(u32, 4), snapshot.min_slot_task_count);
+    try std.testing.expectEqual(@as(u32, 4), snapshot.max_slot_task_count);
+    try std.testing.expectEqual(@as(u32, 0), snapshot.task_balance_gap);
+
+    try std.testing.expectEqual(@as(u16, 4), fairnessEntryCount());
+    const first_entry = fairnessEntry(0);
+    const second_entry = fairnessEntry(1);
+    const third_entry = fairnessEntry(2);
+    const fourth_entry = fairnessEntry(3);
+    try std.testing.expectEqual(@as(u32, 1), first_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 3), first_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 0), first_entry.drained_task_count);
+    try std.testing.expectEqual(@as(u32, 4), first_entry.total_drained_task_count);
+    try std.testing.expectEqual(@as(u32, 4), first_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 4), first_entry.last_priority);
+    try std.testing.expectEqual(@as(u32, 11), first_entry.last_budget_ticks);
+    try std.testing.expectEqual(@as(u32, 4), first_entry.last_batch_accumulator);
+    try std.testing.expectEqual(@as(u32, 40), first_entry.total_accumulator);
+
+    try std.testing.expectEqual(@as(u32, 2), second_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 3), second_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 0), second_entry.drained_task_count);
+    try std.testing.expectEqual(@as(u32, 4), second_entry.total_drained_task_count);
+    try std.testing.expectEqual(@as(u32, 3), second_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 3), second_entry.last_priority);
+    try std.testing.expectEqual(@as(u32, 9), second_entry.last_budget_ticks);
+    try std.testing.expectEqual(@as(u32, 3), second_entry.last_batch_accumulator);
+    try std.testing.expectEqual(@as(u32, 36), second_entry.total_accumulator);
+
+    try std.testing.expectEqual(@as(u32, 3), third_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 3), third_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 0), third_entry.drained_task_count);
+    try std.testing.expectEqual(@as(u32, 4), third_entry.total_drained_task_count);
+    try std.testing.expectEqual(@as(u32, 2), third_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 2), third_entry.last_priority);
+    try std.testing.expectEqual(@as(u32, 7), third_entry.last_budget_ticks);
+    try std.testing.expectEqual(@as(u32, 8), third_entry.last_batch_accumulator);
+    try std.testing.expectEqual(@as(u32, 32), third_entry.total_accumulator);
+
+    try std.testing.expectEqual(@as(u32, 4), fourth_entry.target_apic_id);
+    try std.testing.expectEqual(@as(u32, 4), fourth_entry.dispatch_count);
+    try std.testing.expectEqual(@as(u32, 1), fourth_entry.drained_task_count);
+    try std.testing.expectEqual(@as(u32, 4), fourth_entry.total_drained_task_count);
+    try std.testing.expectEqual(@as(u32, 1), fourth_entry.last_task_id);
+    try std.testing.expectEqual(@as(u32, 1), fourth_entry.last_priority);
+    try std.testing.expectEqual(@as(u32, 5), fourth_entry.last_budget_ticks);
+    try std.testing.expectEqual(@as(u32, 1), fourth_entry.last_batch_accumulator);
+    try std.testing.expectEqual(@as(u32, 28), fourth_entry.total_accumulator);
+    try std.testing.expectEqual(@as(u32, 1), FairnessStorage.task_ids[@as(usize, fourth_entry.slot_index)][0]);
+
+    const fairness_render = try renderFairnessAlloc(std.testing.allocator);
+    defer std.testing.allocator.free(fairness_render);
+    try std.testing.expect(std.mem.indexOf(u8, fairness_render, "total_drained_task_count=16") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fairness_render, "total_dispatch_count=13") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fairness_render, "drain_round_count=4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fairness_render, "last_pending_task_count=0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fairness_render, "task_balance_gap=0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fairness_render, "slot[3].task[0]=1") != null);
 
     try haltApSlot(3);
     try haltApSlot(2);

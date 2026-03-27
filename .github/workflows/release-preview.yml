@@ -318,14 +318,20 @@ jobs:
       - name: Bare-metal QEMU i386 firmware SMP priority backfill probe 1GiB (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-backfill-probe-check.ps1 -MemoryMiB 1024
-      - name: Bare-metal QEMU i386 firmware SMP priority window probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-window-probe-check.ps1
-      - name: Bare-metal QEMU i386 firmware SMP priority window probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-window-probe-check.ps1 -MemoryMiB 1024
+        - name: Bare-metal QEMU i386 firmware SMP priority window probe (optional)
+          shell: pwsh
+          run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-window-probe-check.ps1
+        - name: Bare-metal QEMU i386 firmware SMP priority window probe 1GiB (optional)
+          shell: pwsh
+          run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-window-probe-check.ps1 -MemoryMiB 1024
+        - name: Bare-metal QEMU i386 firmware SMP priority fairness probe (optional)
+          shell: pwsh
+          run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-fairness-probe-check.ps1
+        - name: Bare-metal QEMU i386 firmware SMP priority fairness probe 1GiB (optional)
+          shell: pwsh
+          run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-fairness-probe-check.ps1 -MemoryMiB 1024
 
-      - name: Bare-metal QEMU i386 SMP probe (optional)
+        - name: Bare-metal QEMU i386 SMP probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-i386-smp-probe-check.ps1
 
