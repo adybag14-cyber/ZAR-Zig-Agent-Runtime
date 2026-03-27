@@ -870,6 +870,36 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - `scripts/baremetal-qemu-i386-firmware-smp-priority-backfill-probe-check.ps1`
   - `scripts/baremetal-qemu-i386-firmware-smp-priority-backfill-probe-check.ps1 -MemoryMiB 1024`
 
+## Firmware Priority Fairness Drain
+
+- the newest FS5.7 slice widens the same four-slot firmware scheduler lane from bounded windows into bounded backlog-drain fairness:
+  - `src/baremetal/i386_ap_startup.zig`
+  - `src/baremetal_main.zig`
+  - `scripts/baremetal-qemu-i386-firmware-smp-priority-fairness-probe-check.ps1`
+- new exported surfaces make the fairness boundary explicit instead of inferring it from the earlier window counters:
+  - `/dev/cpu/ap-fairness`
+  - `/sys/cpu/ap-fairness`
+- the dedicated live proof is explicit:
+  - BIOS firmware boot under `-smp 5`
+  - 4 resident AP slots
+  - an initial fully saturated 16-task priority table
+  - repeated bounded priority windows with budget `5`
+  - backlog drain until zero pending tasks remain
+  - preserved cumulative per-slot totals plus last-worked slot snapshots
+  - `/sys/cpu/ap-fairness` plus `/sys/cpu/ap-window` plus `/sys/cpu/smp` render/readback
+- the dedicated live results are explicit:
+  - `BAREMETAL_I386_QEMU_FIRMWARE_SMP_PRIORITY_FAIRNESS_PROBE_CODE=0x94`
+  - `I386_AP_EXECUTION_OBSERVED=1`
+  - `I386_AP_FAIRNESS_TOTAL_TASK_COUNT=16`
+  - `I386_AP_FAIRNESS_TOTAL_DISPATCH_COUNT=13`
+  - `I386_AP_FAIRNESS_TOTAL_ACCUMULATOR=136`
+  - `I386_AP_FAIRNESS_DRAIN_ROUND_COUNT=4`
+  - `I386_AP_FAIRNESS_LAST_PENDING_TASK_COUNT=0`
+  - `I386_AP_FAIRNESS_TASK_BALANCE_GAP=0`
+- hosted `zig-ci` and `release-preview` now also execute:
+  - `scripts/baremetal-qemu-i386-firmware-smp-priority-fairness-probe-check.ps1`
+  - `scripts/baremetal-qemu-i386-firmware-smp-priority-fairness-probe-check.ps1 -MemoryMiB 1024`
+
 ## ZigOS Follow-On Work
 
 - next adoption analysis is stored in:
@@ -918,6 +948,13 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
 - the i386 freestanding runtime now also has a real BIOS firmware-boot saturated-reprioritization scheduler lane that proves the same sixteen scheduler-created ready tasks can remain fully saturated across two additional rounds after live full-table reprioritization, while reusing the existing ownership surfaces to export cumulative redistribution plus last-round slot telemetry through `/dev/cpu/ap-ownership` and `/sys/cpu/ap-ownership`, with cumulative totals `96/24/816`, `72` migrated tasks, and the same explicit seventeenth-task `result_no_space` saturation boundary
 - the i386 freestanding runtime now also has a real BIOS firmware-boot AP-slot failover scheduler lane that proves the same sixteen scheduler-created ready tasks can start fully saturated across four resident AP slots, retire one live AP slot, rebalance across the remaining three slots for two more rounds, export retired-slot plus failed-over-task telemetry through `/dev/cpu/ap-failover` and `/sys/cpu/ap-failover`, and finish with cumulative totals `96/22/816`, `77` redistributed tasks, `4` explicit failed-over tasks, and the same explicit seventeenth-task `result_no_space` saturation boundary
 - the i386 freestanding runtime now also has a real BIOS firmware-boot AP backfill/refill scheduler lane that proves the same four-slot firmware scheduler can terminate four older tasks after saturated ownership waves, refill the freed scheduler slots with four new higher-priority tasks, export backfilled-task plus terminated-task telemetry through `/dev/cpu/ap-backfill` and `/sys/cpu/ap-backfill`, and finish with cumulative totals `32/8/336`, `12` redistributed tasks, `4` backfilled tasks, and `4` terminated tasks at both default memory and `1024 MiB`
+- the i386 freestanding runtime now also has a real BIOS firmware-boot scheduler-window lane that proves the same sixteen scheduler-created ready tasks can be dispatched through three bounded priority windows with budget `6`, exports cumulative and last-round window/deferred/cursor/wrap telemetry through `/dev/cpu/ap-window` and `/sys/cpu/ap-window`, and finishes with cumulative totals `16/12/136`, `32` deferred tasks, `12` last-round deferred tasks, and one clean cursor wrap at both default memory and `1024 MiB`
+- the i386 freestanding runtime now also has a real BIOS firmware-boot fairness-drain scheduler lane that proves the same sixteen scheduler-created ready tasks can be drained through repeated bounded priority windows with budget `5`, exports cumulative fairness and per-slot drain telemetry through `/dev/cpu/ap-fairness` and `/sys/cpu/ap-fairness`, and finishes with cumulative totals `16/13/136`, zero remaining pending tasks, one clean cursor wrap, and `task_balance_gap=0` at both default memory and `1024 MiB`
+- the i386 freestanding runtime now also has a real BIOS firmware-boot skew-rebalance scheduler lane that proves a deliberately skewed four-slot history can be corrected instead of only draining from a fresh balanced start, exports cumulative rebalance and per-slot seed/final/compensated telemetry through `/dev/cpu/ap-rebalance` and `/sys/cpu/ap-rebalance`, seeds the live rebalance pass from the prior scheduler-window totals, and finishes by taking a `4/2/2/2` slot history back to `4/4/4/4` with cumulative totals `6/5/21`, `initial_task_balance_gap=2`, `final_task_balance_gap=0`, and `total_compensated_task_count=6` at both default memory and `1024 MiB`
+- the i386 freestanding runtime now also has a real BIOS firmware-boot priority-debt scheduler lane that proves the same skewed `4/2/2/2` four-slot history can carry explicit per-slot debt across later rounds instead of only being corrected immediately, exports cumulative debt plus per-slot seed/final/debt/compensated telemetry through `/dev/cpu/ap-debt` and `/sys/cpu/ap-debt`, drains four debt tasks with budget `2`, and finishes at `4/3/4/3` with cumulative totals `4/4/10`, `initial_total_debt=6`, `remaining_total_debt=2`, and `total_compensated_task_count=4` at both default memory and `1024 MiB`
+- the i386 freestanding runtime now also has a real BIOS firmware-boot priority-admission scheduler lane that proves the same skewed `4/2/2/2` four-slot history can admit higher-priority resumed waiting tasks into the live debt-carrying slot map instead of only draining a closed debt set, exports cumulative admission plus debt telemetry through `/dev/cpu/ap-admission` and `/sys/cpu/ap-admission`, drains two admitted tasks and four debt tasks with budget `2`, and finishes at `4/4/4/4` with cumulative totals `2` admitted tasks, `4` debt tasks, `6` dispatches, accumulator `21`, `initial_total_debt=6`, `remaining_total_debt=0`, and `total_compensated_task_count=6` at both default memory and `1024 MiB`
+- the i386 freestanding runtime now also has a real BIOS firmware-boot priority-aging scheduler lane that proves the same skewed `4/2/2/2` four-slot history can keep low-priority waiting tasks live across carried-debt rounds until their effective priority rises into the active debt map, exports cumulative aging plus debt telemetry through `/dev/cpu/ap-aging` and `/sys/cpu/ap-aging`, drains two waiting tasks and four debt tasks with budget `2` and aging step `3`, and finishes at `4/4/4/4` with cumulative totals `2` waiting tasks, `4` debt tasks, `6` dispatches, accumulator `21`, `2` aged tasks, `2` promoted tasks, `remaining_total_debt=0`, and `peak_effective_priority=3` at both default memory and `1024 MiB`
+- the i386 freestanding runtime now also has a real BIOS firmware-boot priority-fairshare scheduler lane that proves a seeded `2/1/1/1` four-slot history can drain a carried debt set of `3` plus a waiting backlog of `8` through combined compensation, aging, promotion, and fairshare rounds, exports cumulative fairshare plus debt telemetry through `/dev/cpu/ap-fairshare` and `/sys/cpu/ap-fairshare`, drains the combined backlog with budget `2` and aging step `2`, and finishes at `4/4/4/4` with cumulative totals `8` waiting tasks, `3` debt tasks, `11` dispatches, accumulator `66`, `24` aged tasks, `8` promoted tasks, `7` fairshare tasks, `remaining_total_debt=0`, and `final_task_balance_gap=0` at both default memory and `1024 MiB`
 - the i386 freestanding runtime now has bounded IOAPIC export plus live MMIO proof with `/dev/cpu/ioapic` and `/sys/cpu/ioapic` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded legacy PIC export plus live remap/control-plane proof with `/dev/cpu/pic` and `/sys/cpu/pic` visibility on the i386 platform lane
 - the i386 freestanding runtime now has bounded PIT export plus live latch/readback proof with `/dev/cpu/pit` and `/sys/cpu/pit` visibility on the i386 platform lane
@@ -964,13 +1001,19 @@ Start `FS5.7` with a real bounded `i386` freestanding lane, without falsely clai
   - bounded saturated reprioritization is now observed on the BIOS firmware-boot path
   - bounded AP-slot failover redistribution is now observed on the BIOS firmware-boot path
   - bounded termination backfill/refill is now observed on the BIOS firmware-boot path
-  - that moves the next real closure step to broader SMP bring-up beyond bounded concurrent/owned/redistributed/priority-aware/priority-rotation/priority-fanout/full-table-saturation/saturated-reprioritization/failover/backfill AP slot dispatch
+  - bounded scheduler-window dispatch with deferred-task backlog and cursor wrap is now observed on the BIOS firmware-boot path
+  - bounded scheduler fairness-drain with zero final pending tasks and zero slot-balance gap is now observed on the BIOS firmware-boot path
+  - bounded scheduler skew-rebalance from `4/2/2/2` back to `4/4/4/4` is now observed on the BIOS firmware-boot path
+  - bounded scheduler priority-admission on top of carried debt from `4/2/2/2` into `4/4/4/4` with zero remaining debt is now observed on the BIOS firmware-boot path
+  - bounded scheduler priority-aging on top of carried debt/admission from `4/2/2/2` into `4/4/4/4` is now observed on the BIOS firmware-boot path
+  - bounded scheduler priority-fairshare on top of carried debt/admission/aging from a seeded `2/1/1/1` history into `4/4/4/4` is now observed on the BIOS firmware-boot path
+  - that moves the next real closure step to broader SMP bring-up beyond bounded concurrent/owned/redistributed/priority-aware/priority-rotation/priority-fanout/full-table-saturation/saturated-reprioritization/failover/backfill/windowed/fairness-drain/skew-rebalance/priority-debt/priority-admission/priority-aging/priority-fairshare AP slot dispatch
 
 ## Next Steps
 
 1. widen the current firmware-backed AP execution lane into broader SMP bring-up:
    - more than four bounded resident AP slots
    - AP-owned work dispatch beyond the current targeted owned/redistributed/priority-aware/priority-rotation/priority-fanout model
-   - scheduler behavior beyond the current four-round ownership plus live reprioritization map
+   - scheduler behavior beyond the current four-slot backlog-drain fairness, skew-rebalance, debt/admission, priority-aging, and priority-fairshare map
 2. then lift that broader SMP model back toward the direct-loader path where possible
 3. only after that, widen timer / interrupt hardening around the real multi-core path
