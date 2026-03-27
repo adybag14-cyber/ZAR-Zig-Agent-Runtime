@@ -81,6 +81,8 @@ var aging_state: abi.BaremetalApAgingState = zeroAgingState();
 var aging_entries: [max_ap_command_slots]abi.BaremetalApAgingEntry = std.mem.zeroes([max_ap_command_slots]abi.BaremetalApAgingEntry);
 var fairshare_state: abi.BaremetalApFairshareState = zeroFairshareState();
 var fairshare_entries: [max_ap_command_slots]abi.BaremetalApFairshareEntry = std.mem.zeroes([max_ap_command_slots]abi.BaremetalApFairshareEntry);
+var quota_state: abi.BaremetalApQuotaState = zeroQuotaState();
+var quota_entries: [max_ap_command_slots]abi.BaremetalApQuotaEntry = std.mem.zeroes([max_ap_command_slots]abi.BaremetalApQuotaEntry);
 var ownership_dispatch_round_count: u32 = 0;
 var ownership_policy: u8 = abi.ap_ownership_policy_round_robin;
 var ownership_peak_active_slot_count: u8 = 0;
@@ -242,6 +244,37 @@ var fairshare_total_promoted_task_count: u32 = 0;
 var fairshare_total_fairshare_task_count: u32 = 0;
 var fairshare_peak_effective_priority: u32 = 0;
 var fairshare_last_start_slot_index: u32 = 0;
+var quota_drain_round_count: u32 = 0;
+var quota_aging_round_count: u32 = 0;
+var quota_quota_round_count: u32 = 0;
+var quota_policy: u8 = abi.ap_ownership_policy_round_robin;
+var quota_peak_active_slot_count: u8 = 0;
+var quota_last_round_active_slot_count: u8 = 0;
+var quota_last_round_waiting_task_count: u32 = 0;
+var quota_last_round_debt_task_count: u32 = 0;
+var quota_last_round_quota_task_count: u32 = 0;
+var quota_initial_pending_task_count: u32 = 0;
+var quota_last_pending_task_count: u32 = 0;
+var quota_peak_pending_task_count: u32 = 0;
+var quota_task_budget: u32 = 0;
+var quota_aging_step_value: u32 = 0;
+var quota_budget_total: u32 = 0;
+var quota_initial_min_slot_task_count: u32 = 0;
+var quota_initial_max_slot_task_count: u32 = 0;
+var quota_initial_task_balance_gap: u32 = 0;
+var quota_final_min_slot_task_count: u32 = 0;
+var quota_final_max_slot_task_count: u32 = 0;
+var quota_final_task_balance_gap: u32 = 0;
+var quota_initial_total_debt: u32 = 0;
+var quota_remaining_total_debt: u32 = 0;
+var quota_total_compensated_task_count: u32 = 0;
+var quota_last_round_compensated_task_count: u32 = 0;
+var quota_total_aged_task_count: u32 = 0;
+var quota_last_round_aged_task_count: u32 = 0;
+var quota_total_promoted_task_count: u32 = 0;
+var quota_total_quota_task_count: u32 = 0;
+var quota_peak_effective_priority: u32 = 0;
+var quota_last_start_slot_index: u32 = 0;
 const max_backfill_seen_tasks: usize = 128;
 const OwnershipStorage = struct {
     var owned_task_ids: [max_ap_command_slots][max_task_batch_entries]u32 = [_][max_task_batch_entries]u32{[_]u32{0} ** max_task_batch_entries} ** max_ap_command_slots;
@@ -370,6 +403,34 @@ const FairshareStorage = struct {
     var dispatch_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var seed_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var final_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var initial_debt: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var remaining_debt: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_task_id: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_priority: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_effective_priority: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var peak_effective_priority: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_budget_ticks: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var last_batch_accumulator: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var total_accumulator: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var compensated_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var total_compensated_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var aged_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var total_aged_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+};
+const QuotaStorage = struct {
+    var task_ids: [max_ap_command_slots][max_task_batch_entries]u32 = [_][max_task_batch_entries]u32{[_]u32{0} ** max_task_batch_entries} ** max_ap_command_slots;
+    var task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var waiting_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var total_waiting_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var debt_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var total_debt_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var quota_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var total_quota_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var dispatch_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var seed_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var final_task_count: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var configured_quota: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
+    var remaining_quota: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var initial_debt: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var remaining_debt: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
     var last_task_id: [max_ap_command_slots]u32 = [_]u32{0} ** max_ap_command_slots;
@@ -1057,6 +1118,55 @@ fn zeroFairshareState() abi.BaremetalApFairshareState {
     };
 }
 
+fn zeroQuotaState() abi.BaremetalApQuotaState {
+    return .{
+        .magic = abi.ap_quota_magic,
+        .api_version = abi.api_version,
+        .present = 0,
+        .policy = abi.ap_ownership_policy_round_robin,
+        .exported_count = 0,
+        .active_count = 0,
+        .peak_active_slot_count = 0,
+        .last_round_active_slot_count = 0,
+        .requested_cpu_count = 0,
+        .logical_processor_count = 0,
+        .reserved0 = 0,
+        .bsp_apic_id = 0,
+        .total_waiting_task_count = 0,
+        .total_debt_task_count = 0,
+        .total_dispatch_count = 0,
+        .total_accumulator = 0,
+        .drain_round_count = 0,
+        .aging_round_count = 0,
+        .quota_round_count = 0,
+        .last_round_waiting_task_count = 0,
+        .last_round_debt_task_count = 0,
+        .last_round_quota_task_count = 0,
+        .initial_pending_task_count = 0,
+        .last_pending_task_count = 0,
+        .peak_pending_task_count = 0,
+        .task_budget = 0,
+        .aging_step = 0,
+        .quota_budget_total = 0,
+        .initial_min_slot_task_count = 0,
+        .initial_max_slot_task_count = 0,
+        .initial_task_balance_gap = 0,
+        .final_min_slot_task_count = 0,
+        .final_max_slot_task_count = 0,
+        .final_task_balance_gap = 0,
+        .initial_total_debt = 0,
+        .remaining_total_debt = 0,
+        .total_compensated_task_count = 0,
+        .last_round_compensated_task_count = 0,
+        .total_aged_task_count = 0,
+        .last_round_aged_task_count = 0,
+        .total_promoted_task_count = 0,
+        .total_quota_task_count = 0,
+        .peak_effective_priority = 0,
+        .last_start_slot_index = 0,
+    };
+}
+
 fn resetSingleState() void {
     state = zeroState();
     diagnostics = .{};
@@ -1329,6 +1439,35 @@ fn resetFairshareSlot(slot_index: usize) void {
     @memset(&FairshareStorage.task_ids[slot_index], 0);
 }
 
+fn resetQuotaSlot(slot_index: usize) void {
+    QuotaStorage.task_count[slot_index] = 0;
+    QuotaStorage.waiting_task_count[slot_index] = 0;
+    QuotaStorage.total_waiting_task_count[slot_index] = 0;
+    QuotaStorage.debt_task_count[slot_index] = 0;
+    QuotaStorage.total_debt_task_count[slot_index] = 0;
+    QuotaStorage.quota_task_count[slot_index] = 0;
+    QuotaStorage.total_quota_task_count[slot_index] = 0;
+    QuotaStorage.dispatch_count[slot_index] = 0;
+    QuotaStorage.seed_task_count[slot_index] = 0;
+    QuotaStorage.final_task_count[slot_index] = 0;
+    QuotaStorage.configured_quota[slot_index] = 0;
+    QuotaStorage.remaining_quota[slot_index] = 0;
+    QuotaStorage.initial_debt[slot_index] = 0;
+    QuotaStorage.remaining_debt[slot_index] = 0;
+    QuotaStorage.last_task_id[slot_index] = 0;
+    QuotaStorage.last_priority[slot_index] = 0;
+    QuotaStorage.last_effective_priority[slot_index] = 0;
+    QuotaStorage.peak_effective_priority[slot_index] = 0;
+    QuotaStorage.last_budget_ticks[slot_index] = 0;
+    QuotaStorage.last_batch_accumulator[slot_index] = 0;
+    QuotaStorage.total_accumulator[slot_index] = 0;
+    QuotaStorage.compensated_task_count[slot_index] = 0;
+    QuotaStorage.total_compensated_task_count[slot_index] = 0;
+    QuotaStorage.aged_task_count[slot_index] = 0;
+    QuotaStorage.total_aged_task_count[slot_index] = 0;
+    @memset(&QuotaStorage.task_ids[slot_index], 0);
+}
+
 fn resetDebtState() void {
     debt_state = zeroDebtState();
     @memset(&debt_entries, std.mem.zeroes(abi.BaremetalApDebtEntry));
@@ -1451,6 +1590,43 @@ fn resetFairshareState() void {
     for (0..max_ap_command_slots) |slot_index| resetFairshareSlot(slot_index);
 }
 
+fn resetQuotaState() void {
+    quota_state = zeroQuotaState();
+    @memset(&quota_entries, std.mem.zeroes(abi.BaremetalApQuotaEntry));
+    quota_drain_round_count = 0;
+    quota_aging_round_count = 0;
+    quota_quota_round_count = 0;
+    quota_policy = abi.ap_ownership_policy_round_robin;
+    quota_peak_active_slot_count = 0;
+    quota_last_round_active_slot_count = 0;
+    quota_last_round_waiting_task_count = 0;
+    quota_last_round_debt_task_count = 0;
+    quota_last_round_quota_task_count = 0;
+    quota_initial_pending_task_count = 0;
+    quota_last_pending_task_count = 0;
+    quota_peak_pending_task_count = 0;
+    quota_task_budget = 0;
+    quota_aging_step_value = 0;
+    quota_budget_total = 0;
+    quota_initial_min_slot_task_count = 0;
+    quota_initial_max_slot_task_count = 0;
+    quota_initial_task_balance_gap = 0;
+    quota_final_min_slot_task_count = 0;
+    quota_final_max_slot_task_count = 0;
+    quota_final_task_balance_gap = 0;
+    quota_initial_total_debt = 0;
+    quota_remaining_total_debt = 0;
+    quota_total_compensated_task_count = 0;
+    quota_last_round_compensated_task_count = 0;
+    quota_total_aged_task_count = 0;
+    quota_last_round_aged_task_count = 0;
+    quota_total_promoted_task_count = 0;
+    quota_total_quota_task_count = 0;
+    quota_peak_effective_priority = 0;
+    quota_last_start_slot_index = 0;
+    for (0..max_ap_command_slots) |slot_index| resetQuotaSlot(slot_index);
+}
+
 pub fn resetMultiState() void {
     multi_state = zeroMultiState();
     @memset(&multi_entries, std.mem.zeroes(abi.BaremetalApMultiEntry));
@@ -1467,6 +1643,7 @@ pub fn resetOwnershipState() void {
     resetAdmissionState();
     resetAgingState();
     resetFairshareState();
+    resetQuotaState();
     @memset(&ownership_entries, std.mem.zeroes(abi.BaremetalApOwnershipEntry));
     @memset(&backfill_entries, std.mem.zeroes(abi.BaremetalApBackfillEntry));
     ownership_dispatch_round_count = 0;
@@ -1696,6 +1873,22 @@ pub fn fairshareEntry(index: u16) abi.BaremetalApFairshareEntry {
     refreshState();
     if (index >= fairshare_state.exported_count) return std.mem.zeroes(abi.BaremetalApFairshareEntry);
     return fairshare_entries[index];
+}
+
+pub fn quotaStatePtr() *const abi.BaremetalApQuotaState {
+    refreshState();
+    return &quota_state;
+}
+
+pub fn quotaEntryCount() u16 {
+    refreshState();
+    return quota_state.exported_count;
+}
+
+pub fn quotaEntry(index: u16) abi.BaremetalApQuotaEntry {
+    refreshState();
+    if (index >= quota_state.exported_count) return std.mem.zeroes(abi.BaremetalApQuotaEntry);
+    return quota_entries[index];
 }
 
 pub fn startupSingleAp() Error!void {
@@ -3014,6 +3207,92 @@ fn selectHighestFairshareDebtSlot(active_slots: []const u16, start_offset: usize
     return best_slot;
 }
 
+fn clearQuotaRoundTelemetry() void {
+    for (0..max_ap_command_slots) |slot_index| {
+        QuotaStorage.task_count[slot_index] = 0;
+        QuotaStorage.waiting_task_count[slot_index] = 0;
+        QuotaStorage.debt_task_count[slot_index] = 0;
+        QuotaStorage.quota_task_count[slot_index] = 0;
+        QuotaStorage.compensated_task_count[slot_index] = 0;
+        QuotaStorage.aged_task_count[slot_index] = 0;
+        @memset(&QuotaStorage.task_ids[slot_index], 0);
+    }
+}
+
+fn snapshotQuotaLoadRange(active_slots: []const u16, final: bool) void {
+    var min_slot_task_count: u32 = std.math.maxInt(u32);
+    var max_slot_task_count: u32 = 0;
+    var have_active_slot = false;
+    for (active_slots) |slot| {
+        const slot_index = @as(usize, slot);
+        const load = if (final) QuotaStorage.final_task_count[slot_index] else QuotaStorage.seed_task_count[slot_index];
+        if (load < min_slot_task_count) min_slot_task_count = load;
+        if (load > max_slot_task_count) max_slot_task_count = load;
+        have_active_slot = true;
+    }
+    const min_value = if (have_active_slot) min_slot_task_count else 0;
+    const gap_value = if (have_active_slot) max_slot_task_count - min_value else 0;
+    if (final) {
+        quota_final_min_slot_task_count = min_value;
+        quota_final_max_slot_task_count = max_slot_task_count;
+        quota_final_task_balance_gap = gap_value;
+    } else {
+        quota_initial_min_slot_task_count = min_value;
+        quota_initial_max_slot_task_count = max_slot_task_count;
+        quota_initial_task_balance_gap = gap_value;
+    }
+}
+
+fn selectHighestQuotaDebtSlot(active_slots: []const u16, start_offset: usize) u16 {
+    var best_slot = active_slots[start_offset % active_slots.len];
+    var best_debt = QuotaStorage.remaining_debt[@as(usize, best_slot)];
+    var best_load = QuotaStorage.final_task_count[@as(usize, best_slot)];
+    var best_waiting = QuotaStorage.total_waiting_task_count[@as(usize, best_slot)];
+    var offset: usize = 1;
+    while (offset < active_slots.len) : (offset += 1) {
+        const slot = active_slots[(start_offset + offset) % active_slots.len];
+        const slot_index = @as(usize, slot);
+        const debt = QuotaStorage.remaining_debt[slot_index];
+        const load = QuotaStorage.final_task_count[slot_index];
+        const waiting = QuotaStorage.total_waiting_task_count[slot_index];
+        if (debt > best_debt or
+            (debt == best_debt and load < best_load) or
+            (debt == best_debt and load == best_load and waiting < best_waiting))
+        {
+            best_slot = slot;
+            best_debt = debt;
+            best_load = load;
+            best_waiting = waiting;
+        }
+    }
+    return best_slot;
+}
+
+fn selectHighestQuotaSlot(active_slots: []const u16, start_offset: usize) u16 {
+    var best_slot = active_slots[start_offset % active_slots.len];
+    var best_quota = QuotaStorage.remaining_quota[@as(usize, best_slot)];
+    var best_load = QuotaStorage.final_task_count[@as(usize, best_slot)];
+    var best_waiting = QuotaStorage.total_waiting_task_count[@as(usize, best_slot)];
+    var offset: usize = 1;
+    while (offset < active_slots.len) : (offset += 1) {
+        const slot = active_slots[(start_offset + offset) % active_slots.len];
+        const slot_index = @as(usize, slot);
+        const quota = QuotaStorage.remaining_quota[slot_index];
+        const load = QuotaStorage.final_task_count[slot_index];
+        const waiting = QuotaStorage.total_waiting_task_count[slot_index];
+        if (quota > best_quota or
+            (quota == best_quota and load < best_load) or
+            (quota == best_quota and load == best_load and waiting < best_waiting))
+        {
+            best_slot = slot;
+            best_quota = quota;
+            best_load = load;
+            best_waiting = waiting;
+        }
+    }
+    return best_slot;
+}
+
 pub fn dispatchDebtAwareSchedulerTasksPriorityWithFairshareFromOffset(
     debt_tasks: []const abi.BaremetalTask,
     waiting_tasks: []const abi.BaremetalTask,
@@ -3231,6 +3510,256 @@ pub fn dispatchDebtAwareSchedulerTasksPriorityWithFairshareFromOffset(
     }
 
     snapshotFairshareLoadRange(active_slots[0..active_slot_count], true);
+    refreshState();
+    return total_accumulator;
+}
+
+pub fn dispatchDebtAwareSchedulerTasksPriorityWithQuotaFromOffset(
+    debt_tasks: []const abi.BaremetalTask,
+    waiting_tasks: []const abi.BaremetalTask,
+    start_slot_offset: usize,
+    task_budget: usize,
+    aging_step: u32,
+    quotas: []const u8,
+) OwnershipError!u32 {
+    if (task_budget == 0 or aging_step == 0) return error.InvalidWorkBatch;
+    if (debt_tasks.len + waiting_tasks.len > max_owned_dispatch_entries) return error.TooManyOwnedTasks;
+
+    var active_slots: [max_ap_command_slots]u16 = undefined;
+    const active_slot_count = activeOwnershipSlots(&active_slots);
+    if (active_slot_count == 0) return error.ApNotStarted;
+    if (quotas.len != active_slot_count) return error.InvalidWorkBatch;
+
+    var quota_budget_sum: u32 = 0;
+    for (quotas) |quota_value| {
+        if (quota_value == 0) return error.InvalidWorkBatch;
+        quota_budget_sum +%= quota_value;
+    }
+    if (task_budget > quota_budget_sum) return error.InvalidWorkBatch;
+
+    var debt_storage: [max_owned_dispatch_entries]abi.BaremetalTask = undefined;
+    var debt_count: usize = 0;
+    for (debt_tasks) |task| {
+        if (task.task_id == 0) continue;
+        if (task.state != abi.task_state_ready and task.state != abi.task_state_running) continue;
+        if (debt_count >= debt_storage.len) return error.TooManyOwnedTasks;
+        debt_storage[debt_count] = task;
+        debt_count += 1;
+    }
+
+    var waiting_storage: [max_owned_dispatch_entries]abi.BaremetalTask = undefined;
+    var waiting_count: usize = 0;
+    for (waiting_tasks) |task| {
+        if (task.task_id == 0) continue;
+        if (task.state != abi.task_state_ready and task.state != abi.task_state_running) continue;
+        if (waiting_count >= waiting_storage.len) return error.TooManyOwnedTasks;
+        waiting_storage[waiting_count] = task;
+        waiting_count += 1;
+    }
+    if (debt_count + waiting_count == 0) return error.NoReadyTask;
+
+    var ordered_debt_storage: [max_owned_dispatch_entries]abi.BaremetalTask = undefined;
+    var ordered_waiting_storage: [max_owned_dispatch_entries]abi.BaremetalTask = undefined;
+    const ordered_debt = if (debt_count == 0)
+        debt_storage[0..0]
+    else
+        try collectOwnedRunnableTasksOrdered(debt_storage[0..debt_count], abi.ap_ownership_policy_priority, &ordered_debt_storage);
+    const ordered_waiting = if (waiting_count == 0)
+        waiting_storage[0..0]
+    else
+        try collectOwnedRunnableTasksOrdered(waiting_storage[0..waiting_count], abi.ap_ownership_policy_priority, &ordered_waiting_storage);
+
+    var remaining_debt_storage: [max_owned_dispatch_entries]abi.BaremetalTask = undefined;
+    std.mem.copyForwards(abi.BaremetalTask, remaining_debt_storage[0..ordered_debt.len], ordered_debt);
+    var remaining_debt_count = ordered_debt.len;
+
+    var remaining_waiting_storage: [max_owned_dispatch_entries]abi.BaremetalTask = undefined;
+    std.mem.copyForwards(abi.BaremetalTask, remaining_waiting_storage[0..ordered_waiting.len], ordered_waiting);
+    var waiting_age_rounds: [max_owned_dispatch_entries]u32 = [_]u32{0} ** max_owned_dispatch_entries;
+    var remaining_waiting_count = ordered_waiting.len;
+
+    resetQuotaState();
+    quota_policy = abi.ap_ownership_policy_priority;
+    quota_last_round_active_slot_count = @as(u8, @intCast(active_slot_count));
+    quota_peak_active_slot_count = quota_last_round_active_slot_count;
+    quota_initial_pending_task_count = @as(u32, @intCast(remaining_debt_count + remaining_waiting_count));
+    quota_last_pending_task_count = quota_initial_pending_task_count;
+    quota_peak_pending_task_count = quota_initial_pending_task_count;
+    quota_task_budget = @as(u32, @intCast(task_budget));
+    quota_aging_step_value = aging_step;
+    quota_budget_total = quota_budget_sum;
+
+    for (active_slots[0..active_slot_count], 0..) |slot, active_index| {
+        const slot_index = @as(usize, slot);
+        const seed_task_count = WindowStorage.total_window_task_count[slot_index];
+        QuotaStorage.seed_task_count[slot_index] = seed_task_count;
+        QuotaStorage.final_task_count[slot_index] = seed_task_count;
+        QuotaStorage.configured_quota[slot_index] = quotas[active_index];
+        QuotaStorage.remaining_quota[slot_index] = quotas[active_index];
+    }
+    snapshotQuotaLoadRange(active_slots[0..active_slot_count], false);
+    for (active_slots[0..active_slot_count]) |slot| {
+        const slot_index = @as(usize, slot);
+        const initial_debt = quota_initial_max_slot_task_count - QuotaStorage.seed_task_count[slot_index];
+        QuotaStorage.initial_debt[slot_index] = initial_debt;
+        QuotaStorage.remaining_debt[slot_index] = initial_debt;
+        quota_initial_total_debt +%= initial_debt;
+        quota_remaining_total_debt +%= initial_debt;
+    }
+    snapshotQuotaLoadRange(active_slots[0..active_slot_count], true);
+
+    var total_accumulator: u32 = 0;
+    var round_index: usize = 0;
+    while (remaining_debt_count != 0 or remaining_waiting_count != 0) : (round_index += 1) {
+        clearQuotaRoundTelemetry();
+        const round_start_slot = (start_slot_offset + round_index) % active_slot_count;
+        const round_is_quota = quota_remaining_total_debt == 0;
+        if (round_is_quota) {
+            var remaining_quota_total: u32 = 0;
+            for (active_slots[0..active_slot_count]) |slot| {
+                remaining_quota_total +%= QuotaStorage.remaining_quota[@as(usize, slot)];
+            }
+            if (remaining_quota_total == 0) {
+                for (active_slots[0..active_slot_count]) |slot| {
+                    const slot_index = @as(usize, slot);
+                    QuotaStorage.remaining_quota[slot_index] = QuotaStorage.configured_quota[slot_index];
+                }
+            }
+        }
+        const candidate_count = remaining_debt_count + remaining_waiting_count;
+        var candidates: [max_owned_dispatch_entries]AgingCandidate = undefined;
+        var built_count: usize = 0;
+        for (remaining_debt_storage[0..remaining_debt_count]) |task| {
+            candidates[built_count] = .{
+                .task = task,
+                .effective_priority = @as(u32, task.priority),
+                .waiting_age_rounds = 0,
+                .kind = .debt,
+            };
+            built_count += 1;
+        }
+        for (remaining_waiting_storage[0..remaining_waiting_count], 0..) |task, waiting_index| {
+            const rounds = waiting_age_rounds[waiting_index];
+            const effective_priority = @as(u32, task.priority) +| (rounds * aging_step);
+            candidates[built_count] = .{
+                .task = task,
+                .effective_priority = effective_priority,
+                .waiting_age_rounds = rounds,
+                .kind = .waiting,
+            };
+            if (quota_peak_effective_priority < effective_priority) quota_peak_effective_priority = effective_priority;
+            built_count += 1;
+        }
+        std.debug.assert(built_count == candidate_count);
+        sortAgingCandidates(candidates[0..candidate_count]);
+
+        const round_task_count = @min(task_budget, candidate_count);
+        const selected_candidates = candidates[0..round_task_count];
+        quota_drain_round_count +%= 1;
+        quota_last_round_waiting_task_count = 0;
+        quota_last_round_debt_task_count = 0;
+        quota_last_round_quota_task_count = 0;
+        quota_last_round_compensated_task_count = 0;
+        quota_last_round_aged_task_count = 0;
+        quota_last_start_slot_index = @as(u32, @intCast(round_start_slot));
+
+        for (selected_candidates, 0..) |candidate, task_index| {
+            const slot = if (round_is_quota)
+                selectHighestQuotaSlot(active_slots[0..active_slot_count], round_start_slot + task_index)
+            else
+                selectHighestQuotaDebtSlot(active_slots[0..active_slot_count], round_start_slot + task_index);
+            const slot_index = @as(usize, slot);
+            const current_count = @as(usize, QuotaStorage.task_count[slot_index]);
+            if (current_count >= max_task_batch_entries) return error.TooManyOwnedTasks;
+            const debt_before = QuotaStorage.remaining_debt[slot_index];
+            const aged = candidate.waiting_age_rounds != 0;
+            if (round_is_quota and QuotaStorage.remaining_quota[slot_index] == 0) return error.InvalidWorkBatch;
+            QuotaStorage.task_ids[slot_index][current_count] = candidate.task.task_id;
+            QuotaStorage.task_count[slot_index] = @as(u32, @intCast(current_count + 1));
+            QuotaStorage.final_task_count[slot_index] +%= 1;
+            QuotaStorage.last_task_id[slot_index] = candidate.task.task_id;
+            QuotaStorage.last_priority[slot_index] = @as(u32, candidate.task.priority);
+            QuotaStorage.last_effective_priority[slot_index] = candidate.effective_priority;
+            QuotaStorage.last_budget_ticks[slot_index] = candidate.task.budget_ticks;
+            if (QuotaStorage.peak_effective_priority[slot_index] < candidate.effective_priority) {
+                QuotaStorage.peak_effective_priority[slot_index] = candidate.effective_priority;
+            }
+            if (candidate.kind == .waiting) {
+                QuotaStorage.waiting_task_count[slot_index] +%= 1;
+                QuotaStorage.total_waiting_task_count[slot_index] +%= 1;
+                quota_last_round_waiting_task_count +%= 1;
+                if (aged) {
+                    QuotaStorage.aged_task_count[slot_index] +%= 1;
+                    QuotaStorage.total_aged_task_count[slot_index] +%= 1;
+                    quota_total_promoted_task_count +%= 1;
+                }
+                if (round_is_quota) {
+                    QuotaStorage.quota_task_count[slot_index] +%= 1;
+                    QuotaStorage.total_quota_task_count[slot_index] +%= 1;
+                    QuotaStorage.remaining_quota[slot_index] -%= 1;
+                    quota_total_quota_task_count +%= 1;
+                    quota_last_round_quota_task_count +%= 1;
+                }
+            } else {
+                QuotaStorage.debt_task_count[slot_index] +%= 1;
+                QuotaStorage.total_debt_task_count[slot_index] +%= 1;
+                quota_last_round_debt_task_count +%= 1;
+            }
+            if (debt_before != 0) {
+                QuotaStorage.remaining_debt[slot_index] = debt_before - 1;
+                QuotaStorage.compensated_task_count[slot_index] +%= 1;
+                QuotaStorage.total_compensated_task_count[slot_index] +%= 1;
+                quota_remaining_total_debt -%= 1;
+                quota_total_compensated_task_count +%= 1;
+                quota_last_round_compensated_task_count +%= 1;
+            }
+        }
+        if (round_is_quota and quota_last_round_quota_task_count != 0) {
+            quota_quota_round_count +%= 1;
+        }
+
+        var round_accumulator: u32 = 0;
+        for (active_slots[0..active_slot_count]) |slot| {
+            const slot_index = @as(usize, slot);
+            const owned_count = @as(usize, QuotaStorage.task_count[slot_index]);
+            if (owned_count == 0) continue;
+            const accumulator = try dispatchWorkBatchToApSlot(slot, QuotaStorage.task_ids[slot_index][0..owned_count]);
+            QuotaStorage.dispatch_count[slot_index] +%= 1;
+            QuotaStorage.last_batch_accumulator[slot_index] = accumulator;
+            QuotaStorage.total_accumulator[slot_index] +%= accumulator;
+            round_accumulator +%= accumulator;
+        }
+        total_accumulator +%= round_accumulator;
+
+        var next_debt_count: usize = 0;
+        for (remaining_debt_storage[0..remaining_debt_count]) |task| {
+            if (containsAgingCandidateTaskId(selected_candidates, task.task_id)) continue;
+            remaining_debt_storage[next_debt_count] = task;
+            next_debt_count += 1;
+        }
+        remaining_debt_count = next_debt_count;
+
+        var next_waiting_count: usize = 0;
+        var aged_this_round: u32 = 0;
+        for (remaining_waiting_storage[0..remaining_waiting_count], 0..) |task, waiting_index| {
+            if (containsAgingCandidateTaskId(selected_candidates, task.task_id)) continue;
+            remaining_waiting_storage[next_waiting_count] = task;
+            waiting_age_rounds[next_waiting_count] = waiting_age_rounds[waiting_index] + 1;
+            next_waiting_count += 1;
+            aged_this_round +%= 1;
+        }
+        remaining_waiting_count = next_waiting_count;
+        if (aged_this_round != 0) {
+            quota_aging_round_count +%= 1;
+            quota_total_aged_task_count +%= aged_this_round;
+            quota_last_round_aged_task_count = aged_this_round;
+        }
+
+        quota_last_pending_task_count = @as(u32, @intCast(remaining_debt_count + remaining_waiting_count));
+        snapshotQuotaLoadRange(active_slots[0..active_slot_count], true);
+    }
+
+    snapshotQuotaLoadRange(active_slots[0..active_slot_count], true);
     refreshState();
     return total_accumulator;
 }
@@ -4407,6 +4936,123 @@ pub fn renderFairshareAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Erro
     return allocator.dupe(u8, buffer[0..used]);
 }
 
+pub fn renderQuotaAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
+    refreshState();
+    var buffer: [6144]u8 = undefined;
+    var used: usize = 0;
+    const head = std.fmt.bufPrint(
+        buffer[used..],
+        "present={d}\npolicy={d}\nexported_count={d}\nactive_count={d}\npeak_active_slot_count={d}\nlast_round_active_slot_count={d}\nrequested_cpu_count={d}\nlogical_processor_count={d}\nbsp_apic_id={d}\ntotal_waiting_task_count={d}\ntotal_debt_task_count={d}\ntotal_dispatch_count={d}\ntotal_accumulator={d}\ndrain_round_count={d}\naging_round_count={d}\nquota_round_count={d}\n",
+        .{
+            quota_state.present,
+            quota_state.policy,
+            quota_state.exported_count,
+            quota_state.active_count,
+            quota_state.peak_active_slot_count,
+            quota_state.last_round_active_slot_count,
+            quota_state.requested_cpu_count,
+            quota_state.logical_processor_count,
+            quota_state.bsp_apic_id,
+            quota_state.total_waiting_task_count,
+            quota_state.total_debt_task_count,
+            quota_state.total_dispatch_count,
+            quota_state.total_accumulator,
+            quota_state.drain_round_count,
+            quota_state.aging_round_count,
+            quota_state.quota_round_count,
+        },
+    ) catch unreachable;
+    used += head.len;
+    const tail = std.fmt.bufPrint(
+        buffer[used..],
+        "last_round_waiting_task_count={d}\nlast_round_debt_task_count={d}\nlast_round_quota_task_count={d}\ninitial_pending_task_count={d}\nlast_pending_task_count={d}\npeak_pending_task_count={d}\ntask_budget={d}\naging_step={d}\nquota_budget_total={d}\ninitial_min_slot_task_count={d}\ninitial_max_slot_task_count={d}\ninitial_task_balance_gap={d}\nfinal_min_slot_task_count={d}\nfinal_max_slot_task_count={d}\nfinal_task_balance_gap={d}\ninitial_total_debt={d}\nremaining_total_debt={d}\ntotal_compensated_task_count={d}\nlast_round_compensated_task_count={d}\ntotal_aged_task_count={d}\nlast_round_aged_task_count={d}\ntotal_promoted_task_count={d}\ntotal_quota_task_count={d}\npeak_effective_priority={d}\nlast_start_slot_index={d}\n",
+        .{
+            quota_state.last_round_waiting_task_count,
+            quota_state.last_round_debt_task_count,
+            quota_state.last_round_quota_task_count,
+            quota_state.initial_pending_task_count,
+            quota_state.last_pending_task_count,
+            quota_state.peak_pending_task_count,
+            quota_state.task_budget,
+            quota_state.aging_step,
+            quota_state.quota_budget_total,
+            quota_state.initial_min_slot_task_count,
+            quota_state.initial_max_slot_task_count,
+            quota_state.initial_task_balance_gap,
+            quota_state.final_min_slot_task_count,
+            quota_state.final_max_slot_task_count,
+            quota_state.final_task_balance_gap,
+            quota_state.initial_total_debt,
+            quota_state.remaining_total_debt,
+            quota_state.total_compensated_task_count,
+            quota_state.last_round_compensated_task_count,
+            quota_state.total_aged_task_count,
+            quota_state.last_round_aged_task_count,
+            quota_state.total_promoted_task_count,
+            quota_state.total_quota_task_count,
+            quota_state.peak_effective_priority,
+            quota_state.last_start_slot_index,
+        },
+    ) catch unreachable;
+    used += tail.len;
+    var entry_index: u16 = 0;
+    while (entry_index < quota_state.exported_count) : (entry_index += 1) {
+        const entry = quota_entries[entry_index];
+        const line_a = std.fmt.bufPrint(
+            buffer[used..],
+            "slot[{d}].target_apic_id={d}\nslot[{d}].dispatch_count={d}\nslot[{d}].waiting_task_count={d}\nslot[{d}].total_waiting_task_count={d}\nslot[{d}].debt_task_count={d}\nslot[{d}].total_debt_task_count={d}\nslot[{d}].quota_task_count={d}\nslot[{d}].total_quota_task_count={d}\nslot[{d}].seed_task_count={d}\nslot[{d}].final_task_count={d}\nslot[{d}].configured_quota={d}\nslot[{d}].remaining_quota={d}\nslot[{d}].initial_debt={d}\nslot[{d}].remaining_debt={d}\nslot[{d}].last_task_id={d}\nslot[{d}].last_priority={d}\n",
+            .{
+                entry_index, entry.target_apic_id,
+                entry_index, entry.dispatch_count,
+                entry_index, entry.waiting_task_count,
+                entry_index, entry.total_waiting_task_count,
+                entry_index, entry.debt_task_count,
+                entry_index, entry.total_debt_task_count,
+                entry_index, entry.quota_task_count,
+                entry_index, entry.total_quota_task_count,
+                entry_index, entry.seed_task_count,
+                entry_index, entry.final_task_count,
+                entry_index, entry.configured_quota,
+                entry_index, entry.remaining_quota,
+                entry_index, entry.initial_debt,
+                entry_index, entry.remaining_debt,
+                entry_index, entry.last_task_id,
+                entry_index, entry.last_priority,
+            },
+        ) catch unreachable;
+        used += line_a.len;
+        const line_b = std.fmt.bufPrint(
+            buffer[used..],
+            "slot[{d}].last_effective_priority={d}\nslot[{d}].peak_effective_priority={d}\nslot[{d}].last_budget_ticks={d}\nslot[{d}].last_batch_accumulator={d}\nslot[{d}].total_accumulator={d}\nslot[{d}].compensated_task_count={d}\nslot[{d}].total_compensated_task_count={d}\nslot[{d}].aged_task_count={d}\nslot[{d}].total_aged_task_count={d}\nslot[{d}].started={d}\nslot[{d}].halted={d}\nslot[{d}].slot_index={d}\n",
+            .{
+                entry_index, entry.last_effective_priority,
+                entry_index, entry.peak_effective_priority,
+                entry_index, entry.last_budget_ticks,
+                entry_index, entry.last_batch_accumulator,
+                entry_index, entry.total_accumulator,
+                entry_index, entry.compensated_task_count,
+                entry_index, entry.total_compensated_task_count,
+                entry_index, entry.aged_task_count,
+                entry_index, entry.total_aged_task_count,
+                entry_index, entry.started,
+                entry_index, entry.halted,
+                entry_index, entry.slot_index,
+            },
+        ) catch unreachable;
+        used += line_b.len;
+        const task_count = @min(@as(usize, @intCast(entry.waiting_task_count + entry.debt_task_count)), max_task_batch_entries);
+        for (0..task_count) |task_index| {
+            const task_line = std.fmt.bufPrint(
+                buffer[used..],
+                "slot[{d}].task[{d}]={d}\n",
+                .{ entry_index, task_index, QuotaStorage.task_ids[entry.slot_index][task_index] },
+            ) catch unreachable;
+            used += task_line.len;
+        }
+    }
+    return allocator.dupe(u8, buffer[0..used]);
+}
+
 fn refreshState() void {
     const topology = acpi.cpuTopologyStatePtr().*;
     const lapic_state = lapic.statePtr().*;
@@ -5275,6 +5921,135 @@ fn refreshState() void {
         fairshare_state.total_fairshare_task_count != 0)
     {
         fairshare_state.present = 1;
+    }
+
+    quota_state = zeroQuotaState();
+    quota_state.present = if (state.supported != 0) 1 else 0;
+    quota_state.policy = quota_policy;
+    quota_state.requested_cpu_count = topology.enabled_count;
+    quota_state.logical_processor_count = lapic_state.logical_processor_count;
+    quota_state.bsp_apic_id = lapic_state.current_apic_id;
+    quota_state.peak_active_slot_count = quota_peak_active_slot_count;
+    quota_state.last_round_active_slot_count = quota_last_round_active_slot_count;
+    quota_state.drain_round_count = quota_drain_round_count;
+    quota_state.aging_round_count = quota_aging_round_count;
+    quota_state.quota_round_count = quota_quota_round_count;
+    quota_state.last_round_waiting_task_count = quota_last_round_waiting_task_count;
+    quota_state.last_round_debt_task_count = quota_last_round_debt_task_count;
+    quota_state.last_round_quota_task_count = quota_last_round_quota_task_count;
+    quota_state.initial_pending_task_count = quota_initial_pending_task_count;
+    quota_state.last_pending_task_count = quota_last_pending_task_count;
+    quota_state.peak_pending_task_count = quota_peak_pending_task_count;
+    quota_state.task_budget = quota_task_budget;
+    quota_state.aging_step = quota_aging_step_value;
+    quota_state.quota_budget_total = quota_budget_total;
+    quota_state.initial_min_slot_task_count = quota_initial_min_slot_task_count;
+    quota_state.initial_max_slot_task_count = quota_initial_max_slot_task_count;
+    quota_state.initial_task_balance_gap = quota_initial_task_balance_gap;
+    quota_state.final_min_slot_task_count = quota_final_min_slot_task_count;
+    quota_state.final_max_slot_task_count = quota_final_max_slot_task_count;
+    quota_state.final_task_balance_gap = quota_final_task_balance_gap;
+    quota_state.initial_total_debt = quota_initial_total_debt;
+    quota_state.remaining_total_debt = quota_remaining_total_debt;
+    quota_state.total_compensated_task_count = quota_total_compensated_task_count;
+    quota_state.last_round_compensated_task_count = quota_last_round_compensated_task_count;
+    quota_state.total_aged_task_count = quota_total_aged_task_count;
+    quota_state.last_round_aged_task_count = quota_last_round_aged_task_count;
+    quota_state.total_promoted_task_count = quota_total_promoted_task_count;
+    quota_state.total_quota_task_count = quota_total_quota_task_count;
+    quota_state.peak_effective_priority = quota_peak_effective_priority;
+    quota_state.last_start_slot_index = quota_last_start_slot_index;
+    @memset(&quota_entries, std.mem.zeroes(abi.BaremetalApQuotaEntry));
+    slot_index = 0;
+    while (slot_index < max_ap_command_slots) : (slot_index += 1) {
+        const target_apic_id = readStateVar(slotTargetApicIdPtr(slot_index));
+        const started = if (readStateVar(slotStartedPtr(slot_index)) != 0) @as(u8, 1) else @as(u8, 0);
+        const halted = if (readStateVar(slotHaltedPtr(slot_index)) != 0) @as(u8, 1) else @as(u8, 0);
+        const waiting_task_count = QuotaStorage.waiting_task_count[slot_index];
+        const total_waiting_task_count = QuotaStorage.total_waiting_task_count[slot_index];
+        const debt_task_count = QuotaStorage.debt_task_count[slot_index];
+        const total_debt_task_count = QuotaStorage.total_debt_task_count[slot_index];
+        const quota_task_count = QuotaStorage.quota_task_count[slot_index];
+        const total_quota_task_count = QuotaStorage.total_quota_task_count[slot_index];
+        const seed_task_count = QuotaStorage.seed_task_count[slot_index];
+        const final_task_count = QuotaStorage.final_task_count[slot_index];
+        const configured_quota = QuotaStorage.configured_quota[slot_index];
+        const remaining_quota = QuotaStorage.remaining_quota[slot_index];
+        const total_accumulator = QuotaStorage.total_accumulator[slot_index];
+        const total_compensated_task_count = QuotaStorage.total_compensated_task_count[slot_index];
+        const total_aged_task_count = QuotaStorage.total_aged_task_count[slot_index];
+        const remaining_debt = QuotaStorage.remaining_debt[slot_index];
+        if (target_apic_id == 0 and
+            waiting_task_count == 0 and
+            total_waiting_task_count == 0 and
+            debt_task_count == 0 and
+            total_debt_task_count == 0 and
+            quota_task_count == 0 and
+            total_quota_task_count == 0 and
+            seed_task_count == 0 and
+            final_task_count == 0 and
+            configured_quota == 0 and
+            remaining_quota == 0 and
+            total_accumulator == 0 and
+            total_compensated_task_count == 0 and
+            total_aged_task_count == 0 and
+            remaining_debt == 0 and
+            started == 0 and
+            halted == 0)
+        {
+            continue;
+        }
+        const dispatch_count = QuotaStorage.dispatch_count[slot_index];
+        const exported_index = quota_state.exported_count;
+        quota_entries[exported_index] = .{
+            .target_apic_id = target_apic_id,
+            .dispatch_count = dispatch_count,
+            .waiting_task_count = waiting_task_count,
+            .total_waiting_task_count = total_waiting_task_count,
+            .debt_task_count = debt_task_count,
+            .total_debt_task_count = total_debt_task_count,
+            .quota_task_count = quota_task_count,
+            .total_quota_task_count = total_quota_task_count,
+            .seed_task_count = seed_task_count,
+            .final_task_count = final_task_count,
+            .configured_quota = configured_quota,
+            .remaining_quota = remaining_quota,
+            .initial_debt = QuotaStorage.initial_debt[slot_index],
+            .remaining_debt = remaining_debt,
+            .last_task_id = QuotaStorage.last_task_id[slot_index],
+            .last_priority = QuotaStorage.last_priority[slot_index],
+            .last_effective_priority = QuotaStorage.last_effective_priority[slot_index],
+            .peak_effective_priority = QuotaStorage.peak_effective_priority[slot_index],
+            .last_budget_ticks = QuotaStorage.last_budget_ticks[slot_index],
+            .last_batch_accumulator = QuotaStorage.last_batch_accumulator[slot_index],
+            .total_accumulator = total_accumulator,
+            .compensated_task_count = QuotaStorage.compensated_task_count[slot_index],
+            .total_compensated_task_count = total_compensated_task_count,
+            .aged_task_count = QuotaStorage.aged_task_count[slot_index],
+            .total_aged_task_count = total_aged_task_count,
+            .started = started,
+            .halted = halted,
+            .slot_index = @as(u8, @intCast(slot_index)),
+            .reserved0 = 0,
+        };
+        quota_state.exported_count += 1;
+        if (started != 0 and halted == 0) quota_state.active_count +%= 1;
+        quota_state.total_waiting_task_count +%= total_waiting_task_count;
+        quota_state.total_debt_task_count +%= total_debt_task_count;
+        quota_state.total_dispatch_count +%= dispatch_count;
+        quota_state.total_accumulator +%= total_accumulator;
+    }
+    if (quota_state.active_count > quota_peak_active_slot_count) {
+        quota_peak_active_slot_count = quota_state.active_count;
+    }
+    quota_state.peak_active_slot_count = quota_peak_active_slot_count;
+    if (quota_state.exported_count != 0 or
+        quota_state.drain_round_count != 0 or
+        quota_state.initial_total_debt != 0 or
+        quota_state.total_waiting_task_count != 0 or
+        quota_state.total_quota_task_count != 0)
+    {
+        quota_state.present = 1;
     }
 }
 
@@ -8340,6 +9115,171 @@ test "i386 debt-aware priority scheduler drains broader fairshare backlog after 
     try std.testing.expect(std.mem.indexOf(u8, fairshare_render, "total_promoted_task_count=8") != null);
     try std.testing.expect(std.mem.indexOf(u8, fairshare_render, "total_fairshare_task_count=7") != null);
     try std.testing.expect(std.mem.indexOf(u8, fairshare_render, "slot[3].task[0]=1") != null);
+
+    try haltApSlot(3);
+    try haltApSlot(2);
+    try haltApSlot(1);
+    try haltApSlot(0);
+}
+
+test "i386 debt-aware priority scheduler drains bounded quota backlog after carried debt" {
+    resetForTest();
+    acpi.resetForTest();
+    try acpi.probeSyntheticImage(true);
+
+    for (0..4) |slot_index| {
+        writeStateVar(slotStartedPtr(slot_index), 1);
+        writeStateVar(slotStagePtr(slot_index), 4);
+        writeStateVar(slotReportedApicIdPtr(slot_index), @as(u32, @intCast(slot_index + 1)));
+        writeStateVar(slotTargetApicIdPtr(slot_index), @as(u32, @intCast(slot_index + 1)));
+        writeStateVar(slotHeartbeatPtr(slot_index), 1);
+    }
+
+    const responder0 = try std.Thread.spawn(.{}, testApSlotResponder, .{0});
+    defer responder0.join();
+    const responder1 = try std.Thread.spawn(.{}, testApSlotResponder, .{1});
+    defer responder1.join();
+    const responder2 = try std.Thread.spawn(.{}, testApSlotResponder, .{2});
+    defer responder2.join();
+    const responder3 = try std.Thread.spawn(.{}, testApSlotResponder, .{3});
+    defer responder3.join();
+    errdefer {
+        _ = haltApSlot(3) catch {};
+        _ = haltApSlot(2) catch {};
+        _ = haltApSlot(1) catch {};
+        _ = haltApSlot(0) catch {};
+    }
+
+    var preload_tasks: [5]abi.BaremetalTask = undefined;
+    for (&preload_tasks, 0..) |*task, index| {
+        const task_id = @as(u32, @intCast(index + 12));
+        const budget_ticks = @as(u32, @intCast((task_id - 1) * 2 + 5));
+        task.* = .{
+            .task_id = task_id,
+            .state = abi.task_state_ready,
+            .priority = @as(u8, @intCast(task_id)),
+            .reserved0 = 0,
+            .run_count = 0,
+            .budget_ticks = budget_ticks,
+            .budget_remaining = budget_ticks,
+            .created_tick = 0,
+            .last_run_tick = 0,
+        };
+    }
+
+    var debt_tasks: [3]abi.BaremetalTask = undefined;
+    for (&debt_tasks, 0..) |*task, index| {
+        const task_id = @as(u32, @intCast(index + 9));
+        const budget_ticks = @as(u32, @intCast((task_id - 1) * 2 + 5));
+        task.* = .{
+            .task_id = task_id,
+            .state = abi.task_state_ready,
+            .priority = @as(u8, @intCast(task_id)),
+            .reserved0 = 0,
+            .run_count = 0,
+            .budget_ticks = budget_ticks,
+            .budget_remaining = budget_ticks,
+            .created_tick = 0,
+            .last_run_tick = 0,
+        };
+    }
+
+    var waiting_tasks: [8]abi.BaremetalTask = undefined;
+    for (&waiting_tasks, 0..) |*task, index| {
+        const task_id = @as(u32, @intCast(index + 1));
+        const budget_ticks = @as(u32, @intCast((task_id - 1) * 2 + 5));
+        task.* = .{
+            .task_id = task_id,
+            .state = abi.task_state_ready,
+            .priority = @as(u8, @intCast(task_id)),
+            .reserved0 = 0,
+            .run_count = 0,
+            .budget_ticks = budget_ticks,
+            .budget_remaining = budget_ticks,
+            .created_tick = 0,
+            .last_run_tick = 0,
+        };
+    }
+
+    resetWindowState();
+    try std.testing.expectEqual(@as(u32, 70), try dispatchWindowedSchedulerTasksPriorityFromOffset(preload_tasks[0..], 0, 5));
+    const quotas = [_]u8{ 3, 2, 2, 1 };
+    const total_accumulator = try dispatchDebtAwareSchedulerTasksPriorityWithQuotaFromOffset(
+        debt_tasks[0..],
+        waiting_tasks[0..],
+        0,
+        3,
+        2,
+        quotas[0..],
+    );
+    try std.testing.expect(total_accumulator > 0);
+
+    const snapshot = quotaStatePtr().*;
+    try std.testing.expectEqual(@as(u8, 1), snapshot.present);
+    try std.testing.expectEqual(@as(u8, abi.ap_ownership_policy_priority), snapshot.policy);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.exported_count);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.active_count);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.peak_active_slot_count);
+    try std.testing.expectEqual(@as(u8, 4), snapshot.last_round_active_slot_count);
+    try std.testing.expectEqual(@as(u32, 8), snapshot.total_waiting_task_count);
+    try std.testing.expectEqual(@as(u32, 3), snapshot.total_debt_task_count);
+    try std.testing.expectEqual(total_accumulator, snapshot.total_accumulator);
+    try std.testing.expect(snapshot.total_dispatch_count > 0);
+    try std.testing.expect(snapshot.drain_round_count > 0);
+    try std.testing.expect(snapshot.aging_round_count > 0);
+    try std.testing.expect(snapshot.quota_round_count > 0);
+    try std.testing.expectEqual(@as(u32, 11), snapshot.initial_pending_task_count);
+    try std.testing.expectEqual(@as(u32, 0), snapshot.last_pending_task_count);
+    try std.testing.expectEqual(@as(u32, 11), snapshot.peak_pending_task_count);
+    try std.testing.expectEqual(@as(u32, 3), snapshot.task_budget);
+    try std.testing.expectEqual(@as(u32, 2), snapshot.aging_step);
+    try std.testing.expectEqual(@as(u32, 8), snapshot.quota_budget_total);
+    try std.testing.expectEqual(@as(u32, 3), snapshot.initial_total_debt);
+    try std.testing.expectEqual(@as(u32, 0), snapshot.remaining_total_debt);
+    try std.testing.expectEqual(@as(u32, 3), snapshot.total_compensated_task_count);
+    try std.testing.expectEqual(@as(u32, 8), snapshot.total_promoted_task_count);
+    try std.testing.expectEqual(@as(u32, 8), snapshot.total_quota_task_count);
+    try std.testing.expect(snapshot.final_max_slot_task_count >= snapshot.final_min_slot_task_count);
+    try std.testing.expect(snapshot.last_start_slot_index < 4);
+
+    try std.testing.expectEqual(@as(u16, 4), quotaEntryCount());
+    var final_task_total: u32 = 0;
+    var waiting_task_total: u32 = 0;
+    var debt_task_total: u32 = 0;
+    var quota_task_total: u32 = 0;
+    inline for ([_]struct { index: u16, apic_id: u32, quota: u32 }{
+        .{ .index = 0, .apic_id = 1, .quota = 3 },
+        .{ .index = 1, .apic_id = 2, .quota = 2 },
+        .{ .index = 2, .apic_id = 3, .quota = 2 },
+        .{ .index = 3, .apic_id = 4, .quota = 1 },
+    }) |expected| {
+        const entry = quotaEntry(expected.index);
+        try std.testing.expectEqual(expected.apic_id, entry.target_apic_id);
+        try std.testing.expectEqual(expected.quota, entry.configured_quota);
+        try std.testing.expect(entry.seed_task_count > 0);
+        try std.testing.expect(entry.final_task_count >= entry.seed_task_count);
+        try std.testing.expect(entry.total_accumulator > 0);
+        try std.testing.expectEqual(@as(u32, 1), entry.started);
+        try std.testing.expectEqual(@as(u32, 0), entry.halted);
+        try std.testing.expectEqual(expected.index, entry.slot_index);
+        final_task_total +%= entry.final_task_count;
+        waiting_task_total +%= entry.total_waiting_task_count;
+        debt_task_total +%= entry.total_debt_task_count;
+        quota_task_total +%= entry.total_quota_task_count;
+    }
+    try std.testing.expectEqual(@as(u32, 16), final_task_total);
+    try std.testing.expectEqual(snapshot.total_waiting_task_count, waiting_task_total);
+    try std.testing.expectEqual(snapshot.total_debt_task_count, debt_task_total);
+    try std.testing.expectEqual(snapshot.total_quota_task_count, quota_task_total);
+
+    const quota_render = try renderQuotaAlloc(std.testing.allocator);
+    defer std.testing.allocator.free(quota_render);
+    try std.testing.expect(std.mem.indexOf(u8, quota_render, "total_waiting_task_count=8") != null);
+    try std.testing.expect(std.mem.indexOf(u8, quota_render, "total_debt_task_count=3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, quota_render, "quota_budget_total=8") != null);
+    try std.testing.expect(std.mem.indexOf(u8, quota_render, "total_quota_task_count=8") != null);
+    try std.testing.expect(std.mem.indexOf(u8, quota_render, "slot[0].configured_quota=3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, quota_render, "slot[3].configured_quota=1") != null);
 
     try haltApSlot(3);
     try haltApSlot(2);
