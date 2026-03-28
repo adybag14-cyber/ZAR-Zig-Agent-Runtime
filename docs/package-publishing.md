@@ -10,9 +10,9 @@ All published package surfaces now carry `GPL-2.0-only` metadata and a package-l
 
 ## Current Edge Release
 
-- GitHub edge release target tag: `v0.2.0-zig-edge.31`
-- npm package version: `0.2.0-zig-edge.31`
-- Python package version: `0.2.0.dev31`
+- GitHub edge release target tag: `v0.2.0-zig-edge.32`
+- npm package version: `0.2.0-zig-edge.32`
+- Python package version: `0.2.0.dev32`
 
 ## Install Paths
 
@@ -21,13 +21,13 @@ All published package surfaces now carry `GPL-2.0-only` metadata and a package-l
 Preferred when npmjs is configured:
 
 ```bash
-npm install @adybag14-cyber/openclaw-zig-rpc-client@0.2.0-zig-edge.31
+npm install @adybag14-cyber/openclaw-zig-rpc-client@0.2.0-zig-edge.32
 ```
 
 Fallback from the GitHub release tarball:
 
 ```bash
-npm install "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases/download/v0.2.0-zig-edge.31/adybag14-cyber-openclaw-zig-rpc-client-0.2.0-zig-edge.31.tgz"
+npm install "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases/download/v0.2.0-zig-edge.32/adybag14-cyber-openclaw-zig-rpc-client-0.2.0-zig-edge.32.tgz"
 ```
 
 ### pip
@@ -35,13 +35,13 @@ npm install "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases/do
 Preferred when PyPI is configured:
 
 ```bash
-pip install openclaw-zig-rpc-client==0.2.0.dev31
+pip install openclaw-zig-rpc-client==0.2.0.dev32
 ```
 
 Fallback from the GitHub release wheel:
 
 ```bash
-pip install "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases/download/v0.2.0-zig-edge.31/openclaw_zig_rpc_client-0.2.0.dev31-py3-none-any.whl"
+pip install "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases/download/v0.2.0-zig-edge.32/openclaw_zig_rpc_client-0.2.0.dev32-py3-none-any.whl"
 ```
 
 ### uvx
@@ -52,10 +52,10 @@ Preferred when PyPI is configured:
 uvx --from openclaw-zig-rpc-client openclaw-zig-rpc health --base-url http://127.0.0.1:8080
 ```
 
-Git fallback verified locally against the release tag:
+Git fallback command for the current edge tag:
 
 ```bash
-uvx --from "git+https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime@v0.2.0-zig-edge.31#subdirectory=python/openclaw-zig-rpc-client" openclaw-zig-rpc health --base-url http://127.0.0.1:8080
+uvx --from "git+https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime@v0.2.0-zig-edge.32#subdirectory=python/openclaw-zig-rpc-client" openclaw-zig-rpc health --base-url http://127.0.0.1:8080
 ```
 
 ## Registry Configuration Requirements
@@ -69,7 +69,7 @@ The workflow supports two public-publish paths:
 
 If neither public path succeeds, the workflow falls back to GitHub Packages and still attaches the tarball to the GitHub release.
 
-Current state observed during `v0.2.0-zig-edge.31`:
+Latest observed publish state (`v0.2.0-zig-edge.31`):
 
 - `npm-release` reaches the real npmjs publish path with `NPM_TOKEN`
 - the tarball was attached to the GitHub prerelease
@@ -94,7 +94,7 @@ The workflow supports two public-publish paths:
 
 If neither public path succeeds, the workflow still attaches the wheel and sdist to the GitHub release.
 
-Current state observed during `v0.2.0-zig-edge.31`:
+Latest observed publish state (`v0.2.0-zig-edge.31`):
 
 - `python-release` now normalizes `v0.2.0-zig-edge.31` to the PEP 440 Python version `0.2.0.dev31`
 - the wheel and sdist were attached to the GitHub prerelease
@@ -147,11 +147,11 @@ Local/operator check:
 
 ```powershell
 pwsh ./scripts/package-registry-status.ps1 `
-  -ReleaseTag v0.2.0-zig-edge.31 `
+  -ReleaseTag v0.2.0-zig-edge.32 `
   -NpmPackageName @adybag14-cyber/openclaw-zig-rpc-client `
-  -NpmVersion 0.2.0-zig-edge.31 `
+  -NpmVersion 0.2.0-zig-edge.32 `
   -PythonPackageName openclaw-zig-rpc-client `
-  -PythonVersion 0.2.0.dev31 `
+  -PythonVersion 0.2.0.dev32 `
   -OutputJsonPath ./release/package-registry-status.json
 ```
 
@@ -168,7 +168,7 @@ Local/operator snapshot:
 
 ```powershell
 pwsh ./scripts/release-status.ps1 `
-  -ReleaseTag v0.2.0-zig-edge.31 `
+  -ReleaseTag v0.2.0-zig-edge.32 `
   -OutputJsonPath ./release/release-status.json `
   -OutputMarkdownPath ./release/release-status.md
 ```

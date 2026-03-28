@@ -304,7 +304,7 @@ Full-stack replacement execution reference:
     - browser-session auth, browser completion success, and Telegram command/reply proofs are green locally
     - FS2 strict closure is now reached locally: provider/session auth, browser completion, direct-provider completion, Telegram reply-loop, Telegram webhook ingress, and Telegram bot-send delivery all have dedicated proofs
   - Release/package lane status (2026-03-06):
-  - Edge release target `v0.2.0-zig-edge.31` is the current branch validation tag for desktop/android/bare-metal artifacts, parity reports, manifest, SBOM, provenance, npm tarball, wheel, and sdist.
+  - Edge release target `v0.2.0-zig-edge.32` is the current branch validation tag for desktop/android/bare-metal artifacts, parity reports, manifest, SBOM, provenance, npm tarball, wheel, and sdist.
   - release evidence now also includes `release-status.json` + `release-status.md` so every edge cut carries a frozen workflow-status + registry-status snapshot in addition to package preflight evidence.
   - Zig toolchain evidence is now mirror-aware:
     - `scripts/zig-github-mirror-release-check.ps1` snapshots the `adybag14-cyber/zig` release target commitish, Windows asset URL, and SHA256 digest.
@@ -317,7 +317,7 @@ Full-stack replacement execution reference:
     - hosted validation remains on Zig `master` for broad regression coverage.
     - freestanding bare-metal smoke/probe validation and `build-baremetal-asset` are pinned to the known-good Linux build `0.16.0-dev.2736+3b515fbed`.
     - reason: current upstream Linux `master` can segfault on `zig build baremetal -Doptimize=ReleaseFast` even though the pinned Linux `0.16.0-dev.2736+3b515fbed` bare-metal lane validates cleanly.
-  - `uvx` fallback from the tagged Git repo was validated locally:
+  - `uvx` fallback from the tagged Git repo was most recently validated locally on `v0.2.0-zig-edge.31`:
     - `uvx --from "git+https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime@v0.2.0-zig-edge.31#subdirectory=python/openclaw-zig-rpc-client" openclaw-zig-rpc --help`
   - npm public publish remains externally blocked by npm scope/package permission on npmjs; the edge.29 tarball is attached to the GitHub prerelease and the GitHub Packages fallback path ran successfully.
   - `scripts/package-registry-status.ps1` now uses the resolved default npm/PyPI package names when called with only `-ReleaseTag`, so local release diagnostics correctly report public-registry 404 state instead of silently skipping those checks.

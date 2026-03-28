@@ -2,7 +2,7 @@
 
 ## Current Snapshot
 
-- Current edge release target: `v0.2.0-zig-edge.31`
+- Current edge release target: `v0.2.0-zig-edge.32`
 - Latest local test gate: `zig build test --summary all` -> `1068 passed; 3 skipped; 0 failed`
 - Current registry count after the Hermes ACP v11 slice: `ZIG_COUNT=207`; gateway events union count remains `ZIG_EVENTS_COUNT=19`
 - Latest shared ACP portable seam: `acp.initialize`, `acp.authenticate`, `acp.sessions.updates`, and `acp.sessions.search` now ride the same Zig runtime contract on both hosted `/rpc` and bare-metal `RUNTIMECALL`

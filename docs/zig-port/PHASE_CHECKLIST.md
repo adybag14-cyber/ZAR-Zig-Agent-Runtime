@@ -2,10 +2,10 @@
 
 Release lock: no release tag is allowed until all phases are complete and parity is measured at 100%.
 Historical note: milestone validation counts below are preserved as captured at the time of each slice; current project-wide test gate is refreshed after each strict hosted-phase signoff.
-Current edge release target: `v0.2.0-zig-edge.31` is validated locally from this branch for binaries, parity evidence, SBOM/provenance, npm tarball, wheel, and sdist output.
+Current edge release target: `v0.2.0-zig-edge.32` is validated locally from this branch for binaries, parity evidence, SBOM/provenance, npm tarball, wheel, and sdist output.
 Registry status:
 - npm public publish still requires npm-side scope/package permission or a publish-capable `NPM_TOKEN`; GitHub release asset + GitHub Packages fallback are available now.
-- PyPI public publish is live for `openclaw-zig-rpc-client==0.2.0.dev31`, and the trusted publisher now matches `repo:adybag14-cyber/ZAR-Zig-Agent-Runtime:environment:pypi`.
+- Latest public PyPI publish remains `openclaw-zig-rpc-client==0.2.0.dev31`, and the trusted publisher now matches `repo:adybag14-cyber/ZAR-Zig-Agent-Runtime:environment:pypi`.
 - `scripts/package-registry-status.ps1` now checks public npmjs/PyPI visibility correctly even when called with only `-ReleaseTag`, so local release diagnostics no longer silently skip the unresolved registry state.
 - release evidence now also includes `release-status.json` + `release-status.md`, which snapshot package visibility plus the latest `zig-ci` / `docs-pages` / `release-preview` / `npm-release` / `python-release` workflow state for the target tag.
 - `FS5.6` repo-wide license refresh is now strict-closed locally: root/package license files, release evidence, package metadata, and Linux-style SPDX headers now use `GPL-2.0-only` to match the Linux-derived RTL8139 slice.
