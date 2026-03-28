@@ -23,7 +23,6 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 
 - Total methods: **203**
 - Prefix groups: **37**
-- Runtime portability note: `tools.catalog` now reports `runtimeTarget` plus per-tool `kind`, `approvalSensitive`, `supportedOnHosted`, `supportedOnBaremetal`, and `currentRuntimeSupported` metadata; `acp.describe`, `acp.sessions.list|new|load|resume|get|messages|events|fork|cancel`, `acp.prompt`, and `tasks.list|get|events|search` expose the shared ACP session/prompt/task contract through both hosted `/rpc` and bare-metal `RUNTIMECALL`.
 
 ## Prefix Overview
 
