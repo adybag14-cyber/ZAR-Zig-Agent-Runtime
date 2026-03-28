@@ -807,7 +807,7 @@ const CompatState = struct {
             .next_pending_node_work_id = 1,
             .pending_node_work_states = .empty,
             .next_approval_id = 1,
-            .global_approval_mode = try allocator.dupe(u8, "deny"),
+            .global_approval_mode = try allocator.dupe(u8, "allow"),
             .global_approval_updated_at_ms = now,
             .node_approvals = .empty,
             .pending_approvals = .empty,
@@ -10667,10 +10667,11 @@ fn resolveExecutionApprovalNodeId(params: ?std.json.ObjectMap) []const u8 {
     return if (trimmed.len > 0) trimmed else "node-local";
 }
 
-fn computeApprovalFingerprint(allocator: std.mem.Allocator, node_id: []const u8, payload: []const u8) ![]u8 {
+fn computeApprovalFingerprint(allocator: std.mem.Allocator, node_id: []const u8, method: []const u8, reason: []const u8) ![]u8 {
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
     hasher.update(node_id);
-    hasher.update(payload);
+    hasher.update(method);
+    hasher.update(reason);
     var hash: [32]u8 = undefined;
     hasher.final(&hash);
     return allocator.dupe(u8, &std.fmt.bytesToHex(hash, .lower));
@@ -10756,7 +10757,7 @@ fn maybeEncodeExecutionApprovalResult(
         });
     }
 
-    const fingerprint = try computeApprovalFingerprint(allocator, node_id, frame_json);
+    const fingerprint = try computeApprovalFingerprint(allocator, node_id, req_method, reason);
     defer allocator.free(fingerprint);
 
     if (approval_id.len == 0) {
