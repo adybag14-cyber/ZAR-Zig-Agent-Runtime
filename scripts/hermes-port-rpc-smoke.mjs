@@ -81,7 +81,7 @@ function startMockWebServer() {
 await fs.mkdir(workRoot, { recursive: true });
 const mockWeb = await startMockWebServer();
 
-async function rpc(method, params = {}, id = method) {
+async function rpcEnvelope(method, params = {}, id = method) {
   const response = await fetch(rpcUrl, {
     method: "POST",
     headers: {
@@ -100,6 +100,11 @@ async function rpc(method, params = {}, id = method) {
   if (!response.ok) {
     throw new Error(`HTTP ${response.status} for ${method}: ${bodyText}`);
   }
+  return body;
+}
+
+async function rpc(method, params = {}, id = method) {
+  const body = await rpcEnvelope(method, params, id);
   if (body.error) {
     throw new Error(`RPC error for ${method}: ${JSON.stringify(body.error)}`);
   }
@@ -113,9 +118,13 @@ assert.match(catalogJson, /tools\.catalog/);
 assert.match(catalogJson, /acp\.describe/);
 assert.match(catalogJson, /acp\.sessions\.list/);
 assert.match(catalogJson, /acp\.sessions\.new/);
+assert.match(catalogJson, /acp\.sessions\.load/);
+assert.match(catalogJson, /acp\.sessions\.resume/);
 assert.match(catalogJson, /acp\.sessions\.get/);
 assert.match(catalogJson, /acp\.sessions\.messages/);
+assert.match(catalogJson, /acp\.sessions\.events/);
 assert.match(catalogJson, /acp\.sessions\.fork/);
+assert.match(catalogJson, /acp\.sessions\.cancel/);
 assert.match(catalogJson, /acp\.prompt/);
 assert.match(catalogJson, /execute_code/);
 assert.match(catalogJson, /delegate_task/);
@@ -144,20 +153,29 @@ assert.match(catalogJson, /"currentRuntimeSupported":true/);
 const acpDescribeResult = await rpc("acp.describe", {}, "acp-describe");
 assert.equal(acpDescribeResult.schemaVersion, 1);
 assert.equal(acpDescribeResult.eventDelivery.mode, "poll");
-assert.equal(acpDescribeResult.eventDelivery.eventsMethod, "tasks.events");
+assert.equal(acpDescribeResult.eventDelivery.eventsMethod, "acp.sessions.events");
+assert.equal(acpDescribeResult.eventDelivery.taskEventsMethod, "tasks.events");
 assert.equal(acpDescribeResult.eventDelivery.receiptsMethod, "tasks.get");
 assert.equal(acpDescribeResult.capabilities.delegateTask, true);
 assert.equal(acpDescribeResult.capabilities.taskReceipts, true);
 assert.equal(acpDescribeResult.capabilities.taskEvents, true);
 assert.equal(acpDescribeResult.capabilities.sessionLifecycle, true);
+assert.equal(acpDescribeResult.capabilities.sessionLoad, true);
+assert.equal(acpDescribeResult.capabilities.sessionResume, true);
 assert.equal(acpDescribeResult.capabilities.sessionMessages, true);
+assert.equal(acpDescribeResult.capabilities.sessionEvents, true);
 assert.equal(acpDescribeResult.capabilities.sessionFork, true);
+assert.equal(acpDescribeResult.capabilities.sessionCancel, true);
 assert.equal(acpDescribeResult.capabilities.prompt, true);
 assert.equal(acpDescribeResult.sessionLifecycle.newMethod, "acp.sessions.new");
+assert.equal(acpDescribeResult.sessionLifecycle.loadMethod, "acp.sessions.load");
+assert.equal(acpDescribeResult.sessionLifecycle.resumeMethod, "acp.sessions.resume");
 assert.equal(acpDescribeResult.sessionLifecycle.listMethod, "acp.sessions.list");
 assert.equal(acpDescribeResult.sessionLifecycle.getMethod, "acp.sessions.get");
 assert.equal(acpDescribeResult.sessionLifecycle.messagesMethod, "acp.sessions.messages");
+assert.equal(acpDescribeResult.sessionLifecycle.eventsMethod, "acp.sessions.events");
 assert.equal(acpDescribeResult.sessionLifecycle.forkMethod, "acp.sessions.fork");
+assert.equal(acpDescribeResult.sessionLifecycle.cancelMethod, "acp.sessions.cancel");
 assert.equal(acpDescribeResult.sessionLifecycle.promptMethod, "acp.prompt");
 assert.equal(acpDescribeResult.contentBlocks.text, true);
 assert.match(JSON.stringify(acpDescribeResult.tools), /tasks\.events/);
@@ -176,6 +194,50 @@ assert.equal(acpSessionNewResult.created, true);
 assert.equal(acpSessionNewResult.session.sessionId, acpSessionId);
 assert.equal(acpSessionNewResult.session.messageCount, 0);
 
+const acpSessionLoadResult = await rpc(
+  "acp.sessions.load",
+  {
+    sessionId: acpSessionId,
+    cwd: workRoot,
+  },
+  "acp-session-load",
+);
+assert.equal(acpSessionLoadResult.loaded, true);
+assert.equal(acpSessionLoadResult.session.sessionId, acpSessionId);
+
+const acpCancelResult = await rpc(
+  "acp.sessions.cancel",
+  {
+    sessionId: acpSessionId,
+  },
+  "acp-cancel",
+);
+assert.equal(acpCancelResult.cancelRequested, true);
+assert.equal(acpCancelResult.session.cancelRequested, true);
+assert.equal(acpCancelResult.session.status, "cancel_requested");
+
+const acpPromptBlockedEnvelope = await rpcEnvelope(
+  "acp.prompt",
+  {
+    sessionId: acpSessionId,
+    content: [{ type: "text", text: "Blocked while canceled" }],
+  },
+  "acp-prompt-blocked",
+);
+assert.equal(acpPromptBlockedEnvelope.error.code, -32047);
+assert.match(acpPromptBlockedEnvelope.error.message, /SessionCancelled/);
+
+const acpSessionResumeResult = await rpc(
+  "acp.sessions.resume",
+  {
+    sessionId: acpSessionId,
+  },
+  "acp-session-resume",
+);
+assert.equal(acpSessionResumeResult.created, false);
+assert.equal(acpSessionResumeResult.session.cancelRequested, false);
+assert.equal(acpSessionResumeResult.session.status, "idle");
+
 const acpPromptResult = await rpc(
   "acp.prompt",
   {
@@ -188,7 +250,22 @@ assert.equal(acpPromptResult.ok, true);
 assert.equal(acpPromptResult.taskCount, 0);
 assert.equal(acpPromptResult.session.sessionId, acpSessionId);
 assert.equal(acpPromptResult.promptBlocks, 1);
+assert.ok(acpPromptResult.latestEventId > 0);
 assert.match(JSON.stringify(acpPromptResult.response), /Prompt recorded in the ACP session/);
+
+const acpEventsResult = await rpc(
+  "acp.sessions.events",
+  {
+    sessionId: acpSessionId,
+    limit: 20,
+  },
+  "acp-events",
+);
+assert.equal(acpEventsResult.count, 6);
+assert.ok(acpEventsResult.cursor > 0);
+assert.match(JSON.stringify(acpEventsResult.items), /session\.resume/);
+assert.match(JSON.stringify(acpEventsResult.items), /message\.user/);
+assert.match(JSON.stringify(acpEventsResult.items), /message\.assistant/);
 
 const acpMessagesResult = await rpc(
   "acp.sessions.messages",
@@ -201,7 +278,6 @@ const acpMessagesResult = await rpc(
 assert.equal(acpMessagesResult.count, 2);
 assert.equal(acpMessagesResult.items[0].role, "user");
 assert.equal(acpMessagesResult.items[1].role, "assistant");
-
 const acpForkResult = await rpc(
   "acp.sessions.fork",
   {
@@ -284,6 +360,19 @@ const snapshotGlobalResult = await rpc(
   "approvals-snapshot-global",
 );
 snapshotGlobalApprovalMode = snapshotGlobalResult.approvals.mode;
+
+const acpDelegateEventsResult = await rpc(
+  "acp.sessions.events",
+  {
+    sessionId: acpDelegateSessionId,
+    limit: 20,
+  },
+  "acp-delegate-events",
+);
+assert.equal(acpDelegateEventsResult.count, 8);
+assert.ok(acpDelegateEventsResult.cursor > 0);
+assert.match(JSON.stringify(acpDelegateEventsResult.items), /task\.start/);
+assert.match(JSON.stringify(acpDelegateEventsResult.items), /message\.task_summary/);
 
 const approvalsAllowResult = await rpc(
   "exec.approvals.set",
@@ -813,9 +902,13 @@ console.log(JSON.stringify({
       "acp.describe",
       "acp.sessions.list",
       "acp.sessions.new",
+      "acp.sessions.load",
+      "acp.sessions.resume",
       "acp.sessions.get",
       "acp.sessions.messages",
+      "acp.sessions.events",
       "acp.sessions.fork",
+      "acp.sessions.cancel",
       "acp.prompt",
       "execute_code",
       "delegate_task",
@@ -843,13 +936,26 @@ console.log(JSON.stringify({
     toolsCatalogHasCurrentRuntimeMetadata: /"currentRuntimeSupported":true/.test(catalogJson),
     acpDescribeSchemaVersion: acpDescribeResult.schemaVersion,
     acpDescribeEventsMethod: acpDescribeResult.eventDelivery.eventsMethod,
+    acpDescribeTaskEventsMethod: acpDescribeResult.eventDelivery.taskEventsMethod,
     acpDescribeReceiptsMethod: acpDescribeResult.eventDelivery.receiptsMethod,
     acpDescribeTaskReceipts: acpDescribeResult.capabilities.taskReceipts,
     acpDescribeTaskEvents: acpDescribeResult.capabilities.taskEvents,
     acpDescribeSessionNewMethod: acpDescribeResult.sessionLifecycle.newMethod,
+    acpDescribeSessionLoadMethod: acpDescribeResult.sessionLifecycle.loadMethod,
+    acpDescribeSessionResumeMethod: acpDescribeResult.sessionLifecycle.resumeMethod,
+    acpDescribeSessionEventsMethod: acpDescribeResult.sessionLifecycle.eventsMethod,
+    acpDescribeSessionCancelMethod: acpDescribeResult.sessionLifecycle.cancelMethod,
     acpDescribePromptMethod: acpDescribeResult.sessionLifecycle.promptMethod,
     acpDescribeSessionLifecycle: acpDescribeResult.capabilities.sessionLifecycle,
+    acpDescribeSessionEvents: acpDescribeResult.capabilities.sessionEvents,
     acpSessionCreated: acpSessionNewResult.created,
+    acpSessionLoaded: acpSessionLoadResult.loaded,
+    acpCancelRequested: acpCancelResult.cancelRequested,
+    acpBlockedCode: acpPromptBlockedEnvelope.error.code,
+    acpResumeCreated: acpSessionResumeResult.created,
+    acpEventsCount: acpEventsResult.count,
+    acpEventsCursor: acpEventsResult.cursor,
+    acpPromptLatestEventId: acpPromptResult.latestEventId,
     acpMessagesCount: acpMessagesResult.count,
     acpForkClonedMessages: acpForkResult.clonedMessages,
     acpListCount: acpListResult.count,
@@ -857,6 +963,7 @@ console.log(JSON.stringify({
     acpDelegateTaskId,
     acpDelegateTaskCount: acpDelegatePromptResult.taskCount,
     acpDelegateMessagesCount: acpDelegateMessagesResult.count,
+    acpDelegateEventsCount: acpDelegateEventsResult.count,
     globalApprovalMode: approvalsAllowResult.approvals.mode,
     approvalPromptState: approvalRequiredResult.state,
     approvalApprovedOk: approvalGrantedResult.ok,

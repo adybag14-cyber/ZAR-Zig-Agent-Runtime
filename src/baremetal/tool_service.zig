@@ -6457,6 +6457,10 @@ test "baremetal tool service bridges persisted runtime queries and rpc calls" {
     try std.testing.expect(std.mem.indexOf(u8, runtime_catalog_response, "\"runtimeTarget\":\"hosted\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_catalog_response, "\"tool\":\"delegate_task\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_catalog_response, "\"tool\":\"acp.sessions.new\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_catalog_response, "\"tool\":\"acp.sessions.load\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_catalog_response, "\"tool\":\"acp.sessions.resume\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_catalog_response, "\"tool\":\"acp.sessions.events\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_catalog_response, "\"tool\":\"acp.sessions.cancel\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_catalog_response, "\"tool\":\"acp.prompt\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_catalog_response, "\"tool\":\"sessions.history\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_catalog_response, "\"supportedOnBaremetal\":false") != null);
@@ -6501,10 +6505,15 @@ test "baremetal tool service bridges persisted runtime queries and rpc calls" {
     try std.testing.expect(std.mem.startsWith(u8, runtime_acp_response, "RESP 65 "));
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "\"schemaVersion\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "\"mode\":\"poll\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "acp.sessions.events") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "tasks.events") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "acp.sessions.load") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "acp.sessions.resume") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "acp.sessions.cancel") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "acp.sessions.new") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "acp.prompt") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "\"taskReceipts\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_response, "\"sessionEvents\":true") != null);
 
     const runtime_task_list_frame =
         "{\"id\":\"svc-task-list\",\"method\":\"tasks.list\",\"params\":{\"sessionId\":\"svc-delegate\",\"limit\":10}}";
@@ -6589,7 +6598,7 @@ test "baremetal tool service bridges persisted runtime queries and rpc calls" {
     defer std.testing.allocator.free(runtime_history_response);
     try std.testing.expect(std.mem.startsWith(u8, runtime_history_response, "RESP 70 "));
     try std.testing.expect(std.mem.indexOf(u8, runtime_history_response, "\"sessionId\":\"svc-delegate\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, runtime_history_response, "file.read") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_history_response, "delegate") != null);
 
     const runtime_search_frame =
         "{\"id\":\"svc-search\",\"method\":\"sessions.search\",\"params\":{\"query\":\"svc-delegate\",\"limit\":5}}";
@@ -6620,6 +6629,64 @@ test "baremetal tool service bridges persisted runtime queries and rpc calls" {
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_session_new_response, "\"sessionId\":\"svc-acp-runtime\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_session_new_response, "\"messageCount\":0") != null);
 
+    const runtime_acp_session_load_frame =
+        "{\"id\":\"svc-acp-session-load\",\"method\":\"acp.sessions.load\",\"params\":{\"sessionId\":\"svc-acp-runtime\",\"cwd\":\"/runtime/tmp\"}}";
+    const runtime_acp_session_load_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 172 RUNTIMECALL {d}\n{s}",
+        .{ runtime_acp_session_load_frame.len, runtime_acp_session_load_frame },
+    );
+    defer std.testing.allocator.free(runtime_acp_session_load_request);
+
+    const runtime_acp_session_load_response = try handleFramedRequest(std.testing.allocator, runtime_acp_session_load_request, 512, 256, 8192);
+    defer std.testing.allocator.free(runtime_acp_session_load_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_acp_session_load_response, "RESP 172 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_session_load_response, "\"loaded\":true") != null);
+
+    const runtime_acp_cancel_frame =
+        "{\"id\":\"svc-acp-cancel\",\"method\":\"acp.sessions.cancel\",\"params\":{\"sessionId\":\"svc-acp-runtime\"}}";
+    const runtime_acp_cancel_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 173 RUNTIMECALL {d}\n{s}",
+        .{ runtime_acp_cancel_frame.len, runtime_acp_cancel_frame },
+    );
+    defer std.testing.allocator.free(runtime_acp_cancel_request);
+
+    const runtime_acp_cancel_response = try handleFramedRequest(std.testing.allocator, runtime_acp_cancel_request, 512, 256, 8192);
+    defer std.testing.allocator.free(runtime_acp_cancel_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_acp_cancel_response, "RESP 173 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_cancel_response, "\"cancelRequested\":true") != null);
+
+    const runtime_acp_prompt_blocked_frame =
+        "{\"id\":\"svc-acp-prompt-blocked\",\"method\":\"acp.prompt\",\"params\":{\"sessionId\":\"svc-acp-runtime\",\"content\":[{\"type\":\"text\",\"text\":\"Blocked while canceled\"}]}}";
+    const runtime_acp_prompt_blocked_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 174 RUNTIMECALL {d}\n{s}",
+        .{ runtime_acp_prompt_blocked_frame.len, runtime_acp_prompt_blocked_frame },
+    );
+    defer std.testing.allocator.free(runtime_acp_prompt_blocked_request);
+
+    const runtime_acp_prompt_blocked_response = try handleFramedRequest(std.testing.allocator, runtime_acp_prompt_blocked_request, 512, 256, 8192);
+    defer std.testing.allocator.free(runtime_acp_prompt_blocked_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_acp_prompt_blocked_response, "RESP 174 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_prompt_blocked_response, "\"code\":-32047") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_prompt_blocked_response, "SessionCancelled") != null);
+
+    const runtime_acp_session_resume_frame =
+        "{\"id\":\"svc-acp-session-resume\",\"method\":\"acp.sessions.resume\",\"params\":{\"sessionId\":\"svc-acp-runtime\"}}";
+    const runtime_acp_session_resume_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 175 RUNTIMECALL {d}\n{s}",
+        .{ runtime_acp_session_resume_frame.len, runtime_acp_session_resume_frame },
+    );
+    defer std.testing.allocator.free(runtime_acp_session_resume_request);
+
+    const runtime_acp_session_resume_response = try handleFramedRequest(std.testing.allocator, runtime_acp_session_resume_request, 512, 256, 8192);
+    defer std.testing.allocator.free(runtime_acp_session_resume_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_acp_session_resume_response, "RESP 175 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_session_resume_response, "\"created\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_session_resume_response, "\"cancelRequested\":false") != null);
+
     const runtime_acp_prompt_frame =
         "{\"id\":\"svc-acp-prompt\",\"method\":\"acp.prompt\",\"params\":{\"sessionId\":\"svc-acp-runtime\",\"content\":[{\"type\":\"text\",\"text\":\"Record a portable ACP prompt\"}]}}";
     const runtime_acp_prompt_request = try std.fmt.allocPrint(
@@ -6633,7 +6700,24 @@ test "baremetal tool service bridges persisted runtime queries and rpc calls" {
     defer std.testing.allocator.free(runtime_acp_prompt_response);
     try std.testing.expect(std.mem.startsWith(u8, runtime_acp_prompt_response, "RESP 73 "));
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_prompt_response, "\"taskCount\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_prompt_response, "\"latestEventId\":") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_prompt_response, "Prompt recorded in the ACP session") != null);
+
+    const runtime_acp_events_frame =
+        "{\"id\":\"svc-acp-events\",\"method\":\"acp.sessions.events\",\"params\":{\"sessionId\":\"svc-acp-runtime\",\"limit\":20}}";
+    const runtime_acp_events_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 176 RUNTIMECALL {d}\n{s}",
+        .{ runtime_acp_events_frame.len, runtime_acp_events_frame },
+    );
+    defer std.testing.allocator.free(runtime_acp_events_request);
+
+    const runtime_acp_events_response = try handleFramedRequest(std.testing.allocator, runtime_acp_events_request, 512, 256, 8192);
+    defer std.testing.allocator.free(runtime_acp_events_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_acp_events_response, "RESP 176 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_events_response, "\"count\":6") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_events_response, "session.resume") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_events_response, "message.assistant") != null);
 
     const runtime_acp_messages_frame =
         "{\"id\":\"svc-acp-messages\",\"method\":\"acp.sessions.messages\",\"params\":{\"sessionId\":\"svc-acp-runtime\",\"limit\":10}}";
@@ -6649,7 +6733,6 @@ test "baremetal tool service bridges persisted runtime queries and rpc calls" {
     try std.testing.expect(std.mem.startsWith(u8, runtime_acp_messages_response, "RESP 74 "));
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_messages_response, "\"count\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_messages_response, "\"role\":\"assistant\"") != null);
-
     const runtime_acp_fork_frame =
         "{\"id\":\"svc-acp-fork\",\"method\":\"acp.sessions.fork\",\"params\":{\"sourceSessionId\":\"svc-acp-runtime\",\"newSessionId\":\"svc-acp-runtime-fork\"}}";
     const runtime_acp_fork_request = try std.fmt.allocPrint(
@@ -6695,6 +6778,22 @@ test "baremetal tool service bridges persisted runtime queries and rpc calls" {
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_delegate_response, "\"taskCount\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_delegate_response, "\"kind\":\"task_summary\"") != null);
 
+    const runtime_acp_delegate_events_frame =
+        "{\"id\":\"svc-acp-events-delegate\",\"method\":\"acp.sessions.events\",\"params\":{\"sessionId\":\"svc-acp-exec\",\"limit\":20}}";
+    const runtime_acp_delegate_events_request = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "REQ 177 RUNTIMECALL {d}\n{s}",
+        .{ runtime_acp_delegate_events_frame.len, runtime_acp_delegate_events_frame },
+    );
+    defer std.testing.allocator.free(runtime_acp_delegate_events_request);
+
+    const runtime_acp_delegate_events_response = try handleFramedRequest(std.testing.allocator, runtime_acp_delegate_events_request, 512, 256, 16384);
+    defer std.testing.allocator.free(runtime_acp_delegate_events_response);
+    try std.testing.expect(std.mem.startsWith(u8, runtime_acp_delegate_events_response, "RESP 177 "));
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_delegate_events_response, "\"count\":8") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_delegate_events_response, "task.start") != null);
+    try std.testing.expect(std.mem.indexOf(u8, runtime_acp_delegate_events_response, "message.task_summary") != null);
+
     const runtime_acp_delegate_read_frame =
         "{\"id\":\"svc-acp-read\",\"method\":\"file.read\",\"params\":{\"sessionId\":\"svc-acp-exec\",\"path\":\"/runtime/tmp/svc-acp-delegate.txt\"}}";
     const runtime_acp_delegate_read_request = try std.fmt.allocPrint(
@@ -6725,7 +6824,7 @@ test "baremetal tool service bridges persisted runtime queries and rpc calls" {
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_list_response, "\"sessionId\":\"svc-acp-runtime-fork\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_list_response, "\"sessionId\":\"svc-acp-exec\"") != null);
 
-    const state_payload_after = try filesystem.readFileAlloc(std.testing.allocator, "/runtime/state/runtime-state.json", std.math.maxInt(usize));
+    const state_payload_after = try filesystem.readFileAlloc(std.testing.allocator, "/runtime/state/runtime-state.json", 32768);
     defer std.testing.allocator.free(state_payload_after);
     try std.testing.expect(std.mem.indexOf(u8, state_payload_after, "svc-delegate") != null);
     try std.testing.expect(std.mem.indexOf(u8, state_payload_after, runtime_task_id) != null);

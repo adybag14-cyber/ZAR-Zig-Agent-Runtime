@@ -24,12 +24,16 @@ pub const RuntimeCatalogEntry = struct {
 pub const portable_entries = [_]CatalogEntry{
     .{ .tool = "acp", .provider = "builtin-runtime", .kind = "read", .approvalSensitive = false, .description = "Hermes-guided ACP bridge family (describe/sessions/prompt)" },
     .{ .tool = "acp.describe", .provider = "builtin-runtime", .kind = "read", .approvalSensitive = false, .description = "Describe the Hermes-guided ACP bridge metadata, capabilities, and event-delivery posture" },
-    .{ .tool = "acp.sessions", .provider = "builtin-runtime", .kind = "read", .approvalSensitive = false, .description = "ACP session lifecycle family (new/list/get/messages/fork)" },
+    .{ .tool = "acp.sessions", .provider = "builtin-runtime", .kind = "read", .approvalSensitive = false, .description = "ACP session lifecycle family (new/load/resume/list/get/messages/events/fork/cancel)" },
     .{ .tool = "acp.sessions.list", .provider = "builtin-runtime", .kind = "read", .approvalSensitive = false, .description = "List persisted ACP session receipts and transcript counts" },
     .{ .tool = "acp.sessions.new", .provider = "builtin-runtime", .kind = "edit", .approvalSensitive = false, .description = "Create or update an ACP session with cwd/title metadata" },
+    .{ .tool = "acp.sessions.load", .provider = "builtin-runtime", .kind = "edit", .approvalSensitive = false, .description = "Load an existing ACP session and refresh cwd/title metadata without resetting its cancel state" },
+    .{ .tool = "acp.sessions.resume", .provider = "builtin-runtime", .kind = "edit", .approvalSensitive = false, .description = "Resume an ACP session, creating it if missing and clearing any outstanding cancel request" },
     .{ .tool = "acp.sessions.get", .provider = "builtin-runtime", .kind = "read", .approvalSensitive = false, .description = "Load one ACP session receipt and current transcript counters" },
     .{ .tool = "acp.sessions.messages", .provider = "builtin-runtime", .kind = "read", .approvalSensitive = false, .description = "Read persisted ACP session transcript messages with cursor support" },
+    .{ .tool = "acp.sessions.events", .provider = "builtin-runtime", .kind = "read", .approvalSensitive = false, .description = "Poll persisted ACP session update events with cursor support" },
     .{ .tool = "acp.sessions.fork", .provider = "builtin-runtime", .kind = "edit", .approvalSensitive = false, .description = "Fork an ACP session into a new session with cloned transcript state" },
+    .{ .tool = "acp.sessions.cancel", .provider = "builtin-runtime", .kind = "edit", .approvalSensitive = false, .description = "Mark an ACP session as canceled and block new prompts until it is resumed" },
     .{ .tool = "acp.prompt", .provider = "builtin-runtime", .kind = "execute", .approvalSensitive = true, .description = "Record an ACP prompt and optionally run Hermes-style delegated steps inside the ACP session" },
     .{ .tool = "tools.catalog", .provider = "builtin-runtime", .kind = "read", .approvalSensitive = false, .description = "Describe the portable runtime tool contract and support posture" },
     .{ .tool = "exec", .provider = "builtin-runtime", .kind = "execute", .approvalSensitive = true, .description = "Exec tool family alias for command execution" },
@@ -148,6 +152,7 @@ pub fn toolsetAllows(toolset: []const u8, method: []const u8) bool {
             std.ascii.eqlIgnoreCase(method, "acp.sessions.list") or
             std.ascii.eqlIgnoreCase(method, "acp.sessions.get") or
             std.ascii.eqlIgnoreCase(method, "acp.sessions.messages") or
+            std.ascii.eqlIgnoreCase(method, "acp.sessions.events") or
             std.ascii.eqlIgnoreCase(method, "tasks") or
             std.ascii.eqlIgnoreCase(method, "tasks.list") or
             std.ascii.eqlIgnoreCase(method, "tasks.get") or
@@ -164,6 +169,7 @@ pub fn toolsetAllows(toolset: []const u8, method: []const u8) bool {
             std.ascii.eqlIgnoreCase(method, "acp.sessions.list") or
             std.ascii.eqlIgnoreCase(method, "acp.sessions.get") or
             std.ascii.eqlIgnoreCase(method, "acp.sessions.messages") or
+            std.ascii.eqlIgnoreCase(method, "acp.sessions.events") or
             std.ascii.eqlIgnoreCase(method, "tasks") or
             std.ascii.eqlIgnoreCase(method, "tasks.list") or
             std.ascii.eqlIgnoreCase(method, "tasks.get") or
@@ -171,6 +177,10 @@ pub fn toolsetAllows(toolset: []const u8, method: []const u8) bool {
             std.ascii.eqlIgnoreCase(method, "tasks.search");
     }
     return false;
+}
+
+pub fn toolKindForMethod(method: []const u8) []const u8 {
+    return if (lookupEntry(method)) |entry| entry.kind else "other";
 }
 
 fn lookupEntry(method: []const u8) ?CatalogEntry {
@@ -183,6 +193,7 @@ fn lookupEntry(method: []const u8) ?CatalogEntry {
 test "tool contract marks hosted and baremetal support posture" {
     try std.testing.expect(isPortableTool("delegate_task"));
     try std.testing.expect(isPortableTool("acp.sessions.new"));
+    try std.testing.expect(isPortableTool("acp.sessions.events"));
     try std.testing.expect(isPortableTool("acp.prompt"));
     try std.testing.expect(isSupportedOnTarget("delegate_task", .freestanding));
     try std.testing.expect(isSupportedOnTarget("exec.run", .freestanding));
@@ -193,6 +204,7 @@ test "tool contract marks hosted and baremetal support posture" {
     try std.testing.expect(!isSupportedOnTarget("execute_code", .windows));
     try std.testing.expect(isSupportedOnTarget("sessions.search", .freestanding));
     try std.testing.expect(isSupportedOnTarget("acp.sessions.messages", .freestanding));
+    try std.testing.expect(isSupportedOnTarget("acp.sessions.cancel", .freestanding));
     try std.testing.expect(isSupportedOnTarget("acp.prompt", .freestanding));
 }
 
@@ -200,6 +212,13 @@ test "tool contract marks hosted and baremetal support posture" {
 test "toolset gating keeps acp prompt out of delegated memory slices" {
     try std.testing.expect(toolsetAllows("memory", "acp.sessions.list"));
     try std.testing.expect(toolsetAllows("inspect", "acp.sessions.messages"));
+    try std.testing.expect(toolsetAllows("memory", "acp.sessions.events"));
     try std.testing.expect(!toolsetAllows("memory", "acp.prompt"));
     try std.testing.expect(!toolsetAllows("inspect", "acp.prompt"));
+}
+
+test "tool kind lookup maps runtime tools to acp kinds" {
+    try std.testing.expectEqualStrings("edit", toolKindForMethod("file.patch"));
+    try std.testing.expectEqualStrings("execute", toolKindForMethod("acp.prompt"));
+    try std.testing.expectEqualStrings("other", toolKindForMethod("not-real"));
 }

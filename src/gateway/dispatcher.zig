@@ -6499,9 +6499,13 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
     if (std.ascii.eqlIgnoreCase(req.method, "acp.describe") or
         std.ascii.eqlIgnoreCase(req.method, "acp.sessions.list") or
         std.ascii.eqlIgnoreCase(req.method, "acp.sessions.new") or
+        std.ascii.eqlIgnoreCase(req.method, "acp.sessions.load") or
+        std.ascii.eqlIgnoreCase(req.method, "acp.sessions.resume") or
         std.ascii.eqlIgnoreCase(req.method, "acp.sessions.get") or
         std.ascii.eqlIgnoreCase(req.method, "acp.sessions.messages") or
+        std.ascii.eqlIgnoreCase(req.method, "acp.sessions.events") or
         std.ascii.eqlIgnoreCase(req.method, "acp.sessions.fork") or
+        std.ascii.eqlIgnoreCase(req.method, "acp.sessions.cancel") or
         std.ascii.eqlIgnoreCase(req.method, "acp.prompt"))
     {
         const runtime = getRuntime();
@@ -9593,9 +9597,13 @@ fn shouldEnforceGuard(method: []const u8) bool {
     if (std.ascii.eqlIgnoreCase(method, "acp.describe")) return false;
     if (std.ascii.eqlIgnoreCase(method, "acp.sessions.list")) return false;
     if (std.ascii.eqlIgnoreCase(method, "acp.sessions.new")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "acp.sessions.load")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "acp.sessions.resume")) return false;
     if (std.ascii.eqlIgnoreCase(method, "acp.sessions.get")) return false;
     if (std.ascii.eqlIgnoreCase(method, "acp.sessions.messages")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "acp.sessions.events")) return false;
     if (std.ascii.eqlIgnoreCase(method, "acp.sessions.fork")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "acp.sessions.cancel")) return false;
     if (std.ascii.eqlIgnoreCase(method, "acp.prompt")) return false;
     if (std.ascii.eqlIgnoreCase(method, "tools.catalog")) return false;
     if (std.ascii.eqlIgnoreCase(method, "channels.status")) return false;
@@ -13815,7 +13823,7 @@ fn appendSystemCompletionMessage(
 fn buildBrowserToolContextMessage(allocator: std.mem.Allocator) ![]u8 {
     return allocator.dupe(
         u8,
-        "OpenClaw Zig runtime tool capabilities are available via RPC methods: tools.catalog, acp.describe, acp.sessions.list, acp.sessions.new, acp.sessions.get, acp.sessions.messages, acp.sessions.fork, acp.prompt, exec.run, execute_code, delegate_task, file.read, file.write, file.search, file.patch, web.search, web.extract, process.start, process.list, process.poll, process.read, process.wait, process.kill, send, poll, sessions.history, sessions.search, chat.history, doctor.memory.status, tts.convert, web.login.start, web.login.wait, web.login.complete, web.login.status. Do not claim there are no tools or no memory when these RPC surfaces are available.",
+        "OpenClaw Zig runtime tool capabilities are available via RPC methods: tools.catalog, acp.describe, acp.sessions.list, acp.sessions.new, acp.sessions.load, acp.sessions.resume, acp.sessions.get, acp.sessions.messages, acp.sessions.events, acp.sessions.fork, acp.sessions.cancel, acp.prompt, exec.run, execute_code, delegate_task, file.read, file.write, file.search, file.patch, web.search, web.extract, process.start, process.list, process.poll, process.read, process.wait, process.kill, send, poll, sessions.history, sessions.search, chat.history, doctor.memory.status, tts.convert, web.login.start, web.login.wait, web.login.complete, web.login.status. Do not claim there are no tools or no memory when these RPC surfaces are available.",
     );
 }
 

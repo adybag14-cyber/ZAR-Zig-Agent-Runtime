@@ -13,17 +13,22 @@ ZAR is **not** full ACP parity yet. The current slice ports the parts that fit Z
   - the catalog also advertises `supportedOnHosted`, `supportedOnBaremetal`, `currentRuntimeSupported`, and top-level `runtimeTarget` posture so ACP-shaped adapters can reason about hosted vs bare-metal availability
 - shared `acp.describe` metadata in Zig with:
   - runtime target labeling
-  - polling delivery posture (`tasks.events` + `tasks.get`)
+  - polling delivery posture (`acp.sessions.events` + `tasks.events` + `tasks.get`)
   - ACP-shaped capability flags
   - session-lifecycle method discovery
   - prompt/content-block capability discovery
   - shared portable tool catalog exposure
 - shared ACP session lifecycle in Zig with:
   - `acp.sessions.new`
+  - `acp.sessions.load`
+  - `acp.sessions.resume`
   - `acp.sessions.list`
   - `acp.sessions.get`
   - `acp.sessions.messages`
+- `acp.sessions.events`
+  - `acp.sessions.events`
   - `acp.sessions.fork`
+  - `acp.sessions.cancel`
   - durable session metadata plus transcript storage in shared runtime state
 - shared `acp.prompt` handling in Zig with:
   - durable user/assistant transcript recording
@@ -79,10 +84,14 @@ The shared task polling seam is:
 The shared ACP session lifecycle now lives in Zig runtime state and is available through both hosted `/rpc` and bare-metal `RUNTIMECALL`:
 
 - `acp.sessions.new` -> create a new ACP session with optional title/cwd metadata
-- `acp.sessions.list` -> list ACP sessions with message/task counters
-- `acp.sessions.get` -> fetch one ACP session plus latest transcript/task cursor state
+- `acp.sessions.load` -> load an existing ACP session and refresh cwd/title metadata
+- `acp.sessions.resume` -> resume an ACP session, clearing a prior cancel request and creating the session if missing
+- `acp.sessions.list` -> list ACP sessions with message/task/event counters
+- `acp.sessions.get` -> fetch one ACP session plus latest transcript/task/event cursor state
 - `acp.sessions.messages` -> read the durable ACP transcript for one session
+- `acp.sessions.events` -> poll durable ACP session events for session lifecycle, messages, and mirrored delegated task progress
 - `acp.sessions.fork` -> clone an ACP session into a child session with copied transcript state
+- `acp.sessions.cancel` -> mark an ACP session canceled so new prompts are blocked until resume
 
 Transcript messages are stored in shared runtime state with per-message ids, roles, kinds, timestamps, and content-block text payloads. Forked sessions preserve lineage through `sourceSessionId` so adapters can reconstruct parent/child flows.
 
@@ -104,7 +113,7 @@ Two main paths exist:
    - persist task receipts and per-step events into shared runtime state
    - append an assistant `task_summary` transcript message that points back to the delegated task receipt
 
-This means ACP prompts, delegated work, task receipts/events, and transcript history now line up across both runtime modes.
+This means ACP prompts, session cancel/resume state, delegated work, task receipts/events, mirrored ACP session events, and transcript history now line up across both runtime modes.
 
 ## Delegated tool gating
 

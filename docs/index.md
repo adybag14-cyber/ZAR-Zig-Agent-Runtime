@@ -4,7 +4,7 @@ Full documentation for ZAR-Zig-Agent-Runtime, the Zig runtime port of OpenClaw.
 
 ## Status Snapshot
 
-- RPC surface in Zig: `199` methods
+- RPC surface in Zig: `203` methods
 - Pinned tri-baseline parity gate:
   - Go baseline (`v2.14.0-go`): `134/134`
   - Original OpenClaw baseline (`v2026.3.13-1`): `100/100`
@@ -15,15 +15,15 @@ Full documentation for ZAR-Zig-Agent-Runtime, the Zig runtime port of OpenClaw.
   - Original OpenClaw baseline (`v2026.3.13-1`): `100/100`
   - Original OpenClaw beta baseline (`v2026.3.13-beta.1`): `100/100`
   - Union baseline: `141/141` (`MISSING_IN_ZIG=0`)
-- Latest local validation: `zig build test --summary all` -> `1066 passed; 3 skipped; 0 failed`
+- Latest local validation: `zig build test --summary all` -> `1068 passed; 3 skipped; 0 failed`
 - Current edge release target tag: `v0.2.0-zig-edge.31`
 - License posture: repo-wide `GPL-2.0-only` with Linux-style SPDX headers on repo-owned source and script files
 - Toolchain lane: Codeberg `master` is canonical; `adybag14-cyber/zig` provides rolling `latest-master` and immutable `upstream-<sha>` Windows releases for refresh and reproducibility.
 - Recent Hermes/ZAR runtime progress (2026-03-27):
-  - shared ACP session lifecycle now ships in Zig through `acp.sessions.list|new|get|messages|fork` on both hosted `/rpc` and bare-metal `RUNTIMECALL`
-  - `acp.prompt` now records durable ACP transcripts in shared runtime state and can launch delegated Zig task batches when prompt params carry work
-  - `acp.describe` now advertises ACP session/prompt discovery metadata alongside the earlier shared task receipt/event polling seam
-  - latest local validation covers hosted plus both bare-metal images with `1066` passing tests (`3` skipped)
+  - shared ACP session lifecycle now ships in Zig through `acp.sessions.list|new|load|resume|get|messages|events|fork|cancel` on both hosted `/rpc` and bare-metal `RUNTIMECALL`
+  - `acp.prompt` now records durable ACP transcripts in shared runtime state, respects cancel/resume session state, and can launch delegated Zig task batches when prompt params carry work
+  - `acp.describe` now advertises ACP session/prompt discovery metadata, `acp.sessions.events`, and the earlier shared task receipt/event polling seam
+  - latest local validation covers hosted plus both bare-metal images with `1068` passing tests (`3` skipped)
 
 ## Documentation Map
 

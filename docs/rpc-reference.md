@@ -21,16 +21,16 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 
 ## Summary
 
-- Total methods: **199**
+- Total methods: **203**
 - Prefix groups: **37**
-- Runtime portability note: `tools.catalog` now reports `runtimeTarget` plus per-tool `kind`, `approvalSensitive`, `supportedOnHosted`, `supportedOnBaremetal`, and `currentRuntimeSupported` metadata; `acp.describe`, `acp.sessions.list|new|get|messages|fork`, `acp.prompt`, and `tasks.list|get|events|search` expose the shared ACP session/prompt/task contract through both hosted `/rpc` and bare-metal `RUNTIMECALL`.
+- Runtime portability note: `tools.catalog` now reports `runtimeTarget` plus per-tool `kind`, `approvalSensitive`, `supportedOnHosted`, `supportedOnBaremetal`, and `currentRuntimeSupported` metadata; `acp.describe`, `acp.sessions.list|new|load|resume|get|messages|events|fork|cancel`, `acp.prompt`, and `tasks.list|get|events|search` expose the shared ACP session/prompt/task contract through both hosted `/rpc` and bare-metal `RUNTIMECALL`.
 
 ## Prefix Overview
 
 | Prefix | Count |
 | --- | ---: |
 | (root) | 15 |
-| acp | 7 |
+| acp | 11 |
 | agent | 2 |
 | agents | 7 |
 | auth | 6 |
@@ -91,11 +91,15 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 
 - acp.describe
 - acp.prompt
+- acp.sessions.cancel
+- acp.sessions.events
 - acp.sessions.fork
 - acp.sessions.get
 - acp.sessions.list
+- acp.sessions.load
 - acp.sessions.messages
 - acp.sessions.new
+- acp.sessions.resume
 
 ### agent
 

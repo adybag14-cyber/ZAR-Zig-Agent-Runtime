@@ -30,6 +30,7 @@ pub const InputError = error{
     PathTraversalDetected,
     PathSymlinkDisallowed,
     SessionNotFound,
+    SessionCancelled,
     TaskNotFound,
     ProcessNotFound,
     ProcessManagementUnsupported,
@@ -377,16 +378,21 @@ pub const AcpSessionItem = struct {
     cwd: []const u8,
     title: []const u8,
     sourceSessionId: ?[]const u8 = null,
+    status: []const u8,
+    cancelRequested: bool,
     lastMessage: []const u8,
     messageCount: usize,
+    eventCount: usize,
     taskCount: usize,
     latestMessageId: u64,
+    latestEventId: u64,
 
     pub fn deinit(self: *AcpSessionItem, allocator: std.mem.Allocator) void {
         allocator.free(self.sessionId);
         allocator.free(self.cwd);
         allocator.free(self.title);
         if (self.sourceSessionId) |value| allocator.free(value);
+        allocator.free(self.status);
         allocator.free(self.lastMessage);
     }
 };
@@ -450,6 +456,24 @@ pub const AcpSessionNewResult = struct {
     }
 };
 
+pub const AcpSessionLoadResult = struct {
+    loaded: bool,
+    session: AcpSessionItem,
+
+    pub fn deinit(self: *AcpSessionLoadResult, allocator: std.mem.Allocator) void {
+        self.session.deinit(allocator);
+    }
+};
+
+pub const AcpSessionResumeResult = struct {
+    created: bool,
+    session: AcpSessionItem,
+
+    pub fn deinit(self: *AcpSessionResumeResult, allocator: std.mem.Allocator) void {
+        self.session.deinit(allocator);
+    }
+};
+
 pub const AcpSessionForkResult = struct {
     sourceSessionId: []const u8,
     clonedMessages: usize,
@@ -458,6 +482,56 @@ pub const AcpSessionForkResult = struct {
     pub fn deinit(self: *AcpSessionForkResult, allocator: std.mem.Allocator) void {
         allocator.free(self.sourceSessionId);
         self.session.deinit(allocator);
+    }
+};
+
+pub const AcpSessionCancelResult = struct {
+    cancelRequested: bool,
+    session: AcpSessionItem,
+
+    pub fn deinit(self: *AcpSessionCancelResult, allocator: std.mem.Allocator) void {
+        self.session.deinit(allocator);
+    }
+};
+
+pub const AcpSessionEventItem = struct {
+    eventId: u64,
+    sessionId: []const u8,
+    taskId: ?[]const u8 = null,
+    messageId: ?u64 = null,
+    atMs: i64,
+    kind: []const u8,
+    role: ?[]const u8 = null,
+    toolCallId: ?[]const u8 = null,
+    tool: ?[]const u8 = null,
+    toolKind: ?[]const u8 = null,
+    status: ?[]const u8 = null,
+    preview: ?[]const u8 = null,
+
+    pub fn deinit(self: *AcpSessionEventItem, allocator: std.mem.Allocator) void {
+        allocator.free(self.sessionId);
+        if (self.taskId) |value| allocator.free(value);
+        allocator.free(self.kind);
+        if (self.role) |value| allocator.free(value);
+        if (self.toolCallId) |value| allocator.free(value);
+        if (self.tool) |value| allocator.free(value);
+        if (self.toolKind) |value| allocator.free(value);
+        if (self.status) |value| allocator.free(value);
+        if (self.preview) |value| allocator.free(value);
+    }
+};
+
+pub const AcpSessionEventsResult = struct {
+    sessionId: []const u8,
+    count: usize,
+    cursor: u64,
+    hasMore: bool,
+    items: []AcpSessionEventItem,
+
+    pub fn deinit(self: *AcpSessionEventsResult, allocator: std.mem.Allocator) void {
+        allocator.free(self.sessionId);
+        for (self.items) |*item| item.deinit(allocator);
+        allocator.free(self.items);
     }
 };
 
@@ -472,6 +546,7 @@ pub const AcpPromptResult = struct {
     promptText: []const u8,
     promptBlocks: usize,
     taskCount: usize,
+    latestEventId: u64,
     tasks: []TaskListItem,
     assistantMessage: AcpMessageItem,
     response: []AcpContentBlock,
@@ -591,6 +666,7 @@ pub const Snapshot = struct {
     persisted: bool,
     sessions: usize,
     sessionMessages: usize,
+    sessionEvents: usize,
     tasks: usize,
     taskEvents: usize,
     queueDepth: usize,
@@ -649,6 +725,7 @@ pub const ToolRuntime = struct {
             .persisted = runtime_snapshot.persisted,
             .sessions = runtime_snapshot.sessions,
             .sessionMessages = runtime_snapshot.sessionMessages,
+            .sessionEvents = runtime_snapshot.sessionEvents,
             .tasks = runtime_snapshot.tasks,
             .taskEvents = runtime_snapshot.taskEvents,
             .queueDepth = runtime_snapshot.pendingJobs,
@@ -661,12 +738,13 @@ pub const ToolRuntime = struct {
         const runtime_snapshot = self.snapshot();
         return std.fmt.allocPrint(
             allocator,
-            "state_path={s}\npersisted={d}\nsessions={d}\nsession_messages={d}\ntasks={d}\ntask_events={d}\nqueue_depth={d}\nleased_jobs={d}\nrecovery_backlog={d}\n",
+            "state_path={s}\npersisted={d}\nsessions={d}\nsession_messages={d}\nsession_events={d}\ntasks={d}\ntask_events={d}\nqueue_depth={d}\nleased_jobs={d}\nrecovery_backlog={d}\n",
             .{
                 runtime_snapshot.statePath,
                 @intFromBool(runtime_snapshot.persisted),
                 runtime_snapshot.sessions,
                 runtime_snapshot.sessionMessages,
+                runtime_snapshot.sessionEvents,
                 runtime_snapshot.tasks,
                 runtime_snapshot.taskEvents,
                 runtime_snapshot.queueDepth,
@@ -1104,10 +1182,14 @@ pub const ToolRuntime = struct {
             .cwd = try allocator.dupe(u8, session.cwd),
             .title = try allocator.dupe(u8, session.title),
             .sourceSessionId = if (session.source_session_id) |value| try allocator.dupe(u8, value) else null,
+            .status = try allocator.dupe(u8, session.status),
+            .cancelRequested = session.cancel_requested,
             .lastMessage = try allocator.dupe(u8, session.last_message),
             .messageCount = self.runtime_state.sessionMessageCount(session_id),
+            .eventCount = self.runtime_state.sessionEventCount(session_id),
             .taskCount = self.taskCountForSession(session_id),
             .latestMessageId = self.runtime_state.latestSessionMessageId(session_id),
+            .latestEventId = self.runtime_state.latestSessionEventId(session_id),
         };
     }
 
@@ -1124,6 +1206,27 @@ pub const ToolRuntime = struct {
             .text = try allocator.dupe(u8, message.text),
             .taskId = if (message.task_id) |value| try allocator.dupe(u8, value) else null,
             .createdAtMs = message.created_unix_ms,
+        };
+    }
+
+    fn buildAcpSessionEventItem(
+        _: *const ToolRuntime,
+        allocator: std.mem.Allocator,
+        event: *const state.SessionEvent,
+    ) !AcpSessionEventItem {
+        return .{
+            .eventId = event.event_id,
+            .sessionId = try allocator.dupe(u8, event.session_id),
+            .taskId = if (event.task_id) |value| try allocator.dupe(u8, value) else null,
+            .messageId = event.message_id,
+            .atMs = event.at_unix_ms,
+            .kind = try allocator.dupe(u8, event.kind),
+            .role = if (event.role) |value| try allocator.dupe(u8, value) else null,
+            .toolCallId = if (event.tool_call_id) |value| try allocator.dupe(u8, value) else null,
+            .tool = if (event.tool) |value| try allocator.dupe(u8, value) else null,
+            .toolKind = if (event.tool_kind) |value| try allocator.dupe(u8, value) else null,
+            .status = if (event.status) |value| try allocator.dupe(u8, value) else null,
+            .preview = if (event.preview) |value| try allocator.dupe(u8, value) else null,
         };
     }
 
@@ -1235,6 +1338,55 @@ pub const ToolRuntime = struct {
         defer allocator.free(session_id);
         const created = self.runtime_state.getSession(session_id) == null;
         try self.runtime_state.ensureSessionMeta(session_id, cwd, title, null, now_ms);
+        try self.runtime_state.setSessionStatus(session_id, "idle", false, now_ms);
+        _ = try self.runtime_state.recordSessionEvent(session_id, null, null, now_ms, if (created) "session.new" else "session.update", null, null, null, null, "ready", if (title.len > 0) title else session_id);
+        return .{ .created = created, .session = try self.buildAcpSessionItem(allocator, session_id) };
+    }
+
+    fn acpSessionLoadFromFrame(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        frame_json: []const u8,
+    ) !AcpSessionLoadResult {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+
+        const params = try getParamsObject(parsed.value);
+        const session_id = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "sessionId", "session" }, ""), " \t\r\n");
+        if (session_id.len == 0) return error.MissingSessionId;
+        if (self.runtime_state.getSession(session_id) == null) return error.SessionNotFound;
+
+        const now_ms = nowUnixMilliseconds(self.io);
+        const cwd = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "cwd", "workdir", "workingDirectory" }, ""), " \t\r\n");
+        const title = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "title", "sessionTitle" }, ""), " \t\r\n");
+        try self.runtime_state.ensureSessionMeta(session_id, cwd, title, null, now_ms);
+        _ = try self.runtime_state.recordSessionEvent(session_id, null, null, now_ms, "session.load", null, null, null, null, "loaded", if (title.len > 0) title else session_id);
+        return .{ .loaded = true, .session = try self.buildAcpSessionItem(allocator, session_id) };
+    }
+
+    fn acpSessionResumeFromFrame(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        frame_json: []const u8,
+    ) !AcpSessionResumeResult {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+
+        const params = try getParamsObject(parsed.value);
+        const now_ms = nowUnixMilliseconds(self.io);
+        const session_id_raw = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "sessionId", "session" }, ""), " \t\r\n");
+        const cwd = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "cwd", "workdir", "workingDirectory" }, ""), " \t\r\n");
+        const title = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "title", "sessionTitle" }, ""), " \t\r\n");
+        const session_id = if (session_id_raw.len > 0)
+            try allocator.dupe(u8, session_id_raw)
+        else
+            try generateAcpSessionIdAlloc(allocator, now_ms, self.runtime_state.next_session_message_id);
+        defer allocator.free(session_id);
+
+        const created = self.runtime_state.getSession(session_id) == null;
+        try self.runtime_state.ensureSessionMeta(session_id, cwd, title, null, now_ms);
+        try self.runtime_state.setSessionStatus(session_id, "idle", false, now_ms);
+        _ = try self.runtime_state.recordSessionEvent(session_id, null, null, now_ms, "session.resume", null, null, null, null, "ready", if (title.len > 0) title else session_id);
         return .{ .created = created, .session = try self.buildAcpSessionItem(allocator, session_id) };
     }
 
@@ -1294,6 +1446,62 @@ pub const ToolRuntime = struct {
         return self.acpSessionMessages(allocator, session_id, after_message_id, limit);
     }
 
+    fn acpSessionEvents(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        session_id: []const u8,
+        after_event_id: u64,
+        limit: usize,
+    ) !AcpSessionEventsResult {
+        if (self.runtime_state.getSession(session_id) == null) return error.SessionNotFound;
+
+        var items: std.ArrayList(AcpSessionEventItem) = .empty;
+        errdefer {
+            for (items.items) |*item| item.deinit(allocator);
+            items.deinit(allocator);
+        }
+
+        const capped_limit = if (limit == 0) 100 else limit;
+        var cursor = after_event_id;
+        var has_more = false;
+
+        for (self.runtime_state.session_events.items) |*entry| {
+            if (!std.mem.eql(u8, entry.session_id, session_id)) continue;
+            if (entry.event_id <= after_event_id) continue;
+            if (items.items.len < capped_limit) {
+                try items.append(allocator, try self.buildAcpSessionEventItem(allocator, entry));
+                cursor = entry.event_id;
+            } else {
+                has_more = true;
+                break;
+            }
+        }
+
+        return .{
+            .sessionId = try allocator.dupe(u8, session_id),
+            .count = items.items.len,
+            .cursor = cursor,
+            .hasMore = has_more,
+            .items = try items.toOwnedSlice(allocator),
+        };
+    }
+
+    fn acpSessionEventsFromFrame(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        frame_json: []const u8,
+    ) !AcpSessionEventsResult {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+
+        const params = try getParamsObject(parsed.value);
+        const session_id = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "sessionId", "session" }, ""), " \t\r\n");
+        if (session_id.len == 0) return error.MissingSessionId;
+        const after_event_id = getOptionalU64(params, "afterEventId", getOptionalU64(params, "cursor", 0));
+        const limit = @as(usize, @intCast(getOptionalU32(params, "limit", 100)));
+        return self.acpSessionEvents(allocator, session_id, after_event_id, limit);
+    }
+
     fn acpSessionForkFromFrame(
         self: *ToolRuntime,
         allocator: std.mem.Allocator,
@@ -1351,11 +1559,32 @@ pub const ToolRuntime = struct {
             cloned_messages += 1;
         }
 
+        _ = try self.runtime_state.recordSessionEvent(dest_session_id, null, null, now_ms, "session.fork", null, null, null, null, "forked", source_session_id);
+
         return .{
             .sourceSessionId = try allocator.dupe(u8, source_session_id),
             .clonedMessages = cloned_messages,
             .session = try self.buildAcpSessionItem(allocator, dest_session_id),
         };
+    }
+
+    fn acpSessionCancelFromFrame(
+        self: *ToolRuntime,
+        allocator: std.mem.Allocator,
+        frame_json: []const u8,
+    ) !AcpSessionCancelResult {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+
+        const params = try getParamsObject(parsed.value);
+        const session_id = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "sessionId", "session" }, ""), " \t\r\n");
+        if (session_id.len == 0) return error.MissingSessionId;
+        if (self.runtime_state.getSession(session_id) == null) return error.SessionNotFound;
+
+        const now_ms = nowUnixMilliseconds(self.io);
+        try self.runtime_state.setSessionStatus(session_id, "cancel_requested", true, now_ms);
+        _ = try self.runtime_state.recordSessionEvent(session_id, null, null, now_ms, "session.cancel", null, null, null, null, "cancel_requested", session_id);
+        return .{ .cancelRequested = true, .session = try self.buildAcpSessionItem(allocator, session_id) };
     }
 
     fn acpPromptFromFrame(
@@ -1396,7 +1625,10 @@ pub const ToolRuntime = struct {
         defer allocator.free(session_id);
 
         try self.runtime_state.ensureSessionMeta(session_id, cwd, title, null, now_ms);
-        _ = try self.runtime_state.appendSessionMessage(session_id, "user", "prompt", prompt_text.text, null, now_ms);
+        if (self.runtime_state.sessionCancelRequested(session_id)) return error.SessionCancelled;
+        try self.runtime_state.setSessionStatus(session_id, if (has_delegated_work) "running" else "active", false, now_ms);
+        const user_message_id = try self.runtime_state.appendSessionMessage(session_id, "user", "prompt", prompt_text.text, null, now_ms);
+        _ = try self.runtime_state.recordSessionEvent(session_id, null, user_message_id, now_ms, "message.user", "user", null, null, null, if (has_delegated_work) "running" else "recorded", prompt_text.text);
 
         var ok_result = true;
         var task_items = try allocator.alloc(TaskListItem, 0);
@@ -1405,6 +1637,7 @@ pub const ToolRuntime = struct {
         errdefer allocator.free(assistant_text);
         var assistant_kind: []const u8 = "message";
         var assistant_task_id: ?[]const u8 = null;
+        var session_status: []const u8 = "idle";
 
         if (has_delegated_work) {
             allocator.free(assistant_text);
@@ -1422,6 +1655,11 @@ pub const ToolRuntime = struct {
             try task_receipts.recordBatch(&self.runtime_state, &delegate_result);
             ok_result = delegate_result.ok;
             task_count = delegate_result.results.len;
+            if (delegate_result.blocked > 0) {
+                session_status = "awaiting_approval";
+            } else if (delegate_result.failed > 0 and delegate_result.succeeded == 0) {
+                session_status = "error";
+            }
             if (task_count > 0) {
                 task_items = try allocator.alloc(TaskListItem, task_count);
                 for (delegate_result.results, 0..) |task, idx| {
@@ -1441,7 +1679,21 @@ pub const ToolRuntime = struct {
         }
 
         const assistant_now_ms = nowUnixMilliseconds(self.io);
+        try self.runtime_state.setSessionStatus(session_id, session_status, false, assistant_now_ms);
         const assistant_message_id = try self.runtime_state.appendSessionMessage(session_id, "assistant", assistant_kind, assistant_text, assistant_task_id, assistant_now_ms);
+        _ = try self.runtime_state.recordSessionEvent(
+            session_id,
+            assistant_task_id,
+            assistant_message_id,
+            assistant_now_ms,
+            if (std.mem.eql(u8, assistant_kind, "task_summary")) "message.task_summary" else "message.assistant",
+            "assistant",
+            null,
+            null,
+            null,
+            session_status,
+            assistant_text,
+        );
         const assistant_message = AcpMessageItem{
             .messageId = assistant_message_id,
             .sessionId = try allocator.dupe(u8, session_id),
@@ -1462,12 +1714,12 @@ pub const ToolRuntime = struct {
             .promptText = try allocator.dupe(u8, prompt_text.text),
             .promptBlocks = prompt_text.blockCount,
             .taskCount = task_count,
+            .latestEventId = self.runtime_state.latestSessionEventId(session_id),
             .tasks = task_items,
             .assistantMessage = assistant_message,
             .response = response_blocks,
         };
     }
-
     fn taskEventCountForTask(self: *const ToolRuntime, task_id: []const u8) usize {
         var count: usize = 0;
         for (self.runtime_state.task_events.items) |entry| {
@@ -1767,7 +2019,7 @@ pub const ToolRuntime = struct {
                 .agent = .{
                     .name = "openclaw-zig",
                     .displayName = "ZAR / OpenClaw Zig Runtime",
-                    .description = "Hermes-guided ACP bridge metadata, delegated task receipts, and polling-based event delivery for the Zig runtime.",
+                    .description = "Hermes-guided ACP bridge metadata, portable session/task receipts, and polling-based session event delivery for the Zig runtime.",
                     .distribution = .{
                         .type = "command",
                         .command = "openclaw-zig",
@@ -1777,15 +2029,20 @@ pub const ToolRuntime = struct {
                 .runtimeTarget = tool_contract.currentRuntimeTargetLabel(builtin.os.tag),
                 .eventDelivery = .{
                     .mode = "poll",
-                    .eventsMethod = "tasks.events",
+                    .eventsMethod = "acp.sessions.events",
+                    .taskEventsMethod = "tasks.events",
                     .receiptsMethod = "tasks.get",
                 },
                 .sessionLifecycle = .{
                     .newMethod = "acp.sessions.new",
+                    .loadMethod = "acp.sessions.load",
+                    .resumeMethod = "acp.sessions.resume",
                     .listMethod = "acp.sessions.list",
                     .getMethod = "acp.sessions.get",
                     .messagesMethod = "acp.sessions.messages",
+                    .eventsMethod = "acp.sessions.events",
                     .forkMethod = "acp.sessions.fork",
+                    .cancelMethod = "acp.sessions.cancel",
                     .promptMethod = "acp.prompt",
                 },
                 .contentBlocks = .{
@@ -1802,8 +2059,12 @@ pub const ToolRuntime = struct {
                     .sessionHistory = true,
                     .sessionSearch = true,
                     .sessionLifecycle = true,
+                    .sessionLoad = true,
+                    .sessionResume = true,
                     .sessionMessages = true,
+                    .sessionEvents = true,
                     .sessionFork = true,
+                    .sessionCancel = true,
                     .prompt = true,
                     .promptBlocks = true,
                     .approvals = true,
@@ -1830,6 +2091,22 @@ pub const ToolRuntime = struct {
             return envelope.encodeResult(allocator, request.id, session_new_result);
         }
 
+        if (std.mem.eql(u8, request.method, "acp.sessions.load")) {
+            var session_load_result = self.acpSessionLoadFromFrame(allocator, frame_json) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{ .code = rpcErrorCode(err), .message = @errorName(err) });
+            };
+            defer session_load_result.deinit(allocator);
+            return envelope.encodeResult(allocator, request.id, session_load_result);
+        }
+
+        if (std.mem.eql(u8, request.method, "acp.sessions.resume")) {
+            var session_resume_result = self.acpSessionResumeFromFrame(allocator, frame_json) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{ .code = rpcErrorCode(err), .message = @errorName(err) });
+            };
+            defer session_resume_result.deinit(allocator);
+            return envelope.encodeResult(allocator, request.id, session_resume_result);
+        }
+
         if (std.mem.eql(u8, request.method, "acp.sessions.get")) {
             var session_get_result = self.acpSessionGetFromFrame(allocator, frame_json) catch |err| {
                 return envelope.encodeError(allocator, request.id, .{ .code = rpcErrorCode(err), .message = @errorName(err) });
@@ -1846,12 +2123,28 @@ pub const ToolRuntime = struct {
             return envelope.encodeResult(allocator, request.id, session_messages_result);
         }
 
+        if (std.mem.eql(u8, request.method, "acp.sessions.events")) {
+            var session_events_result = self.acpSessionEventsFromFrame(allocator, frame_json) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{ .code = rpcErrorCode(err), .message = @errorName(err) });
+            };
+            defer session_events_result.deinit(allocator);
+            return envelope.encodeResult(allocator, request.id, session_events_result);
+        }
+
         if (std.mem.eql(u8, request.method, "acp.sessions.fork")) {
             var session_fork_result = self.acpSessionForkFromFrame(allocator, frame_json) catch |err| {
                 return envelope.encodeError(allocator, request.id, .{ .code = rpcErrorCode(err), .message = @errorName(err) });
             };
             defer session_fork_result.deinit(allocator);
             return envelope.encodeResult(allocator, request.id, session_fork_result);
+        }
+
+        if (std.mem.eql(u8, request.method, "acp.sessions.cancel")) {
+            var session_cancel_result = self.acpSessionCancelFromFrame(allocator, frame_json) catch |err| {
+                return envelope.encodeError(allocator, request.id, .{ .code = rpcErrorCode(err), .message = @errorName(err) });
+            };
+            defer session_cancel_result.deinit(allocator);
+            return envelope.encodeResult(allocator, request.id, session_cancel_result);
         }
 
         if (std.mem.eql(u8, request.method, "acp.prompt")) {
@@ -2291,6 +2584,7 @@ pub const ToolRuntime = struct {
                 .persisted = runtime_snapshot.persisted,
                 .sessions = runtime_snapshot.sessions,
                 .sessionMessages = runtime_snapshot.sessionMessages,
+                .sessionEvents = runtime_snapshot.sessionEvents,
                 .tasks = runtime_snapshot.tasks,
                 .taskEvents = runtime_snapshot.taskEvents,
                 .queueDepth = runtime_snapshot.queueDepth,
@@ -2313,6 +2607,8 @@ pub const ToolRuntime = struct {
                     .cwd = entry.value_ptr.cwd,
                     .title = entry.value_ptr.title,
                     .source_session_id = entry.value_ptr.source_session_id,
+                    .status = entry.value_ptr.status,
+                    .cancel_requested = entry.value_ptr.cancel_requested,
                 });
             }
 
@@ -3945,6 +4241,7 @@ fn rpcErrorCode(err: anyerror) i64 {
         error.ProcessManagementUnsupported => -32012,
         error.WebFetchUnsupported => -32013,
         error.SessionNotFound => -32044,
+        error.SessionCancelled => -32047,
         error.TaskNotFound => -32046,
         error.ProcessNotFound => -32045,
         else => -32000,
@@ -4348,6 +4645,10 @@ test "tool runtime RPC frame bridge serves file exec and session methods" {
     try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"runtimeTarget\":\"hosted\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"tool\":\"delegate_task\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"tool\":\"acp.sessions.new\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"tool\":\"acp.sessions.load\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"tool\":\"acp.sessions.resume\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"tool\":\"acp.sessions.events\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"tool\":\"acp.sessions.cancel\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"tool\":\"acp.prompt\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"tool\":\"sessions.history\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog_response, "\"supportedOnBaremetal\":false") != null);
@@ -4360,9 +4661,14 @@ test "tool runtime RPC frame bridge serves file exec and session methods" {
     defer allocator.free(acp_response);
     try std.testing.expect(std.mem.indexOf(u8, acp_response, "\"schemaVersion\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, acp_response, "\"mode\":\"poll\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_response, "acp.sessions.events") != null);
     try std.testing.expect(std.mem.indexOf(u8, acp_response, "tasks.events") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_response, "acp.sessions.load") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_response, "acp.sessions.resume") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_response, "acp.sessions.cancel") != null);
     try std.testing.expect(std.mem.indexOf(u8, acp_response, "acp.sessions.new") != null);
     try std.testing.expect(std.mem.indexOf(u8, acp_response, "acp.prompt") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_response, "\"sessionEvents\":true") != null);
 
     const acp_session_new_frame = try std.fmt.allocPrint(
         allocator,
@@ -4376,6 +4682,40 @@ test "tool runtime RPC frame bridge serves file exec and session methods" {
     try std.testing.expect(std.mem.indexOf(u8, acp_session_new_response, "\"sessionId\":\"acp-runtime\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, acp_session_new_response, "\"messageCount\":0") != null);
 
+    const acp_session_load_frame = try std.fmt.allocPrint(
+        allocator,
+        "{{\"id\":\"rt-acp-session-load\",\"method\":\"acp.sessions.load\",\"params\":{{\"sessionId\":\"acp-runtime\",\"cwd\":\"{s}\"}}}}",
+        .{json_root},
+    );
+    defer allocator.free(acp_session_load_frame);
+    const acp_session_load_response = try runtime.handleRpcFrameAlloc(allocator, acp_session_load_frame);
+    defer allocator.free(acp_session_load_response);
+    try std.testing.expect(std.mem.indexOf(u8, acp_session_load_response, "\"loaded\":true") != null);
+
+    const acp_cancel_response = try runtime.handleRpcFrameAlloc(
+        allocator,
+        "{\"id\":\"rt-acp-cancel\",\"method\":\"acp.sessions.cancel\",\"params\":{\"sessionId\":\"acp-runtime\"}}",
+    );
+    defer allocator.free(acp_cancel_response);
+    try std.testing.expect(std.mem.indexOf(u8, acp_cancel_response, "\"cancelRequested\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_cancel_response, "cancel_requested") != null);
+
+    const acp_prompt_blocked_response = try runtime.handleRpcFrameAlloc(
+        allocator,
+        "{\"id\":\"rt-acp-prompt-blocked\",\"method\":\"acp.prompt\",\"params\":{\"sessionId\":\"acp-runtime\",\"content\":[{\"type\":\"text\",\"text\":\"Blocked while canceled\"}]}}",
+    );
+    defer allocator.free(acp_prompt_blocked_response);
+    try std.testing.expect(std.mem.indexOf(u8, acp_prompt_blocked_response, "\"code\":-32047") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_prompt_blocked_response, "SessionCancelled") != null);
+
+    const acp_session_resume_response = try runtime.handleRpcFrameAlloc(
+        allocator,
+        "{\"id\":\"rt-acp-session-resume\",\"method\":\"acp.sessions.resume\",\"params\":{\"sessionId\":\"acp-runtime\"}}",
+    );
+    defer allocator.free(acp_session_resume_response);
+    try std.testing.expect(std.mem.indexOf(u8, acp_session_resume_response, "\"created\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_session_resume_response, "\"cancelRequested\":false") != null);
+
     const acp_prompt_response = try runtime.handleRpcFrameAlloc(
         allocator,
         "{\"id\":\"rt-acp-prompt\",\"method\":\"acp.prompt\",\"params\":{\"sessionId\":\"acp-runtime\",\"content\":[{\"type\":\"text\",\"text\":\"Plan a portable ACP session flow\"}]}}",
@@ -4383,7 +4723,18 @@ test "tool runtime RPC frame bridge serves file exec and session methods" {
     defer allocator.free(acp_prompt_response);
     try std.testing.expect(std.mem.indexOf(u8, acp_prompt_response, "\"ok\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, acp_prompt_response, "\"taskCount\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_prompt_response, "\"latestEventId\":") != null);
     try std.testing.expect(std.mem.indexOf(u8, acp_prompt_response, "Prompt recorded in the ACP session") != null);
+
+    const acp_events_response = try runtime.handleRpcFrameAlloc(
+        allocator,
+        "{\"id\":\"rt-acp-events\",\"method\":\"acp.sessions.events\",\"params\":{\"sessionId\":\"acp-runtime\",\"limit\":20}}",
+    );
+    defer allocator.free(acp_events_response);
+    try std.testing.expect(std.mem.indexOf(u8, acp_events_response, "\"count\":6") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_events_response, "session.resume") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_events_response, "message.user") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_events_response, "message.assistant") != null);
 
     const acp_messages_response = try runtime.handleRpcFrameAlloc(
         allocator,
@@ -4393,7 +4744,6 @@ test "tool runtime RPC frame bridge serves file exec and session methods" {
     try std.testing.expect(std.mem.indexOf(u8, acp_messages_response, "\"count\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, acp_messages_response, "\"role\":\"user\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, acp_messages_response, "\"role\":\"assistant\"") != null);
-
     const acp_fork_response = try runtime.handleRpcFrameAlloc(
         allocator,
         "{\"id\":\"rt-acp-fork\",\"method\":\"acp.sessions.fork\",\"params\":{\"sourceSessionId\":\"acp-runtime\",\"newSessionId\":\"acp-runtime-fork\"}}",
@@ -4451,6 +4801,14 @@ test "tool runtime RPC frame bridge serves file exec and session methods" {
     try std.testing.expect(std.mem.indexOf(u8, acp_delegate_messages_response, "\"count\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, acp_delegate_messages_response, "\"kind\":\"task_summary\"") != null);
 
+    const acp_delegate_events_response = try runtime.handleRpcFrameAlloc(
+        allocator,
+        "{\"id\":\"rt-acp-prompt-events\",\"method\":\"acp.sessions.events\",\"params\":{\"sessionId\":\"acp-runtime-exec\",\"limit\":20}}",
+    );
+    defer allocator.free(acp_delegate_events_response);
+    try std.testing.expect(std.mem.indexOf(u8, acp_delegate_events_response, "\"count\":8") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_delegate_events_response, "task.start") != null);
+    try std.testing.expect(std.mem.indexOf(u8, acp_delegate_events_response, "message.task_summary") != null);
     const delegate_test_path = try std.fs.path.join(allocator, &.{ root, "runtime-delegate.txt" });
     defer allocator.free(delegate_test_path);
     const json_delegate_test_path = try std.mem.replaceOwned(u8, allocator, delegate_test_path, "\\", "\\\\");
@@ -4518,7 +4876,7 @@ test "tool runtime RPC frame bridge serves file exec and session methods" {
     defer allocator.free(history_response);
     try std.testing.expect(std.mem.indexOf(u8, history_response, "\"count\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, history_response, "\"sessionId\":\"sess-rpc-delegate\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, history_response, "file.read") != null);
+    try std.testing.expect(std.mem.indexOf(u8, history_response, "delegate") != null);
 
     const session_search_response = try runtime.handleRpcFrameAlloc(
         allocator,
@@ -4535,6 +4893,7 @@ test "tool runtime RPC frame bridge serves file exec and session methods" {
     try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"id\":\"rt-snapshot\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"sessions\":5") != null);
     try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"sessionMessages\":6") != null);
+    try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"sessionEvents\":21") != null);
     try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"tasks\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, snapshot_response, "\"taskEvents\":12") != null);
 

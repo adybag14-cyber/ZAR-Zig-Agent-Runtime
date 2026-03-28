@@ -1,4 +1,5 @@
 const state = @import("state.zig");
+const tool_contract = @import("tool_contract.zig");
 const delegate_task = @import("../gateway/delegate_task.zig");
 
 pub fn recordBatch(
@@ -38,6 +39,21 @@ pub fn recordBatch(
                 event.status,
                 event.preview,
             );
+            if (task.sessionId.len > 0) {
+                _ = try runtime_state.recordSessionEvent(
+                    task.sessionId,
+                    task.taskId,
+                    null,
+                    event.atMs,
+                    event.kind,
+                    null,
+                    event.toolCallId,
+                    event.tool,
+                    if (event.tool) |tool| tool_contract.toolKindForMethod(tool) else null,
+                    event.status,
+                    event.preview,
+                );
+            }
         }
 
         if (task.sessionId.len > 0 and runtime_state.getSession(task.sessionId) == null) {
