@@ -25,6 +25,15 @@ const approvalPromptNodeId = "node-hermes-approval";
 const approvalDenyNodeId = "node-hermes-deny";
 
 
+/**
+ * Starts a local mock HTTP server that serves deterministic search and page responses for testing.
+ *
+ * Provides three endpoints: `GET /search?q=...` (returns HTML with two result links whose snippets include the query),
+ * `GET /page-1` (returns an HTML page containing the "Web Extract Sentinel One" marker), and
+ * `GET /page-2` (returns a JSON payload with `{"kind":"mock","content":"Web extract sentinel two"}`); all other paths return 404.
+ *
+ * @returns {Promise<{server: import('http').Server, baseUrl: string, close: () => Promise<void>}>} Resolves to an object containing the `http.Server` instance, a `baseUrl` pointing to the listening address, and a `close()` function that returns a promise which resolves when the server has stopped.
+ */
 function startMockWebServer() {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
