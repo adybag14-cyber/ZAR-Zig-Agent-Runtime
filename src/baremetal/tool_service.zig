@@ -6725,7 +6725,7 @@ test "baremetal tool service bridges persisted runtime queries and rpc calls" {
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_list_response, "\"sessionId\":\"svc-acp-runtime-fork\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, runtime_acp_list_response, "\"sessionId\":\"svc-acp-exec\"") != null);
 
-    const state_payload_after = try filesystem.readFileAlloc(std.testing.allocator, "/runtime/state/runtime-state.json", 8192);
+    const state_payload_after = try filesystem.readFileAlloc(std.testing.allocator, "/runtime/state/runtime-state.json", std.math.maxInt(usize));
     defer std.testing.allocator.free(state_payload_after);
     try std.testing.expect(std.mem.indexOf(u8, state_payload_after, "svc-delegate") != null);
     try std.testing.expect(std.mem.indexOf(u8, state_payload_after, runtime_task_id) != null);

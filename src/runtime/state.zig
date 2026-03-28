@@ -332,20 +332,23 @@ pub const RuntimeState = struct {
         if (self.sessions.getPtr(session_id)) |existing| {
             var changed = false;
             if (cwd.len > 0 and !std.mem.eql(u8, existing.cwd, cwd)) {
+                const new_cwd = try self.allocator.dupe(u8, cwd);
                 self.allocator.free(existing.cwd);
-                existing.cwd = try self.allocator.dupe(u8, cwd);
+                existing.cwd = new_cwd;
                 changed = true;
             }
             if (title.len > 0 and !std.mem.eql(u8, existing.title, title)) {
+                const new_title = try self.allocator.dupe(u8, title);
                 self.allocator.free(existing.title);
-                existing.title = try self.allocator.dupe(u8, title);
+                existing.title = new_title;
                 changed = true;
             }
             if (source_session_id) |source_id| {
                 if (existing.source_session_id) |existing_source| {
                     if (!std.mem.eql(u8, existing_source, source_id)) {
+                        const new_source_id = try self.allocator.dupe(u8, source_id);
                         self.allocator.free(existing_source);
-                        existing.source_session_id = try self.allocator.dupe(u8, source_id);
+                        existing.source_session_id = new_source_id;
                         changed = true;
                     }
                 } else {
@@ -393,8 +396,9 @@ pub const RuntimeState = struct {
             try self.ensureSessionMeta(session_id, "", "", null, now_unix_ms);
         }
         if (self.sessions.getPtr(session_id)) |existing| {
+            const new_message = try self.allocator.dupe(u8, text);
             self.allocator.free(existing.last_message);
-            existing.last_message = try self.allocator.dupe(u8, text);
+            existing.last_message = new_message;
             existing.updated_unix_ms = now_unix_ms;
         }
 
@@ -467,6 +471,19 @@ pub const RuntimeState = struct {
         for (self.task_receipts.items) |*existing| {
             if (!std.mem.eql(u8, existing.task_id, task_id)) continue;
 
+            const new_goal = try self.allocator.dupe(u8, goal);
+            errdefer self.allocator.free(new_goal);
+            const new_context = try self.allocator.dupe(u8, context);
+            errdefer self.allocator.free(new_context);
+            const new_session_id = try self.allocator.dupe(u8, session_id);
+            errdefer self.allocator.free(new_session_id);
+            const new_cwd = try self.allocator.dupe(u8, cwd);
+            errdefer self.allocator.free(new_cwd);
+            const new_status = try self.allocator.dupe(u8, status);
+            errdefer self.allocator.free(new_status);
+            const new_summary = try self.allocator.dupe(u8, summary);
+            errdefer self.allocator.free(new_summary);
+
             self.allocator.free(existing.goal);
             self.allocator.free(existing.context);
             self.allocator.free(existing.session_id);
@@ -474,12 +491,12 @@ pub const RuntimeState = struct {
             self.allocator.free(existing.status);
             self.allocator.free(existing.summary);
 
-            existing.goal = try self.allocator.dupe(u8, goal);
-            existing.context = try self.allocator.dupe(u8, context);
-            existing.session_id = try self.allocator.dupe(u8, session_id);
-            existing.cwd = try self.allocator.dupe(u8, cwd);
-            existing.status = try self.allocator.dupe(u8, status);
-            existing.summary = try self.allocator.dupe(u8, summary);
+            existing.goal = new_goal;
+            existing.context = new_context;
+            existing.session_id = new_session_id;
+            existing.cwd = new_cwd;
+            existing.status = new_status;
+            existing.summary = new_summary;
             existing.completed_steps = completed_steps;
             existing.total_steps = total_steps;
             existing.success_count = success_count;

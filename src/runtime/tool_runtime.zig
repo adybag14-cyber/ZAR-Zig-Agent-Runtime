@@ -1314,6 +1314,10 @@ pub const ToolRuntime = struct {
             try generateAcpSessionIdAlloc(allocator, now_ms, self.runtime_state.next_session_message_id);
         defer allocator.free(dest_session_id);
 
+        if (dest_session_id.len == 0) return error.InvalidSessionId;
+        if (std.mem.eql(u8, dest_session_id, source_session_id)) return error.CannotForkToSameSession;
+        if (self.runtime_state.getSession(dest_session_id) != null) return error.SessionAlreadyExists;
+
         const cwd_override = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "cwd", "workdir", "workingDirectory" }, ""), " \t\r\n");
         const title_override = std.mem.trim(u8, getOptionalStringAliases(params, &.{ "title", "sessionTitle" }, ""), " \t\r\n");
         const dest_cwd = if (cwd_override.len > 0) cwd_override else source.cwd;

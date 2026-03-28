@@ -21,9 +21,13 @@ const nodeBinary = process.execPath;
 const requireHostedProcessSupport =
   process.env.ZAR_HERMES_REQUIRE_PROCESS === "1" ||
   (process.env.ZAR_HERMES_REQUIRE_PROCESS !== "0" && process.platform !== "win32");
-const approvalPromptNodeId = "node-hermes-approval";
-const approvalDenyNodeId = "node-hermes-deny";
+const runId = Date.now();
+const approvalPromptNodeId = `node-hermes-approval-${runId}`;
+const approvalDenyNodeId = `node-hermes-deny-${runId}`;
 
+let snapshotGlobalApprovalMode = null;
+let snapshotPromptNodeApprovalMode = null;
+let snapshotDenyNodeApprovalMode = null;
 
 function startMockWebServer() {
   const server = http.createServer((req, res) => {
@@ -274,6 +278,13 @@ const acpDelegateMessagesResult = await rpc(
 assert.equal(acpDelegateMessagesResult.count, 2);
 assert.match(JSON.stringify(acpDelegateMessagesResult.items), /task_summary/);
 
+const snapshotGlobalResult = await rpc(
+  "exec.approvals.get",
+  {},
+  "approvals-snapshot-global",
+);
+snapshotGlobalApprovalMode = snapshotGlobalResult.approvals.mode;
+
 const approvalsAllowResult = await rpc(
   "exec.approvals.set",
   {
@@ -282,6 +293,17 @@ const approvalsAllowResult = await rpc(
   "approvals-allow",
 );
 assert.equal(approvalsAllowResult.approvals.mode, "allow");
+
+try {
+  const snapshotPromptResult = await rpc(
+    "exec.approvals.node.get",
+    { nodeId: approvalPromptNodeId },
+    "approvals-snapshot-prompt",
+  );
+  snapshotPromptNodeApprovalMode = snapshotPromptResult.approvals.mode;
+} catch {
+  snapshotPromptNodeApprovalMode = null;
+}
 
 const approvalPromptModeResult = await rpc(
   "exec.approvals.node.set",
@@ -347,6 +369,17 @@ const approvalGrantedResult = await rpc(
 );
 assert.equal(approvalGrantedResult.ok, true);
 assert.match(approvalGrantedResult.stdout, /approval-granted-js/);
+
+try {
+  const snapshotDenyResult = await rpc(
+    "exec.approvals.node.get",
+    { nodeId: approvalDenyNodeId },
+    "approvals-snapshot-deny",
+  );
+  snapshotDenyNodeApprovalMode = snapshotDenyResult.approvals.mode;
+} catch {
+  snapshotDenyNodeApprovalMode = null;
+}
 
 const approvalDenyModeResult = await rpc(
   "exec.approvals.node.set",
@@ -856,5 +889,45 @@ console.log(JSON.stringify({
 }, null, 2));
 }
 finally {
+  try {
+    if (snapshotGlobalApprovalMode !== null) {
+      await rpc(
+        "exec.approvals.set",
+        { mode: snapshotGlobalApprovalMode },
+        "approvals-restore-global",
+      );
+    }
+
+    if (snapshotPromptNodeApprovalMode !== null) {
+      await rpc(
+        "exec.approvals.node.set",
+        { nodeId: approvalPromptNodeId, mode: snapshotPromptNodeApprovalMode },
+        "approvals-restore-prompt",
+      );
+    } else {
+      await rpc(
+        "exec.approvals.node.delete",
+        { nodeId: approvalPromptNodeId },
+        "approvals-delete-prompt",
+      );
+    }
+
+    if (snapshotDenyNodeApprovalMode !== null) {
+      await rpc(
+        "exec.approvals.node.set",
+        { nodeId: approvalDenyNodeId, mode: snapshotDenyNodeApprovalMode },
+        "approvals-restore-deny",
+      );
+    } else {
+      await rpc(
+        "exec.approvals.node.delete",
+        { nodeId: approvalDenyNodeId },
+        "approvals-delete-deny",
+      );
+    }
+  } catch (error) {
+    console.error("Failed to restore approval state:", error);
+  }
+
   await mockWeb.close();
 }

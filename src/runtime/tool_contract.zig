@@ -116,8 +116,8 @@ pub fn isSupportedOnTarget(method: []const u8, comptime os_tag: std.Target.Os.Ta
 pub fn toolAllowedByToolsets(method: []const u8, toolsets_value: ?std.json.Value) bool {
     if (toolsets_value == null) return true;
     const value = toolsets_value.?;
-    if (value != .array) return true;
-    if (value.array.items.len == 0) return true;
+    if (value != .array) return false;
+    if (value.array.items.len == 0) return false;
     if (std.ascii.eqlIgnoreCase(method, "tools.catalog") or std.ascii.eqlIgnoreCase(method, "acp.describe")) return true;
 
     for (value.array.items) |entry| {
