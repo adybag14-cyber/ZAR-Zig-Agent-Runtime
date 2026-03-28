@@ -11,12 +11,23 @@ const sessionId = process.env.ZAR_SMOKE_SESSION_ID ?? `hermes-port-${Date.now()}
 const messageNeedle = `Hermes port smoke message ${Date.now()}`;
 const filePath = path.join(workRoot, "coding-agent.txt");
 const jsArtifactPath = path.join(workRoot, "execute-code-js.txt");
+const delegateFilePath = path.join(workRoot, "delegate-task.txt");
+const acpDelegateFilePath = path.join(workRoot, "acp-prompt-delegate.txt");
+const acpSessionId = `${sessionId}-acp`;
+const acpForkSessionId = `${acpSessionId}-fork`;
+const acpDelegateSessionId = `${acpSessionId}-exec`;
 const zigBinary = process.env.ZAR_ZIG_BIN ?? "";
 const nodeBinary = process.execPath;
 const requireHostedProcessSupport =
   process.env.ZAR_HERMES_REQUIRE_PROCESS === "1" ||
   (process.env.ZAR_HERMES_REQUIRE_PROCESS !== "0" && process.platform !== "win32");
+const runId = Date.now();
+const approvalPromptNodeId = `node-hermes-approval-${runId}`;
+const approvalDenyNodeId = `node-hermes-deny-${runId}`;
 
+let snapshotGlobalApprovalMode = null;
+let snapshotPromptNodeApprovalMode = null;
+let snapshotDenyNodeApprovalMode = null;
 
 function startMockWebServer() {
   const server = http.createServer((req, res) => {
@@ -70,7 +81,7 @@ function startMockWebServer() {
 await fs.mkdir(workRoot, { recursive: true });
 const mockWeb = await startMockWebServer();
 
-async function rpc(method, params = {}, id = method) {
+async function rpcEnvelope(method, params = {}, id = method) {
   const response = await fetch(rpcUrl, {
     method: "POST",
     headers: {
@@ -89,6 +100,11 @@ async function rpc(method, params = {}, id = method) {
   if (!response.ok) {
     throw new Error(`HTTP ${response.status} for ${method}: ${bodyText}`);
   }
+  return body;
+}
+
+async function rpc(method, params = {}, id = method) {
+  const body = await rpcEnvelope(method, params, id);
   if (body.error) {
     throw new Error(`RPC error for ${method}: ${JSON.stringify(body.error)}`);
   }
@@ -98,7 +114,20 @@ async function rpc(method, params = {}, id = method) {
 try {
 const catalog = await rpc("tools.catalog", {}, "catalog");
 const catalogJson = JSON.stringify(catalog);
+assert.match(catalogJson, /tools\.catalog/);
+assert.match(catalogJson, /acp\.describe/);
+assert.match(catalogJson, /acp\.sessions\.list/);
+assert.match(catalogJson, /acp\.sessions\.new/);
+assert.match(catalogJson, /acp\.sessions\.load/);
+assert.match(catalogJson, /acp\.sessions\.resume/);
+assert.match(catalogJson, /acp\.sessions\.get/);
+assert.match(catalogJson, /acp\.sessions\.messages/);
+assert.match(catalogJson, /acp\.sessions\.events/);
+assert.match(catalogJson, /acp\.sessions\.fork/);
+assert.match(catalogJson, /acp\.sessions\.cancel/);
+assert.match(catalogJson, /acp\.prompt/);
 assert.match(catalogJson, /execute_code/);
+assert.match(catalogJson, /delegate_task/);
 assert.match(catalogJson, /file\.search/);
 assert.match(catalogJson, /file\.patch/);
 assert.match(catalogJson, /web\.search/);
@@ -109,7 +138,360 @@ assert.match(catalogJson, /process\.poll/);
 assert.match(catalogJson, /process\.read/);
 assert.match(catalogJson, /process\.wait/);
 assert.match(catalogJson, /process\.kill/);
+assert.match(catalogJson, /sessions\.history/);
 assert.match(catalogJson, /sessions\.search/);
+assert.match(catalogJson, /tasks\.list/);
+assert.match(catalogJson, /tasks\.get/);
+assert.match(catalogJson, /tasks\.events/);
+assert.match(catalogJson, /tasks\.search/);
+assert.match(catalogJson, /"runtimeTarget":"hosted"/);
+assert.match(catalogJson, /"kind":"execute"/);
+assert.match(catalogJson, /"approvalSensitive":true/);
+assert.match(catalogJson, /"supportedOnBaremetal":false/);
+assert.match(catalogJson, /"currentRuntimeSupported":true/);
+
+const acpDescribeResult = await rpc("acp.describe", {}, "acp-describe");
+assert.equal(acpDescribeResult.schemaVersion, 1);
+assert.equal(acpDescribeResult.eventDelivery.mode, "poll");
+assert.equal(acpDescribeResult.eventDelivery.eventsMethod, "acp.sessions.events");
+assert.equal(acpDescribeResult.eventDelivery.taskEventsMethod, "tasks.events");
+assert.equal(acpDescribeResult.eventDelivery.receiptsMethod, "tasks.get");
+assert.equal(acpDescribeResult.capabilities.delegateTask, true);
+assert.equal(acpDescribeResult.capabilities.taskReceipts, true);
+assert.equal(acpDescribeResult.capabilities.taskEvents, true);
+assert.equal(acpDescribeResult.capabilities.sessionLifecycle, true);
+assert.equal(acpDescribeResult.capabilities.sessionLoad, true);
+assert.equal(acpDescribeResult.capabilities.sessionResume, true);
+assert.equal(acpDescribeResult.capabilities.sessionMessages, true);
+assert.equal(acpDescribeResult.capabilities.sessionEvents, true);
+assert.equal(acpDescribeResult.capabilities.sessionFork, true);
+assert.equal(acpDescribeResult.capabilities.sessionCancel, true);
+assert.equal(acpDescribeResult.capabilities.prompt, true);
+assert.equal(acpDescribeResult.sessionLifecycle.newMethod, "acp.sessions.new");
+assert.equal(acpDescribeResult.sessionLifecycle.loadMethod, "acp.sessions.load");
+assert.equal(acpDescribeResult.sessionLifecycle.resumeMethod, "acp.sessions.resume");
+assert.equal(acpDescribeResult.sessionLifecycle.listMethod, "acp.sessions.list");
+assert.equal(acpDescribeResult.sessionLifecycle.getMethod, "acp.sessions.get");
+assert.equal(acpDescribeResult.sessionLifecycle.messagesMethod, "acp.sessions.messages");
+assert.equal(acpDescribeResult.sessionLifecycle.eventsMethod, "acp.sessions.events");
+assert.equal(acpDescribeResult.sessionLifecycle.forkMethod, "acp.sessions.fork");
+assert.equal(acpDescribeResult.sessionLifecycle.cancelMethod, "acp.sessions.cancel");
+assert.equal(acpDescribeResult.sessionLifecycle.promptMethod, "acp.prompt");
+assert.equal(acpDescribeResult.contentBlocks.text, true);
+assert.match(JSON.stringify(acpDescribeResult.tools), /tasks\.events/);
+assert.match(JSON.stringify(acpDescribeResult.tools), /acp\.prompt/);
+
+const acpSessionNewResult = await rpc(
+  "acp.sessions.new",
+  {
+    sessionId: acpSessionId,
+    cwd: workRoot,
+    title: "ACP Smoke Session",
+  },
+  "acp-session-new",
+);
+assert.equal(acpSessionNewResult.created, true);
+assert.equal(acpSessionNewResult.session.sessionId, acpSessionId);
+assert.equal(acpSessionNewResult.session.messageCount, 0);
+
+const acpSessionLoadResult = await rpc(
+  "acp.sessions.load",
+  {
+    sessionId: acpSessionId,
+    cwd: workRoot,
+  },
+  "acp-session-load",
+);
+assert.equal(acpSessionLoadResult.loaded, true);
+assert.equal(acpSessionLoadResult.session.sessionId, acpSessionId);
+
+const acpCancelResult = await rpc(
+  "acp.sessions.cancel",
+  {
+    sessionId: acpSessionId,
+  },
+  "acp-cancel",
+);
+assert.equal(acpCancelResult.cancelRequested, true);
+assert.equal(acpCancelResult.session.cancelRequested, true);
+assert.equal(acpCancelResult.session.status, "cancel_requested");
+
+const acpPromptBlockedEnvelope = await rpcEnvelope(
+  "acp.prompt",
+  {
+    sessionId: acpSessionId,
+    content: [{ type: "text", text: "Blocked while canceled" }],
+  },
+  "acp-prompt-blocked",
+);
+assert.equal(acpPromptBlockedEnvelope.error.code, -32047);
+assert.match(acpPromptBlockedEnvelope.error.message, /SessionCancelled/);
+
+const acpSessionResumeResult = await rpc(
+  "acp.sessions.resume",
+  {
+    sessionId: acpSessionId,
+  },
+  "acp-session-resume",
+);
+assert.equal(acpSessionResumeResult.created, false);
+assert.equal(acpSessionResumeResult.session.cancelRequested, false);
+assert.equal(acpSessionResumeResult.session.status, "idle");
+
+const acpPromptResult = await rpc(
+  "acp.prompt",
+  {
+    sessionId: acpSessionId,
+    content: [{ type: "text", text: "Record a portable ACP smoke prompt" }],
+  },
+  "acp-prompt",
+);
+assert.equal(acpPromptResult.ok, true);
+assert.equal(acpPromptResult.taskCount, 0);
+assert.equal(acpPromptResult.session.sessionId, acpSessionId);
+assert.equal(acpPromptResult.promptBlocks, 1);
+assert.ok(acpPromptResult.latestEventId > 0);
+assert.match(JSON.stringify(acpPromptResult.response), /Prompt recorded in the ACP session/);
+
+const acpEventsResult = await rpc(
+  "acp.sessions.events",
+  {
+    sessionId: acpSessionId,
+    limit: 20,
+  },
+  "acp-events",
+);
+assert.equal(acpEventsResult.count, 6);
+assert.ok(acpEventsResult.cursor > 0);
+assert.match(JSON.stringify(acpEventsResult.items), /session\.resume/);
+assert.match(JSON.stringify(acpEventsResult.items), /message\.user/);
+assert.match(JSON.stringify(acpEventsResult.items), /message\.assistant/);
+
+const acpMessagesResult = await rpc(
+  "acp.sessions.messages",
+  {
+    sessionId: acpSessionId,
+    limit: 10,
+  },
+  "acp-messages",
+);
+assert.equal(acpMessagesResult.count, 2);
+assert.equal(acpMessagesResult.items[0].role, "user");
+assert.equal(acpMessagesResult.items[1].role, "assistant");
+const acpForkResult = await rpc(
+  "acp.sessions.fork",
+  {
+    sourceSessionId: acpSessionId,
+    newSessionId: acpForkSessionId,
+  },
+  "acp-fork",
+);
+assert.equal(acpForkResult.clonedMessages, 2);
+assert.equal(acpForkResult.session.sessionId, acpForkSessionId);
+assert.equal(acpForkResult.session.sourceSessionId, acpSessionId);
+
+const acpGetResult = await rpc(
+  "acp.sessions.get",
+  {
+    sessionId: acpForkSessionId,
+  },
+  "acp-get",
+);
+assert.equal(acpGetResult.session.sessionId, acpForkSessionId);
+assert.equal(acpGetResult.session.messageCount, 2);
+assert.equal(acpGetResult.session.sourceSessionId, acpSessionId);
+
+const acpListResult = await rpc(
+  "acp.sessions.list",
+  {
+    limit: 10,
+  },
+  "acp-list",
+);
+assert.ok(acpListResult.count >= 2);
+assert.match(JSON.stringify(acpListResult.items), new RegExp(acpSessionId));
+assert.match(JSON.stringify(acpListResult.items), new RegExp(acpForkSessionId));
+
+const acpDelegatePromptResult = await rpc(
+  "acp.prompt",
+  {
+    sessionId: acpDelegateSessionId,
+    goal: "ACP delegated smoke file flow",
+    prompt: "Write and read through ACP prompt",
+    toolsets: ["file"],
+    steps: [
+      { tool: "file.write", path: acpDelegateFilePath, content: "acp-smoke-data" },
+      { tool: "file.read", path: acpDelegateFilePath },
+    ],
+  },
+  "acp-prompt-delegate",
+);
+assert.equal(acpDelegatePromptResult.ok, true);
+assert.equal(acpDelegatePromptResult.taskCount, 1);
+assert.equal(acpDelegatePromptResult.tasks[0].status, "completed");
+assert.ok(acpDelegatePromptResult.tasks[0].eventCount >= 6);
+const acpDelegateTaskId = acpDelegatePromptResult.tasks[0].taskId;
+assert.match(acpDelegateTaskId, /^delegate-task-/);
+
+const acpDelegateReadResult = await rpc(
+  "file.read",
+  {
+    sessionId: acpDelegateSessionId,
+    path: acpDelegateFilePath,
+  },
+  "acp-delegate-read",
+);
+assert.match(acpDelegateReadResult.content, /acp-smoke-data/);
+
+const acpDelegateMessagesResult = await rpc(
+  "acp.sessions.messages",
+  {
+    sessionId: acpDelegateSessionId,
+    limit: 10,
+  },
+  "acp-delegate-messages",
+);
+assert.equal(acpDelegateMessagesResult.count, 2);
+assert.match(JSON.stringify(acpDelegateMessagesResult.items), /task_summary/);
+
+const snapshotGlobalResult = await rpc(
+  "exec.approvals.get",
+  {},
+  "approvals-snapshot-global",
+);
+snapshotGlobalApprovalMode = snapshotGlobalResult.approvals.mode;
+
+const acpDelegateEventsResult = await rpc(
+  "acp.sessions.events",
+  {
+    sessionId: acpDelegateSessionId,
+    limit: 20,
+  },
+  "acp-delegate-events",
+);
+assert.equal(acpDelegateEventsResult.count, 8);
+assert.ok(acpDelegateEventsResult.cursor > 0);
+assert.match(JSON.stringify(acpDelegateEventsResult.items), /task\.start/);
+assert.match(JSON.stringify(acpDelegateEventsResult.items), /message\.task_summary/);
+
+const approvalsAllowResult = await rpc(
+  "exec.approvals.set",
+  {
+    mode: "allow",
+  },
+  "approvals-allow",
+);
+assert.equal(approvalsAllowResult.approvals.mode, "allow");
+
+try {
+  const snapshotPromptResult = await rpc(
+    "exec.approvals.node.get",
+    { nodeId: approvalPromptNodeId },
+    "approvals-snapshot-prompt",
+  );
+  snapshotPromptNodeApprovalMode = snapshotPromptResult.approvals.mode;
+} catch {
+  snapshotPromptNodeApprovalMode = null;
+}
+
+const approvalPromptModeResult = await rpc(
+  "exec.approvals.node.set",
+  {
+    nodeId: approvalPromptNodeId,
+    mode: "prompt",
+  },
+  "approvals-node-prompt",
+);
+assert.equal(approvalPromptModeResult.approvals.mode, "prompt");
+
+const approvalRequiredResult = await rpc(
+  "execute_code",
+  {
+    sessionId,
+    nodeId: approvalPromptNodeId,
+    language: "javascript",
+    runtimePath: nodeBinary,
+    cwd: workRoot,
+    code: 'console.log("approval-required-js")',
+  },
+  "approval-required",
+);
+assert.equal(approvalRequiredResult.ok, false);
+assert.equal(approvalRequiredResult.state, "approval_required");
+assert.equal(approvalRequiredResult.approval.mode, "prompt");
+assert.match(approvalRequiredResult.approval.reason, /Approval required/);
+const approvalId = approvalRequiredResult.approval.approvalId;
+assert.match(approvalId, /^approval-/);
+
+const approvalPendingResult = await rpc(
+  "exec.approval.waitDecision",
+  {
+    approvalId,
+    timeoutMs: 10,
+  },
+  "approval-wait",
+);
+assert.equal(approvalPendingResult.approval.status, "pending");
+
+const approvalResolvedResult = await rpc(
+  "exec.approval.resolve",
+  {
+    approvalId,
+    status: "approved",
+  },
+  "approval-resolve",
+);
+assert.equal(approvalResolvedResult.approval.status, "approved");
+
+const approvalGrantedResult = await rpc(
+  "execute_code",
+  {
+    sessionId,
+    nodeId: approvalPromptNodeId,
+    approvalId,
+    language: "javascript",
+    runtimePath: nodeBinary,
+    cwd: workRoot,
+    code: 'console.log("approval-granted-js")',
+  },
+  "approval-granted",
+);
+assert.equal(approvalGrantedResult.ok, true);
+assert.match(approvalGrantedResult.stdout, /approval-granted-js/);
+
+try {
+  const snapshotDenyResult = await rpc(
+    "exec.approvals.node.get",
+    { nodeId: approvalDenyNodeId },
+    "approvals-snapshot-deny",
+  );
+  snapshotDenyNodeApprovalMode = snapshotDenyResult.approvals.mode;
+} catch {
+  snapshotDenyNodeApprovalMode = null;
+}
+
+const approvalDenyModeResult = await rpc(
+  "exec.approvals.node.set",
+  {
+    nodeId: approvalDenyNodeId,
+    mode: "deny",
+  },
+  "approvals-node-deny",
+);
+assert.equal(approvalDenyModeResult.approvals.mode, "deny");
+
+const approvalDeniedResult = await rpc(
+  "process.start",
+  {
+    sessionId,
+    nodeId: approvalDenyNodeId,
+    cwd: workRoot,
+    command: "printf denied-should-not-run",
+  },
+  "approval-denied",
+);
+assert.equal(approvalDeniedResult.ok, false);
+assert.equal(approvalDeniedResult.state, "approval_denied");
 
 const writeResult = await rpc(
   "file.write",
@@ -126,6 +508,86 @@ const writeResult = await rpc(
   "write",
 );
 assert.equal(writeResult.ok, true);
+
+const delegateTaskSessionId = `${sessionId}-delegate`;
+const delegateTaskResult = await rpc(
+  "delegate_task",
+  {
+    goal: "delegate file flow",
+    sessionId: delegateTaskSessionId,
+    toolsets: ["file"],
+    steps: [
+      { tool: "file.write", path: delegateFilePath, content: "delegate-needle" },
+      { tool: "file.search", path: workRoot, query: "delegate-needle", maxResults: 5 },
+      { tool: "file.patch", path: delegateFilePath, oldText: "delegate-needle", newText: "delegate-patched" },
+      { tool: "file.read", path: delegateFilePath },
+    ],
+  },
+  "delegate-task",
+);
+assert.equal(delegateTaskResult.ok, true);
+assert.equal(delegateTaskResult.kind, "delegate_task");
+assert.equal(delegateTaskResult.count, 1);
+assert.equal(delegateTaskResult.results[0].status, "completed");
+assert.equal(delegateTaskResult.results[0].successCount, 4);
+assert.match(JSON.stringify(delegateTaskResult.results[0].events), /task\.start/);
+assert.match(JSON.stringify(delegateTaskResult.results[0].events), /delegate file flow/);
+assert.match(JSON.stringify(delegateTaskResult.results[0].events), /tool\.call\.start/);
+assert.match(JSON.stringify(delegateTaskResult.results[0].steps), /delegate-patched/);
+const delegateTaskId = delegateTaskResult.results[0].taskId;
+assert.match(delegateTaskId, /^delegate-task-/);
+
+const taskListResult = await rpc(
+  "tasks.list",
+  {
+    sessionId: delegateTaskSessionId,
+    limit: 10,
+  },
+  "task-list",
+);
+assert.equal(taskListResult.count, 1);
+assert.equal(taskListResult.items[0].taskId, delegateTaskId);
+assert.equal(taskListResult.items[0].eventCount, 10);
+
+const taskGetResult = await rpc(
+  "tasks.get",
+  {
+    taskId: delegateTaskId,
+  },
+  "task-get",
+);
+assert.equal(taskGetResult.task.taskId, delegateTaskId);
+assert.equal(taskGetResult.task.status, "completed");
+assert.equal(taskGetResult.task.eventCount, 10);
+assert.equal(taskGetResult.latestEventId > 0, true);
+assert.match(taskGetResult.task.goal, /delegate file flow/);
+
+const taskEventsResult = await rpc(
+  "tasks.events",
+  {
+    taskId: delegateTaskId,
+    limit: 20,
+  },
+  "task-events",
+);
+assert.equal(taskEventsResult.count, 10);
+assert.equal(taskEventsResult.items[0].taskId, delegateTaskId);
+assert.equal(taskEventsResult.cursor > 0, true);
+assert.match(JSON.stringify(taskEventsResult.items), /task\.start/);
+assert.match(JSON.stringify(taskEventsResult.items), /task\.complete/);
+assert.match(JSON.stringify(taskEventsResult.items), /delegate-patched/);
+
+const taskSearchResult = await rpc(
+  "tasks.search",
+  {
+    query: "delegate file flow",
+    sessionId: delegateTaskSessionId,
+    limit: 5,
+  },
+  "task-search",
+);
+assert.equal(taskSearchResult.count, 1);
+assert.equal(taskSearchResult.items[0].taskId, delegateTaskId);
 
 const searchResult = await rpc(
   "file.search",
@@ -200,6 +662,7 @@ let executeCodeZigResult = null;
 let processListResult = null;
 let processWaitResult = null;
 let processKillWaitResult = null;
+let delegateTaskApprovalResult = null;
 
 if (requireHostedProcessSupport) {
   assert.ok(zigBinary, "ZAR_ZIG_BIN is required for execute_code zig smoke");
@@ -270,6 +733,33 @@ if (requireHostedProcessSupport) {
   assert.equal(executeCodeZigResult.ok, true);
   assert.equal(executeCodeZigResult.language, "zig");
   assert.match(`${executeCodeZigResult.stdout}\n${executeCodeZigResult.stderr}`, /execute-code-zig/);
+
+  delegateTaskApprovalResult = await rpc(
+    "delegate_task",
+    {
+      goal: "delegate approval flow",
+      sessionId: `${sessionId}-delegate-approval`,
+      toolsets: ["terminal"],
+      steps: [
+        {
+          tool: "execute_code",
+          nodeId: approvalPromptNodeId,
+          language: "javascript",
+          runtimePath: nodeBinary,
+          cwd: workRoot,
+          code: 'console.log("delegate-approval-js")',
+        },
+      ],
+    },
+    "delegate-task-approval",
+  );
+  assert.equal(delegateTaskApprovalResult.ok, false);
+  assert.equal(delegateTaskApprovalResult.kind, "delegate_task");
+  assert.equal(delegateTaskApprovalResult.results[0].status, "blocked");
+  assert.equal(delegateTaskApprovalResult.results[0].approvalRequiredCount, 1);
+  assert.equal(delegateTaskApprovalResult.results[0].steps[0].state, "approval_required");
+  assert.match(JSON.stringify(delegateTaskApprovalResult.results[0].events), /task\.start/);
+  assert.match(JSON.stringify(delegateTaskApprovalResult.results[0].events), /delegate approval flow/);
 
   const processStartResult = await rpc(
     "process.start",
@@ -408,7 +898,20 @@ console.log(JSON.stringify({
   zigBinary,
   verified: {
     toolsCatalog: [
+      "tools.catalog",
+      "acp.describe",
+      "acp.sessions.list",
+      "acp.sessions.new",
+      "acp.sessions.load",
+      "acp.sessions.resume",
+      "acp.sessions.get",
+      "acp.sessions.messages",
+      "acp.sessions.events",
+      "acp.sessions.fork",
+      "acp.sessions.cancel",
+      "acp.prompt",
       "execute_code",
+      "delegate_task",
       "file.search",
       "file.patch",
       "web.search",
@@ -419,12 +922,66 @@ console.log(JSON.stringify({
       "process.read",
       "process.wait",
       "process.kill",
+      "sessions.history",
       "sessions.search",
+      "tasks.list",
+      "tasks.get",
+      "tasks.events",
+      "tasks.search",
     ],
+    toolsCatalogRuntimeTarget: catalog.runtimeTarget,
+    toolsCatalogHasKinds: /"kind":"execute"/.test(catalogJson),
+    toolsCatalogHasApprovalMetadata: /"approvalSensitive":true/.test(catalogJson),
+    toolsCatalogHasBaremetalMetadata: /"supportedOnBaremetal":false/.test(catalogJson),
+    toolsCatalogHasCurrentRuntimeMetadata: /"currentRuntimeSupported":true/.test(catalogJson),
+    acpDescribeSchemaVersion: acpDescribeResult.schemaVersion,
+    acpDescribeEventsMethod: acpDescribeResult.eventDelivery.eventsMethod,
+    acpDescribeTaskEventsMethod: acpDescribeResult.eventDelivery.taskEventsMethod,
+    acpDescribeReceiptsMethod: acpDescribeResult.eventDelivery.receiptsMethod,
+    acpDescribeTaskReceipts: acpDescribeResult.capabilities.taskReceipts,
+    acpDescribeTaskEvents: acpDescribeResult.capabilities.taskEvents,
+    acpDescribeSessionNewMethod: acpDescribeResult.sessionLifecycle.newMethod,
+    acpDescribeSessionLoadMethod: acpDescribeResult.sessionLifecycle.loadMethod,
+    acpDescribeSessionResumeMethod: acpDescribeResult.sessionLifecycle.resumeMethod,
+    acpDescribeSessionEventsMethod: acpDescribeResult.sessionLifecycle.eventsMethod,
+    acpDescribeSessionCancelMethod: acpDescribeResult.sessionLifecycle.cancelMethod,
+    acpDescribePromptMethod: acpDescribeResult.sessionLifecycle.promptMethod,
+    acpDescribeSessionLifecycle: acpDescribeResult.capabilities.sessionLifecycle,
+    acpDescribeSessionEvents: acpDescribeResult.capabilities.sessionEvents,
+    acpSessionCreated: acpSessionNewResult.created,
+    acpSessionLoaded: acpSessionLoadResult.loaded,
+    acpCancelRequested: acpCancelResult.cancelRequested,
+    acpBlockedCode: acpPromptBlockedEnvelope.error.code,
+    acpResumeCreated: acpSessionResumeResult.created,
+    acpEventsCount: acpEventsResult.count,
+    acpEventsCursor: acpEventsResult.cursor,
+    acpPromptLatestEventId: acpPromptResult.latestEventId,
+    acpMessagesCount: acpMessagesResult.count,
+    acpForkClonedMessages: acpForkResult.clonedMessages,
+    acpListCount: acpListResult.count,
+    acpPromptTaskCount: acpPromptResult.taskCount,
+    acpDelegateTaskId,
+    acpDelegateTaskCount: acpDelegatePromptResult.taskCount,
+    acpDelegateMessagesCount: acpDelegateMessagesResult.count,
+    acpDelegateEventsCount: acpDelegateEventsResult.count,
+    globalApprovalMode: approvalsAllowResult.approvals.mode,
+    approvalPromptState: approvalRequiredResult.state,
+    approvalApprovedOk: approvalGrantedResult.ok,
+    approvalDeniedState: approvalDeniedResult.state,
     hostedProcessSupportRequired: requireHostedProcessSupport,
     executeCodeJsOk: executeCodeJsResult?.ok ?? null,
     executeCodeZigOk: executeCodeZigResult?.ok ?? null,
     executeCodeJsArtifact: executeCodeJsArtifactRead?.content ?? null,
+    delegateTaskOk: delegateTaskResult.ok,
+    delegateTaskId,
+    delegateTaskStepCount: delegateTaskResult.results[0]?.steps?.length ?? null,
+    delegateTaskEventCount: delegateTaskResult.results[0]?.events?.length ?? null,
+    delegateTaskApprovalState: delegateTaskApprovalResult?.results?.[0]?.steps?.[0]?.state ?? null,
+    taskListCount: taskListResult.count,
+    taskGetLatestEventId: taskGetResult.latestEventId,
+    taskEventsCount: taskEventsResult.count,
+    taskEventsCursor: taskEventsResult.cursor,
+    taskSearchCount: taskSearchResult.count,
     fileWrite: writeResult.ok,
     fileSearchCount: searchResult.count,
     filePatchApplied: patchResult.applied,
@@ -439,5 +996,45 @@ console.log(JSON.stringify({
 }, null, 2));
 }
 finally {
+  try {
+    if (snapshotGlobalApprovalMode !== null) {
+      await rpc(
+        "exec.approvals.set",
+        { mode: snapshotGlobalApprovalMode },
+        "approvals-restore-global",
+      );
+    }
+
+    if (snapshotPromptNodeApprovalMode !== null) {
+      await rpc(
+        "exec.approvals.node.set",
+        { nodeId: approvalPromptNodeId, mode: snapshotPromptNodeApprovalMode },
+        "approvals-restore-prompt",
+      );
+    } else {
+      await rpc(
+        "exec.approvals.node.delete",
+        { nodeId: approvalPromptNodeId },
+        "approvals-delete-prompt",
+      );
+    }
+
+    if (snapshotDenyNodeApprovalMode !== null) {
+      await rpc(
+        "exec.approvals.node.set",
+        { nodeId: approvalDenyNodeId, mode: snapshotDenyNodeApprovalMode },
+        "approvals-restore-deny",
+      );
+    } else {
+      await rpc(
+        "exec.approvals.node.delete",
+        { nodeId: approvalDenyNodeId },
+        "approvals-delete-deny",
+      );
+    }
+  } catch (error) {
+    console.error("Failed to restore approval state:", error);
+  }
+
   await mockWeb.close();
 }

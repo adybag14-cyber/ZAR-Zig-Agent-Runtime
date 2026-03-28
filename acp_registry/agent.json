@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "name": "openclaw-zig",
+  "display_name": "ZAR / OpenClaw Zig Runtime",
+  "description": "Hermes-guided ACP scaffold for the Zig runtime with RPC-served tools, typed catalog metadata, and execution approvals.",
+  "icon": "icon.svg",
+  "distribution": {
+    "type": "command",
+    "command": "openclaw-zig",
+    "args": ["--serve"]
+  }
+}

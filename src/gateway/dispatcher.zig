@@ -6,6 +6,7 @@ const protocol = @import("../protocol/envelope.zig");
 const registry = @import("registry.zig");
 const gateway_request = @import("request.zig");
 const gateway_response = @import("response.zig");
+const delegate_task = @import("delegate_task.zig");
 const lightpanda = @import("../bridge/lightpanda.zig");
 const provider_http = @import("../bridge/provider_http.zig");
 const web_login = @import("../bridge/web_login.zig");
@@ -15,6 +16,8 @@ const memory_store = @import("../memory/store.zig");
 const pal = @import("../pal/mod.zig");
 const secret_store = @import("../security/secret_store.zig");
 const tool_runtime = @import("../runtime/tool_runtime.zig");
+const tool_contract = @import("../runtime/tool_contract.zig");
+const task_receipts = @import("../runtime/task_receipts.zig");
 const security_guard = @import("../security/guard.zig");
 const security_audit = @import("../security/audit.zig");
 const time_util = @import("../util/time.zig");
@@ -506,6 +509,9 @@ const CompatPendingApproval = struct {
     status: []u8,
     method: []u8,
     reason: []u8,
+    fingerprint: []u8,
+    node_id: []u8,
+    consumed: bool,
     created_at_ms: i64,
     resolved_at_ms: i64,
 
@@ -514,6 +520,8 @@ const CompatPendingApproval = struct {
         allocator.free(self.status);
         allocator.free(self.method);
         allocator.free(self.reason);
+        allocator.free(self.fingerprint);
+        allocator.free(self.node_id);
     }
 };
 
@@ -799,7 +807,7 @@ const CompatState = struct {
             .next_pending_node_work_id = 1,
             .pending_node_work_states = .empty,
             .next_approval_id = 1,
-            .global_approval_mode = try allocator.dupe(u8, "prompt"),
+            .global_approval_mode = try allocator.dupe(u8, "allow"),
             .global_approval_updated_at_ms = now,
             .node_approvals = .empty,
             .pending_approvals = .empty,
@@ -2520,7 +2528,7 @@ const CompatState = struct {
 
     fn upsertNodeApproval(self: *CompatState, node_id: []const u8, mode: []const u8) !CompatNodeApproval {
         const normalized_node_id = std.mem.trim(u8, node_id, " \t\r\n");
-        const normalized_mode = std.mem.trim(u8, mode, " \t\r\n");
+        const normalized_mode = normalizeApprovalMode(mode, self.global_approval_mode);
         if (self.findNodeApprovalIndex(normalized_node_id)) |idx| {
             var entry = &self.node_approvals.items[idx];
             self.allocator.free(entry.mode);
@@ -2545,7 +2553,7 @@ const CompatState = struct {
         return null;
     }
 
-    fn createPendingApproval(self: *CompatState, method: []const u8, reason: []const u8) !CompatPendingApproval {
+    fn createPendingApproval(self: *CompatState, method: []const u8, reason: []const u8, fingerprint: []const u8, node_id: []const u8) !CompatPendingApproval {
         const now = time_util.nowMs();
         const approval_id = try std.fmt.allocPrint(self.allocator, "approval-{d:0>6}", .{self.next_approval_id});
         self.next_approval_id += 1;
@@ -2554,6 +2562,9 @@ const CompatState = struct {
             .status = try self.allocator.dupe(u8, "pending"),
             .method = try self.allocator.dupe(u8, method),
             .reason = try self.allocator.dupe(u8, reason),
+            .fingerprint = try self.allocator.dupe(u8, fingerprint),
+            .node_id = try self.allocator.dupe(u8, node_id),
+            .consumed = false,
             .created_at_ms = now,
             .resolved_at_ms = 0,
         });
@@ -4519,8 +4530,10 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         }
         const compat = try getCompatState();
         if (mode.len > 0) {
+            const normalized_mode = normalizeApprovalMode(mode, compat.global_approval_mode);
+            const new_mode = try compat.allocator.dupe(u8, normalized_mode);
             compat.allocator.free(compat.global_approval_mode);
-            compat.global_approval_mode = try compat.allocator.dupe(u8, mode);
+            compat.global_approval_mode = new_mode;
         }
         compat.global_approval_updated_at_ms = time_util.nowMs();
         return protocol.encodeResult(allocator, req.id, .{
@@ -4589,7 +4602,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         const method = firstParamString(params, "method", "");
         const reason = firstParamString(params, "reason", "");
         const compat = try getCompatState();
-        const approval = try compat.createPendingApproval(method, reason);
+        const approval = try compat.createPendingApproval(method, reason, "", "");
         return protocol.encodeResult(allocator, req.id, .{
             .approval = .{
                 .approvalId = approval.approval_id,
@@ -4665,7 +4678,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
                 },
             });
         }
-        const created = try compat.createPendingApproval("", "");
+        const created = try compat.createPendingApproval("", "", "", "");
         const idx = compat.findPendingApprovalIndex(created.approval_id).?;
         var entry = &compat.pending_approvals.items[idx];
         compat.allocator.free(entry.approval_id);
@@ -6483,42 +6496,69 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         });
     }
 
+    if (std.ascii.eqlIgnoreCase(req.method, "acp.describe") or
+        std.ascii.eqlIgnoreCase(req.method, "acp.sessions.list") or
+        std.ascii.eqlIgnoreCase(req.method, "acp.sessions.new") or
+        std.ascii.eqlIgnoreCase(req.method, "acp.sessions.load") or
+        std.ascii.eqlIgnoreCase(req.method, "acp.sessions.resume") or
+        std.ascii.eqlIgnoreCase(req.method, "acp.sessions.get") or
+        std.ascii.eqlIgnoreCase(req.method, "acp.sessions.messages") or
+        std.ascii.eqlIgnoreCase(req.method, "acp.sessions.events") or
+        std.ascii.eqlIgnoreCase(req.method, "acp.sessions.fork") or
+        std.ascii.eqlIgnoreCase(req.method, "acp.sessions.cancel") or
+        std.ascii.eqlIgnoreCase(req.method, "acp.prompt"))
+    {
+        const runtime = getRuntime();
+        return runtime.handleRpcFrameAlloc(allocator, frame_json);
+    }
+
     if (std.ascii.eqlIgnoreCase(req.method, "tools.catalog")) {
-        const tools = [_]struct {
-            tool: []const u8,
-            provider: []const u8,
-            description: []const u8,
-        }{
-            .{ .tool = "browser", .provider = "lightpanda", .description = "Browser tool family with open/request actions" },
-            .{ .tool = "browser.open", .provider = "lightpanda", .description = "Open browser URL through bridge runtime" },
-            .{ .tool = "browser.request", .provider = "lightpanda", .description = "Send browser bridge request or completion payload" },
-            .{ .tool = "exec", .provider = "builtin-runtime", .description = "Exec tool family alias for command execution" },
-            .{ .tool = "exec.run", .provider = "builtin-runtime", .description = "Execute local process command with timeout" },
-            .{ .tool = "execute_code", .provider = "builtin-runtime", .description = "Run short code snippets through local interpreters or compilers" },
-            .{ .tool = "file.read", .provider = "builtin-runtime", .description = "Read local file content" },
-            .{ .tool = "file.write", .provider = "builtin-runtime", .description = "Write local file content" },
-            .{ .tool = "file.search", .provider = "builtin-runtime", .description = "Recursively search local files for matching text" },
-            .{ .tool = "file.patch", .provider = "builtin-runtime", .description = "Apply bounded text replacement patch to a local file" },
-            .{ .tool = "web", .provider = "builtin-runtime", .description = "Web research tool family (search/extract)" },
-            .{ .tool = "web.search", .provider = "builtin-runtime", .description = "Search the web and return titles, URLs, and descriptions" },
-            .{ .tool = "web.extract", .provider = "builtin-runtime", .description = "Fetch web page URLs and extract readable content" },
-            .{ .tool = "process", .provider = "builtin-runtime", .description = "Background process lifecycle tool family" },
-            .{ .tool = "process.start", .provider = "builtin-runtime", .description = "Start a background process and capture stdout/stderr to logs" },
-            .{ .tool = "process.list", .provider = "builtin-runtime", .description = "List tracked background processes" },
-            .{ .tool = "process.poll", .provider = "builtin-runtime", .description = "Poll tracked background process state and recent logs" },
-            .{ .tool = "process.read", .provider = "builtin-runtime", .description = "Read tracked background process logs and state" },
-            .{ .tool = "process.wait", .provider = "builtin-runtime", .description = "Wait for a tracked background process to finish" },
-            .{ .tool = "process.kill", .provider = "builtin-runtime", .description = "Terminate a tracked background process" },
-            .{ .tool = "message", .provider = "telegram-runtime", .description = "Message tool family (send/poll)" },
-            .{ .tool = "message.send", .provider = "telegram-runtime", .description = "Send message through runtime bridge" },
-            .{ .tool = "sessions", .provider = "builtin-runtime", .description = "Sessions tool family (history/search/status)" },
-            .{ .tool = "sessions.search", .provider = "memory-store", .description = "Search prior session history with semantic recall" },
-            .{ .tool = "wasm", .provider = "builtin-runtime", .description = "WASM tool family (inspect/list/execute)" },
+        const portable_tools = tool_contract.runtimeCatalogEntries(builtin.os.tag);
+        const extra_tools = [_]tool_contract.RuntimeCatalogEntry{
+            .{ .tool = "browser", .provider = "lightpanda", .kind = "fetch", .approvalSensitive = false, .description = "Browser tool family with open/request actions", .supportedOnHosted = true, .supportedOnBaremetal = false, .currentRuntimeSupported = builtin.os.tag != .freestanding },
+            .{ .tool = "browser.open", .provider = "lightpanda", .kind = "fetch", .approvalSensitive = false, .description = "Open browser URL through bridge runtime", .supportedOnHosted = true, .supportedOnBaremetal = false, .currentRuntimeSupported = builtin.os.tag != .freestanding },
+            .{ .tool = "browser.request", .provider = "lightpanda", .kind = "fetch", .approvalSensitive = false, .description = "Send browser bridge request or completion payload", .supportedOnHosted = true, .supportedOnBaremetal = false, .currentRuntimeSupported = builtin.os.tag != .freestanding },
+            .{ .tool = "message", .provider = "telegram-runtime", .kind = "execute", .approvalSensitive = false, .description = "Message tool family (send/poll)", .supportedOnHosted = true, .supportedOnBaremetal = false, .currentRuntimeSupported = builtin.os.tag != .freestanding },
+            .{ .tool = "message.send", .provider = "telegram-runtime", .kind = "execute", .approvalSensitive = false, .description = "Send message through runtime bridge", .supportedOnHosted = true, .supportedOnBaremetal = false, .currentRuntimeSupported = builtin.os.tag != .freestanding },
+            .{ .tool = "wasm", .provider = "builtin-runtime", .kind = "execute", .approvalSensitive = false, .description = "WASM tool family (inspect/list/execute)", .supportedOnHosted = true, .supportedOnBaremetal = false, .currentRuntimeSupported = builtin.os.tag != .freestanding },
         };
+        const tools = portable_tools ++ extra_tools;
         return protocol.encodeResult(allocator, req.id, .{
+            .runtimeTarget = tool_contract.currentRuntimeTargetLabel(builtin.os.tag),
             .tools = tools,
             .count = tools.len,
         });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "delegate_task")) {
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+        defer parsed.deinit();
+        const params = getParamsObjectOrNull(parsed.value);
+        const delegate_invoke = struct {
+            fn call(_: void, allocator_inner: std.mem.Allocator, frame_inner: []const u8) anyerror![]u8 {
+                return dispatch(allocator_inner, frame_inner);
+            }
+        }.call;
+        var delegate_result = delegate_task.run(allocator, params, {}, delegate_invoke) catch |err| {
+            const message = switch (err) {
+                error.InvalidParamsFrame => "delegate_task requires a tasks array or single steps/actions array",
+                else => @errorName(err),
+            };
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32602,
+                .message = message,
+            });
+        };
+        defer delegate_result.deinit(allocator);
+        const runtime = getRuntime();
+        task_receipts.recordBatch(&runtime.runtime_state, &delegate_result) catch |err| {
+            std.log.warn("task_receipts.recordBatch failed for delegate_task: {s}", .{@errorName(err)});
+        };
+        const compat = getCompatState() catch null;
+        if (compat) |state| {
+            _ = state.addEvent(if (delegate_result.ok) "delegate.task.completed" else "delegate.task.blocked") catch {};
+        }
+        return protocol.encodeResult(allocator, req.id, delegate_result);
     }
 
     if (std.ascii.eqlIgnoreCase(req.method, "shutdown")) {
@@ -7361,6 +7401,15 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
             .neighborCount = recall.neighbors.count,
             .neighbors = recall.neighbors.items,
         });
+    }
+
+    if (std.ascii.eqlIgnoreCase(req.method, "tasks.list") or
+        std.ascii.eqlIgnoreCase(req.method, "tasks.get") or
+        std.ascii.eqlIgnoreCase(req.method, "tasks.events") or
+        std.ascii.eqlIgnoreCase(req.method, "tasks.search"))
+    {
+        const runtime = getRuntime();
+        return runtime.handleRpcFrameAlloc(allocator, frame_json);
     }
 
     if (std.ascii.eqlIgnoreCase(req.method, "chat.history")) {
@@ -9150,6 +9199,10 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
     }
 
     if (std.ascii.eqlIgnoreCase(req.method, "exec.run")) {
+        const compat = try getCompatState();
+        if (try maybeEncodeExecutionApprovalResult(allocator, req.id, req.method, frame_json, compat)) |approval_result| {
+            return approval_result;
+        }
         const runtime = getRuntime();
         var exec_result = runtime.execRunFromFrame(allocator, frame_json) catch |err| {
             return encodeRuntimeError(allocator, req.id, err);
@@ -9159,6 +9212,10 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
     }
 
     if (std.ascii.eqlIgnoreCase(req.method, "execute_code")) {
+        const compat = try getCompatState();
+        if (try maybeEncodeExecutionApprovalResult(allocator, req.id, req.method, frame_json, compat)) |approval_result| {
+            return approval_result;
+        }
         const runtime = getRuntime();
         var execute_code_result = runtime.executeCodeFromFrame(allocator, frame_json) catch |err| {
             return encodeRuntimeError(allocator, req.id, err);
@@ -9222,6 +9279,10 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
     }
 
     if (std.ascii.eqlIgnoreCase(req.method, "process.start")) {
+        const compat = try getCompatState();
+        if (try maybeEncodeExecutionApprovalResult(allocator, req.id, req.method, frame_json, compat)) |approval_result| {
+            return approval_result;
+        }
         const runtime = getRuntime();
         var start_result = runtime.processStartFromFrame(allocator, frame_json) catch |err| {
             return encodeRuntimeError(allocator, req.id, err);
@@ -9533,6 +9594,17 @@ fn shouldEnforceGuard(method: []const u8) bool {
     if (std.ascii.eqlIgnoreCase(method, "config.patch")) return false;
     if (std.ascii.eqlIgnoreCase(method, "config.apply")) return false;
     if (std.ascii.eqlIgnoreCase(method, "config.schema")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "acp.describe")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "acp.sessions.list")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "acp.sessions.new")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "acp.sessions.load")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "acp.sessions.resume")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "acp.sessions.get")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "acp.sessions.messages")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "acp.sessions.events")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "acp.sessions.fork")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "acp.sessions.cancel")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "acp.prompt")) return false;
     if (std.ascii.eqlIgnoreCase(method, "tools.catalog")) return false;
     if (std.ascii.eqlIgnoreCase(method, "channels.status")) return false;
     if (std.ascii.eqlIgnoreCase(method, "channels.logout")) return false;
@@ -9559,6 +9631,10 @@ fn shouldEnforceGuard(method: []const u8) bool {
     if (std.ascii.eqlIgnoreCase(method, "sessions.usage.logs")) return false;
     if (std.ascii.eqlIgnoreCase(method, "sessions.patch")) return false;
     if (std.ascii.eqlIgnoreCase(method, "sessions.resolve")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "tasks.list")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "tasks.get")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "tasks.events")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "tasks.search")) return false;
     if (std.ascii.eqlIgnoreCase(method, "system.maintenance.plan")) return false;
     if (std.ascii.eqlIgnoreCase(method, "system.maintenance.run")) return false;
     if (std.ascii.eqlIgnoreCase(method, "system.maintenance.status")) return false;
@@ -9592,6 +9668,7 @@ fn shouldEnforceGuard(method: []const u8) bool {
     if (std.ascii.eqlIgnoreCase(method, "sessions.send")) return false;
     if (std.ascii.eqlIgnoreCase(method, "poll")) return false;
     if (std.ascii.eqlIgnoreCase(method, "sessions.history")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "sessions.search")) return false;
     if (std.ascii.eqlIgnoreCase(method, "chat.history")) return false;
     if (std.ascii.eqlIgnoreCase(method, "edge.wasm.marketplace.list")) return false;
     if (std.ascii.eqlIgnoreCase(method, "edge.wasm.execute")) return false;
@@ -10546,6 +10623,310 @@ fn pendingNodeWorkLessThan(_: void, lhs: CompatPendingNodeWorkItem, rhs: CompatP
     if (lhs_rank != rhs_rank) return lhs_rank > rhs_rank;
     if (lhs.created_at_ms != rhs.created_at_ms) return lhs.created_at_ms < rhs.created_at_ms;
     return std.mem.order(u8, lhs.item_id, rhs.item_id) == .lt;
+}
+
+fn normalizeApprovalMode(raw: []const u8, fallback: []const u8) []const u8 {
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    if (trimmed.len == 0) return fallback;
+    if (std.ascii.eqlIgnoreCase(trimmed, "allow") or
+        std.ascii.eqlIgnoreCase(trimmed, "auto") or
+        std.ascii.eqlIgnoreCase(trimmed, "approved"))
+    {
+        return "allow";
+    }
+    if (std.ascii.eqlIgnoreCase(trimmed, "prompt") or
+        std.ascii.eqlIgnoreCase(trimmed, "ask") or
+        std.ascii.eqlIgnoreCase(trimmed, "manual"))
+    {
+        return "prompt";
+    }
+    if (std.ascii.eqlIgnoreCase(trimmed, "deny") or
+        std.ascii.eqlIgnoreCase(trimmed, "block") or
+        std.ascii.eqlIgnoreCase(trimmed, "disabled"))
+    {
+        return "deny";
+    }
+    return fallback;
+}
+
+fn resolveExecutionApprovalNodeId(params: ?std.json.ObjectMap) []const u8 {
+    const node_id = firstParamString(
+        params,
+        "nodeId",
+        firstParamString(
+            params,
+            "node_id",
+            firstParamString(
+                params,
+                "targetNodeId",
+                firstParamString(params, "target_node_id", "node-local"),
+            ),
+        ),
+    );
+    const trimmed = std.mem.trim(u8, node_id, " \t\r\n");
+    return if (trimmed.len > 0) trimmed else "node-local";
+}
+
+fn computeApprovalFingerprint(allocator: std.mem.Allocator, node_id: []const u8, method: []const u8) ![]u8 {
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher.update(node_id);
+    hasher.update(method);
+    var hash: [32]u8 = undefined;
+    hasher.final(&hash);
+    return allocator.dupe(u8, &std.fmt.bytesToHex(hash, .lower));
+}
+
+fn effectiveExecutionApprovalMode(compat: *const CompatState, node_id: []const u8) []const u8 {
+    if (compat.findNodeApprovalIndex(node_id)) |idx| {
+        return normalizeApprovalMode(compat.node_approvals.items[idx].mode, compat.global_approval_mode);
+    }
+    return normalizeApprovalMode(compat.global_approval_mode, "deny");
+}
+
+fn previewSingleLine(raw: []const u8, max_len: usize) []const u8 {
+    var trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    if (trimmed.len == 0) return "";
+    if (std.mem.indexOfAny(u8, trimmed, "\r\n")) |idx| trimmed = trimmed[0..idx];
+    if (trimmed.len > max_len) trimmed = trimmed[0..max_len];
+    return trimmed;
+}
+
+fn buildExecutionApprovalReason(
+    allocator: std.mem.Allocator,
+    method: []const u8,
+    params: ?std.json.ObjectMap,
+) ![]u8 {
+    if (std.ascii.eqlIgnoreCase(method, "exec.run")) {
+        const command = previewSingleLine(firstParamString(params, "command", firstParamString(params, "cmd", "")), 160);
+        if (command.len > 0) return std.fmt.allocPrint(allocator, "Approval required for exec.run: {s}", .{command});
+        return std.fmt.allocPrint(allocator, "Approval required for exec.run", .{});
+    }
+    if (std.ascii.eqlIgnoreCase(method, "process.start")) {
+        const command = previewSingleLine(firstParamString(params, "command", firstParamString(params, "cmd", "")), 160);
+        if (command.len > 0) return std.fmt.allocPrint(allocator, "Approval required for process.start: {s}", .{command});
+        return std.fmt.allocPrint(allocator, "Approval required for process.start", .{});
+    }
+    if (std.ascii.eqlIgnoreCase(method, "execute_code")) {
+        const language = previewSingleLine(firstParamString(params, "language", "unknown"), 32);
+        const cwd = previewSingleLine(firstParamString(params, "cwd", ""), 120);
+        const code = previewSingleLine(firstParamString(params, "code", ""), 120);
+        if (cwd.len > 0 and code.len > 0) {
+            return std.fmt.allocPrint(allocator, "Approval required for execute_code ({s}) in {s}: {s}", .{ language, cwd, code });
+        }
+        if (code.len > 0) {
+            return std.fmt.allocPrint(allocator, "Approval required for execute_code ({s}): {s}", .{ language, code });
+        }
+        return std.fmt.allocPrint(allocator, "Approval required for execute_code ({s})", .{language});
+    }
+    return std.fmt.allocPrint(allocator, "Approval required for {s}", .{method});
+}
+
+fn maybeEncodeExecutionApprovalResult(
+    allocator: std.mem.Allocator,
+    req_id: []const u8,
+    req_method: []const u8,
+    frame_json: []const u8,
+    compat: *CompatState,
+) !?[]u8 {
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+    defer parsed.deinit();
+    const params = getParamsObjectOrNull(parsed.value);
+    const node_id = resolveExecutionApprovalNodeId(params);
+    const mode = effectiveExecutionApprovalMode(compat, node_id);
+    if (std.ascii.eqlIgnoreCase(mode, "allow")) return null;
+
+    const reason = try buildExecutionApprovalReason(allocator, req_method, params);
+    defer allocator.free(reason);
+
+    const approval_id = firstParamString(params, "approvalId", firstParamString(params, "approval_id", ""));
+
+    if (std.ascii.eqlIgnoreCase(mode, "deny")) {
+        return try protocol.encodeResult(allocator, req_id, .{
+            .ok = false,
+            .status = 403,
+            .state = "approval_denied",
+            .method = req_method,
+            .approvalRequired = false,
+            .message = "execution blocked by approval policy",
+            .approval = .{
+                .mode = mode,
+                .nodeId = node_id,
+                .reason = reason,
+            },
+        });
+    }
+
+    const fingerprint = try computeApprovalFingerprint(allocator, node_id, req_method);
+    defer allocator.free(fingerprint);
+
+    if (approval_id.len == 0) {
+        const approval = try compat.createPendingApproval(req_method, reason, fingerprint, node_id);
+        return try protocol.encodeResult(allocator, req_id, .{
+            .ok = false,
+            .status = 409,
+            .state = "approval_required",
+            .method = req_method,
+            .approvalRequired = true,
+            .message = "approval required before execution can continue",
+            .approval = .{
+                .approvalId = approval.approval_id,
+                .status = approval.status,
+                .mode = mode,
+                .nodeId = node_id,
+                .method = approval.method,
+                .reason = approval.reason,
+                .createdAtMs = approval.created_at_ms,
+                .resolvedAtMs = approval.resolved_at_ms,
+            },
+        });
+    }
+
+    const approval_idx = compat.findPendingApprovalIndex(approval_id) orelse {
+        return try protocol.encodeResult(allocator, req_id, .{
+            .ok = false,
+            .status = 404,
+            .state = "approval_not_found",
+            .method = req_method,
+            .approvalRequired = true,
+            .message = "approvalId not found",
+            .approval = .{
+                .approvalId = approval_id,
+                .mode = mode,
+                .nodeId = node_id,
+                .reason = reason,
+            },
+        });
+    };
+    const approval = compat.pending_approvals.items[approval_idx];
+
+    if (std.mem.trim(u8, approval.method, " \t\r\n").len > 0 and !std.ascii.eqlIgnoreCase(approval.method, req_method)) {
+        return try protocol.encodeResult(allocator, req_id, .{
+            .ok = false,
+            .status = 409,
+            .state = "approval_method_mismatch",
+            .method = req_method,
+            .approvalRequired = true,
+            .message = "approvalId was issued for a different method",
+            .approval = .{
+                .approvalId = approval.approval_id,
+                .status = approval.status,
+                .mode = mode,
+                .nodeId = node_id,
+                .method = approval.method,
+                .reason = approval.reason,
+                .createdAtMs = approval.created_at_ms,
+                .resolvedAtMs = approval.resolved_at_ms,
+            },
+        });
+    }
+
+    if (approval.fingerprint.len > 0 and !std.mem.eql(u8, approval.fingerprint, fingerprint)) {
+        return try protocol.encodeResult(allocator, req_id, .{
+            .ok = false,
+            .status = 409,
+            .state = "approval_fingerprint_mismatch",
+            .method = req_method,
+            .approvalRequired = true,
+            .message = "approvalId fingerprint does not match request payload",
+            .approval = .{
+                .approvalId = approval.approval_id,
+                .status = approval.status,
+                .mode = mode,
+                .nodeId = node_id,
+                .method = approval.method,
+                .reason = approval.reason,
+                .createdAtMs = approval.created_at_ms,
+                .resolvedAtMs = approval.resolved_at_ms,
+            },
+        });
+    }
+
+    if (approval.node_id.len > 0 and !std.mem.eql(u8, approval.node_id, node_id)) {
+        return try protocol.encodeResult(allocator, req_id, .{
+            .ok = false,
+            .status = 409,
+            .state = "approval_node_mismatch",
+            .method = req_method,
+            .approvalRequired = true,
+            .message = "approvalId was issued for a different nodeId",
+            .approval = .{
+                .approvalId = approval.approval_id,
+                .status = approval.status,
+                .mode = mode,
+                .nodeId = node_id,
+                .method = approval.method,
+                .reason = approval.reason,
+                .createdAtMs = approval.created_at_ms,
+                .resolvedAtMs = approval.resolved_at_ms,
+            },
+        });
+    }
+
+    if (approval.consumed) {
+        return try protocol.encodeResult(allocator, req_id, .{
+            .ok = false,
+            .status = 409,
+            .state = "approval_already_consumed",
+            .method = req_method,
+            .approvalRequired = true,
+            .message = "approvalId has already been used",
+            .approval = .{
+                .approvalId = approval.approval_id,
+                .status = approval.status,
+                .mode = mode,
+                .nodeId = node_id,
+                .method = approval.method,
+                .reason = approval.reason,
+                .createdAtMs = approval.created_at_ms,
+                .resolvedAtMs = approval.resolved_at_ms,
+            },
+        });
+    }
+
+    if (std.ascii.eqlIgnoreCase(approval.status, "approved")) {
+        compat.pending_approvals.items[approval_idx].consumed = true;
+        return null;
+    }
+
+    if (std.ascii.eqlIgnoreCase(approval.status, "rejected")) {
+        return try protocol.encodeResult(allocator, req_id, .{
+            .ok = false,
+            .status = 403,
+            .state = "approval_rejected",
+            .method = req_method,
+            .approvalRequired = false,
+            .message = "approval request was rejected",
+            .approval = .{
+                .approvalId = approval.approval_id,
+                .status = approval.status,
+                .mode = mode,
+                .nodeId = node_id,
+                .method = approval.method,
+                .reason = approval.reason,
+                .createdAtMs = approval.created_at_ms,
+                .resolvedAtMs = approval.resolved_at_ms,
+            },
+        });
+    }
+
+    return try protocol.encodeResult(allocator, req_id, .{
+        .ok = false,
+        .status = 409,
+        .state = "approval_required",
+        .method = req_method,
+        .approvalRequired = true,
+        .message = "approval is still pending",
+        .approval = .{
+            .approvalId = approval.approval_id,
+            .status = approval.status,
+            .mode = mode,
+            .nodeId = node_id,
+            .method = approval.method,
+            .reason = approval.reason,
+            .createdAtMs = approval.created_at_ms,
+            .resolvedAtMs = approval.resolved_at_ms,
+        },
+    });
 }
 
 fn normalizeBootPolicy(raw: []const u8, fallback: []const u8) []const u8 {
@@ -13442,7 +13823,7 @@ fn appendSystemCompletionMessage(
 fn buildBrowserToolContextMessage(allocator: std.mem.Allocator) ![]u8 {
     return allocator.dupe(
         u8,
-        "OpenClaw Zig runtime tool capabilities are available via RPC methods: tools.catalog, exec.run, execute_code, file.read, file.write, file.search, file.patch, web.search, web.extract, process.start, process.list, process.poll, process.read, process.wait, process.kill, send, poll, sessions.history, sessions.search, chat.history, doctor.memory.status, tts.convert, web.login.start, web.login.wait, web.login.complete, web.login.status. Do not claim there are no tools or no memory when these RPC surfaces are available.",
+        "OpenClaw Zig runtime tool capabilities are available via RPC methods: tools.catalog, acp.describe, acp.sessions.list, acp.sessions.new, acp.sessions.load, acp.sessions.resume, acp.sessions.get, acp.sessions.messages, acp.sessions.events, acp.sessions.fork, acp.sessions.cancel, acp.prompt, exec.run, execute_code, delegate_task, file.read, file.write, file.search, file.patch, web.search, web.extract, process.start, process.list, process.poll, process.read, process.wait, process.kill, send, poll, sessions.history, sessions.search, chat.history, doctor.memory.status, tts.convert, web.login.start, web.login.wait, web.login.complete, web.login.status. Do not claim there are no tools or no memory when these RPC surfaces are available.",
     );
 }
 
@@ -13857,6 +14238,7 @@ test "dispatch config.get and tools.catalog expose runtime + wasm contracts" {
     try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"wasm\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"browser.open\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"execute_code\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"delegate_task\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"file.search\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"file.patch\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"web.search\"") != null);
@@ -13864,6 +14246,8 @@ test "dispatch config.get and tools.catalog expose runtime + wasm contracts" {
     try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"process.start\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"process.wait\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"sessions.search\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"kind\":\"execute\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, catalog_out, "\"approvalSensitive\":true") != null);
 }
 
 test "dispatch config.get authMode reflects non-loopback bind token policy" {
@@ -14172,6 +14556,50 @@ test "dispatch execute_code runs shell snippets through runtime" {
     try std.testing.expect(std.mem.indexOf(u8, out, "\"ok\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"language\":\"shell\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "dispatcher-exec:") != null);
+}
+
+test "dispatch delegate_task runs zig-native delegated file pipeline" {
+    const allocator = std.testing.allocator;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var cfg = config.defaults();
+    cfg.state_path = "memory://dispatcher-delegate-task";
+    setConfig(cfg);
+    defer setConfig(config.defaults());
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const base_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(base_path);
+    const file_path = try std.fs.path.join(allocator, &.{ base_path, "delegate-coding.txt" });
+    defer allocator.free(file_path);
+
+    const frame = try encodeFrame(
+        allocator,
+        "delegate-task-1",
+        "delegate_task",
+        .{
+            .goal = "delegate file flow",
+            .sessionId = "sess-delegate",
+            .toolsets = .{"file"},
+            .steps = .{
+                .{ .tool = "file.write", .path = file_path, .content = "delegate-needle" },
+                .{ .tool = "file.search", .path = base_path, .query = "delegate-needle", .maxResults = 5 },
+                .{ .tool = "file.patch", .path = file_path, .oldText = "delegate-needle", .newText = "delegate-patched" },
+                .{ .tool = "file.read", .path = file_path },
+            },
+        },
+    );
+    defer allocator.free(frame);
+
+    const out = try dispatch(allocator, frame);
+    defer allocator.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"kind\":\"delegate_task\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"status\":\"completed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"tool\":\"file.search\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"kind\":\"task.start\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"preview\":\"delegate file flow\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"kind\":\"tool.call.start\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "delegate-patched") != null);
 }
 
 test "dispatch file.search and file.patch expose coding-agent flows" {
@@ -15400,10 +15828,10 @@ test "dispatch memory history handlers return persisted send activity" {
     const memory_status = try dispatch(allocator, "{\"id\":\"mem-status\",\"method\":\"doctor.memory.status\",\"params\":{}}");
     defer allocator.free(memory_status);
     try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"healthy\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"entryCount\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"entryCount\":") != null);
     try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"checkedAt\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"maxRetention\":") != null);
-    try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"stats\":{\"entries\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"stats\":{\"entries\":") != null);
     try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"entries\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"statePath\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, memory_status, "\"runtime\":{\"statePath\":") != null);
@@ -16429,6 +16857,127 @@ test "dispatch compat exec approvals methods return contracts" {
     const approval_resolve = try dispatch(allocator, approval_resolve_frame);
     defer allocator.free(approval_resolve);
     try std.testing.expect(std.mem.indexOf(u8, approval_resolve, "\"status\":\"approved\"") != null);
+}
+
+
+
+test "dispatch execution approvals gate runtime methods end to end" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi or builtin.os.tag == .freestanding) {
+        return error.SkipZigTest;
+    }
+
+    const allocator = std.testing.allocator;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var cfg = config.defaults();
+    cfg.state_path = "memory://dispatcher-approval-gate";
+    setConfig(cfg);
+    defer setConfig(config.defaults());
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const root = try tmp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+
+    const approvals_allow_frame = try encodeFrame(allocator, "approval-global-allow", "exec.approvals.set", .{
+        .mode = "allow",
+    });
+    defer allocator.free(approvals_allow_frame);
+    const approvals_allow = try dispatch(allocator, approvals_allow_frame);
+    defer allocator.free(approvals_allow);
+    try std.testing.expect(std.mem.indexOf(u8, approvals_allow, "\"mode\":\"allow\"") != null);
+
+    const prompt_set_frame = try encodeFrame(allocator, "approval-node-prompt", "exec.approvals.node.set", .{
+        .nodeId = "approval-node",
+        .mode = "prompt",
+    });
+    defer allocator.free(prompt_set_frame);
+    const prompt_set = try dispatch(allocator, prompt_set_frame);
+    defer allocator.free(prompt_set);
+    try std.testing.expect(std.mem.indexOf(u8, prompt_set, "\"mode\":\"prompt\"") != null);
+
+    const prompt_frame = try encodeFrame(
+        allocator,
+        "approval-needed",
+        "execute_code",
+        .{
+            .sessionId = "approval-s1",
+            .nodeId = "approval-node",
+            .language = "shell",
+            .cwd = root,
+            .code = "printf prompt-gated",
+            .timeoutMs = 20_000,
+        },
+    );
+    defer allocator.free(prompt_frame);
+    const prompt_result = try dispatch(allocator, prompt_frame);
+    defer allocator.free(prompt_result);
+    try std.testing.expect(std.mem.indexOf(u8, prompt_result, "\"state\":\"approval_required\"") != null);
+    const approval_id = try extractResultObjectStringField(allocator, prompt_result, "approval", "approvalId");
+    defer allocator.free(approval_id);
+
+    const wait_frame = try encodeFrame(allocator, "approval-pending", "exec.approval.waitDecision", .{
+        .approvalId = approval_id,
+        .timeoutMs = 10,
+    });
+    defer allocator.free(wait_frame);
+    const wait_result = try dispatch(allocator, wait_frame);
+    defer allocator.free(wait_result);
+    try std.testing.expect(std.mem.indexOf(u8, wait_result, "\"status\":\"pending\"") != null);
+
+    const resolve_frame = try encodeFrame(allocator, "approval-approve", "exec.approval.resolve", .{
+        .approvalId = approval_id,
+        .status = "approved",
+    });
+    defer allocator.free(resolve_frame);
+    const resolve_result = try dispatch(allocator, resolve_frame);
+    defer allocator.free(resolve_result);
+    try std.testing.expect(std.mem.indexOf(u8, resolve_result, "\"status\":\"approved\"") != null);
+
+    const approved_frame = try encodeFrame(
+        allocator,
+        "approval-granted",
+        "execute_code",
+        .{
+            .sessionId = "approval-s1",
+            .nodeId = "approval-node",
+            .approvalId = approval_id,
+            .language = "shell",
+            .cwd = root,
+            .code = "printf approved-run",
+            .timeoutMs = 20_000,
+        },
+    );
+    defer allocator.free(approved_frame);
+    const approved_result = try dispatch(allocator, approved_frame);
+    defer allocator.free(approved_result);
+    try std.testing.expect(std.mem.indexOf(u8, approved_result, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, approved_result, "approved-run") != null);
+
+    const deny_set_frame = try encodeFrame(allocator, "approval-node-deny", "exec.approvals.node.set", .{
+        .nodeId = "approval-deny-node",
+        .mode = "deny",
+    });
+    defer allocator.free(deny_set_frame);
+    const deny_set = try dispatch(allocator, deny_set_frame);
+    defer allocator.free(deny_set);
+    try std.testing.expect(std.mem.indexOf(u8, deny_set, "\"mode\":\"deny\"") != null);
+
+    const denied_frame = try encodeFrame(
+        allocator,
+        "approval-denied",
+        "process.start",
+        .{
+            .sessionId = "approval-s1",
+            .nodeId = "approval-deny-node",
+            .cwd = root,
+            .command = "printf should-not-run",
+        },
+    );
+    defer allocator.free(denied_frame);
+    const denied_result = try dispatch(allocator, denied_frame);
+    defer allocator.free(denied_result);
+    try std.testing.expect(std.mem.indexOf(u8, denied_result, "\"state\":\"approval_denied\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, denied_result, "\"ok\":false") != null);
 }
 
 test "dispatch edge parity slice methods return contracts" {
