@@ -10673,7 +10673,7 @@ fn computeApprovalFingerprint(allocator: std.mem.Allocator, node_id: []const u8,
     hasher.update(payload);
     var hash: [32]u8 = undefined;
     hasher.final(&hash);
-    return std.fmt.allocPrint(allocator, "{s}", .{std.fmt.fmtSliceHexLower(&hash)});
+    return allocator.dupe(u8, &std.fmt.bytesToHex(hash, .lower));
 }
 
 fn effectiveExecutionApprovalMode(compat: *const CompatState, node_id: []const u8) []const u8 {
