@@ -13,23 +13,29 @@ ZAR is **not** full ACP parity yet. The current slice ports the parts that fit Z
   - the catalog also advertises `supportedOnHosted`, `supportedOnBaremetal`, `currentRuntimeSupported`, and top-level `runtimeTarget` posture so ACP-shaped adapters can reason about hosted vs bare-metal availability
 - shared `acp.describe` metadata in Zig with:
   - runtime target labeling
-  - polling delivery posture (`acp.sessions.events` + `tasks.events` + `tasks.get`)
+  - authentication discovery (`acp.initialize`, `acp.authenticate`)
+  - polling delivery posture (`acp.sessions.events`, `acp.sessions.updates`, `tasks.events`, `tasks.get`)
   - ACP-shaped capability flags
-  - session-lifecycle method discovery
+  - session-lifecycle/update/search method discovery
   - prompt/content-block capability discovery
   - shared portable tool catalog exposure
+- shared ACP handshake/auth in Zig with:
+  - `acp.initialize`
+  - `acp.authenticate`
+  - provider/method posture discovery that stays aligned across hosted `/rpc` and bare-metal `RUNTIMECALL`
 - shared ACP session lifecycle in Zig with:
+  - `acp.sessions.list`
   - `acp.sessions.new`
   - `acp.sessions.load`
   - `acp.sessions.resume`
-  - `acp.sessions.list`
   - `acp.sessions.get`
   - `acp.sessions.messages`
-- `acp.sessions.events`
   - `acp.sessions.events`
+  - `acp.sessions.updates`
+  - `acp.sessions.search`
   - `acp.sessions.fork`
   - `acp.sessions.cancel`
-  - durable session metadata plus transcript storage in shared runtime state
+  - durable session metadata plus transcript and session-event storage in shared runtime state
 - shared `acp.prompt` handling in Zig with:
   - durable user/assistant transcript recording
   - direct assistant-message replies when no delegated work is requested
@@ -56,13 +62,15 @@ zig build -Doptimize=Debug
 ./zig-out/bin/openclaw-zig --serve
 ```
 
-The runtime serves JSON-RPC over HTTP on `/rpc`. The same portable runtime contract now also reaches the bare-metal service path through `RUNTIMECALL`, so catalog metadata, ACP session/prompt semantics, delegation, task receipts/events, and session transcripts stay aligned across both runtime profiles.
+The runtime serves JSON-RPC over HTTP on `/rpc`. The same portable runtime contract now also reaches the bare-metal service path through `RUNTIMECALL`, so catalog metadata, ACP auth/session/prompt semantics, session updates/search, delegation, task receipts/events, and session transcripts stay aligned across both runtime profiles.
 
 ## ACP description and tool metadata
 
-`acp.describe` now returns Hermes-guided ACP metadata so an adapter or UI can discover the runtime target, polling delivery posture, task/session capability set, session lifecycle methods, and prompt capability envelope without guessing.
+`acp.describe` now returns Hermes-guided ACP metadata so an adapter or UI can discover the runtime target, authentication methods, polling delivery posture, task/session capability set, session lifecycle/update/search methods, and prompt capability envelope without guessing.
 
 `tools.catalog` returns Hermes-inspired tool categories so an ACP adapter or UI can distinguish between read/edit/search/fetch/execute style tools. It also returns per-tool support posture for hosted vs bare-metal targets plus the current runtime target label.
+
+`acp.initialize` returns the advertised ACP authentication methods for the current runtime target. `acp.authenticate` accepts a method/provider id and returns the current runtime's best-effort auth posture (`authenticated`, `provider`, `runtimeTarget`, and a status message) without pretending credentials exist where they do not.
 
 Examples:
 
@@ -72,8 +80,11 @@ Examples:
 - `web.search`, `web.extract`, `browser.open` -> `fetch`
 - `exec.run`, `execute_code`, `process.start`, `acp.prompt` -> `execute`
 
-The shared task polling seam is:
+The shared ACP/session/task polling seam is:
 
+- `acp.sessions.events` -> poll durable ACP session events by session
+- `acp.sessions.updates` -> poll ACP-shaped update envelopes derived from those durable session events
+- `acp.sessions.search` -> search ACP sessions by metadata, transcript text, event previews, and delegated task summaries
 - `tasks.list` -> list persisted delegated task receipts
 - `tasks.get` -> load a delegated task receipt + latest event cursor
 - `tasks.events` -> poll delegated task events by task or session
@@ -90,6 +101,8 @@ The shared ACP session lifecycle now lives in Zig runtime state and is available
 - `acp.sessions.get` -> fetch one ACP session plus latest transcript/task/event cursor state
 - `acp.sessions.messages` -> read the durable ACP transcript for one session
 - `acp.sessions.events` -> poll durable ACP session events for session lifecycle, messages, and mirrored delegated task progress
+- `acp.sessions.updates` -> poll ACP-shaped update envelopes derived from those durable session events
+- `acp.sessions.search` -> search ACP sessions by metadata, transcript text, event previews, task goals, and task summaries
 - `acp.sessions.fork` -> clone an ACP session into a child session with copied transcript state
 - `acp.sessions.cancel` -> mark an ACP session canceled so new prompts are blocked until resume
 
@@ -122,10 +135,15 @@ This means ACP prompts, session cancel/resume state, delegated work, task receip
 The shared tool contract allows delegated tasks to inspect ACP metadata and ACP session reads where appropriate:
 
 - `acp`
+- `acp.initialize`
+- `acp.authenticate`
 - `acp.describe`
 - `acp.sessions.list`
 - `acp.sessions.get`
 - `acp.sessions.messages`
+- `acp.sessions.events`
+- `acp.sessions.updates`
+- `acp.sessions.search`
 
 But it does **not** allow delegated tasks to call `acp.prompt` recursively. This prevents nested capability escalation inside delegated batches while still letting delegated flows inspect ACP metadata and read transcript history.
 
@@ -169,12 +187,17 @@ Then re-run the original request with `approvalId` included.
 `scripts/hermes-port-rpc-smoke.mjs` now verifies:
 
 - typed `tools.catalog` metadata
-- `acp.describe` polling + session-lifecycle metadata
-- `acp.sessions.new`
+- `acp.describe` authentication + polling + session-lifecycle/update/search metadata
+- `acp.initialize`
+- `acp.authenticate`
+- `acp.sessions.new|load|cancel|resume`
 - direct-message `acp.prompt`
 - durable transcript lookup through `acp.sessions.messages`
+- ACP session-event polling through `acp.sessions.events`
+- ACP update polling through `acp.sessions.updates`
+- ACP session search through `acp.sessions.search`
 - session cloning through `acp.sessions.fork`
-- delegated `acp.prompt` execution that produces a persisted task receipt and transcript summary
+- delegated `acp.prompt` execution that produces a persisted task receipt, mirrored ACP session events/updates, and a transcript summary
 - persisted task receipt polling via `tasks.list|get|events|search`
 - prompt -> pending approval -> approved re-run
 - deny-mode blocking for `process.start`

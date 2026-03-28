@@ -4,7 +4,9 @@
 
 - Current edge release target: `v0.2.0-zig-edge.31`
 - Latest local test gate: `zig build test --summary all` -> `1068 passed; 3 skipped; 0 failed`
-- Latest parity gate: `scripts/check-go-method-parity.ps1` -> `GO_MISSING_IN_ZIG=0`, `ORIGINAL_MISSING_IN_ZIG=0`, `ORIGINAL_BETA_MISSING_IN_ZIG=0`, `UNION_MISSING_IN_ZIG=0`, `UNION_EVENTS_MISSING_IN_ZIG=0`, `ZIG_COUNT=203`, `ZIG_EVENTS_COUNT=19`, union baseline `141/141`
+- Current registry count after the Hermes ACP v11 slice: `ZIG_COUNT=207`; gateway events union count remains `ZIG_EVENTS_COUNT=19`
+- Latest shared ACP portable seam: `acp.initialize`, `acp.authenticate`, `acp.sessions.updates`, and `acp.sessions.search` now ride the same Zig runtime contract on both hosted `/rpc` and bare-metal `RUNTIMECALL`
+- Pinned parity gate baseline remains `scripts/check-go-method-parity.ps1` -> `GO_MISSING_IN_ZIG=0`, `ORIGINAL_MISSING_IN_ZIG=0`, `ORIGINAL_BETA_MISSING_IN_ZIG=0`, `UNION_MISSING_IN_ZIG=0`, `UNION_EVENTS_MISSING_IN_ZIG=0`, union baseline `141/141`
 - Current head: local source-of-truth on `fs55-ethernet-integration` (exact pushed head is tracked in issue `#1` and the latest branch GitHub Actions runs)
 - License posture: repo-wide `GPL-2.0-only` with Linux-style SPDX headers on repo-owned source and script files
 - Toolchain lane: Codeberg `master` is canonical; `adybag14-cyber/zig` is the Windows release mirror with rolling `latest-master` plus immutable `upstream-<sha>` releases.
