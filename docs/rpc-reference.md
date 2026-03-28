@@ -21,7 +21,7 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 
 ## Summary
 
-- Total methods: **203**
+- Total methods: **207**
 - Prefix groups: **37**
 
 ## Prefix Overview
@@ -29,7 +29,7 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 | Prefix | Count |
 | --- | ---: |
 | (root) | 15 |
-| acp | 11 |
+| acp | 15 |
 | agent | 2 |
 | agents | 7 |
 | auth | 6 |
@@ -88,7 +88,9 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 
 ### acp
 
+- acp.authenticate
 - acp.describe
+- acp.initialize
 - acp.prompt
 - acp.sessions.cancel
 - acp.sessions.events
@@ -99,6 +101,8 @@ Source of truth: [`src/gateway/registry.zig`](https://github.com/adybag14-cyber/
 - acp.sessions.messages
 - acp.sessions.new
 - acp.sessions.resume
+- acp.sessions.search
+- acp.sessions.updates
 
 ### agent
 

@@ -4,7 +4,7 @@ ZAR-Zig-Agent-Runtime is the Zig runtime port of OpenClaw, with parity-first del
 
 ## Current Status
 
-- RPC method surface in Zig: `203`
+- RPC method surface in Zig: `207`
 - Pinned parity gate (tri-baseline, CI/docs):
   - Go baseline (`v2.14.0-go`): `134/134` covered
   - Original OpenClaw baseline (`v2026.3.13-1`): `100/100` covered
@@ -576,7 +576,7 @@ ZAR-Zig-Agent-Runtime is now distributed under `GPL-2.0-only`.
 
 - Runtime profiles:
   - OS-hosted runtime: full HTTP/RPC gateway and feature surface.
-  - Bare-metal runtime: freestanding image exporting lifecycle hooks (`_start`, `oc_tick`, `oc_tick_n`, `oc_status_ptr`) plus command/mailbox ABI (`oc_command_ptr`, `oc_submit_command`, `oc_kernel_info_ptr`), descriptor table/int-vector bootstrap exports, a Multiboot2 header for bootloader/hypervisor integration, and the same portable Zig tool contract (`tools.catalog`, `acp.describe`, `acp.sessions.list`, `acp.sessions.new`, `acp.sessions.load`, `acp.sessions.resume`, `acp.sessions.get`, `acp.sessions.messages`, `acp.sessions.events`, `acp.sessions.fork`, `acp.sessions.cancel`, `acp.prompt`, `delegate_task`, `sessions.history`, `sessions.search`, `tasks.list`, `tasks.get`, `tasks.events`, `tasks.search`) through `RUNTIMECALL` that the hosted `/rpc` gateway exposes.
+  - Bare-metal runtime: freestanding image exporting lifecycle hooks (`_start`, `oc_tick`, `oc_tick_n`, `oc_status_ptr`) plus command/mailbox ABI (`oc_command_ptr`, `oc_submit_command`, `oc_kernel_info_ptr`), descriptor table/int-vector bootstrap exports, a Multiboot2 header for bootloader/hypervisor integration, and the same portable Zig tool contract (`tools.catalog`, `acp.describe`, `acp.initialize`, `acp.authenticate`, `acp.sessions.list`, `acp.sessions.new`, `acp.sessions.load`, `acp.sessions.resume`, `acp.sessions.get`, `acp.sessions.messages`, `acp.sessions.events`, `acp.sessions.updates`, `acp.sessions.search`, `acp.sessions.fork`, `acp.sessions.cancel`, `acp.prompt`, `delegate_task`, `sessions.history`, `sessions.search`, `tasks.list`, `tasks.get`, `tasks.events`, `tasks.search`) through `RUNTIMECALL` that the hosted `/rpc` gateway exposes.
 - Protocol: JSON-RPC request/response envelopes with deterministic error semantics.
 - Gateway: HTTP/WebSocket server with `GET /health`, `GET /ui`, `POST /rpc`, and websocket RPC routes (`GET /ws` + root compatibility on `GET /`), graceful shutdown via RPC.
 - Dispatcher: method routing and contract handling across runtime, security, browser/auth, channels, memory, and edge domains.
@@ -607,8 +607,9 @@ All major runtime feature domains are implemented and dispatchable. Representati
 
 - Tool execution and filesystem actions:
   - `tools.catalog` now reports a shared portable runtime contract with `kind`, `approvalSensitive`, `supportedOnHosted`, `supportedOnBaremetal`, `currentRuntimeSupported`, and top-level `runtimeTarget` metadata.
-  - `acp.describe` now exposes Hermes-guided ACP metadata, capabilities, polling posture, session-lifecycle methods, and prompt semantics from shared Zig runtime code on both hosted `/rpc` and bare-metal `RUNTIMECALL`.
-  - `acp.sessions.list`, `acp.sessions.new`, `acp.sessions.load`, `acp.sessions.resume`, `acp.sessions.get`, `acp.sessions.messages`, `acp.sessions.events`, `acp.sessions.fork`, and `acp.sessions.cancel` now expose shared ACP session lifecycle plus durable transcript and session-event lookup from that same Zig runtime seam.
+  - `acp.describe` now exposes Hermes-guided ACP metadata, capabilities, authentication posture, polling posture, session-lifecycle/update/search methods, and prompt semantics from shared Zig runtime code on both hosted `/rpc` and bare-metal `RUNTIMECALL`.
+  - `acp.initialize` and `acp.authenticate` now provide a shared ACP handshake/auth seam in Zig so both runtime modes discover the same authentication methods and provider posture.
+  - `acp.sessions.list`, `acp.sessions.new`, `acp.sessions.load`, `acp.sessions.resume`, `acp.sessions.get`, `acp.sessions.messages`, `acp.sessions.events`, `acp.sessions.updates`, `acp.sessions.search`, `acp.sessions.fork`, and `acp.sessions.cancel` now expose shared ACP session lifecycle plus durable transcript lookup, ACP-shaped update polling, session-event polling, and session search from that same Zig runtime seam.
   - `acp.prompt` now records ACP session messages in shared Zig runtime state, respects session cancel/resume state, and can either return a direct assistant message or launch delegated work that emits the same persisted task receipts/events while mirroring them into ACP session events.
   - `delegate_task` now runs through the shared Zig runtime seam on both hosted `/rpc` and bare-metal `RUNTIMECALL` paths, rather than only the hosted gateway.
   - `tasks.list`, `tasks.get`, `tasks.events`, and `tasks.search` now expose persisted delegated task receipts/events from that same shared runtime seam.
@@ -626,7 +627,7 @@ All major runtime feature domains are implemented and dispatchable. Representati
   - bare-metal command/service proof now exercises the same catalog/ACP session/prompt/delegation/task contract through `src/baremetal/tool_service.zig` tests.
   - freestanding compile proof now covers both `zig build baremetal` and `zig build baremetal-i386`.
 - Runtime and session surfaces:
-  - `acp.sessions.list`, `acp.sessions.new`, `acp.sessions.load`, `acp.sessions.resume`, `acp.sessions.get`, `acp.sessions.messages`, `acp.sessions.events`, `acp.sessions.fork`, `acp.sessions.cancel`, `acp.prompt`
+  - `acp.initialize`, `acp.authenticate`, `acp.sessions.list`, `acp.sessions.new`, `acp.sessions.load`, `acp.sessions.resume`, `acp.sessions.get`, `acp.sessions.messages`, `acp.sessions.events`, `acp.sessions.updates`, `acp.sessions.search`, `acp.sessions.fork`, `acp.sessions.cancel`, `acp.prompt`
   - `sessions.list`, `sessions.preview`, `session.status`
   - `sessions.patch`, `sessions.resolve`
   - `sessions.history`, `sessions.search`, `chat.history`

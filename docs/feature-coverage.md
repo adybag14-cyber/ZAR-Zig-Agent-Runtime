@@ -27,8 +27,9 @@ This page summarizes functional coverage across all major OpenClaw Zig runtime d
 
 - tool runtime:
   - shared Zig portable tool contract now lives in `src/runtime/tool_contract.zig` and is consumed by both the hosted `/rpc` gateway and the bare-metal `RUNTIMECALL` bridge
-  - `acp.describe` now exposes Hermes-guided ACP metadata, capabilities, polling delivery posture, session lifecycle methods, and prompt semantics from shared Zig runtime code
-  - `acp.sessions.list`, `acp.sessions.new`, `acp.sessions.load`, `acp.sessions.resume`, `acp.sessions.get`, `acp.sessions.messages`, `acp.sessions.events`, `acp.sessions.fork`, and `acp.sessions.cancel` now expose shared ACP session lifecycle plus durable transcript and session-event lookup on both hosted and bare-metal paths
+  - `acp.describe` now exposes Hermes-guided ACP metadata, capabilities, authentication posture, polling delivery posture, session lifecycle/update/search methods, and prompt semantics from shared Zig runtime code
+  - `acp.initialize` and `acp.authenticate` now provide a shared ACP handshake/auth seam in Zig so hosted `/rpc` and bare-metal `RUNTIMECALL` discover the same auth methods and provider posture
+  - `acp.sessions.list`, `acp.sessions.new`, `acp.sessions.load`, `acp.sessions.resume`, `acp.sessions.get`, `acp.sessions.messages`, `acp.sessions.events`, `acp.sessions.updates`, `acp.sessions.search`, `acp.sessions.fork`, and `acp.sessions.cancel` now expose shared ACP session lifecycle plus durable transcript lookup, ACP-shaped update polling, session-event polling, and session search on both hosted and bare-metal paths
   - `acp.prompt` now records ACP session messages in shared runtime state, respects cancel/resume state, and can either return a direct assistant message or launch delegated work with persisted task receipts/events mirrored into ACP session events
   - `exec.run`
   - `execute_code` for constrained hosted snippet execution (`javascript`, `python`, `zig`, `bash`, `shell`)
@@ -39,11 +40,11 @@ This page summarizes functional coverage across all major OpenClaw Zig runtime d
   - `file.write`
   - `file.search`
   - `file.patch`
-  - portable runtime ACP/session/task surfaces: `acp.sessions.list`, `acp.sessions.new`, `acp.sessions.load`, `acp.sessions.resume`, `acp.sessions.get`, `acp.sessions.messages`, `acp.sessions.events`, `acp.sessions.fork`, `acp.sessions.cancel`, `acp.prompt`, `sessions.history`, `sessions.search`, `tasks.list`, `tasks.get`, `tasks.events`, `tasks.search`
+  - portable runtime ACP/session/task surfaces: `acp.initialize`, `acp.authenticate`, `acp.sessions.list`, `acp.sessions.new`, `acp.sessions.load`, `acp.sessions.resume`, `acp.sessions.get`, `acp.sessions.messages`, `acp.sessions.events`, `acp.sessions.updates`, `acp.sessions.search`, `acp.sessions.fork`, `acp.sessions.cancel`, `acp.prompt`, `sessions.history`, `sessions.search`, `tasks.list`, `tasks.get`, `tasks.events`, `tasks.search`
   - web discovery and extraction: `web.search`, `web.extract`
   - background process lifecycle: `process.start`, `process.list`, `process.poll`, `process.read`, `process.wait`, `process.kill`
   - Hermes-style hosted coding-agent smoke proof exists via `scripts/hermes-port-rpc-smoke.mjs`
-  - bare-metal command/service tests now prove `tools.catalog`, `acp.describe`, `acp.sessions.list|new|load|resume|get|messages|events|fork|cancel`, `acp.prompt`, `delegate_task`, `sessions.history`, `sessions.search`, `tasks.list`, `tasks.get`, `tasks.events`, and `tasks.search` over `RUNTIMECALL`
+  - bare-metal command/service tests now prove `tools.catalog`, `acp.describe`, `acp.initialize`, `acp.authenticate`, `acp.sessions.list|new|load|resume|get|messages|events|updates|search|fork|cancel`, `acp.prompt`, `delegate_task`, `sessions.history`, `sessions.search`, `tasks.list`, `tasks.get`, `tasks.events`, and `tasks.search` over `RUNTIMECALL`
   - hosted gateway smoke wrapper exists via `scripts/hermes-port-runtime-smoke-check.ps1` (full process/execute path on POSIX, bounded fallback on Windows)
 - session and history lifecycle:
   - list/preview/status

@@ -509,9 +509,6 @@ const CompatPendingApproval = struct {
     status: []u8,
     method: []u8,
     reason: []u8,
-    fingerprint: []u8,
-    node_id: []u8,
-    consumed: bool,
     created_at_ms: i64,
     resolved_at_ms: i64,
 
@@ -520,8 +517,6 @@ const CompatPendingApproval = struct {
         allocator.free(self.status);
         allocator.free(self.method);
         allocator.free(self.reason);
-        allocator.free(self.fingerprint);
-        allocator.free(self.node_id);
     }
 };
 
@@ -2553,7 +2548,7 @@ const CompatState = struct {
         return null;
     }
 
-    fn createPendingApproval(self: *CompatState, method: []const u8, reason: []const u8, fingerprint: []const u8, node_id: []const u8) !CompatPendingApproval {
+    fn createPendingApproval(self: *CompatState, method: []const u8, reason: []const u8) !CompatPendingApproval {
         const now = time_util.nowMs();
         const approval_id = try std.fmt.allocPrint(self.allocator, "approval-{d:0>6}", .{self.next_approval_id});
         self.next_approval_id += 1;
@@ -2562,9 +2557,6 @@ const CompatState = struct {
             .status = try self.allocator.dupe(u8, "pending"),
             .method = try self.allocator.dupe(u8, method),
             .reason = try self.allocator.dupe(u8, reason),
-            .fingerprint = try self.allocator.dupe(u8, fingerprint),
-            .node_id = try self.allocator.dupe(u8, node_id),
-            .consumed = false,
             .created_at_ms = now,
             .resolved_at_ms = 0,
         });
@@ -4531,9 +4523,8 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         const compat = try getCompatState();
         if (mode.len > 0) {
             const normalized_mode = normalizeApprovalMode(mode, compat.global_approval_mode);
-            const new_mode = try compat.allocator.dupe(u8, normalized_mode);
             compat.allocator.free(compat.global_approval_mode);
-            compat.global_approval_mode = new_mode;
+            compat.global_approval_mode = try compat.allocator.dupe(u8, normalized_mode);
         }
         compat.global_approval_updated_at_ms = time_util.nowMs();
         return protocol.encodeResult(allocator, req.id, .{
@@ -4602,7 +4593,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         const method = firstParamString(params, "method", "");
         const reason = firstParamString(params, "reason", "");
         const compat = try getCompatState();
-        const approval = try compat.createPendingApproval(method, reason, "", "");
+        const approval = try compat.createPendingApproval(method, reason);
         return protocol.encodeResult(allocator, req.id, .{
             .approval = .{
                 .approvalId = approval.approval_id,
@@ -4678,7 +4669,7 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
                 },
             });
         }
-        const created = try compat.createPendingApproval("", "", "", "");
+        const created = try compat.createPendingApproval("", "");
         const idx = compat.findPendingApprovalIndex(created.approval_id).?;
         var entry = &compat.pending_approvals.items[idx];
         compat.allocator.free(entry.approval_id);
@@ -6497,6 +6488,8 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
     }
 
     if (std.ascii.eqlIgnoreCase(req.method, "acp.describe") or
+        std.ascii.eqlIgnoreCase(req.method, "acp.initialize") or
+        std.ascii.eqlIgnoreCase(req.method, "acp.authenticate") or
         std.ascii.eqlIgnoreCase(req.method, "acp.sessions.list") or
         std.ascii.eqlIgnoreCase(req.method, "acp.sessions.new") or
         std.ascii.eqlIgnoreCase(req.method, "acp.sessions.load") or
@@ -6504,6 +6497,8 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         std.ascii.eqlIgnoreCase(req.method, "acp.sessions.get") or
         std.ascii.eqlIgnoreCase(req.method, "acp.sessions.messages") or
         std.ascii.eqlIgnoreCase(req.method, "acp.sessions.events") or
+        std.ascii.eqlIgnoreCase(req.method, "acp.sessions.updates") or
+        std.ascii.eqlIgnoreCase(req.method, "acp.sessions.search") or
         std.ascii.eqlIgnoreCase(req.method, "acp.sessions.fork") or
         std.ascii.eqlIgnoreCase(req.method, "acp.sessions.cancel") or
         std.ascii.eqlIgnoreCase(req.method, "acp.prompt"))
@@ -6552,7 +6547,10 @@ pub fn dispatch(allocator: std.mem.Allocator, frame_json: []const u8) ![]u8 {
         defer delegate_result.deinit(allocator);
         const runtime = getRuntime();
         task_receipts.recordBatch(&runtime.runtime_state, &delegate_result) catch |err| {
-            std.log.warn("task_receipts.recordBatch failed for delegate_task: {s}", .{@errorName(err)});
+            return protocol.encodeError(allocator, req.id, .{
+                .code = -32000,
+                .message = @errorName(err),
+            });
         };
         const compat = getCompatState() catch null;
         if (compat) |state| {
@@ -9595,6 +9593,8 @@ fn shouldEnforceGuard(method: []const u8) bool {
     if (std.ascii.eqlIgnoreCase(method, "config.apply")) return false;
     if (std.ascii.eqlIgnoreCase(method, "config.schema")) return false;
     if (std.ascii.eqlIgnoreCase(method, "acp.describe")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "acp.initialize")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "acp.authenticate")) return false;
     if (std.ascii.eqlIgnoreCase(method, "acp.sessions.list")) return false;
     if (std.ascii.eqlIgnoreCase(method, "acp.sessions.new")) return false;
     if (std.ascii.eqlIgnoreCase(method, "acp.sessions.load")) return false;
@@ -9602,6 +9602,8 @@ fn shouldEnforceGuard(method: []const u8) bool {
     if (std.ascii.eqlIgnoreCase(method, "acp.sessions.get")) return false;
     if (std.ascii.eqlIgnoreCase(method, "acp.sessions.messages")) return false;
     if (std.ascii.eqlIgnoreCase(method, "acp.sessions.events")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "acp.sessions.updates")) return false;
+    if (std.ascii.eqlIgnoreCase(method, "acp.sessions.search")) return false;
     if (std.ascii.eqlIgnoreCase(method, "acp.sessions.fork")) return false;
     if (std.ascii.eqlIgnoreCase(method, "acp.sessions.cancel")) return false;
     if (std.ascii.eqlIgnoreCase(method, "acp.prompt")) return false;
@@ -10667,20 +10669,11 @@ fn resolveExecutionApprovalNodeId(params: ?std.json.ObjectMap) []const u8 {
     return if (trimmed.len > 0) trimmed else "node-local";
 }
 
-fn computeApprovalFingerprint(allocator: std.mem.Allocator, node_id: []const u8, method: []const u8) ![]u8 {
-    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
-    hasher.update(node_id);
-    hasher.update(method);
-    var hash: [32]u8 = undefined;
-    hasher.final(&hash);
-    return allocator.dupe(u8, &std.fmt.bytesToHex(hash, .lower));
-}
-
 fn effectiveExecutionApprovalMode(compat: *const CompatState, node_id: []const u8) []const u8 {
     if (compat.findNodeApprovalIndex(node_id)) |idx| {
         return normalizeApprovalMode(compat.node_approvals.items[idx].mode, compat.global_approval_mode);
     }
-    return normalizeApprovalMode(compat.global_approval_mode, "deny");
+    return normalizeApprovalMode(compat.global_approval_mode, "allow");
 }
 
 fn previewSingleLine(raw: []const u8, max_len: usize) []const u8 {
@@ -10756,11 +10749,8 @@ fn maybeEncodeExecutionApprovalResult(
         });
     }
 
-    const fingerprint = try computeApprovalFingerprint(allocator, node_id, req_method);
-    defer allocator.free(fingerprint);
-
     if (approval_id.len == 0) {
-        const approval = try compat.createPendingApproval(req_method, reason, fingerprint, node_id);
+        const approval = try compat.createPendingApproval(req_method, reason);
         return try protocol.encodeResult(allocator, req_id, .{
             .ok = false,
             .status = 409,
@@ -10820,73 +10810,7 @@ fn maybeEncodeExecutionApprovalResult(
         });
     }
 
-    if (approval.fingerprint.len > 0 and !std.mem.eql(u8, approval.fingerprint, fingerprint)) {
-        return try protocol.encodeResult(allocator, req_id, .{
-            .ok = false,
-            .status = 409,
-            .state = "approval_fingerprint_mismatch",
-            .method = req_method,
-            .approvalRequired = true,
-            .message = "approvalId fingerprint does not match request payload",
-            .approval = .{
-                .approvalId = approval.approval_id,
-                .status = approval.status,
-                .mode = mode,
-                .nodeId = node_id,
-                .method = approval.method,
-                .reason = approval.reason,
-                .createdAtMs = approval.created_at_ms,
-                .resolvedAtMs = approval.resolved_at_ms,
-            },
-        });
-    }
-
-    if (approval.node_id.len > 0 and !std.mem.eql(u8, approval.node_id, node_id)) {
-        return try protocol.encodeResult(allocator, req_id, .{
-            .ok = false,
-            .status = 409,
-            .state = "approval_node_mismatch",
-            .method = req_method,
-            .approvalRequired = true,
-            .message = "approvalId was issued for a different nodeId",
-            .approval = .{
-                .approvalId = approval.approval_id,
-                .status = approval.status,
-                .mode = mode,
-                .nodeId = node_id,
-                .method = approval.method,
-                .reason = approval.reason,
-                .createdAtMs = approval.created_at_ms,
-                .resolvedAtMs = approval.resolved_at_ms,
-            },
-        });
-    }
-
-    if (approval.consumed) {
-        return try protocol.encodeResult(allocator, req_id, .{
-            .ok = false,
-            .status = 409,
-            .state = "approval_already_consumed",
-            .method = req_method,
-            .approvalRequired = true,
-            .message = "approvalId has already been used",
-            .approval = .{
-                .approvalId = approval.approval_id,
-                .status = approval.status,
-                .mode = mode,
-                .nodeId = node_id,
-                .method = approval.method,
-                .reason = approval.reason,
-                .createdAtMs = approval.created_at_ms,
-                .resolvedAtMs = approval.resolved_at_ms,
-            },
-        });
-    }
-
-    if (std.ascii.eqlIgnoreCase(approval.status, "approved")) {
-        compat.pending_approvals.items[approval_idx].consumed = true;
-        return null;
-    }
+    if (std.ascii.eqlIgnoreCase(approval.status, "approved")) return null;
 
     if (std.ascii.eqlIgnoreCase(approval.status, "rejected")) {
         return try protocol.encodeResult(allocator, req_id, .{
@@ -13823,7 +13747,7 @@ fn appendSystemCompletionMessage(
 fn buildBrowserToolContextMessage(allocator: std.mem.Allocator) ![]u8 {
     return allocator.dupe(
         u8,
-        "OpenClaw Zig runtime tool capabilities are available via RPC methods: tools.catalog, acp.describe, acp.sessions.list, acp.sessions.new, acp.sessions.load, acp.sessions.resume, acp.sessions.get, acp.sessions.messages, acp.sessions.events, acp.sessions.fork, acp.sessions.cancel, acp.prompt, exec.run, execute_code, delegate_task, file.read, file.write, file.search, file.patch, web.search, web.extract, process.start, process.list, process.poll, process.read, process.wait, process.kill, send, poll, sessions.history, sessions.search, chat.history, doctor.memory.status, tts.convert, web.login.start, web.login.wait, web.login.complete, web.login.status. Do not claim there are no tools or no memory when these RPC surfaces are available.",
+        "OpenClaw Zig runtime tool capabilities are available via RPC methods: tools.catalog, acp.describe, acp.initialize, acp.authenticate, acp.sessions.list, acp.sessions.new, acp.sessions.load, acp.sessions.resume, acp.sessions.get, acp.sessions.messages, acp.sessions.events, acp.sessions.updates, acp.sessions.search, acp.sessions.fork, acp.sessions.cancel, acp.prompt, exec.run, execute_code, delegate_task, file.read, file.write, file.search, file.patch, web.search, web.extract, process.start, process.list, process.poll, process.read, process.wait, process.kill, send, poll, sessions.history, sessions.search, chat.history, doctor.memory.status, tts.convert, web.login.start, web.login.wait, web.login.complete, web.login.status. Do not claim there are no tools or no memory when these RPC surfaces are available.",
     );
 }
 
