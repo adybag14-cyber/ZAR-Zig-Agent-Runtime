@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: GPL-2.0-only
+param(
+    [switch] $SkipBuild
+)
+
+$ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
+$probe = Join-Path $PSScriptRoot "baremetal-qemu-scheduler-priority-budget-probe-check.ps1"
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
+
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_SCHEDULER_PRIORITY_BUDGET_PROBE=skipped\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_SCHEDULER_PRIORITY_BUDGET_PRIORITY_DOMINANCE_PROBE' `
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_SCHEDULER_PRIORITY_BUDGET_PRIORITY_DOMINANCE_PROBE_SOURCE' `
+    -SkippedSourceValue 'baremetal-qemu-scheduler-priority-budget-probe-check.ps1' `
+    -FailureLabel 'scheduler-priority-budget'
+$probeText = $probeState.Text
+
+$policy = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_SCHEDULER_PRIORITY_BUDGET_POLICY'
+$lowRunBefore = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_SCHEDULER_PRIORITY_BUDGET_LOW_RUN_BEFORE'
+$highRunBefore = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_SCHEDULER_PRIORITY_BUDGET_HIGH_RUN_BEFORE'
+$dispatchCount = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_SCHEDULER_PRIORITY_BUDGET_DISPATCH_COUNT'
+
+if ($null -in @($policy, $lowRunBefore, $highRunBefore, $dispatchCount)) {
+    throw 'Missing expected scheduler-priority-budget dominance fields in probe output.'
+}
+if ($policy -ne 1) { throw "Expected POLICY=1. got $policy" }
+if ($lowRunBefore -ne 0) { throw "Expected LOW_RUN_BEFORE=0. got $lowRunBefore" }
+if ($highRunBefore -lt 1) { throw "Expected HIGH_RUN_BEFORE >= 1. got $highRunBefore" }
+if ($dispatchCount -lt 2) { throw "Expected DISPATCH_COUNT >= 2. got $dispatchCount" }
+
+Write-Output 'BAREMETAL_QEMU_SCHEDULER_PRIORITY_BUDGET_PRIORITY_DOMINANCE_PROBE=pass'
+Write-Output "POLICY=$policy"
+Write-Output "LOW_RUN_BEFORE=$lowRunBefore"
+Write-Output "HIGH_RUN_BEFORE=$highRunBefore"
+Write-Output "DISPATCH_COUNT=$dispatchCount"

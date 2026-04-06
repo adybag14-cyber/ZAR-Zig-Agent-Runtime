@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: GPL-2.0-only
+param(
+    [switch] $SkipBuild
+)
+
+$ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
+$probe = Join-Path $PSScriptRoot "baremetal-qemu-scheduler-priority-budget-probe-check.ps1"
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
+
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_SCHEDULER_PRIORITY_BUDGET_PROBE=skipped\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_SCHEDULER_PRIORITY_BUDGET_INVALID_PRESERVE_PROBE' `
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_SCHEDULER_PRIORITY_BUDGET_INVALID_PRESERVE_PROBE_SOURCE' `
+    -SkippedSourceValue 'baremetal-qemu-scheduler-priority-budget-probe-check.ps1' `
+    -FailureLabel 'scheduler-priority-budget'
+$probeText = $probeState.Text
+
+$ack = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_SCHEDULER_PRIORITY_BUDGET_ACK'
+$lastOpcode = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_SCHEDULER_PRIORITY_BUDGET_LAST_OPCODE'
+$lastResult = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_SCHEDULER_PRIORITY_BUDGET_LAST_RESULT'
+$invalidPolicyResult = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_SCHEDULER_PRIORITY_BUDGET_INVALID_POLICY_RESULT'
+$policyAfterInvalid = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_SCHEDULER_PRIORITY_BUDGET_POLICY_AFTER_INVALID'
+$invalidTaskResult = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_SCHEDULER_PRIORITY_BUDGET_INVALID_TASK_RESULT'
+$lowPriorityAfterInvalid = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_SCHEDULER_PRIORITY_BUDGET_LOW_PRIORITY_AFTER_INVALID'
+$taskCountAfterInvalid = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_SCHEDULER_PRIORITY_BUDGET_TASK_COUNT_AFTER_INVALID'
+
+if ($null -in @($ack, $lastOpcode, $lastResult, $invalidPolicyResult, $policyAfterInvalid, $invalidTaskResult, $lowPriorityAfterInvalid, $taskCountAfterInvalid)) {
+    throw 'Missing expected scheduler-priority-budget invalid-preserve fields in probe output.'
+}
+if ($ack -ne 11) { throw "Expected ACK=11. got $ack" }
+if ($lastOpcode -ne 56 -or $lastResult -ne -2) { throw "Expected final invalid task result with opcode 56 / result -2. got opcode=$lastOpcode result=$lastResult" }
+if ($invalidPolicyResult -ne -22) { throw "Expected INVALID_POLICY_RESULT=-22. got $invalidPolicyResult" }
+if ($policyAfterInvalid -ne 1) { throw "Expected POLICY_AFTER_INVALID=1. got $policyAfterInvalid" }
+if ($invalidTaskResult -ne -2) { throw "Expected INVALID_TASK_RESULT=-2. got $invalidTaskResult" }
+if ($lowPriorityAfterInvalid -ne 15) { throw "Expected LOW_PRIORITY_AFTER_INVALID=15. got $lowPriorityAfterInvalid" }
+if ($taskCountAfterInvalid -ne 2) { throw "Expected TASK_COUNT_AFTER_INVALID=2. got $taskCountAfterInvalid" }
+
+Write-Output 'BAREMETAL_QEMU_SCHEDULER_PRIORITY_BUDGET_INVALID_PRESERVE_PROBE=pass'
+Write-Output "ACK=$ack"
+Write-Output "LAST_OPCODE=$lastOpcode"
+Write-Output "LAST_RESULT=$lastResult"
+Write-Output "INVALID_POLICY_RESULT=$invalidPolicyResult"
+Write-Output "POLICY_AFTER_INVALID=$policyAfterInvalid"
+Write-Output "INVALID_TASK_RESULT=$invalidTaskResult"
+Write-Output "LOW_PRIORITY_AFTER_INVALID=$lowPriorityAfterInvalid"
+Write-Output "TASK_COUNT_AFTER_INVALID=$taskCountAfterInvalid"

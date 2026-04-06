@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: GPL-2.0-only
+param(
+    [switch] $SkipBuild,
+    [int] $TimeoutSeconds = 45,
+    [int] $GdbPort = 0
+)
+
+$ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
+$probe = Join-Path $PSScriptRoot 'baremetal-qemu-syscall-saturation-reset-probe-check.ps1'
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
+
+function Extract-IntValue {
+    param([string] $Text, [string] $Name)
+    $match = [regex]::Match($Text, '(?m)^' + [regex]::Escape($Name) + '=(-?\\d+)\\r?$')
+    if (-not $match.Success) { return $null }
+    return [int64]::Parse($match.Groups[1].Value)
+}
+
+$invoke = @{ TimeoutSeconds = $TimeoutSeconds; GdbPort = $GdbPort }
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_SYSCALL_SATURATION_RESET_PROBE=skipped\\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_SYSCALL_SATURATION_RESET_RESTART_PROBE' `
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_SYSCALL_SATURATION_RESET_RESTART_PROBE_SOURCE' `
+    -SkippedSourceValue 'baremetal-qemu-syscall-saturation-reset-probe-check.ps1' `
+    -FailureLabel 'Syscall saturation-reset' `
+    -EchoOnSuccess:$false `
+    -EchoOnSkip:$true `
+    -EchoOnFailure:$true `
+    -TrimEchoText:$true `
+    -EmitSkippedSourceReceipt:$true `
+    -InvokeArgs $invoke
+$text = $probeState.Text
+$outputText = $probeState.Text
+
+$postResetEntryCount = Extract-IntValue -Text $outputText -Name 'POST_RESET_ENTRY_COUNT'
+$postResetDispatchCount = Extract-IntValue -Text $outputText -Name 'POST_RESET_DISPATCH_COUNT'
+$postResetFirstState = Extract-IntValue -Text $outputText -Name 'POST_RESET_FIRST_STATE'
+$freshId = Extract-IntValue -Text $outputText -Name 'FRESH_ID'
+$secondSlotState = Extract-IntValue -Text $outputText -Name 'SECOND_SLOT_STATE'
+$freshInvokeCount = Extract-IntValue -Text $outputText -Name 'FRESH_INVOKE_COUNT'
+
+if ($postResetEntryCount -ne 0) { throw "Expected POST_RESET_ENTRY_COUNT=0. got $postResetEntryCount" }
+if ($postResetDispatchCount -ne 0) { throw "Expected POST_RESET_DISPATCH_COUNT=0. got $postResetDispatchCount" }
+if ($postResetFirstState -ne 0) { throw "Expected POST_RESET_FIRST_STATE=0. got $postResetFirstState" }
+if ($freshId -ne 777) { throw "Expected FRESH_ID=777 after reset restart. got $freshId" }
+if ($secondSlotState -ne 0) { throw "Expected SECOND_SLOT_STATE=0 after fresh restart. got $secondSlotState" }
+if ($freshInvokeCount -ne 1) { throw "Expected FRESH_INVOKE_COUNT=1 after fresh invoke. got $freshInvokeCount" }
+
+Write-Output 'BAREMETAL_QEMU_SYSCALL_SATURATION_RESET_RESTART_PROBE=pass'
+Write-Output 'BAREMETAL_QEMU_SYSCALL_SATURATION_RESET_RESTART_PROBE_SOURCE=baremetal-qemu-syscall-saturation-reset-probe-check.ps1'
+Write-Output "POST_RESET_ENTRY_COUNT=$postResetEntryCount"
+Write-Output "POST_RESET_DISPATCH_COUNT=$postResetDispatchCount"
+Write-Output "POST_RESET_FIRST_STATE=$postResetFirstState"
+Write-Output "FRESH_ID=$freshId"
+Write-Output "SECOND_SLOT_STATE=$secondSlotState"
+Write-Output "FRESH_INVOKE_COUNT=$freshInvokeCount"

@@ -1,0 +1,2162 @@
+# Zig Port Plan
+
+## Objective
+
+Track and achieve OpenClaw Zig parity against upstream stable + beta baselines:
+- latest `adybag14-cyber/openclaw-go-port` release tag
+- latest `openclaw/openclaw` stable release tag
+- latest `openclaw/openclaw` prerelease (beta) tag
+
+while maintaining parity-first validation and release gating.
+
+Full-stack replacement execution reference:
+- `FS5.7` i386 CPU-architecture support is now tracked in:
+  - `docs/zig-port/FS5_7_I386_CPU_ARCHITECTURE.md`
+  - first delivered slice emits a real `zig build baremetal-i386` freestanding `x86-freestanding-none` artifact through `scripts/baremetal/i386_boot.S` + `scripts/baremetal/i386_lld.ld`
+  - validation now includes `scripts/baremetal-i386-smoke-check.ps1` and `scripts/baremetal-qemu-i386-smoke-check.ps1`
+  - second delivered slice makes `src/baremetal/x86_bootstrap.zig` additive dual-arch for runtime descriptor layout/telemetry, widens freestanding `x86` QEMU debug + interrupt-enable guards in `src/baremetal_main.zig`, widens hardware-backed VGA text console support in `src/baremetal/vga_text_console.zig`, and extends the i386 smoke script to require descriptor exports in the ELF symbol table
+  - third delivered slice enables x87/SSE before entering Zig runtime in `scripts/baremetal/i386_boot.S`, widens the first freestanding `x86` hardware-backed guards through `src/baremetal/pci.zig`, `src/baremetal/ata_pio_disk.zig`, `src/baremetal/rtl8139.zig`, `src/baremetal/e1000.zig`, `src/baremetal/framebuffer_console.zig`, `src/baremetal/ps2_input.zig`, `src/baremetal/virtio_block.zig`, `src/baremetal/virtio_gpu.zig`, `src/baremetal/virtio_net.zig`, `src/pal/net.zig`, and `src/pal/tls_client_light.zig`, and adds live i386 QEMU proof lanes for ATA-backed storage plus E1000 raw-frame NIC bring-up through `scripts/baremetal-qemu-i386-ata-storage-probe-check.ps1` and `scripts/baremetal-qemu-i386-e1000-probe-check.ps1`
+  - fourth delivered slice closes the raw i386 `RTL8139` probe through `scripts/baremetal-qemu-i386-rtl8139-probe-check.ps1`, adds the first live i386 display proof through bounded VGA console-state validation in `scripts/baremetal-qemu-i386-vga-console-probe-check.ps1`, and widens the i386 `E1000` lane through `ARP` / `IPv4` / `UDP` / bounded `TCP` via `scripts/baremetal-qemu-i386-e1000-arp-probe-check.ps1`, `scripts/baremetal-qemu-i386-e1000-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-i386-e1000-udp-probe-check.ps1`, and `scripts/baremetal-qemu-i386-e1000-tcp-probe-check.ps1`
+  - fifth delivered slice widens the i386 display and NIC proof matrix through `scripts/baremetal-qemu-i386-framebuffer-console-probe-check.ps1`, `scripts/baremetal-qemu-i386-virtio-gpu-display-probe-check.ps1`, `scripts/baremetal-qemu-i386-e1000-dhcp-probe-check.ps1`, `scripts/baremetal-qemu-i386-e1000-dns-probe-check.ps1`, `scripts/baremetal-qemu-i386-e1000-http-post-probe-check.ps1`, `scripts/baremetal-qemu-i386-e1000-https-post-probe-check.ps1`, `scripts/baremetal-qemu-i386-e1000-tool-service-probe-check.ps1`, `scripts/baremetal-qemu-i386-rtl8139-arp-probe-check.ps1`, `scripts/baremetal-qemu-i386-rtl8139-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-i386-rtl8139-udp-probe-check.ps1`, `scripts/baremetal-qemu-i386-rtl8139-tcp-probe-check.ps1`, and `scripts/baremetal-qemu-i386-rtl8139-runtime-service-probe-check.ps1`, makes `src/runtime/tool_runtime.zig` explicitly freestanding-safe for hosted process-management methods, and makes the raw `RTL8139` `IPv4` / `UDP` probes deterministic through the same bounded internal loopback hook already used by the later `TCP` and runtime-service lanes
+  - sixth delivered slice widens the i386 storage/NIC proof matrix through `scripts/baremetal-qemu-i386-rtl8139-dhcp-probe-check.ps1`, `scripts/baremetal-qemu-i386-rtl8139-dns-probe-check.ps1`, `scripts/baremetal-qemu-i386-rtl8139-http-post-probe-check.ps1`, `scripts/baremetal-qemu-i386-rtl8139-https-post-probe-check.ps1`, `scripts/baremetal-qemu-i386-virtio-net-probe-check.ps1`, `scripts/baremetal-qemu-i386-virtio-net-arp-probe-check.ps1`, `scripts/baremetal-qemu-i386-virtio-net-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-i386-virtio-net-udp-probe-check.ps1`, `scripts/baremetal-qemu-i386-virtio-net-tcp-probe-check.ps1`, `scripts/baremetal-qemu-i386-virtio-net-dhcp-probe-check.ps1`, `scripts/baremetal-qemu-i386-virtio-net-dns-probe-check.ps1`, `scripts/baremetal-qemu-i386-virtio-net-http-post-probe-check.ps1`, `scripts/baremetal-qemu-i386-virtio-net-https-post-probe-check.ps1`, `scripts/baremetal-qemu-i386-virtio-net-tool-service-probe-check.ps1`, `scripts/baremetal-qemu-i386-virtio-block-probe-check.ps1`, `scripts/baremetal-qemu-i386-virtio-block-installer-probe-check.ps1`, `scripts/baremetal-qemu-i386-virtio-block-mount-probe-check.ps1`, `scripts/baremetal-qemu-i386-virtio-block-ext2-mount-probe-check.ps1`, `scripts/baremetal-qemu-i386-virtio-block-fat32-mount-probe-check.ps1`, and `scripts/baremetal-qemu-i386-virtio-block-mount-control-probe-check.ps1`, makes the i386 `RTL8139` `DHCP` / `DNS` probes deterministic through the same bounded internal loopback hook already used by the later service lanes, and fixes the shared i386 Ethernet harness to launch the correct `virtio-net` datagram echo helper instead of the stale `E1000` helper identity
+  - seventh delivered slice widens the i386 `RTL8139` lane through `scripts/baremetal-qemu-i386-rtl8139-gateway-probe-check.ps1` and `scripts/baremetal-qemu-i386-rtl8139-full-stack-probe-check.ps1`, makes `runRtl8139GatewayProbe()` explicitly enable the bounded hardware-loopback datapath on hardware-backed non-test runs so routed ARP/UDP delivery is deterministic on the i386 guest, closes live i386 gateway-routing proof, closes broader i386 package/workspace/app/trust/runtime depth on the `RTL8139` controller lane through the existing full-stack TCP/runtime surface, and records that the existing i386 `virtio-gpu` wrapper already reuses the shared broad output/interface/mode/profile matrix in `runVirtioGpuDisplayProbe()` rather than only the early inventory subset
+  - eighth delivered slice exposes a dedicated `baremetal-e1000-full-stack-probe` build option plus `scripts/baremetal-qemu-i386-e1000-full-stack-probe-check.ps1`, formalizes the already-broad `runE1000ToolServiceProbe()` surface as a first-class full-stack `E1000` lane through `runE1000FullStackProbe()`, closes live i386 `E1000` package/workspace/app/trust/runtime depth through the same controller path, and removes the stale FS5.7 boundary that still treated i386 `E1000` as “tool-service only”
+  - ninth delivered slice adds `src/baremetal/acpi.zig`, exports `/sys/acpi/state` and `oc_acpi_state_ptr()`, adds `scripts/baremetal-qemu-i386-platform-probe-check.ps1`, validates live i386 descriptor-load state plus interrupt wake and masked-interrupt timer fallback, and uses bounded synthetic `XSDT`-backed ACPI data only when real firmware ACPI tables are unavailable or insufficient under the current direct-loader QEMU path
+  - tenth delivered slice widens `src/baremetal/acpi.zig` into a bounded CPU-topology/SMP-readiness seam derived from `MADT`, exports `oc_cpu_topology_state_ptr()` plus `oc_cpu_topology_entry*()`, adds `/dev/cpu/{state,topology}` and `/sys/cpu/{state,topology}`, widens the synthetic ACPI fallback image to carry two enabled local-APIC entries, and makes the existing i386 platform probe require exported CPU topology plus distinct enabled APIC IDs instead of only aggregate ACPI counts
+  - eleventh delivered slice adds `src/baremetal/lapic.zig`, exports `oc_lapic_state_ptr()`, adds `/dev/cpu/{lapic,smp}` plus `/sys/cpu/{lapic,smp}`, adds `scripts/baremetal-qemu-i386-smp-probe-check.ps1`, validates live i386 local-APIC support/enabled state plus bounded LAPIC MMIO register visibility under `-smp 2`, and makes the bounded i386 SMP-readiness seam include real LAPIC state instead of only ACPI-derived topology
+  - twelfth delivered slice adds `src/baremetal/i386_ap_startup.zig`, `scripts/baremetal/i386_ap_trampoline.S`, and `scripts/baremetal-qemu-i386-ap-startup-probe-check.ps1`, exports `oc_i386_ap_startup_state_ptr()` plus `/dev/cpu/ap-startup` and `/sys/cpu/ap-startup`, moves the trampoline to a safe high page at `0x00080000`, proves bounded BSP-side INIT / deassert / SIPI / SIPI sequencing plus exported stage telemetry on the current direct-loader i386 QEMU path, adds bounded AP execution-control telemetry (`command_seq`, `response_seq`, `heartbeat_count`, `ping_count`) with hosted simulated ping/halt regressions, and isolates the i386 probe artifacts per script so adjacent probe lanes cannot accidentally execute a stale ELF
+  - thirteenth delivered slice hardens `src/baremetal/i386_ap_startup.zig` with longer INIT-settle timing, LAPIC error-status clearing before SIPIs, and bounded first-SIPI polling before retry, then widens `scripts/baremetal-qemu-i386-ap-startup-probe-check.ps1` plus `src/baremetal_main.zig` so the live lane distinguishes actual AP execution (`0x7F`) from the bounded fallback control-only path (`0x7E`); the current direct-loader QEMU result remains explicit as `AP_EXECUTION_OBSERVED=False`
+  - fourteenth delivered slice adds `src/baremetal/ioapic.zig`, records bounded MADT IOAPIC entries in `src/baremetal/acpi.zig`, exports `oc_ioapic_state_ptr()`, adds `/dev/cpu/ioapic` plus `/sys/cpu/ioapic`, and widens `scripts/baremetal-qemu-i386-platform-probe-check.ps1` plus `src/baremetal_main.zig` so the live i386 platform lane proves ACPI-present IOAPIC state, MMIO base visibility, bounded redirection-entry count, and `/sys/cpu/ioapic` render/readback on the current direct-loader path
+  - fifteenth delivered slice widens `src/baremetal/i386_ap_startup.zig` into a Linux-style warm-reset startup diagnostic seam by programming the CMOS shutdown code plus warm-reset vector before the BSP-side INIT / deassert / SIPI / SIPI sequence, exports `warm_reset_programmed`, `warm_reset_vector_segment`, `warm_reset_vector_offset`, `init_ipi_count`, `startup_ipi_count`, `last_delivery_status`, and `last_accept_status` through `oc_i386_ap_startup_state_ptr()`, writes those diagnostics into the live `release/qemu-i386-ap-startup-probe-debug.log` trace via `src/baremetal_main.zig`, and proves on the current direct-loader path that warm reset is configured and both startup IPIs complete with zero APIC delivery/accept errors even though actual AP execution is still not yet observed
+  - sixteenth delivered slice adds `src/baremetal/pic.zig`, exports `oc_pic_state_ptr()`, adds `/dev/cpu/pic` plus `/sys/cpu/pic`, remaps the legacy dual 8259 PIC to `0x20/0x28` while preserving the live hardware masks, records bounded IRR/ISR plus hardware-mask state and the separate software interrupt-mask control plane, and widens `runI386PlatformProbe()` so the live i386 platform lane proves remap offsets, `/sys/cpu/pic` render/readback, and that applying the exported software interrupt-mask profile updates control-plane counters without mutating the preserved hardware PIC masks on the current direct-loader path
+  - seventeenth delivered slice adds `src/baremetal/pit.zig` plus `src/baremetal/acpi_pm_timer.zig`, exports `oc_pit_state_ptr()` and `oc_pm_timer_state_ptr()`, adds `/dev/cpu/pit`, `/sys/cpu/pit`, and `/sys/acpi/pm-timer`, and widens `runI386PlatformProbe()` so the live i386 platform lane proves bounded PIT channel-0 latch/readback plus ACPI PM-timer monotonic readback through the exported FADT `pm_timer_block` instead of only proving higher-level timer wake behavior above opaque controllers
+  - eighteenth delivered slice adds the real BIOS firmware-boot i386 ACPI lane through `scripts/build-i386-firmware-image.ps1`, `scripts/baremetal/i386_bios_boot_sector.asm`, `scripts/baremetal/i386_bios_stage2.asm`, and `scripts/baremetal-qemu-i386-firmware-platform-probe-check.ps1`, exposes `baremetal-i386-firmware-platform-probe` in `build.zig`, widens `src/baremetal/acpi.zig` so live ACPI keeps low-memory `RSDP` search bounded but can validate real firmware root tables above `1 MiB`, and closes real firmware ACPI proof with no synthetic fallback on the BIOS-boot i386 path
+  - nineteenth delivered slice adds `src/baremetal/boot_memory.zig` plus `src/baremetal/physical_memory.zig`, exports `oc_boot_memory_state_ptr()` plus `oc_boot_memory_region_count()` / `oc_boot_memory_region(index)` and `/dev/memory/{state,map}` plus `/sys/memory/{state,map}`, records raw Multiboot2 boot info on the direct-loader path in `scripts/baremetal/i386_boot.S`, teaches `scripts/baremetal/i386_bios_stage2.asm` to emit a bounded BIOS `E820`-derived Multiboot2 memory-map tag instead of only aggregate basic-meminfo, removes the old fixed `1 MiB` i386 heap in favor of region-aware allocation up to `1 GiB`, makes allocator allocation skip non-usable holes inside the exported region table, widens the i386 probe scripts with `-MemoryMiB` plus explicit `region_entry_count` validation, validates live `1024M` direct-loader platform, firmware platform, SMP/AP-startup control, ATA storage, and E1000 full-stack lanes, and keeps the key `1 GiB` platform/storage/NIC probes wired into `zig-ci` and `release-preview`
+  - twentieth delivered slice adds `scripts/baremetal-qemu-i386-firmware-ap-startup-probe-check.ps1`, reuses the BIOS firmware image builder for the existing `baremetal-i386-ap-startup-probe` artifact, and proves that the firmware-boot i386 lane now observes real AP execution plus bounded heartbeat/ping/halt control at both default memory and `1024 MiB`; the direct-loader lane remains explicitly control-only, so the remaining FS5.7 SMP gap is now broader multi-core execution depth rather than first AP execution itself
+  - twenty-first delivered slice adds `baremetal-i386-smp-work-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-work-probe-check.ps1`, widens `src/baremetal/i386_ap_startup.zig` and `scripts/baremetal/i386_ap_trampoline.S` with a bounded AP `work` command plus shared payload/result telemetry (`command_value`, `work_count`, `last_work_value`, `work_accumulator`), exports `/dev/cpu/ap-work` plus `/sys/cpu/ap-work` through `src/baremetal/virtual_fs.zig`, and proves on the BIOS firmware-boot i386 lane that real AP execution now completes two BSP-dispatched AP-owned work units before bounded `ping`/`halt`, with the same proof at `1024 MiB`
+  - twenty-second delivered slice adds `baremetal-i386-smp-batch-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-batch-probe-check.ps1`, widens `src/baremetal/i386_ap_startup.zig` and `scripts/baremetal/i386_ap_trampoline.S` with a bounded AP `batch_work` command plus shared task/batch telemetry (`task_count`, `batch_count`, `last_batch_count`, `last_batch_accumulator`) beside the older single-work seam, exports `/dev/cpu/ap-tasks` plus `/sys/cpu/ap-tasks` through `src/baremetal/virtual_fs.zig`, and proves on the BIOS firmware-boot i386 lane that real AP execution now completes two BSP-dispatched AP task batches before bounded `ping`/`halt`, with the same proof at `1024 MiB`
+  - twenty-third delivered slice adds `baremetal-i386-smp-multi-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-multi-probe-check.ps1`, widens `src/baremetal/i386_ap_startup.zig` with bounded aggregate multi-AP telemetry (`run_count`, `started_count`, `halted_count`, `total_task_count`, `total_batch_count`, `total_accumulator`) plus per-AP result entries exposed through `/dev/cpu/ap-multi` and `/sys/cpu/ap-multi`, and proves on the BIOS firmware-boot i386 lane under `-smp 3` that two distinct secondary APs start, execute bounded batch work, halt, and publish aggregate multi-AP totals at both default memory and `1024 MiB`
+  - twenty-fourth delivered slice adds `baremetal-i386-smp-concurrent-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-concurrent-probe-check.ps1`, widens `src/baremetal/i386_ap_startup.zig` and `scripts/baremetal/i386_ap_trampoline.S` with slot-indexed AP mailboxes, slot-indexed telemetry, and slot-indexed stacks exposed through `/dev/cpu/ap-slots` and `/sys/cpu/ap-slots`, preserves the older single-slot and aggregate multi-AP surfaces for the existing probes, and proves on the BIOS firmware-boot i386 lane under `-smp 3` that two secondary APs remain resident concurrently, each receives targeted bounded batch work on its own slot, both keep independent heartbeat/task/batch telemetry, and both halt cleanly at default memory and `1024 MiB`
+  - twenty-fifth delivered slice adds `baremetal-i386-smp-owned-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-owned-probe-check.ps1`, widens `src/baremetal/i386_ap_startup.zig` with exported ownership telemetry through `/dev/cpu/ap-ownership` and `/sys/cpu/ap-ownership`, adds synchronous command-mailbox draining in `src/baremetal_main.zig` so scheduler disable/policy/task-create commands are executed deterministically without relying on live `oc_tick` / PIT activity, and proves on the BIOS firmware-boot i386 lane under `-smp 3` that two resident secondary APs receive bounded round-robin ownership of five scheduler-created ready tasks with totals `5/2/15` at default memory and `1024 MiB`
+  - twenty-sixth delivered slice adds `baremetal-i386-smp-redistribution-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-redistribution-probe-check.ps1`, widens `src/baremetal/i386_ap_startup.zig` with cumulative ownership totals, per-round redistribution counters, rotated slot-start telemetry, and explicit `/dev/cpu/ap-redistribution` plus `/sys/cpu/ap-redistribution` readback, and proves on the BIOS firmware-boot i386 lane under `-smp 3` that the same five scheduler-created ready tasks are redistributed across two resident AP slots over two ownership rounds with cumulative totals `10/4/30` and `5` migrated tasks at default memory and `1024 MiB`
+  - twenty-seventh delivered slice adds `baremetal-i386-smp-priority-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-priority-probe-check.ps1`, widens `src/baremetal/i386_ap_startup.zig` with exported ownership-policy state plus priority-ordered runnable-task collection for the firmware AP lane, preserves redistribution accounting across policy-driven rounds, and proves on the BIOS firmware-boot i386 lane under `-smp 3` that live task reprioritization changes the next AP-slot ownership map under the `priority` policy with cumulative totals `10/4/30` and `4` migrated tasks at default memory and `1024 MiB`
+  - twenty-eighth delivered slice adds `baremetal-i386-smp-priority-rotation-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-priority-rotation-probe-check.ps1`, widens `src/baremetal/i386_ap_startup.zig` with exported `peak_active_slot_count` plus `last_round_active_slot_count`, and proves on the BIOS firmware-boot i386 lane under `-smp 4` that three resident AP slots execute three priority-owned rounds over eight scheduler-created ready tasks with rotated start slots, live reprioritization between rounds, cumulative totals `24/9/108`, and `14` redistributed tasks at default memory and `1024 MiB`
+  - twenty-ninth delivered slice adds `baremetal-i386-smp-priority-fanout-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-priority-fanout-probe-check.ps1`, widens the shipped FS5.7 ownership proof from three resident AP slots to the full four-slot command-lane ceiling, and proves on the BIOS firmware-boot i386 lane under `-smp 5` that four resident AP slots execute four priority-owned rounds over eight scheduler-created ready tasks with rotated start slots, live reprioritization between rounds, cumulative totals `32/16/144`, and `23` redistributed tasks at default memory and `1024 MiB`
+  - thirtieth delivered slice adds `baremetal-i386-smp-priority-saturation-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-priority-saturation-probe-check.ps1`, keeps the same four-slot firmware scheduler lane but saturates the full 16-task scheduler table, and proves on the BIOS firmware-boot i386 lane under `-smp 5` that four resident AP slots execute four priority-owned rounds over sixteen scheduler-created ready tasks with rotated start slots, cumulative totals `64/16/544`, a clean seventeenth-task `result_no_space` boundary, and `48` redistributed tasks at default memory and `1024 MiB`
+  - thirty-first delivered slice adds `baremetal-i386-smp-priority-reprioritization-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-priority-reprioritization-probe-check.ps1`, keeps the same four-slot firmware scheduler lane saturated across two additional rounds after live full-table reprioritization, proves on the BIOS firmware-boot i386 lane under `-smp 5` that all sixteen scheduler tasks stay resident over six total rounds, preserves the seventeenth-task `result_no_space` boundary, and finishes with cumulative totals `96/24/816` and `72` redistributed tasks at default memory and `1024 MiB`
+  - thirty-second delivered slice adds `baremetal-i386-smp-priority-failover-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-priority-failover-probe-check.ps1`, keeps the same four-slot firmware scheduler lane saturated across four initial rounds, retires one live AP slot, rebalances the same sixteen scheduler tasks across the remaining three slots for two additional rounds, exports `/dev/cpu/ap-failover` plus `/sys/cpu/ap-failover` with retired-slot and failed-over-task telemetry, preserves the seventeenth-task `result_no_space` boundary, and finishes with cumulative totals `96/22/816`, `77` redistributed tasks, and `4` failed-over tasks at default memory and `1024 MiB`
+  - thirty-third delivered slice adds `baremetal-i386-smp-priority-backfill-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-priority-backfill-probe-check.ps1`, keeps the same four-slot firmware scheduler lane but proves bounded refill/backfill after live task termination by terminating four older tasks after saturated ownership waves, refilling the freed scheduler slots with four new higher-priority tasks, exporting `/dev/cpu/ap-backfill` plus `/sys/cpu/ap-backfill` with cumulative and last-round backfilled-task plus terminated-task telemetry, and finishing with cumulative totals `32/8/336`, `12` redistributed tasks, `4` backfilled tasks, and `4` terminated tasks at default memory and `1024 MiB`
+  - thirty-fourth delivered slice adds `baremetal-i386-smp-priority-window-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-priority-window-probe-check.ps1`, keeps the same four-slot firmware scheduler lane but proves bounded scheduler-window dispatch by taking the fully saturated sixteen-task priority table through three non-wrapping rounds with budget `6`, exporting `/dev/cpu/ap-window` plus `/sys/cpu/ap-window` with cumulative window/deferred/cursor/wrap telemetry, and finishing with cumulative totals `16/12/136`, `32` deferred tasks, `12` last-round deferred tasks, and one clean cursor wrap at default memory and `1024 MiB`
+  - thirty-fifth delivered slice adds `baremetal-i386-smp-priority-fairness-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-priority-fairness-probe-check.ps1`, keeps the same four-slot firmware scheduler lane but drains the fully saturated sixteen-task priority backlog through repeated bounded windows with budget `5`, exporting `/dev/cpu/ap-fairness` plus `/sys/cpu/ap-fairness` with cumulative drained/dispatch/accumulator totals, per-slot cumulative fairness entries, drain-round/pending/cursor/wrap telemetry, and a final `task_balance_gap=0`, and finishes with cumulative totals `16/13/136`, zero remaining pending tasks, one clean cursor wrap, and balanced `4/4/4/4` per-slot task totals at default memory and `1024 MiB`
+  - thirty-sixth delivered slice adds `baremetal-i386-smp-priority-rebalance-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-priority-rebalance-probe-check.ps1`, keeps the same four-slot firmware scheduler lane but proves bounded skew-rebalance by seeding a deliberately uneven `4/2/2/2` slot history from the already-exported scheduler-window totals, exporting `/dev/cpu/ap-rebalance` plus `/sys/cpu/ap-rebalance` with cumulative rebalance/dispatch/accumulator/compensated totals plus per-slot seed/final load telemetry, and finishing by draining the remaining six ready tasks back to `4/4/4/4` with cumulative totals `6/5/21`, `initial_task_balance_gap=2`, `final_task_balance_gap=0`, and `total_compensated_task_count=6` at default memory and `1024 MiB`
+  - thirty-seventh delivered slice adds `baremetal-i386-smp-priority-debt-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-priority-debt-probe-check.ps1`, keeps the same four-slot firmware scheduler lane but proves bounded priority-debt compensation by carrying a skewed `4/2/2/2` slot history forward as explicit per-slot debt, exporting `/dev/cpu/ap-debt` plus `/sys/cpu/ap-debt` with cumulative debt-task/dispatch/accumulator totals plus per-slot seed/final/debt/compensated telemetry, and finishing by draining four debt tasks at budget `2` to `4/3/4/3` with cumulative totals `4/4/10`, `initial_total_debt=6`, `remaining_total_debt=2`, and `total_compensated_task_count=4` at default memory and `1024 MiB`
+  - thirty-eighth delivered slice adds `baremetal-i386-smp-priority-admission-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-priority-admission-probe-check.ps1`, keeps the same four-slot firmware scheduler lane but proves bounded priority-admission on top of carried debt by resuming two higher-priority waiting tasks into a live skewed `4/2/2/2` slot history, exporting `/dev/cpu/ap-admission` plus `/sys/cpu/ap-admission` with cumulative admitted-task/debt-task/dispatch/accumulator totals plus per-slot seed/final/admission/debt/compensated telemetry, and finishing by draining two admitted tasks plus four debt tasks at budget `2` to `4/4/4/4` with cumulative totals `2` admitted tasks, `4` debt tasks, `6` dispatches, accumulator `21`, `initial_total_debt=6`, `remaining_total_debt=0`, and `total_compensated_task_count=6` at default memory and `1024 MiB`
+  - thirty-ninth delivered slice adds `baremetal-i386-smp-priority-aging-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-priority-aging-probe-check.ps1`, keeps the same four-slot firmware scheduler lane but proves bounded priority-aging on top of carried debt/admission by holding two low-priority waiting tasks across rounds until their effective priority rises into the live debt-carrying slot map, exporting `/dev/cpu/ap-aging` plus `/sys/cpu/ap-aging` with cumulative waiting-task/debt-task/dispatch/accumulator totals plus per-slot seed/final/waiting/debt/aged/compensated/effective-priority telemetry, and finishing by draining two waiting tasks plus four debt tasks at budget `2` with aging step `3` to `4/4/4/4` with cumulative totals `2` waiting tasks, `4` debt tasks, `6` dispatches, accumulator `21`, `2` aged tasks, `2` promoted tasks, `initial_total_debt=6`, `remaining_total_debt=0`, and `peak_effective_priority=3` at default memory and `1024 MiB`
+  - fortieth delivered slice adds `baremetal-i386-smp-priority-fairshare-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-priority-fairshare-probe-check.ps1`, keeps the same four-slot firmware scheduler lane but proves bounded priority-fairshare on top of carried debt/admission/aging by seeding a `2/1/1/1` slot history from the window lane, draining a carried debt set of `3` plus a waiting backlog of `8` with budget `2` and aging step `2`, exporting `/dev/cpu/ap-fairshare` plus `/sys/cpu/ap-fairshare` with cumulative waiting/debt/dispatch/accumulator totals plus per-slot seed/final/waiting/debt/fairshare/aged/compensated/effective-priority telemetry, and finishing at `4/4/4/4` with cumulative totals `8` waiting tasks, `3` debt tasks, `11` dispatches, accumulator `66`, `24` aged tasks, `8` promoted tasks, `7` fairshare tasks, `remaining_total_debt=0`, and `final_task_balance_gap=0` at default memory and `1024 MiB`
+  - forty-first delivered slice adds `baremetal-i386-smp-priority-quota-probe` plus `scripts/baremetal-qemu-i386-firmware-smp-priority-quota-probe-check.ps1`, keeps the same four-slot firmware scheduler lane but proves bounded priority-quota on top of carried debt/admission/aging by seeding a `2/1/1/1` slot history from the window lane, draining a carried debt set of `3` plus a waiting backlog of `8` under explicit per-slot quotas `3/2/2/1` with budget `3` and aging step `2`, exporting `/dev/cpu/ap-quota` plus `/sys/cpu/ap-quota` with cumulative waiting/debt/quota/dispatch/accumulator totals plus per-slot seed/final/waiting/debt/quota/configured-quota/effective-priority telemetry, and finishing with zero remaining debt, `8` total quota tasks, bounded four-slot export/readback, and live proof at default memory and `1024 MiB`
+  - next ZigOS-derived adoption priorities are now tracked in `docs/zig-port/ZAR_VS_ZIGOS_NEXT_ADOPTION_OPPORTUNITIES.md`
+  - current boundary is explicit: this is boot/build smoke plus broad real i386 storage/NIC/display/service lanes, a bounded direct-loader platform ACPI/timer-controller/interrupt/CPU-topology/IOAPIC/LAPIC/AP-startup-control seam, and separate real firmware-boot ACPI plus firmware AP-execution/AP-work/AP-batch/AP-multi/AP-slot/AP-ownership/AP-redistribution/AP-priority/AP-priority-rotation/AP-priority-fanout/AP-priority-saturation/AP-priority-reprioritization/AP-priority-failover/AP-priority-backfill/AP-window/AP-fairness/AP-rebalance/AP-debt/AP-admission/AP-aging/AP-fairshare/AP-quota proof lanes; remaining gaps are broader SMP scheduling beyond bounded concurrent, owned, redistributed, priority-aware, 4-slot saturation, failover, backfill/refill, backlog-drain fairness, skew-rebalance, priority-debt compensation, priority-admission, priority-aging, priority-fairshare, priority-quota, and windowed dispatch and the next architecture-hardening seams after current device proof breadth, with the BSP-side warm-reset and startup-IPI path now explicitly proven clean on the direct-loader lane
+- ZigOS integration planning is now tracked in:
+  - `docs/zig-port/ZAR_VS_ZIGOS_INTEGRATION_PLAN.md`
+  - `docs/zig-port/ZAR_VS_ZIGOS_E1000_SLICE_PLAN.md`
+  - `docs/zig-port/ZAR_VS_ZIGOS_BENCHMARK_SLICE_PLAN.md`
+  - `docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_NET_SLICE_PLAN.md`
+  - `docs/zig-port/ZAR_VS_ZIGOS_VIRTIO_BLOCK_SLICE_PLAN.md`
+  - `docs/zig-port/ZAR_VS_ZIGOS_MOUNT_LAYER_SLICE_PLAN.md`
+  - `docs/zig-port/ZAR_VS_ZIGOS_VFS_SLICE_PLAN.md`
+  - `docs/zig-port/ZAR_VS_ZIGOS_STORAGE_REGISTRY_SLICE_PLAN.md`
+  - `docs/zig-port/ZAR_VS_ZIGOS_EXT_FILESYSTEM_MOUNT_SLICE_PLAN.md`
+  - `docs/zig-port/ZAR_VS_ZIGOS_SHELL_CONTROL_SLICE_PLAN.md`
+  - `docs/zig-port/ZAR_VS_ZIGOS_TTY_CONTROL_SLICE_PLAN.md`
+  - upstream ZigOS licensing is now explicit: `MIT`
+  - first delivered adoption slice is clean-room `E1000` protocol reuse through `ARP` / `IPv4` / `UDP` / bounded `TCP`, because it expands hardware breadth without forcing a VFS/ELF/syscall redesign
+  - `src/baremetal/e1000.zig` now provides the first ZAR-owned `82540EM`-class `E1000` path with PCI bind, MMIO + legacy I/O reset, EEPROM MAC readout, bounded TX/RX rings, and raw-frame send/receive telemetry
+  - `src/baremetal/pci.zig` now discovers the `E1000` MMIO + I/O BAR pair and enables I/O, memory, and bus-master decode on the selected PCI function
+  - host regressions now prove init, MAC readout, TX, RX, export-surface stability, and `ARP` / `IPv4` / `UDP` / bounded `TCP` protocol reuse on the clean-room `E1000` path
+  - `scripts/baremetal-qemu-e1000-probe-check.ps1` plus `scripts/qemu-e1000-dgram-echo.ps1` now prove live QEMU `E1000` PCI bind, MAC readout, TX, RX, payload validation, and counter advance over the freestanding PVH artifact
+  - `src/pal/net.zig` now routes the same raw-frame PAL seam through selectable `RTL8139` and `E1000` backends without regressing the existing RTL8139 path
+  - `scripts/baremetal-qemu-e1000-arp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-e1000-udp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-dhcp-probe-check.ps1`, `scripts/baremetal-qemu-e1000-dns-probe-check.ps1`, and `scripts/baremetal-qemu-e1000-tcp-probe-check.ps1` now prove live QEMU `E1000` ARP request transmission, IPv4 frame encode/decode, UDP datagram encode/decode, DHCP discover encode/decode, DNS query/response exchange, bounded TCP handshake/payload/teardown, and TX/RX counter advance over the freestanding PVH artifact
+  - bounded framed tool-service reuse is now closed over `E1000` through `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1`, and bounded `HTTP` / `HTTPS` transport reuse remains closed through host regressions plus `scripts/baremetal-qemu-e1000-http-post-probe-check.ps1` and `scripts/baremetal-qemu-e1000-https-post-probe-check.ps1`
+  - second delivered adoption slice is the hosted benchmark lane through `src/benchmark_suite.zig`, `src/benchmark_main.zig`, and `scripts/benchmark-smoke-check.ps1`, with the current catalog covering DNS, DHCP, TCP, runtime-state queue churn, tool-service codec parsing, filesystem persistence churn, virtual overlay read churn, and synthetic `RTL8139` / `E1000` UDP loopback comparisons
+  - third delivered adoption slice is a ZAR-native read-only introspection overlay through `src/baremetal/virtual_fs.zig` and `src/baremetal/filesystem.zig`, exposing `/proc` + `/sys` over the existing runtime/storage/display/network state, reusing the existing builtin and typed `GET` / `LIST` / `STAT` tool-service surface, and proving the same overlay live over `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1`
+  - fourth delivered adoption slice is a ZAR-native read-only device overlay through `src/baremetal/virtual_fs.zig` and `src/baremetal/filesystem.zig`, exposing `/dev` over the existing storage/display/network device state, reusing the existing builtin and typed `GET` / `LIST` / `STAT` tool-service surface, and proving the same overlay live over `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1`
+  - fifth delivered adoption slice is a bounded non-persistent `/tmp` surface through `src/baremetal/tmpfs.zig` and `src/baremetal/filesystem.zig`, with host regressions proving lifecycle behavior plus reset-driven non-persistence
+  - sixth delivered adoption slice is bounded `virtio-block` storage breadth through `src/baremetal/virtio_block.zig`, `src/baremetal/storage_backend.zig`, `src/baremetal/mount_table.zig`, `scripts/baremetal-qemu-virtio-block-probe-check.ps1`, `scripts/baremetal-qemu-virtio-block-installer-probe-check.ps1`, and `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1`, with host regressions for mock-backed read/write/flush plus live QEMU block mutation/readback, canonical installer/bootstrap persistence, and persistent `/mnt/<alias>` reload proof backed by `/runtime/mounts/*.txt`
+  - seventh delivered adoption slice is bounded `virtio-net` NIC breadth through `src/baremetal/virtio_net.zig`, `src/baremetal/pci.zig`, `src/pal/net.zig`, `scripts/baremetal-qemu-virtio-net-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-arp-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-ipv4-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-udp-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-dhcp-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-dns-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-tcp-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-tool-service-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-http-post-probe-check.ps1`, `scripts/baremetal-qemu-virtio-net-https-post-probe-check.ps1`, and `scripts/qemu-virtio-net-dgram-echo.ps1`, with host regressions for mock-backed init/MAC/TX/RX/export state plus `ARP` / `IPv4` / `UDP` / `DHCP` / `DNS` / bounded `TCP`, framed tool-service reuse, and bounded `HTTP` / `HTTPS` transport reuse with live QEMU proof on `virtio-net-pci`
+  - eighth delivered adoption slice is a bounded internal VFS router through `src/baremetal/vfs.zig`, `src/baremetal/filesystem.zig`, and `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1`, with host regressions for merged root listing plus cross-layer routing over `/`, `/tmp`, `/mnt`, `/proc`, `/dev`, and `/sys`, and live `virtio-blk-pci` proof for root listing, `/proc/version`, persisted mount aliases, and `/tmp` alias volatility across reset
+  - ninth delivered adoption slice is a bounded storage registry plus raw ext2/FAT probe seam through `src/baremetal/storage_registry.zig`, `src/baremetal/virtual_fs.zig`, and `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1`, with host regressions for `zarfs` / `ext2` / `fat32` detection and registry rendering across persistent, tmpfs, virtual, and mounted-alias layers, and live `virtio-blk-pci` proof for `detected_filesystem=zarfs` plus registry entries for persistent and tmpfs-backed aliases
+  - tenth delivered adoption slice is a bounded storage backend registry plus mounted-filesystem capability seam through `src/baremetal/storage_backend_registry.zig`, `src/baremetal/virtual_fs.zig`, and `scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1`, with host regressions for backend availability/selection reporting across `ram_disk`, `ata_pio`, and `virtio_block`, runtime-visible filesystem capability export for `zarfs` / `ext2` / `fat32`, and live `virtio-blk-pci` proof for `/sys/storage/backends` plus `/sys/storage/filesystems`
+  - eleventh delivered adoption slice is bounded external-filesystem mounting through `src/baremetal/ext2_ro.zig`, `src/baremetal/fat32_ro.zig`, `src/baremetal/mounted_external_fs.zig`, `src/baremetal/storage_backend.zig`, `src/baremetal/vfs.zig`, `scripts/baremetal-qemu-virtio-block-ext2-mount-probe-check.ps1`, `scripts/baremetal-qemu-virtio-block-fat32-mount-probe-check.ps1`, and `scripts/baremetal-qemu-virtio-block-mount-control-probe-check.ps1`, with host regressions for backend retargeting, exported mount bind/remove controls, user-facing CLI/framed storage controls, mounted `/mnt/external` listing/read/stat, read-only write rejection on `ext2`, bounded one-level FAT32 file mutation plus directory create/remove, and live `virtio-blk-pci` proof for ext2 payload readback, nested FAT32 mutation, mounted-directory mutation, and mount-control reload behavior
+- twelfth delivered adoption slice is a bounded shell/control layer through `src/baremetal/tool_exec.zig`, `src/baremetal/tool_service.zig`, `src/baremetal/tool_service/codec.zig`, and `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1`, with host regressions for bounded shell batching, escaped metacharacters including escaped `<`, escaped whitespace on redirection paths, escaped-whitespace direct path arguments for path-consuming builtins including direct `run-script` script paths plus `mount-bind` target paths, bounded stdin/stdout/stderr redirection, multi-segment glob expansion, early malformed-quoted-argument rejection, escaped-quote handling on the direct quoted-path path for path-consuming builtins, wrapper-command bypass of the outer shell-line parser so embedded `shell-run` / `tty-send` / `tty-shell` redirections stay intact, typed `SHELLRUN` / `SHELLEXPAND` over the framed TCP seam, live `E1000` proof for shell help plus batch/glob/direct-quoted-path/redirect/readback behavior, and `build.zig` now explicitly wiring `scripts/baremetal/pvh_boot.S` plus `scripts/baremetal/pvh_lld.ld` so the Multiboot2 header stays within the required first `32768` bytes on current Zig `master`
+- thirteenth delivered adoption slice is a bounded TTY/session control plus shell-execution layer through `src/baremetal/tty_runtime.zig`, `src/baremetal/tool_exec.zig`, `src/baremetal/tool_service.zig`, `src/baremetal/tool_service/codec.zig`, `src/baremetal/virtual_fs.zig`, and `scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1`, with host regressions for bounded TTY open/write/pending/send/clear/events/read/stdout/stderr/close plus `tty-shell`, per-command `< file` override inside `tty-shell` while later commands still see drained session stdin, direct `tty-send` file-override precedence through the inner bounded parser, escaped-whitespace file overrides on `tty-send` and `tty-shell`, direct escaped-space `run-script` script paths plus `mount-bind` target paths through the same bounded direct-path rules, bounded quoted-path shell receipts, virtual `/dev/tty` and `/sys/tty` readback including `pending` plus `events`, and live `E1000` proof for the same queued-input/session lifecycle plus bounded shell receipts on the clean-room NIC lane
+- `FS5.5` hardware-driver pivot update:
+  - framebuffer/console strict closure is now reached locally.
+  - real linear-framebuffer path shipped in `src/baremetal/framebuffer_console.zig`:
+    - Bochs/QEMU BGA mode programming
+    - bounded `640x400x32bpp`, `800x600x32bpp`, `1024x768x32bpp`, `1280x720x32bpp`, and `1280x1024x32bpp` framebuffer layouts
+    - glyph rendering into the hardware-backed MMIO surface
+  - structured PCI display-adapter discovery shipped in `src/baremetal/pci.zig` and the PAL surface is exposed in `src/pal/framebuffer.zig`, with bounded mode switching plus supported-mode enumeration exported through `oc_framebuffer_set_mode`, `oc_framebuffer_supported_mode_count`, `oc_framebuffer_supported_mode_width`, and `oc_framebuffer_supported_mode_height`.
+  - `src/baremetal/edid.zig`, `src/baremetal/display_output.zig`, and `src/baremetal/virtio_gpu.zig` now add the first real EDID-backed controller-capability path over `virtio-gpu-pci`, with exported display-output state, exported interface typing, bounded per-output entry export, and EDID bytes routed through `src/pal/framebuffer.zig` and the bare-metal ABI.
+  - the same real virtio-gpu path now also supports explicit connector-targeted activation through `display-activate` and typed `DISPLAYACTIVATE`, and the live probe now proves success on the connected connector plus rejection of a mismatched connector request.
+  - the same real virtio-gpu path now also supports explicit output-index mode retargeting through `display-output-set` and typed `DISPLAYOUTPUTSET`, plus explicit connector-preferred and output-preferred restore through `display-activate-preferred`, `DISPLAYACTIVATEPREFERRED`, `display-activate-output-preferred`, and `DISPLAYACTIVATEOUTPUTPREFERRED`; the live probe now proves the connected output can be driven to `1024x768`, oversized requests are rejected on the controller path, and the same scanout can then be restored to the EDID-preferred `1280x800`.
+  - the same real virtio-gpu path now also exports a bounded EDID-derived per-output mode inventory through `oc_display_output_mode_count`, `oc_display_output_mode_width`, `oc_display_output_mode_height`, and `oc_display_output_mode_refresh_hz`, supports explicit mode-index activation through `display-output-activate-mode` / `DISPLAYOUTPUTACTIVATEMODE` / `oc_display_output_activate_mode`, and the live probe now proves the connected output advertises a bounded mode table where mode `0` matches the EDID-preferred geometry and an alternate advertised mode is available.
+  - the same real virtio-gpu path now also exports the parsed EDID digital-interface subtype through the active/output display state, surfaces that as `interface=...` in the tool/service display queries, and the live probe now selects the first connected scanout before validating connector/interface consistency so it no longer assumes the connected sink must classify as `virtual`.
+  - the same real virtio-gpu path now also exports a bounded interface-scoped mode inventory through `oc_display_interface_mode_count`, `oc_display_interface_mode_width`, `oc_display_interface_mode_height`, and `oc_display_interface_mode_refresh_hz`, supports explicit interface-targeted mode set plus mode-index activation through `display-interface-set` / `DISPLAYINTERFACESET` / `oc_display_interface_set` and `display-interface-activate-mode` / `DISPLAYINTERFACEACTIVATEMODE` / `oc_display_interface_activate_mode`, and the live probe now proves the connected HDMI/DisplayPort-class sink reports the same bounded inventory through the interface view, that mode `0` still matches the EDID-preferred geometry, and that an alternate advertised mode can be activated by interface without corrupting the exported sink identity.
+  - hosted/host regressions now prove framebuffer state, display-output state, output-entry metadata, adapter metadata, supported-mode enumeration, glyph pixel updates, bounded mode switching, and preservation of the last valid mode on unsupported requests.
+  - live QEMU+GDB proof `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1` reads back real MMIO banner pixels plus exported adapter metadata from the hardware-backed framebuffer BAR over the freestanding PVH artifact at `640x400`, `1024x768`, and `1280x720`.
+  - live QEMU+GDB proof `scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1` reads back real `virtio-gpu-pci` EDID/controller capability state, including scanout geometry, physical size, manufacturer/product IDs, EDID bytes, exported output-entry metadata for the selected scanout, exported interface typing, exported per-output mode inventory rows, exported interface-scoped mode inventory rows, explicit mode-index activation, explicit interface mode-index activation, explicit `1024x768` retargeting through both the output and interface seams, explicit interface-targeted activation, explicit interface-preferred restore, persisted display-profile save/list/info/apply, and preferred connector/output restore back to `1280x800`.
+  - real HDMI/DisplayPort connector-specific scanout paths are still future depth and are not claimed by the current branch; the current slice closes interface-targeted activation and preferred restore on the real `virtio-gpu` controller path, not physical connector-specific scanout.
+  - keyboard/mouse strict closure is now reached locally.
+  - real PS/2 controller path shipped in `src/baremetal/ps2_input.zig`:
+    - x86 port-I/O backed controller data/status/command access (`0x60` / `0x64`)
+    - controller config read/write
+    - controller keyboard + mouse enable flow
+    - controller output-buffer drain and mouse packet assembly
+  - new live QEMU+GDB proof:
+    - `scripts/baremetal-qemu-ps2-input-probe-check.ps1`
+  - new narrow wrapper proofs:
+    - `scripts/baremetal-qemu-ps2-input-baseline-probe-check.ps1`
+    - `scripts/baremetal-qemu-ps2-keyboard-event-payload-probe-check.ps1`
+    - `scripts/baremetal-qemu-ps2-keyboard-modifier-queue-probe-check.ps1`
+    - `scripts/baremetal-qemu-ps2-mouse-accumulator-state-probe-check.ps1`
+    - `scripts/baremetal-qemu-ps2-mouse-packet-payload-probe-check.ps1`
+  - storage/disk depth advanced locally:
+    - shared storage backend facade shipped in `src/baremetal/storage_backend.zig`
+    - real ATA PIO path shipped in `src/baremetal/ata_pio_disk.zig`
+    - ATA PIO currently supports `IDENTIFY`, sector `READ`, sector `WRITE`, `CACHE FLUSH`, bounded multi-partition MBR/GPT discovery/export, first-usable-MBR-partition mounting, and protective-MBR GPT partition mounting with logical LBA translation
+    - PAL storage and bare-metal tool layout now route through the backend facade
+    - PAL storage now also exports logical base-LBA plus bounded partition count/info/select on the mounted storage view
+    - partition selection now invalidates stale tool-layout/filesystem state, and the bare-metal export seam now exposes explicit `oc_tool_layout_format` plus `oc_filesystem_format` control on the selected partition
+    - hosted and host validation now proves:
+      - ATA-backed backend selection
+      - identify-backed capacity detection
+      - bounded multi-partition MBR/GPT export plus explicit selection
+      - direct `oc_storage_*` export coverage for logical base-LBA plus partition count/info/select
+      - rebind-safe tool-layout/filesystem invalidation after partition switches
+      - per-partition tool-layout/filesystem persistence after switching between primary and secondary MBR partitions
+      - first-partition MBR mount and logical base-LBA translation
+      - protective-MBR GPT mount and logical base-LBA translation
+      - ATA mock-device read/write/flush behavior
+      - ATA-backed bare-metal export reporting
+      - live QEMU ATA-backed mutation + readback against a real MBR-partitioned raw image
+      - secondary-partition raw mutation/readback through the exported partition-selection surface
+      - live QEMU secondary-partition tool-layout formatting + payload persistence
+      - live QEMU secondary-partition filesystem formatting + persisted superblock
+      - ATA-backed tool-layout persistence through the mounted partition view
+      - ATA-backed filesystem persistence through the mounted partition view
+      - canonical persisted install-layout seeding through `src/baremetal/disk_installer.zig`
+      - live QEMU ATA-backed GPT install proof against a real protective-MBR GPT raw image, including mounted-view block mutation, `/boot` + `/system` + `/runtime/install` readback, and persisted bootstrap package execution from disk
+  - Ethernet driver depth advanced locally:
+    - real RTL8139 path shipped in `src/baremetal/rtl8139.zig`
+    - PCI RTL8139 discovery + I/O / bus-master enable shipped in `src/baremetal/pci.zig`
+    - bare-metal ABI/export surface shipped in `src/baremetal_main.zig`
+    - raw-frame PAL surface shipped in `src/pal/net.zig`
+    - hosted/host validation now proves mock-device init/send/receive plus PAL bridging
+    - live QEMU RTL8139 proof now passes:
+      - `scripts/baremetal-qemu-rtl8139-probe-check.ps1`
+      - MAC readout
+      - TX/RX loopback
+      - payload validation
+      - TX/RX counter advance
+    - the first TCP/IP slices are now real:
+      - `src/protocol/ethernet.zig`
+      - `src/protocol/arp.zig`
+      - `src/protocol/ipv4.zig`
+      - `src/protocol/udp.zig`
+      - `src/protocol/tcp.zig`
+      - `src/pal/net.zig` `sendArpRequest` / `pollArpPacket`
+      - `src/pal/net.zig` `sendIpv4Frame` / `pollIpv4PacketStrict`
+      - `src/pal/net.zig` `sendUdpPacket` / `pollUdpPacketStrictInto`
+      - `src/pal/net.zig` `sendTcpPacket` / `pollTcpPacketStrictInto`
+      - `scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1`
+      - `scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1`
+      - `scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1`
+      - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1`
+      - live ARP request loopback + decode over the freestanding PVH artifact
+      - live IPv4 frame loopback + decode over the freestanding PVH artifact
+      - live UDP datagram loopback + decode over the freestanding PVH artifact
+      - live TCP segment framing/payload loopback + decode over the freestanding PVH artifact
+    - DHCP framing/decode is now also proven over the real RTL8139 path via `src/protocol/dhcp.zig`, `src/pal/net.zig`, and `scripts/baremetal-qemu-rtl8139-dhcp-probe-check.ps1`
+    - DNS framing/decode is now also proven over the real RTL8139 path via `src/protocol/dns.zig`, `src/pal/net.zig`, and `scripts/baremetal-qemu-rtl8139-dns-probe-check.ps1`
+    - TCP session/state closure is now reached locally:
+      - `src/protocol/tcp.zig` now carries a minimal client/server session state machine for `SYN -> SYN-ACK -> ACK`, established payload exchange, bounded four-way teardown, bounded SYN/payload/FIN retransmission recovery, bounded multi-flow session-table management, bounded cumulative-ACK advancement across multiple in-flight payload chunks, strict remote-window enforcement for bounded sequential payload chunking, zero-window blocking until a pure ACK reopens the remote window, and bounded sender congestion-window growth after ACK plus payload-timeout collapse on the chunked send path
+      - `src/pal/net.zig` host regressions now prove that session behavior over the mock RTL8139 path, including dropped-first-SYN recovery, dropped-first-payload recovery, dropped-first-FIN recovery on both close sides, bounded four-way close, bounded multi-flow session isolation, bounded cumulative-ACK advancement through two in-flight chunks, bounded sender congestion-window growth/collapse on the chunked send path, and a freestanding bounded `http://` POST path that resolves a hostname through DNS and completes a plain-HTTP request/response exchange over the same mock RTL8139 device
+      - `src/pal/net.zig` now also carries explicit DNS server configuration (`configureDnsServers`, `configureDnsServersFromDhcp`), a real freestanding `https://` POST path, and persistent filesystem-backed trust-store selection for bounded CA-bundle verification on the live HTTPS path
+      - the freestanding DNS decode path now writes directly into caller-owned packet storage instead of building large stack temporaries
+      - `scripts/baremetal-qemu-rtl8139-http-post-probe-check.ps1` now proves the same plain-HTTP POST path live over RTL8139 with DNS, TCP, and allocator-owned response buffering
+      - the PVH boot stack was increased to `128 KiB` so the live DNS + TCP + HTTP + service path no longer overruns the early page-table scratch area
+      - `src/baremetal/tool_service.zig` now provides a bounded framed request/response shim on top of the bare-metal tool substrate for the TCP path, with typed `CMD`, `EXEC`, `GET`, `PUT`, `STAT`, `LIST`, `INSTALL`, `MANIFEST`, `PKG`, `PKGLIST`, `PKGINFO`, `PKGRUN`, `PKGAPP`, `PKGDISPLAY`, `PKGPUT`, `PKGLS`, `PKGGET`, `PKGDELETE`, `APPLIST`, `APPINFO`, `APPSTATE`, `APPHISTORY`, `APPSTDOUT`, `APPSTDERR`, `APPTRUST`, `APPCONNECTOR`, `APPRUN`, `APPDELETE`, `DISPLAYINFO`, `DISPLAYMODES`, `DISPLAYSET`, `TRUSTPUT`, `TRUSTLIST`, `TRUSTINFO`, `TRUSTACTIVE`, `TRUSTSELECT`, and `TRUSTDELETE` requests plus bounded batched request parsing/execution on one flow
+      - `src/baremetal/package_store.zig` now provides the canonical persisted package layout at `/packages/<name>/bin/main.oc` and `/packages/<name>/meta/package.txt`, with manifest fields for `name`, `root`, `entrypoint`, and `script_bytes`
+      - host/module validation now also proves typed TCP file-service, package-service, and app-lifecycle behavior on top of the bare-metal filesystem, including `PUT`, `GET`, `STAT`, `LIST`, `PKG`, `PKGLIST`, `PKGINFO`, `PKGRUN`, `PKGAPP`, `PKGDISPLAY`, `PKGPUT`, `PKGLS`, `PKGGET`, `PKGDELETE`, `APPLIST`, `APPINFO`, `APPSTATE`, `APPHISTORY`, `APPSTDOUT`, `APPSTDERR`, `APPTRUST`, `APPCONNECTOR`, `APPRUN`, `APPDELETE`, `TRUSTPUT`, `TRUSTLIST`, `TRUSTINFO`, `TRUSTACTIVE`, `TRUSTSELECT`, `TRUSTDELETE`, persisted `run-script`, canonical `run-package`, persisted `app-run` state receipts, persisted app-history receipts, persisted app stdout/stderr receipts, ATA-backed package persistence, manifest readback, direct-child directory introspection, recursive uninstall cleanup, trust-bundle rotation/revocation, and mixed typed batch handling with concatenated framed responses through that service seam
+      - `src/baremetal_main.zig` now drives the live RTL8139 TCP proof through the same session/state machine, including zero-window block/reopen, bounded sender congestion-window growth after ACK plus payload-timeout collapse, framed multi-request service exchange on a single flow, bounded typed batch request multiplexing on one flow, bounded long-response chunking under the advertised remote window, typed TCP `PUT` upload, typed `PKG` / `PKGLIST` / `PKGINFO` / `PKGRUN` / `PKGAPP` / `PKGDISPLAY` / `PKGPUT` / `PKGLS` / `PKGGET` / `PKGDELETE` package-service exchange, typed `APPLIST` / `APPINFO` / `APPSTATE` / `APPHISTORY` / `APPSTDOUT` / `APPSTDERR` / `APPTRUST` / `APPCONNECTOR` / `APPRUN` / `APPDELETE` app-lifecycle exchange, typed `TRUSTPUT` / `TRUSTLIST` / `TRUSTINFO` / `TRUSTACTIVE` / `TRUSTSELECT` / `TRUSTDELETE` trust-store exchange, selected trust-bundle query/path readback, trust-bundle deletion, post-delete remaining-list readback, canonical package entrypoint readback, package manifest readback, package-directory listing, package output readback, and persisted app-state/stdout/stderr readback with uninstall cleanup
+      - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1` now proves live handshake + payload exchange + bounded four-way close with dropped-first-SYN recovery, dropped-first-payload recovery, dropped-first-FIN recovery on both close sides, bounded two-flow session isolation, zero-window block/reopen, bounded sequential payload chunking, bounded sender congestion-window growth after ACK plus payload-timeout collapse, framed multi-request command-service exchange, bounded typed batch request multiplexing on one flow with concatenated framed responses, typed TCP `PUT` upload, typed `PKG` / `PKGLIST` / `PKGINFO` / `PKGRUN` / `PKGAPP` / `PKGDISPLAY` / `PKGPUT` / `PKGLS` / `PKGGET` / `PKGDELETE` package-service exchange, typed `APPLIST` / `APPINFO` / `APPSTATE` / `APPHISTORY` / `APPSTDOUT` / `APPSTDERR` / `APPTRUST` / `APPCONNECTOR` / `APPRUN` / `APPDELETE` app-lifecycle exchange with persisted runtime-state readback, persisted history-log readback, persisted stdout/stderr readback, and uninstall cleanup, typed `TRUSTPUT` / `TRUSTLIST` / `TRUSTINFO` / `TRUSTACTIVE` / `TRUSTSELECT` / `TRUSTDELETE` trust-store exchange, selected trust-bundle query/path readback, trust-bundle deletion, post-delete remaining-list readback, canonical package entrypoint readback, package manifest readback, package-directory listing, and package output readback over the freestanding PVH artifact with attached disk media
+      - the live package-service proof required a real stack-budget fix in `runRtl8139TcpProbe()`: static probe scratch storage reduced the project-built bare-metal frame from `0x3e78` to `0x3708`
+    - routed networking depth now also closes through the real RTL8139 path:
+      - `src/protocol/arp.zig` now also encodes ARP replies
+      - `src/pal/net.zig` now carries ARP-cache learning, DHCP-driven route configuration, next-hop resolution, and routed UDP send helpers
+      - hosted regressions now prove gateway ARP learning, off-subnet UDP delivery through the gateway MAC, and direct-subnet gateway bypass over the mock RTL8139 path
+      - `src/baremetal_main.zig` now drives the live gateway-routing proof through the same route helpers instead of a framing-only shortcut
+      - `scripts/baremetal-qemu-rtl8139-gateway-probe-check.ps1` now proves live ARP-reply learning, ARP-cache population, gateway next-hop selection, direct-subnet bypass, and routed UDP delivery over the freestanding PVH artifact
+    - deeper networking depth remains future work above the FS5.5 closure bar:
+      - higher-level service/runtime layers beyond the current bounded typed batch file/package/trust/display/app/delete metadata seam on the bare-metal TCP path
+      - persistent multi-root trust-store lifecycle is now proven through `TRUSTPUT` / `TRUSTLIST` / `TRUSTINFO` / `TRUSTACTIVE` / `TRUSTSELECT` / `TRUSTDELETE` on the live TCP path, and the live HTTPS path now consumes the persisted selected bundle from that same trust store
+  - path-based filesystem usage is now also shipped above the shared backend:
+    - `src/baremetal/filesystem.zig` implements directory creation plus file read/write/stat
+    - `src/pal/fs.zig` routes the freestanding PAL through that layer
+    - hosted and host validation now proves RAM-disk and ATA-backed persistence for `/runtime/state/agent.json`, `/tools/cache/tool.txt`, `/tools/scripts/bootstrap.oc`, and `/tools/script/output.txt`
+  - bare-metal tool execution closure is now reached locally:
+    - real freestanding builtin command substrate shipped in `src/baremetal/tool_exec.zig`, including persisted `run-script` execution and canonical `run-package`
+    - `src/pal/proc.zig` now exposes explicit freestanding capture through `runCaptureFreestanding(...)`
+    - `src/baremetal/package_store.zig` now closes the canonical persisted package layout and ATA-backed package roundtrip seam
+    - `src/baremetal/tool_service.zig` now closes the bounded typed request/response service seam on top of the freestanding tool substrate
+    - live QEMU+GDB proof `scripts/baremetal-qemu-tool-exec-probe-check.ps1` validates `help`, `mkdir`, `write-file`, `cat`, `stat`, `run-script`, direct filesystem readback, persisted script readback after filesystem reset/re-init, and `echo` over the freestanding PVH artifact with attached disk media
+    - hosted/module validation additionally proves `run-package`, `PKG`, `PKGLIST`, `PKGINFO`, `PKGRUN`, package manifests, direct-child directory listing, and ATA-backed package persistence
+- `docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md` (FS0..FS7 scope/gates)
+- `FS5.6` repo-wide license refresh:
+  - project license posture is now `GPL-2.0-only` to align the repo with the Linux-derived RTL8139 driver slice.
+  - root/package license files, package metadata, release evidence, and repo-owned source/script headers are now refreshed in the local source of truth.
+  - tracking doc: `docs/zig-port/FS5_6_LICENSE_REFRESH.md`
+
+## Critical Points
+
+- Preserve wire compatibility for existing RPC envelopes and method names.
+- Keep behavior parity before optimization changes.
+- Require tests for every vertical slice (`config + handler + integration contract`).
+- Block release until parity gates and smoke checks pass.
+- Push each completed parity slice to GitHub immediately; release artifacts remain blocked until parity is 100%.
+- Keep security, browser bridge, and Telegram flows first-class (no stubs).
+- Disallow success-path dispatcher scaffolds for registered methods; missing handler paths must fail fast and be caught by coverage tests.
+
+## Phases
+
+1. Foundation
+- Zig project scaffold, build scripts, lint/test harness, config loader, health endpoint.
+
+2. Protocol + Gateway Core
+- RPC envelope codec, registry, dispatcher, HTTP server, graceful shutdown.
+
+3. Runtime + Tooling
+- runtime state model, scheduler primitives, tool runtime foundation (`exec`, files, message/session ops).
+
+4. Security + Diagnostics
+- guard pipeline, policy checks, doctor/security audit command surface.
+
+5. Browser + Auth + Channels
+- browser-bridge contracts (Lightpanda-only runtime; Playwright/Puppeteer explicitly rejected), OAuth/login lifecycle, Telegram channel parity.
+
+6. Memory + Edge
+- memory store equivalents, edge method payload handling, wasm/sandbox lifecycle.
+
+7. Validation + Release
+- parity diff checks, CP-style gates, cross-platform build matrix, signed artifacts, release cut.
+
+## Done Criteria
+
+- RPC contract parity score: `100%`
+- No unimplemented handlers in advertised method set
+- Full test suite green
+- End-to-end smoke for browser auth and Telegram replies
+- Host + Docker smoke/system checks return HTTP 200 for gateway surfaces
+- Release artifacts built for target platforms
+
+## Current Progress Snapshot
+
+- Note: historical milestone bullets below retain their original validation counts at the time they were logged; current project-wide test gate is `203/203`.
+- Strict execution report added:
+  - `docs/zig-port/FS1_FS5_STRICT_ANALYSIS_REPORT.md`
+  - this freezes the no-guesswork dependency order: `FS1 -> FS4 -> FS2 -> FS3 -> FS5`
+  - additional FS6 work is not allowed to substitute for unresolved FS1-FS5 hard gaps
+ - FS5 hard matrix + first proof lane are now in place:
+ - `docs/zig-port/FS5_EDGE_WASM_FINETUNE_MATRIX.md`
+ - `scripts/edge-wasm-lifecycle-smoke-check.ps1`
+  - `scripts/edge-finetune-lifecycle-smoke-check.ps1`
+  - both hosted validation workflows now run the strict WASM + finetune lifecycle smokes
+  - FS5 strict closure is now reached locally: advertised edge/WASM/marketplace methods are documented, WASM lifecycle is proven end to end, and finetune lifecycle is proven end to end
+- FS1 strict closure is now reached locally:
+  - `node.pending.enqueue`
+  - `node.pending.drain`
+  - registry coverage, dispatcher handlers, compat-state semantics, tests, and RPC reference are implemented
+  - parity gate is at zero missing methods against Go + stable + beta
+  - strict phase order now advances to FS4
+- FS4 strict closure is now reached locally:
+  - strict matrix source is `docs/zig-port/FS4_SECURITY_TRUST_MATRIX.md`
+  - `scripts/security-secret-store-smoke-check.ps1` is now enforced in both hosted validation workflows
+  - `secrets.store.status` now reports backend truth explicitly instead of implying native-provider support
+  - explicit support levels are now emitted for:
+    - `env` -> `implemented`
+    - `file|encrypted-file` -> `implemented`
+    - `dpapi|keychain|keystore` -> `fallback-only`
+    - `auto` -> `fallback-only`
+    - unknown backend -> `unsupported`
+  - runtime contract now exposes:
+    - `requestedRecognized`
+    - `requestedSupport`
+    - `fallbackApplied`
+    - `fallbackReason`
+  - direct secret-store tests and dispatcher coverage now lock those semantics
+  - gateway auth and rate-limit posture is now validated under safe, unsafe, and invalid configs in both dispatcher and audit/doctor test coverage
+  - prior `security.audit --fix` signoff for auto-remediation vs partial/manual blockers remains part of the phase closure
+  - strict hosted-phase order now advances to FS2
+  - FS2 hard-gate slice now shipped:
+    - strict matrix defined in `docs/zig-port/FS2_PROVIDER_CHANNEL_MATRIX.md`
+    - `scripts/web-login-smoke-check.ps1` and `scripts/telegram-reply-loop-smoke-check.ps1` now accept explicit `-SkipBuild`
+    - all current FS2 smokes are now enforced in `zig-ci` and `release-preview`
+    - browser-session auth, browser completion success, and Telegram command/reply proofs are green locally
+    - FS2 strict closure is now reached locally: provider/session auth, browser completion, direct-provider completion, Telegram reply-loop, Telegram webhook ingress, and Telegram bot-send delivery all have dedicated proofs
+  - Release/package lane status (2026-03-06):
+  - Edge release target `v0.2.0-zig-edge.32` is the current branch validation tag for desktop/android/bare-metal artifacts, parity reports, manifest, SBOM, provenance, npm tarball, wheel, and sdist.
+  - release evidence now also includes `release-status.json` + `release-status.md` so every edge cut carries a frozen workflow-status + registry-status snapshot in addition to package preflight evidence.
+  - Zig toolchain evidence is now mirror-aware:
+    - `scripts/zig-github-mirror-release-check.ps1` snapshots the `adybag14-cyber/zig` release target commitish, Windows asset URL, and SHA256 digest.
+    - `scripts/zig-bootstrap-from-github-mirror.ps1` provides the Windows bootstrap/reinstall path for both rolling `latest-master` and immutable `upstream-<sha>` releases.
+    - `scripts/zig-codeberg-master-check.ps1` now compares Codeberg `master`, the local Zig binary, and the GitHub mirror release in a single report.
+  - Toolchain policy:
+    - `latest-master` is the fast Windows refresh lane.
+    - `upstream-<sha>` is the reproducible lane for CI, bisects, and release recreation.
+  - CI split policy:
+    - hosted validation remains on Zig `master` for broad regression coverage.
+    - freestanding bare-metal smoke/probe validation and `build-baremetal-asset` are pinned to the known-good Linux build `0.16.0-dev.2736+3b515fbed`.
+    - reason: current upstream Linux `master` can segfault on `zig build baremetal -Doptimize=ReleaseFast` even though the pinned Linux `0.16.0-dev.2736+3b515fbed` bare-metal lane validates cleanly.
+  - `uvx` fallback from the tagged Git repo was most recently validated locally on `v0.2.0-zig-edge.31`:
+    - `uvx --from "git+https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime@v0.2.0-zig-edge.31#subdirectory=python/openclaw-zig-rpc-client" openclaw-zig-rpc --help`
+  - npm public publish remains externally blocked by npm scope/package permission on npmjs; the edge.29 tarball is attached to the GitHub prerelease and the GitHub Packages fallback path ran successfully.
+  - `scripts/package-registry-status.ps1` now uses the resolved default npm/PyPI package names when called with only `-ReleaseTag`, so local release diagnostics correctly report public-registry 404 state instead of silently skipping those checks.
+  - PyPI public publish remains externally blocked by missing trusted-publisher mapping, but the workflow now emits the confirmed OIDC claim shape for the branch release lane:
+    - `sub=repo:adybag14-cyber/ZAR-Zig-Agent-Runtime:environment:pypi`
+    - `workflow_ref=adybag14-cyber/ZAR-Zig-Agent-Runtime/.github/workflows/python-release.yml@refs/heads/fs55-ethernet-integration`
+    - `ref=refs/heads/fs55-ethernet-integration`
+  - FS1 runtime persistence posture slice shipped:
+    - `security.audit` now emits `runtime.state_path.in_memory` when state is empty or memory-backed.
+    - `doctor` now exposes `runtime.state_path` and `security.policy_bundle` checks with explicit persisted-vs-memory detail.
+    - dispatcher `doctor` JSON coverage now asserts both checks are present on the RPC surface.
+  - FS1 manual-remediation audit slice shipped:
+    - `security.audit --fix` now distinguishes between auto-remediation that actually ran and config changes Zig still cannot apply automatically.
+    - `fix.complete=false` plus `fix.unresolved[]` now surface manual follow-up for memory-backed `OPENCLAW_ZIG_STATE_PATH` and policy-bundle config when applicable.
+    - `system.maintenance.run` now reports partial remediation honestly:
+      - `actions[].status=partial`
+      - run `status=completed_with_manual_action`
+      - `counts.partial`
+    - new regressions cover both the raw audit JSON surface and the maintenance-run partial/remediation contract.
+  - FS1 leased-job replay slice shipped:
+    - runtime-state persistence now keeps dequeued in-flight jobs durable via `leasedJobs` instead of dropping them from restart replay as soon as they are leased for execution.
+    - on restart, leased jobs are re-queued ahead of later pending jobs so interrupted work resumes in deterministic order.
+    - new regression proves a job dequeued but not released before shutdown is replayed after restore:
+      - `runtime state restart replay preserves leased jobs that were dequeued but not released`
+  - FS1 live runtime recovery visibility slice shipped:
+    - runtime-state load now normalizes replayed `leasedJobs` back into persisted `pendingJobs` immediately after bootstrap, so the on-disk state file stops reporting stale in-flight work once recovery has happened.
+    - `ToolRuntime.snapshot()` now exposes shared runtime posture:
+      - `statePath`
+      - `persisted`
+      - `sessions`
+      - `queueDepth`
+      - `leasedJobs`
+      - `recoveryBacklog`
+    - live RPC/operator surfaces now expose the same runtime snapshot:
+      - `status`
+      - `doctor`
+      - `doctor.memory.status`
+      - `agent.identity.get`
+      - `system.maintenance.plan`
+      - `system.maintenance.run`
+      - `system.maintenance.status`
+    - new regressions cover both the normalized persisted replay file and the exported runtime snapshot contract.
+  - FS1 doctor-memory contract parity slice shipped:
+    - `doctor.memory.status` now includes the Go-visible health envelope instead of exposing only the expanded Zig counters:
+      - `healthy`
+      - `entryCount`
+      - `checkedAt`
+      - `maxRetention`
+      - nested `stats`
+    - Zig keeps its richer top-level counters plus nested `runtime`, so operator/agent callers get both the compat contract and the deeper local posture in one receipt.
+    - dispatcher regression coverage now asserts the health envelope keys alongside the richer runtime snapshot.
+  - FS1 identity diagnostics parity slice shipped:
+    - `agent.identity.get` now reports a stable process start time instead of generating a fresh timestamp on every call.
+    - the identity contract now includes the Go-visible RFC3339 `startedAt` field while preserving `startedAtMs` for Zig callers.
+    - `authMode` now reflects gateway auth posture (`token` or `none`) instead of the unrelated browser-bridge `keyless` label.
+    - dispatcher regression coverage now asserts `authMode`, `startedAt`, and `startedAtMs` on the identity receipt.
+  - FS1 status contract parity slice shipped:
+    - `status` now includes the Go-visible summary keys Zig can expose without widening the handler surface:
+      - `status`
+      - `version`
+      - `phase`
+      - `supportedMethods`
+      - `count`
+      - `sessions.count`
+    - Zig keeps the older compatibility fields (`browser_bridge`, `supported_methods`, `runtime_*`, `gateway_auth_mode`, `configHash`) alongside the new Go-visible summary envelope.
+    - dispatcher regression coverage now asserts both the Go-style summary keys and the richer Zig runtime/security posture on the same receipt.
+  - Full-stack replacement kickoff (2026-03-05):
+  - Phase 5 Telegram auth fallback-metadata parity hardened:
+    - no-session `/auth url` metadata now matches Go’s leaner fallback envelope and no longer emits Zig-only top-level:
+      - `provider`
+      - `account`
+    - missing-session `/auth complete` metadata now matches Go’s leaner fallback envelope and no longer emits Zig-only top-level:
+      - `provider`
+      - `account`
+    - default `auth.invalid` metadata now matches Go’s minimal contract and no longer emits Zig-only top-level:
+      - `provider`
+      - `status`
+      - `error`
+    - runtime and dispatcher regressions now parse these fallback receipts structurally and assert those extra fields stay absent.
+  - Phase 5 Telegram auth edge-metadata parity hardened:
+    - no-session `/auth wait` metadata no longer emits the Zig-only `timeoutSeconds` field; it now matches Go’s leaner `missing_session` envelope for that path.
+    - `/auth complete` with an empty extracted code no longer emits the Zig-only top-level `loginSessionId`; it now matches Go’s leaner `missing_code` envelope for that path.
+    - runtime and dispatcher regressions now assert the absence of those extra fields on the corresponding no-session wait and missing-code complete receipts.
+  - Phase 5 Telegram auth success-metadata parity hardened:
+    - success-path `/auth status`, `/auth wait`, and `/auth complete` receipts now rely on the nested Go-style `metadata.login` object for session state instead of duplicating those fields at the top level.
+    - the following top-level success metadata fields were removed on those paths to match Go more closely:
+      - `status`
+      - `loginSessionId`
+      - `code`
+    - the already-completed `/auth complete` metadata path now also avoids re-exposing top-level provider/account/session status and relies on `scope` + nested `login`.
+    - runtime and dispatcher regression coverage now parse metadata structurally and assert that those removed top-level fields stay absent while `metadata.login` remains present.
+  - Phase 5 Telegram auth-bridge metadata parity hardened:
+    - nested `metadata.bridge` now keeps the Go-style bridge keys:
+      - `enabled`
+      - `status`
+      - `endpoint`
+      - `reachable`
+      - `httpStatus`
+      - `error`
+      - `sessions`
+    - Zig-only bridge metadata fields were removed from this path:
+      - `guidance`
+      - `probeUrl`
+      - `statusCode`
+      - `latencyMs`
+    - runtime and dispatcher regressions now assert the absence of those extra bridge fields.
+  - Phase 5 Telegram invalid-auth metadata envelope hardened:
+    - invalid `/auth start|status|wait|url|complete|cancel` parser receipts now use Go’s narrow metadata contract:
+      - `type`
+      - `target`
+      - `error`
+    - those invalid parser paths no longer emit Zig-only metadata fields such as `status="invalid"`, `scope`, `resolvedScope`, or `timeoutSeconds`.
+    - runtime and dispatcher regressions now assert the absence of those extra fields on representative invalid-start and invalid-wait parser failures.
+  - Phase 5 Telegram auth-wait timeout parser metadata hardened:
+    - missing `--timeout` values still use the Go-visible operator reply:
+      - `Missing timeout value. Example: \`/auth wait --timeout 90\``
+    - non-integer and out-of-range timeout values still use the Go-visible operator reply:
+      - `Timeout must be an integer between 1 and 900 seconds.`
+    - machine-readable `metadata.error` for all timeout parser failures now matches Go instead of Zig’s older split tokens:
+      - `/auth wait ... --timeout` missing value -> `invalid_wait_args`
+      - `/auth wait ... --timeout abc|0|901` -> `invalid_wait_args`
+    - runtime and dispatcher regressions now assert the normalized Go-compatible metadata error instead of the prior `missing_timeout` / `invalid_timeout` split.
+  - Phase 5 Telegram pending-status completion parity hardened:
+    - pending `/auth status` still appends the live `Open: <verificationUriComplete>` line.
+    - the suggested completion command now always uses the compact Go form:
+      - `Then run: \`/auth complete <provider> <code>\``
+    - account-scoped pending status replies no longer append the account token to that completion command.
+    - runtime and dispatcher regressions now assert that account-scoped pending status replies omit the trailing account token.
+  - Phase 5 Telegram no-session cancel metadata parity hardened:
+    - `/auth cancel` with no active scoped session still returns the Go-style reply:
+      - `No active auth session for this target.`
+    - the no-session metadata envelope still reports `status=none`, but it no longer emits the Zig-only `revoked=false` field that Go does not include on this path.
+    - regression coverage now asserts that the no-session cancel receipt omits `revoked` while preserving the existing `auth.cancel` metadata envelope.
+  - Phase 5 Telegram auth parser-metadata parity hardened:
+    - unknown `/auth status ... --bogus` replies still use the Go-visible operator text:
+      - `Unknown status option \`--bogus\``
+    - unknown `/auth wait ... --bogus` replies still use the Go-visible operator text:
+      - `Unknown wait option \`--bogus\`.`
+    - machine-readable `metadata.error` for those parser failures now matches Go instead of Zig-only tokens:
+      - `/auth status ... --bogus` -> `invalid_status_args`
+      - `/auth wait ... --bogus` -> `invalid_wait_args`
+    - runtime and dispatcher regressions now assert both the reply text and the normalized metadata errors for these parse-failure receipts.
+  - Phase 5 Telegram auth parser-wording parity hardened:
+    - invalid `/auth start` unknown-flag replies now use the Go-style operator wording:
+      - `Unknown start option \`--bogus\`.`
+    - invalid `/auth cancel|logout` unknown-flag replies now use the same Go-style status-parser wording as `/auth status`:
+      - `Unknown status option \`--bogus\`.`
+    - malformed `/auth cancel|logout` extra-argument replies now use the same Go-style status usage string:
+      - `Usage: \`/auth status [provider] [account] [session_id]\``
+    - runtime and dispatcher regression coverage now assert those exact reply strings while preserving the structured `auth.cancel` metadata envelope (`type=auth.cancel`, `error=invalid_cancel_args`).
+  - Phase 5 Telegram auth-start metadata parity hardened:
+    - auth-start success metadata now includes the explicit Go-style `expiresAt` field at the top level instead of leaving expiry only inside the nested login payload.
+    - repeat auth-start metadata for already-pending sessions now includes the same `expiresAt` field.
+    - Zig now has a deterministic RFC3339 helper in `src/util/time.zig`:
+      - `unixMsToRfc3339Alloc`
+    - direct timestamp-format tests were added for the unix epoch and a stable known timestamp.
+    - runtime and dispatcher regression coverage now assert `metadata.expiresAt` on auth-start receipts.
+  - Phase 5 Telegram auth providers/bridge reply parity hardened:
+    - `/auth providers` now emits the compact Go-style operator reply:
+      - `Auth providers: <provider> (browser:<bool>, apiKey:<bool>), ...`
+    - `/auth bridge` now emits the compact Go-style operator reply:
+      - `Bridge \`<status>\` (<endpoint>).`
+      - `Probe error: <error>` is appended only when the probe fails.
+    - `auth.providers` metadata now includes the missing Go-compatible catalog keys while keeping Zig’s richer auth/browser details:
+      - `providerId`
+      - `name`
+      - `verificationUrl`
+      - `verificationUri`
+    - `auth.bridge` metadata now includes the missing Go-compatible bridge keys while keeping Zig’s richer probe/session guidance details:
+      - `enabled`
+      - `reachable`
+      - `httpStatus`
+    - regression coverage tightened in both runtime and dispatcher tests for the compact reply surface and the added metadata keys.
+  - Phase 5 Telegram auth-url parser parity hardened:
+    - `/auth url`, `/auth link`, and `/auth open` now reject malformed input with the same operator-visible parse surface Go uses for `/auth url`.
+    - unknown `--*` flags now return the Go-style status-parser reply text:
+      - `Unknown status option \`--bogus\``
+    - extra positional arguments now return the Go-style status usage string:
+      - `Usage: \`/auth status [provider] [account] [session_id]\``
+    - invalid alias parser receipts now emit `metadata.type=auth.url` with `error=invalid_url_args` instead of silently accepting malformed alias inputs.
+    - runtime and dispatcher regressions now assert both unknown-flag and extra-arg failures for this alias surface.
+  - Phase 5 Telegram auth-url metadata parity hardened:
+    - `/auth link`, `/auth open`, and `/auth url` now all emit the same Go-compatible nested metadata type:
+      - `type=auth.url`
+    - the older Zig-only alias metadata type (`auth.link`) is gone from success, missing-session, and no-session alias receipts.
+    - runtime and dispatcher regression coverage now assert the shared `auth.url` metadata contract directly for alias flows.
+  - Phase 5 Telegram auth-link/open alias parity hardened:
+    - `/auth link` and `/auth open` now reuse the same compact auth-url reply surface as `/auth url`:
+      - `Auth URL: <verificationUriComplete>`
+      - `Code: <code>`
+    - the older Zig-only multi-line `Auth link for ... / Status / Session / /auth guest ...` prose was removed from the alias reply body so operator output now stays aligned with the compact Go shape.
+    - no-session alias lookups now use the same Go-style missing-flow reply as `/auth url`:
+      - `No active auth flow. Run \`/auth start <provider>\` first.`
+    - missing-session alias lookups now use the same Go-style expired/missing reply as `/auth url`:
+      - `Auth session expired or missing. Run \`/auth\` again.`
+    - stale scoped auth bindings are now cleared on missing-session `/auth link|open` lookups in the same way they were already cleared for `/auth url`.
+    - regression coverage added:
+      - `channels.telegram_runtime.test.telegram runtime auth link and open aliases use url-style missing replies`
+      - dispatcher auth metadata test now asserts compact `/auth link` reply shape directly.
+  - Phase 5 Telegram auth-start parity hardened:
+    - new `/auth start` replies now match the Go operator flow more closely:
+      - `Auth started for ...`
+      - `Open: ...`
+      - `If prompted, use code \`<code>\`.`
+      - `Then run: \`/auth complete <provider> <code>\``
+    - account-scoped starts now append the account to the completion command in the same Go-style layout.
+    - repeat `/auth start` against an existing pending session now uses the Go-style pending wording:
+      - `Auth already pending for \`<provider>\` account \`<account>\`.`
+      - the older Zig-only `Use \`--force\` to replace session.` and `/auth guest ...` reply guidance were removed from that pending-start path.
+    - invalid `/auth start` replies now use backticked Go-style usage:
+      - `Usage: \`/auth start <provider> [account] [--force]\``
+    - runtime and dispatcher regression coverage now assert success, repeat-start, and invalid-start reply text directly.
+  - Phase 5 Telegram auth-help parity hardened:
+    - `/auth help` now leads with the Go canonical `Auth command usage:` surface instead of Zig's older custom usage/examples block.
+    - canonical help lines now cover:
+      - `/auth providers`
+      - `/auth status [provider] [account] [session_id]`
+      - `/auth bridge`
+      - `/auth` (start default provider)
+      - `/auth start <provider> [account] [--force]`
+      - `/auth wait <provider> [session_id] [account] [--timeout <seconds>]`
+      - `/auth complete <provider> <callback_url_or_code> [session_id] [account]`
+      - `/auth complete <code> [session_id]`
+      - `/auth cancel [provider] [account] [session_id]`
+    - Zig-only auth helpers remain documented in the same reply:
+      - `/auth url <provider> [account] [session_id]`
+      - `/auth guest <provider> [account] [session_id]`
+    - runtime and dispatcher regression coverage now assert the canonical help surface directly.
+  - Phase 5 Telegram auth-usage parity hardened:
+    - invalid `/auth status` parser replies now use the backticked Go-style usage string:
+      - `Usage: \`/auth status [provider] [account] [session_id]\``
+    - invalid `/auth wait` parser replies now use the backticked Go-style usage string:
+      - `Usage: \`/auth wait <provider> [session_id] [account] [--timeout <seconds>]\``
+    - invalid `/auth complete` parser replies now use the backticked Go-style usage string:
+      - `Usage: \`/auth complete <provider> <callback_url_or_code> [session_id] [account]\``
+    - runtime and dispatcher regression coverage now assert those exact reply strings together with the existing `invalid_status_args`, `invalid_wait_args`, and `invalid_complete_args` metadata paths.
+  - Phase 5 Telegram auth operator-text parity hardened:
+    - `/auth cancel` success replies now use the generic Go-style wording:
+      - `Auth session \`<id>\` cancelled.`
+    - active `/auth cancel` receipts now omit Zig's older extra `status` field and keep the Go-style `revoked` + `loginSessionId` metadata surface only.
+    - unknown `/auth` actions now use the fuller Go-style help text:
+      - `Unknown \`/auth\` action. Use \`/auth help\` for full usage.`
+    - `auth.invalid` metadata now also includes the raw action token (`action=<verb>`) so Zig matches the Go invalid-action receipt surface.
+    - bare and provider-only `/auth complete` invocations now follow the Go parser contract:
+      - `Usage: \`/auth complete <provider> <callback_url_or_code> [session_id] [account]\``
+      - metadata `error=invalid_complete_args`
+    - regression tests added:
+      - `channels.telegram_runtime.test.telegram runtime auth invalid action and complete usage use go-style help text`
+      - `gateway.dispatcher.test.dispatch send auth cancel and invalid action use go-style replies`
+  - Phase 5 Telegram auth success-reply parity hardened:
+    - `/auth url` now emits the compact Go-style operator reply (`Auth URL: ...` + `Code: ...`) instead of Zig's longer status/session/scope/guest guidance block.
+    - rich `/auth url` details remain in the nested metadata envelope, so machine-readable context is preserved while the human reply matches Go.
+    - `/auth complete` success replies now use the generic Go wording:
+      - `Auth completed. Session \`<id>\` is \`<status>\`.`
+    - regression assertions added in both runtime and dispatcher tests for the compact `/auth url` and success `/auth complete` paths.
+  - Phase 5 Telegram auth-complete parity hardened:
+    - missing `/auth complete` sessions now use the Go-style scope reply:
+      - `No pending auth session for scope \`<provider>/<account>\`. Run \`/auth start <provider>\` first.`
+    - complete no-session metadata now keeps `error=missing_session` without Zig's older `status=none`, and top-level `authStatus` now settles to `none`.
+    - bridge completion failures now preserve Go-style raw error text in both reply and metadata:
+      - `invalid login code`
+      - `login session expired`
+      - `login session not found`
+    - regression tests added:
+      - `channels.telegram_runtime.test.telegram runtime auth complete missing session and bridge errors use go-style replies`
+      - `gateway.dispatcher.test.dispatch send auth complete errors use go-style messages`
+  - Phase 5 Telegram empty-code completion parity hardened:
+    - when `/auth complete` receives a callback/code token that extracts to an empty value, Zig now mirrors Go:
+      - pending sessions reply with `Missing code. Usage: \`/auth complete <provider> <callback_url_or_code> [session_id] [account]\`` and metadata `error=missing_code`
+      - already-authorized sessions reply with `Auth already completed. Session \`<id>\` is \`authorized\`.`
+    - runtime and dispatcher regression coverage now exercise both paths via `/auth complete <provider> guest <session_id> <account>`.
+  - Phase 5 Telegram auth-wait bridge error parity hardened:
+    - when `/auth wait` resolves through a scoped/bound login session that no longer exists, Zig now mirrors the Go bridge error wording:
+      - `Auth wait failed: login session not found`
+    - bridge-error metadata on this path now carries the Go-style `error=login session not found` and no longer includes Zig's older `status=missing` field.
+    - regression tests added:
+      - `channels.telegram_runtime.test.telegram runtime auth wait missing session uses go-style bridge error`
+      - `gateway.dispatcher.test.dispatch send auth wait bridge errors use go-style messages`
+  - Phase 5 Telegram no-session status/wait parity hardened:
+    - `/auth status` with no scoped session now uses the Go-style `No active auth flow for <target> in scope <scope>.` reply with `authStatus=none` and metadata `status=none`.
+    - `/auth wait` with no scoped session now uses the Go-style `No auth session selected for scope <scope>. Start with /auth start <provider>.` reply with `authStatus=missing` and metadata `error=missing_session`.
+    - the old Zig shared no-session reply (`No active auth session for <provider> account <account>.`) and `authStatus=pending` behavior are gone from these paths.
+    - regression tests added:
+      - `channels.telegram_runtime.test.telegram runtime auth status and wait without session use go-style replies`
+      - `gateway.dispatcher.test.dispatch send auth status and wait without session use go-style replies`
+  - Phase 5 Telegram missing-status cleanup parity hardened:
+    - missing `/auth status` replies now use the Go-style `Auth session expired or missing. Run \`/auth start <provider>\` again.` wording instead of `Auth session not found.`.
+    - when `/auth status` resolves through a scoped binding whose backing login session no longer exists, Zig now clears that stale binding immediately.
+    - the missing-session status metadata no longer emits Zig-only `error=session_not_found`.
+    - ownership in the missing-session `/auth status` and `/auth url` cleanup branches is now hardened so login-session IDs are duplicated before binding cleanup when needed, preventing use-after-free on reply/metadata serialization.
+    - regression test added:
+      - `channels.telegram_runtime.test.telegram runtime auth status clears stale binding when session is missing`
+  - Phase 5 Telegram pending-status UX parity hardened:
+    - pending `/auth status` replies now include the live verification URL plus the concrete completion command, instead of only returning `Auth status: <pending>`.
+    - account-scoped bindings now also use the compact Go completion form (`/auth complete <provider> <code>`) instead of Zig's older scoped variant with the trailing account token.
+  - Phase 5 Telegram auth URL stale-binding parity hardened:
+    - `/auth url` now clears the scoped auth binding when the referenced login session is missing, matching the Go cleanup behavior for expired/missing URL lookups.
+    - missing-session URL lookups now return the Go-style reply:
+      - `Auth session expired or missing. Run \`/auth\` again.`
+    - regression test added:
+      - `channels.telegram_runtime.test.telegram runtime auth url clears stale binding when session is missing`
+  - Phase 5 Telegram cancel parity hardened:
+    - invalid `/auth cancel|logout` parser branches now preserve structured `auth.cancel` metadata with `error=invalid_cancel_args`.
+    - `/auth cancel` with no active scoped session now returns the Go-style `status=none` outcome, and the no-session receipt no longer includes Zig's older extra `revoked=false` field.
+    - cancel metadata now derives `revoked` from the actual `web_login.logout()` result, so explicit double-cancel / already-rejected session flows no longer over-report revocation success.
+    - regression tests added/expanded:
+      - `channels.telegram_runtime.test.telegram runtime auth cancel explicit rejected session reports revoked false`
+      - `channels.telegram_runtime.test.telegram runtime cancel without active session returns none status metadata`
+      - `gateway.dispatcher.test.dispatch send cancel without active auth session returns none status metadata`
+  - Phase 5 Telegram invalid-auth metadata parity hardened:
+    - invalid `/auth status`, `/auth wait`, and `/auth complete` parser branches now preserve the nested `metadata` envelope instead of returning bare invalid replies.
+    - structured auth failure telemetry is now preserved for:
+      - missing `session` arguments
+      - missing/invalid timeout values
+      - unknown `--*` status/wait flags
+      - malformed trailing arguments
+      - missing completion codes
+    - `/auth help` now explicitly advertises the short-form completion syntax:
+      - `/auth complete <callback_url_or_code> [session_id]`
+    - regression tests added/expanded:
+      - `channels.telegram_runtime.test.telegram runtime auth parser rejects invalid options and trailing args`
+      - `gateway.dispatcher.test.dispatch send invalid auth parser replies preserve metadata envelope`
+  - Phase 5 Telegram `/set api key` parity expanded:
+    - Zig Telegram runtime now supports Go-style `/set api key <provider> <key>` operator flows instead of treating `/set` as an unknown command.
+    - `/set` now writes provider API keys through the existing secret-resolution path used by browser/direct-provider auth:
+      - dispatcher wires Telegram runtime to a setter backed by `SecretStore`
+      - stored keys land under canonical secret targets such as `talk.providers.<provider>.apiKey`
+      - subsequent `/auth providers` and provider API-key fallback resolution see the same stored key immediately
+    - command replies now include Go-compatible `set.api_key` / `set.invalid` metadata, including masked key telemetry and deterministic usage/store-failure errors.
+    - command help/unknown-command text now includes `/set` in the supported Telegram operator surface.
+    - regression tests added:
+      - `channels.telegram_runtime.test.telegram runtime set api key command stores provider secret and updates auth providers reply`
+      - `gateway.dispatcher.test.dispatch send set api key command stores provider secret for telegram runtime`
+  - Phase 5 Telegram model parser parity hardened:
+    - malformed provider-scoped Telegram model commands such as `/model /edge-experimental` no longer fall through the empty-provider alias path and silently select `chatgpt/edge-experimental`.
+    - Zig now mirrors Go-style behavior by rejecting provider-scoped syntax with an empty provider segment and returning the usage reply:
+      - `Provider is required. Usage: /model <provider>/<model> or /model <provider> <model>.`
+    - `send` metadata now reports `type=model.invalid` with `error=missing_provider` for this path.
+    - regression tests added:
+      - `channels.telegram_runtime.test.telegram runtime model command rejects missing provider in provider scoped syntax`
+      - `gateway.dispatcher.test.dispatch send model command rejects missing provider in provider-scoped syntax`
+  - Phase 5 Telegram model catalog parity expanded:
+    - `src/channels/telegram_runtime.zig` now accepts a dispatcher-fed model catalog resolver, so Telegram `/model` commands can consume the shared compat catalog instead of a Telegram-only static table.
+    - `/model status`, `/model list`, `/model list <provider>`, provider-default selection, provider-scoped resolution, alias resolution, and invalid-model/provider replies now operate on the merged compat catalog surface already used by `models.list`.
+    - dispatcher-fed dynamic compat models are now visible inside Telegram model flows, including provider-default selection for providers that exist only in dynamic compat state.
+    - runtime fallback handling for empty provider filters now preserves the full static provider catalog instead of collapsing to `chatgpt`.
+    - `/model set|next|reset` replies now include Go-style target-aware wording (`for <target>`), aligning Telegram UX more closely with Go without changing the existing Zig command envelope.
+    - regression tests added:
+      - `channels.telegram_runtime.test.telegram runtime model command uses injected catalog resolver`
+      - `gateway.dispatcher.test.dispatch send model command uses compat-backed dynamic catalog for telegram runtime`
+  - Phase 5 Telegram model/TTS envelope parity expanded:
+    - `src/channels/telegram_runtime.zig` now attaches a nested `metadata` object to `/model` and `/tts` command receipts while preserving Zig's stable top-level send fields.
+    - model command metadata now carries the Go-compatible selection envelope:
+      - `currentProvider`
+      - `currentModel`
+      - `modelRef`
+      - `requestedProvider`
+      - `requestedModel`
+      - `requested`
+      - `aliasUsed`
+      - `matchedCatalogModel`
+      - `customOverride`
+      - `providers`
+      - `availableModels`
+      - `models`
+    - TTS command metadata now carries Go-compatible provider and clip envelope fields:
+      - canonical provider IDs (`native`, `openai-voice`, `kittentts`, `elevenlabs`)
+      - provider catalog availability/reason state
+      - enable/disable status
+      - `tts.say` audio fields (`audioRef`, `bytes`, `outputFormat`, `realAudio`, `fallback`, `engine`, `audioSource`)
+    - `/tts` command compatibility improved:
+      - bare `/tts` now resolves to `status`
+      - `/tts say <text>` is now accepted as a first-class alias for `/tts speak <text>`
+      - TTS reply text now aligns more closely with Go-visible command UX:
+        - compact status phrasing (`TTS is <enabled> via <provider> (available=<bool>)`)
+        - canonical provider IDs in replies (`native`, `openai-voice`, `kittentts`, `elevenlabs`)
+        - compact provider summary lines for `/tts providers`
+        - synthesized-byte success wording for `/tts say`
+    - dispatcher regression coverage added:
+      - `gateway.dispatcher.test.dispatch send model and tts commands expose go-compatible metadata envelope`
+  - Phase 5 Telegram auth envelope parity expanded:
+    - `src/channels/telegram_runtime.zig` now attaches a nested `metadata` object to `/auth` command receipts while preserving Zig's stable top-level receipt fields (`loginSessionId`, `loginCode`, `authStatus`, `reply`, etc.).
+    - metadata now carries structured auth state for `help`, `providers`, `bridge`, `link|open|url`, `start`, `status`, `wait`, `guest`, `complete`, `cancel`, and invalid-action replies.
+    - provider catalog metadata now round-trips structured provider descriptors (`authMode`, `defaultModel`, `verificationUri`, guest hints, alias sets, API-key posture) instead of only reply text.
+    - bridge metadata now includes structured Lightpanda probe status, endpoint/probe URL, HTTP status, latency, guidance, and login-manager session summary.
+    - dispatcher regression coverage added:
+      - `gateway.dispatcher.test.dispatch send auth commands expose go-compatible metadata envelope`
+  - Phase 5 Telegram auth parser parity hardened:
+    - `/auth status` now rejects unknown `--*` flags and extra positional tail arguments instead of silently accepting them.
+    - `/auth wait` now supports Go-style `session <id>`, bounded `--timeout <seconds>` and `--timeout=<seconds>` parsing, and deterministic rejection for missing/invalid/unknown timeout options.
+    - `/auth complete` now rejects unknown flags and trailing garbage beyond `provider + code + optional session_id + optional account`.
+    - `/auth cancel|logout` now rejects unknown flags and extra positional tail arguments instead of ignoring them.
+    - Zig intentionally retains the older positional timeout shortcut (`/auth wait <provider> <account> <seconds>`) as a compatibility extension beyond current Go behavior.
+    - regression tests added:
+      - `channels.telegram_runtime.test.telegram runtime wait supports session keyword and bounded timeout flag`
+      - `channels.telegram_runtime.test.telegram runtime auth parser rejects invalid options and trailing args`
+  - Phase 5 Telegram auth-depth parity expanded:
+    - `/auth providers` now renders a live provider catalog instead of a hardcoded string:
+      - per-provider auth mode, browser-session support, API-key posture, guest bypass support, default model, verification URL, popup action, and aliases are now surfaced directly from Zig runtime state/profile data.
+    - `/auth bridge <provider>` now performs a live Lightpanda endpoint probe and reports bridge endpoint, probe URL, HTTP status, latency, and web-login session summary counts.
+    - `/auth url <provider> [account] [session_id]` now exists as a first-class alias for phone-friendly auth flows, returning URL, code, session, scope, and guest-mode hints.
+    - `/auth cancel|logout` now revokes the underlying login session through `web_login.logout`, so explicit status checks against the cancelled `loginSessionId` return `rejected`.
+    - `/auth start` now only reuses existing pending sessions; already-authorized scoped sessions are no longer silently reused without `--force`.
+    - regression tests added:
+      - `channels.telegram_runtime.test.telegram runtime auth bridge and providers help include guest guidance`
+      - `channels.telegram_runtime.test.telegram runtime auth url alias surfaces session details`
+      - `channels.telegram_runtime.test.telegram runtime auth cancel revokes scoped session`
+  - master tracking issue refreshed with FS0..FS7 execution gates.
+  - FS0 execution issue opened (`#2`) and linked from master issue.
+  - initial matrix published: `docs/zig-port/FULL_STACK_REPLACEMENT_MATRIX.md`.
+  - FS1 restart determinism coverage expanded:
+    - compat-state persistence test now asserts `sessionChannels` mappings and replayed timestamps survive restart, preserving omitted-channel send routing without memory-history dependence.
+  - FS3 memory replay retention coverage expanded:
+    - memory store load path now enforces configured retention cap (`max_entries`) during replay.
+    - high-turn multi-session regression confirms oldest-history trimming and newest-history recall invariants after reload.
+    - replay load now derives `next_id` from restored message IDs, preventing ID collisions when persisted `nextId` metadata is stale.
+  - FS3 memory depth parity expanded:
+    - `memory/store.zig` now exposes semantic recall (`semanticRecall`) and graph-neighbor recall (`graphNeighbors`) with synthesis helper (`recallSynthesis`).
+    - memory stats now report vector and graph telemetry (`vectors`, `graphNodes`, `graphEdges`) plus unlimited-retention posture (`unlimited`, `maxEntries=0`).
+    - runtime memory retention is now config-driven through `runtime.memory_max_entries` (`OPENCLAW_ZIG_RUNTIME_MEMORY_MAX_ENTRIES`), including unlimited mode for `<=0`.
+    - browser completion context injection now includes memory recap + semantic/graph recall hints to reduce false \"no tools/no memory\" model responses.
+  - FS3 strict closure reached locally:
+    - hard matrix published: `docs/zig-port/FS3_MEMORY_KNOWLEDGE_MATRIX.md`
+    - `scripts/browser-request-memory-context-smoke-check.ps1` now proves persisted session memory injection on the hosted `browser.request` completion lane
+    - `scripts/telegram-reply-memory-context-smoke-check.ps1` now proves persisted session memory injection on the hosted Telegram reply lane
+    - both FS3 consumer smokes are now wired into `zig-ci` and `release-preview`
+  - Phase 5 Telegram bridge context depth expanded:
+    - dispatcher now wires Telegram runtime to the shared memory store (`getTelegramRuntime -> setMemoryStore(getMemoryStore())`) so runtime bridge completions can consume persisted session memory context.
+    - Telegram `tryGenerateBridgeReply` now injects a runtime tool-capability system prompt plus memory recall context (semantic + graph synthesis) and recent session history into Lightpanda completion messages.
+    - Telegram completion message builder now enforces role filtering and last-user dedupe to avoid duplicated user turns in bridge payloads.
+    - Telegram completion payload shaping now enforces a bounded context budget (`12,000` chars) while preserving system context and newest user turn.
+    - Telegram bridge attempt logic now includes latest-authorized fallback across providers:
+      - if selected provider/session is unavailable, runtime attempts completion using the most recent authorized session from login manager.
+      - runtime now exposes `providerFailover` in send responses to signal fallback usage when bridge completion succeeds via alternate authorized provider/session.
+    - Telegram bridge attempt logic now includes provider API-key credential fallback:
+      - selected and fallback attempts now attach provider API key credentials when available via dispatcher resolver (config/secret/env) or environment aliases.
+      - non-command replies can now avoid false `auth_required` when browser login is absent but provider API key credentials are present.
+      - regression test added: `channels.telegram_runtime.test.telegram runtime uses provider api key when no authorized browser session exists`.
+    - Dispatcher provider-key resolver matrix expanded for provider/channel parity depth:
+      - resolver now covers `codex` (OpenAI key family), `gemini`, `openrouter`, and `opencode` in addition to existing `chatgpt` and `claude`.
+      - regression test added: `gateway.dispatcher.test.resolve browser provider api key supports extended provider matrix`.
+    - Direct-provider bridge depth expanded for OpenRouter compatibility:
+      - `provider_http` now supports `openrouter` as a direct provider path (OpenAI-compatible API envelope), alongside `chatgpt|codex` and `claude`.
+      - direct-provider request URL telemetry now reports OpenRouter endpoint (`https://openrouter.ai/api/v1/chat/completions`) for missing-key and runtime failures.
+      - regression tests added:
+        - `bridge.provider_http.test.direct provider openrouter requires api key and reports openrouter endpoint`
+        - `gateway.dispatcher.test.dispatch browser.request supports direct provider path for openrouter with missing key telemetry`
+    - Direct-provider bridge depth expanded for OpenCode compatibility:
+      - `provider_http` now supports `opencode` as a direct provider path (OpenAI-compatible API envelope).
+      - direct-provider request URL telemetry now reports OpenCode endpoint (`https://api.opencode.ai/v1/chat/completions`) for missing-key and runtime failures.
+      - regression tests added:
+        - `bridge.provider_http.test.direct provider opencode requires api key and reports opencode endpoint`
+        - `gateway.dispatcher.test.dispatch browser.request supports direct provider path for opencode with missing key telemetry`
+    - Telegram bridge response telemetry now includes API-key usage flag:
+      - `send` result now emits `providerApiKeyUsed` when bridge completion succeeds using provider API-key credentials.
+      - regression test updated: `channels.telegram_runtime.test.telegram runtime uses provider api key when no authorized browser session exists`.
+    - Browser-request auth telemetry now includes API-key usage/source:
+      - `browser.request` responses now include `auth.apiKeyUsed` and `auth.apiKeySource` (`explicit|resolver|none`) plus `auth.loginSessionId`.
+      - direct-provider missing-key paths now report deterministic `auth` telemetry for debugging parity with Telegram auth flows.
+      - regression test added:
+        - `gateway.dispatcher.test.dispatch browser.request metadata-only direct provider reports explicit api-key telemetry`.
+  - Phase 5 direct-provider parity expanded:
+    - `bridge/provider_http.zig` now supports `gemini` through Google's official OpenAI-compatible chat completions endpoint (`https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`).
+    - direct-provider default model resolution now aligns Gemini requests to the existing catalog default (`gemini-2.5-pro`) when callers omit `model`.
+    - `browser.request` now reports `authMode:"api_key"` whenever `directProvider=true`, including metadata-only responses, so the surface no longer advertises browser-session auth semantics on API-key execution paths.
+    - regression tests added:
+      - `bridge.provider_http.test.direct provider gemini requires api key and reports gemini endpoint`
+      - `gateway.dispatcher.test.dispatch browser.request direct provider gemini missing key uses api-key auth semantics`
+  - Phase 5 provider-catalog parity expanded:
+    - Telegram `/model` command parity depth expanded:
+      - `telegram_runtime` now supports `/model`, `/model status`, `/model list`, `/model list <provider>`, `/model next`, provider-default selection via `/model <provider>`, provider-scoped catalog IDs, alias-driven model selection (`pro`, `thinking`, etc.), and custom override messaging for non-catalog provider models.
+      - provider-scoped model resolution now accepts provider-trimmed slash-scoped model IDs, so commands like `/model openrouter/qwen/qwen3-coder:free` resolve back to the full catalog ID deterministically.
+      - custom override result handling now re-reads the persisted target model after selection, eliminating transient-buffer corruption in command responses for non-catalog models.
+      - regression tests added:
+        - `channels.telegram_runtime.test.telegram runtime model command lifecycle`
+        - `channels.telegram_runtime.test.telegram runtime model command supports custom overrides and provider scoped catalog ids`
+    - `auth.oauth.providers` now returns a richer OAuth/browser catalog aligned with Go parity, including `codex` and `opencode`, verification URLs, browser-session support flags, alias lists, provider-filtering, and deterministic invalid-param rejection.
+    - `auth.oauth.import` now canonicalizes provider aliases, rejects unknown providers with `-32602`, supports existing `loginSessionId` completion reuse, and returns `providerId` plus `providerDisplayName` for downstream UX parity.
+    - browser/provider API-key resolution now covers the extended auth matrix:
+      - `qwen`
+      - `zai`
+      - `inception`
+      - `minimax`
+      - `kimi`
+      - `zhipuai`
+      - alongside existing `chatgpt|codex`, `claude`, `gemini`, `openrouter`, and `opencode`.
+    - regression tests added:
+      - `gateway.dispatcher.test.dispatch auth.oauth.providers rejects unknown params`
+      - `gateway.dispatcher.test.dispatch auth.oauth.providers filter supports alias and api key flag`
+      - `gateway.dispatcher.test.dispatch auth.oauth.import rejects unknown provider`
+      - `gateway.dispatcher.test.dispatch auth.oauth.import canonicalizes provider alias and returns provider display`
+      - `gateway.dispatcher.test.resolve browser provider api key supports extended provider matrix`
+    - `models.list` now refreshes dynamic provider catalogs for `qwen`, `openrouter`, and `opencode`, while preserving static fallback models and provider alias normalization (`copaw -> qwen`).
+    - catalog refresh state is TTL-bound via `runtime.model_catalog_refresh_ttl_seconds` / `OPENCLAW_ZIG_RUNTIME_MODEL_CATALOG_REFRESH_TTL_SECONDS`.
+    - dynamic model ownership now uses the compat allocator instead of the transient request allocator, fixing a cross-allocator lifetime bug that surfaced as test leaks and an alignment panic on Windows Zig master.
+    - regression tests added/updated:
+      - `gateway.dispatcher.test.dispatch models.list rejects unknown params`
+      - `gateway.dispatcher.test.dispatch models.list provider filter supports copaw alias and qwen refresh`
+      - `gateway.dispatcher.test.parse openrouter model catalog payload prefixes provider ids`
+      - `gateway.dispatcher.test.parse opencode model catalog payload prefixes provider ids`
+      - `gateway.dispatcher.test.dispatch browser.request injects memory and tool context when session history exists` now parses JSON and asserts the behavior contract instead of a brittle exact string count.
+
+- Tracking and documentation refresh (2026-03-04):
+  - Gateway hardening slice shipped:
+    - optional `/rpc` token auth gate (`OPENCLAW_ZIG_GATEWAY_REQUIRE_TOKEN`, `OPENCLAW_ZIG_GATEWAY_AUTH_TOKEN`)
+    - in-process gateway rate limiting (`OPENCLAW_ZIG_GATEWAY_RATE_LIMIT_ENABLED`, `OPENCLAW_ZIG_GATEWAY_RATE_LIMIT_WINDOW_MS`, `OPENCLAW_ZIG_GATEWAY_RATE_LIMIT_MAX_REQUESTS`)
+    - native WebSocket gateway routes (`GET /ws` + root compatibility `GET /`) with upgrade handling + text-frame RPC dispatch
+    - target-path normalization for gateway route matching (`/health|/rpc|/ws` now correctly match query-bearing targets like `/rpc?x=1` and `/ws?mode=compat`)
+    - websocket RPC parity expanded to accept binary websocket frames in addition to text frames (aligned with Go transport behavior)
+    - websocket stream envelope path added for chunked responses:
+      - client may request chunked response frames with `params.stream=true`
+      - optional bounded chunk-size hint via `params.streamChunkBytes` (clamped for backpressure safety)
+      - websocket replies emit ordered stream envelopes with `chunkIndex/chunkCount/done/chunkBytes/totalBytes`
+    - HTTP `/rpc` stream envelope parity added for unified transport semantics:
+      - `params.stream=true` now wraps HTTP RPC responses into chunk-envelope payloads (`stream.transport=http`, `chunks[]`)
+      - HTTP stream chunks reuse the same chunk metadata fields as websocket streaming (`chunkIndex/chunkCount/done/chunkBytes/totalBytes`)
+      - stream chunk sizing is now config-driven with environment overrides:
+        - `OPENCLAW_ZIG_GATEWAY_STREAM_CHUNK_DEFAULT_BYTES`
+        - `OPENCLAW_ZIG_GATEWAY_STREAM_CHUNK_MAX_BYTES`
+      - websocket/http stream-option parsing now applies fallback + min/max clamping from gateway config for deterministic bounded chunk behavior
+    - `security.audit` + `doctor` gateway auth/rate-limit checks and regression tests
+    - non-loopback bind token policy enforcement shipped:
+      - `/rpc` and websocket paths now enforce token auth on non-loopback bind regardless of `OPENCLAW_ZIG_GATEWAY_REQUIRE_TOKEN`
+      - gateway fails closed with `gateway_token_unconfigured` when bind requires token but token value is empty
+    - deterministic config fingerprint surfaced in diagnostics:
+      - `health`, `status`, and `config.get` now include `configHash`
+      - `doctor` report now includes `configHash`
+    - validation: `zig build`, `zig build test` (`118/118`), `scripts/runtime-smoke-check.ps1`, `scripts/gateway-auth-smoke-check.ps1`, `scripts/websocket-smoke-check.ps1`, `scripts/web-login-smoke-check.ps1`
+  - PAL v1 extraction shipped:
+    - new PAL modules in `src/pal/`: `fs`, `proc`, `net`, `secrets`, `sandbox`.
+    - runtime tool execution + file sandbox paths now route through PAL interfaces.
+    - Telegram Bot API connector HTTP send path now routes through PAL net interface.
+    - dispatcher env-secret lookup now routes through PAL secrets interface.
+  - Secure secret storage backend abstraction shipped:
+    - new module: `src/security/secret_store.zig`.
+    - new RPC methods: `secrets.store.status`, `secrets.store.set`, `secrets.store.get`, `secrets.store.delete`, `secrets.store.list`.
+    - encrypted fallback backend implemented with XChaCha20-Poly1305 persistence (`secrets.store.enc.json`) and backend-selection abstraction (`env` / `encrypted-file` / `dpapi|keychain|keystore` with encrypted fallback).
+    - `secrets.resolve` now checks secure store entries between config overlay and environment aliases.
+  - Release trust artifact generation shipped:
+    - new script: `scripts/generate-release-evidence.ps1`.
+    - local release flow (`scripts/release-preview.ps1`) now generates `release-manifest.json`, `sbom.spdx.json`, and `provenance.intoto.json` from packaged release assets.
+    - CI release flow (`.github/workflows/release-preview.yml`) now generates and publishes the same trust artifacts in GitHub release assets.
+  - WASM trust/signature + host-hook hardening shipped:
+    - `edge.wasm.install` now computes deterministic module digest metadata, validates optional expected hashes, and supports trust policy enforcement (`hash|signature|off`) with HMAC signature verification (`OPENCLAW_ZIG_WASM_TRUST_KEY`) when required.
+    - custom module records now retain trust metadata (`sourceUrl`, `sha256`, `signature`, `signer`, `verificationMode`, `verified`) for execute-time and response-time observability.
+    - `edge.wasm.execute` now validates requested host hooks against declared module capabilities (`fs.read/write`, `memory.read/write`, `network.fetch`) with deterministic sandbox-deny errors on violations.
+  - README refreshed with current parity/validation state and workflow guidance.
+  - Local Zig toolchain reference doc refreshed to current local/remote hashes.
+  - MkDocs documentation site scaffolded with full feature/domain documentation and GitHub Pages deployment workflow.
+  - GitHub Pages enabled and verified with workflow deployment:
+    - site: https://adybag14-cyber.github.io/ZAR-Zig-Agent-Runtime/
+    - workflow run: https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/actions/runs/22653680203
+  - RPC reference automation and drift guard added:
+    - `scripts/generate-rpc-reference.ps1` generates `docs/rpc-reference.md` from `src/gateway/registry.zig`.
+    - `zig-ci`, `release-preview`, and `docs-pages` now regenerate and enforce `git diff --exit-code` on `docs/rpc-reference.md`.
+  - Next-generation update/release expansion added:
+    - new channel-aware update methods: `update.plan` and `update.status` (alongside enriched `update.run`).
+    - npm client package scaffolded at `npm/openclaw-zig-rpc-client` with publish workflow `.github/workflows/npm-release.yml`.
+    - npm package dry-run checks now enforced in `zig-ci`, `release-preview` validate stage, and local `scripts/npm-pack-check.ps1`.
+  - GitHub tracking issue updated with optimization-slice evidence:
+    - https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/issues/1#issuecomment-3994942224
+    - https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/issues/1#issuecomment-3994964162
+- Phase 2 complete:
+  - JSON-RPC envelope parser/encoder
+  - Registry + dispatcher
+  - HTTP route implementation (`GET /health`, `POST /rpc`, `GET /ws` websocket upgrade, and root websocket compatibility route `GET /`)
+  - Graceful shutdown via RPC `shutdown` method
+- Phase 3 complete:
+  - Runtime session primitives + queue lifecycle
+  - Tool runtime actions (`exec.run`, `file.read`, `file.write`)
+  - Dispatcher wiring and integration request lifecycle tests
+  - Runtime status telemetry (`runtime_queue_depth`, `runtime_sessions`)
+  - Runtime policy hardening shipped:
+    - optional filesystem sandbox with traversal/symlink denial (`OPENCLAW_ZIG_RUNTIME_FILE_SANDBOX_ENABLED`, `OPENCLAW_ZIG_RUNTIME_FILE_ALLOWED_ROOTS`)
+    - optional `exec.run` policy gate + command-prefix allowlist (`OPENCLAW_ZIG_RUNTIME_EXEC_ENABLED`, `OPENCLAW_ZIG_RUNTIME_EXEC_ALLOWLIST`)
+    - new runtime tests:
+      - `tool runtime file sandbox blocks traversal and out-of-root writes`
+      - `tool runtime exec policy denies non-allowlisted commands`
+  - Hosted coding-agent runtime slice shipped:
+    - `src/runtime/tool_runtime.zig` now adds bounded `execute_code`, `file.search`, `file.patch`, `web.search`, `web.extract`, `process.start`, `process.list`, `process.poll`, `process.read`, `process.wait`, and `process.kill` on top of the existing runtime-state/session seam.
+    - `src/runtime/process_registry.zig` adds bounded hosted background-process tracking with lifecycle snapshots plus stdout/stderr log capture paths.
+    - `src/runtime/web_tools.zig` adds bounded hosted web search/extract helpers for HTML and JSON payloads.
+    - `src/gateway/registry.zig` and `src/gateway/dispatcher.zig` now expose `execute_code`, the file/web/process tool family, and `sessions.search`, and `tools.catalog` plus browser tool-context messaging now advertise the expanded hosted coding-agent surface.
+    - `scripts/hermes-port-rpc-smoke.mjs` is now tracked as the hosted `/rpc` coding-agent smoke helper for the combined execute/file/web/process/session path.
+    - `scripts/hermes-port-runtime-smoke-check.ps1` now promotes that helper into a first-class hosted smoke gate and both `zig-ci` and `release-preview` execute it after the baseline runtime smoke; the wrapper keeps full `execute_code` + process coverage on POSIX and automatically falls back to the bounded file/web/session subset on Windows where hosted process management remains unsupported.
+  - FS1 runtime recovery slice shipped:
+    - runtime state persistence/replay added for tool runtime sessions + pending queue (`src/runtime/state.zig`).
+    - persisted at `<state_path>/runtime-state.json` (or explicit JSON path override) and restored during runtime bootstrap.
+    - regression test added: `runtime state persistence roundtrip restores session and pending queue`.
+  - FS1 Telegram/auth recovery slice shipped:
+    - web login session persistence/replay added (`src/bridge/web_login.zig`) via `<state_path>/web-login-state.json`.
+    - telegram runtime persistence/replay added (`src/channels/telegram_runtime.zig`) via `<state_path>/telegram-runtime-state.json`.
+    - dispatcher bootstrap now initializes both persistence paths on startup.
+    - regression tests added:
+      - `web login persistence roundtrip restores authorized session`
+      - `telegram runtime persistence roundtrip restores model auth binding and queue`.
+  - FS1 compat runtime/control-plane recovery slice shipped:
+    - compat runtime state persistence/replay added in dispatcher (`src/gateway/dispatcher.zig`) via `<state_path>/compat-state.json`.
+    - persisted payload includes core control-plane fields used by compat runtime methods:
+      - heartbeat/presence/talk/tts/voicewake profile
+      - update head metadata + bounded event/update histories
+      - config overlay entries + session tombstones
+    - dispatcher now performs safe compat-state snapshot writes after request handling when compat state is active.
+    - regression test added:
+      - `compat state persistence roundtrip restores core runtime settings and histories`.
+  - Bare-metal diagnostics depth expansion shipped:
+    - new boot diagnostics ABI contract (`BaremetalBootDiagnostics`) with exported pointer + stack snapshot helper (`oc_boot_diag_ptr`, `oc_boot_diag_capture_stack`)
+    - new mailbox opcodes wired in runtime: `command_set_boot_phase`, `command_reset_boot_diagnostics`, `command_capture_stack_pointer`
+    - boot phase transitions + command/tick telemetry now tracked in bare-metal runtime path
+    - new bare-metal test added: `baremetal diagnostics command flow updates phase and stack snapshot`
+  - Bare-metal command-history depth expansion shipped:
+    - new command event ABI contract (`BaremetalCommandEvent`) and feature flags (`feature_command_history_export`, `kernel_abi_command_history`)
+    - exported history-ring telemetry + clear controls (`oc_command_history_capacity`, `oc_command_history_len`, `oc_command_history_event`, `oc_command_history_clear`)
+    - new mailbox opcode wired: `command_clear_command_history`
+  - Bare-metal health-history depth expansion shipped:
+    - new health event ABI contract (`BaremetalHealthEvent`) and feature flags (`feature_health_history_export`, `kernel_abi_health_history`)
+    - exported health history ring telemetry + clear controls (`oc_health_history_capacity`, `oc_health_history_len`, `oc_health_history_event`, `oc_health_history_clear`)
+    - new mailbox opcode wired: `command_clear_health_history`
+    - runtime now records health snapshots from both command-path (`command_set_health_code`) and tick-path health enforcement.
+  - Bare-metal mode-history depth expansion shipped:
+    - new mode transition ABI contract (`BaremetalModeEvent`) and feature flags (`feature_mode_history_export`, `kernel_abi_mode_history`)
+    - exported mode history ring telemetry + clear controls (`oc_mode_history_capacity`, `oc_mode_history_len`, `oc_mode_history_event`, `oc_mode_history_clear`)
+    - new mailbox opcode wired: `command_clear_mode_history`
+    - runtime now records mode transitions across command-driven, tick-driven, and panic transitions.
+  - Bare-metal boot-phase-history depth expansion shipped:
+    - new boot phase transition ABI contract (`BaremetalBootPhaseEvent`) and feature flags (`feature_boot_phase_history_export`, `kernel_abi_boot_phase_history`)
+    - exported boot phase history ring telemetry + clear controls (`oc_boot_phase_history_capacity`, `oc_boot_phase_history_len`, `oc_boot_phase_history_event`, `oc_boot_phase_history_clear`)
+    - new mailbox opcode wired: `command_clear_boot_phase_history`
+    - runtime now records boot phase transitions across command-driven, runtime-tick, and panic transitions.
+  - Bare-metal command-result-counter depth expansion shipped:
+    - new command result counter ABI contract (`BaremetalCommandResultCounters`) and feature flags (`feature_command_result_counters_export`, `kernel_abi_command_result_counters`)
+    - exported command result telemetry + reset controls (`oc_command_result_total_count`, `oc_command_result_count_ok`, `oc_command_result_count_invalid_argument`, `oc_command_result_count_not_supported`, `oc_command_result_count_other_error`, `oc_command_result_counters_clear`)
+    - new mailbox opcode wired: `command_reset_command_result_counters`
+    - runtime now classifies every processed mailbox command into result categories (`ok`, `invalid_argument`, `not_supported`, `other_error`) with last-result/last-opcode/last-seq tracking.
+  - Bare-metal scheduler/task depth expansion shipped:
+    - new scheduler contracts (`BaremetalSchedulerState`, `BaremetalTask`) and feature flags (`feature_scheduler_export`, `kernel_abi_scheduler`)
+    - exported scheduler/task telemetry and reset controls (`oc_scheduler_state_ptr`, `oc_scheduler_enabled`, `oc_scheduler_task_capacity`, `oc_scheduler_task_count`, `oc_scheduler_task`, `oc_scheduler_tasks_ptr`, `oc_scheduler_reset`)
+    - new scheduler mailbox controls wired: `command_scheduler_enable`, `command_scheduler_disable`, `command_scheduler_reset`, `command_task_create`, `command_task_terminate`, `command_scheduler_set_timeslice`, `command_scheduler_set_default_budget`
+    - runtime now performs cooperative round-robin task dispatch on tick with budget depletion and task-state transitions (`ready -> running -> ready/completed`).
+  - Bare-metal allocator/syscall depth expansion shipped:
+    - new allocator/syscall contracts (`BaremetalAllocatorState`, `BaremetalAllocationRecord`, `BaremetalSyscallState`, `BaremetalSyscallEntry`) and feature flags (`feature_allocator_export`, `feature_syscall_table_export`, `kernel_abi_allocator`, `kernel_abi_syscall_table`)
+    - exported allocator/syscall telemetry and reset controls (`oc_allocator_state_ptr`, `oc_allocator_page_bitmap_ptr`, `oc_allocator_allocation_count`, `oc_allocator_allocation`, `oc_allocator_reset`, `oc_syscall_state_ptr`, `oc_syscall_entry_count`, `oc_syscall_entry`, `oc_syscall_reset`)
+    - new allocator/syscall mailbox controls wired: `command_allocator_reset`, `command_allocator_alloc`, `command_allocator_free`, `command_syscall_register`, `command_syscall_unregister`, `command_syscall_invoke`, `command_syscall_reset`
+  - Bare-metal timer/wake queue + syscall ABI v2 depth expansion shipped:
+    - new timer/wake/syscall-v2 contracts (`BaremetalTimerState`, `BaremetalTimerEntry`, `BaremetalWakeEvent`) and feature/kernel ABI flags (`feature_timer_export`, `feature_wake_queue_export`, `feature_syscall_abi_v2`, `kernel_abi_timer`, `kernel_abi_wake_queue`, `kernel_abi_syscall_abi_v2`)
+    - exported timer + wake queue telemetry/reset controls (`oc_timer_state_ptr`, `oc_timer_entry_count`, `oc_timer_entry`, `oc_timer_reset`, `oc_wake_queue_len`, `oc_wake_queue_event`, `oc_wake_queue_clear`)
+    - new mailbox controls wired: `command_syscall_enable`, `command_syscall_disable`, `command_syscall_set_flags`, `command_timer_reset`, `command_timer_schedule`, `command_timer_cancel`, `command_wake_queue_clear`, `command_scheduler_wake_task`
+    - runtime now supports interrupt-driven wake queue progression by detecting interrupt-count deltas per tick and waking waiting tasks while preserving wake reason/vector telemetry.
+  - Bare-metal timer control depth expansion shipped:
+    - new timer control opcodes: `command_timer_enable`, `command_timer_disable`, `command_timer_set_quantum`, `command_timer_schedule_periodic`.
+    - timer exports extended with control telemetry: `oc_timer_enabled`, `oc_timer_quantum`.
+    - runtime now supports periodic timer re-arming and configurable timer scan quantum while maintaining interrupt-driven wake progression.
+  - Bare-metal scheduler wait/resume + task-targeted timer cancel depth expansion shipped:
+    - new control opcodes: `command_task_wait`, `command_task_resume`, `command_timer_cancel_task`.
+    - scheduler/timer telemetry exports extended: `oc_scheduler_waiting_count`, `oc_timer_fire_total_count`.
+    - runtime now supports explicit task waiting/resume transitions with manual wake events and cancellation of all armed timers associated with a task.
+  - bare-metal QEMU timer cancel-task validation shipped:
+    - new script: `scripts/baremetal-qemu-timer-cancel-task-probe-check.ps1`.
+    - live PVH/QEMU+GDB sequence proves `command_timer_schedule`, `command_timer_schedule_periodic`, and `command_timer_cancel_task` over a single task, with the first cancel collapsing `TIMER_ENTRY_COUNT=0` while preserving `TIMER0_STATE=3`.
+    - second cancel returns `LAST_RESULT=-2`, matching the hosted parity test for task-targeted timer cancellation.
+  - bare-metal QEMU timer cancel-task wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-timer-cancel-task-baseline-probe-check.ps1`, `scripts/baremetal-qemu-timer-cancel-task-cancel-collapse-probe-check.ps1`, `scripts/baremetal-qemu-timer-cancel-task-canceled-entry-preserve-probe-check.ps1`, `scripts/baremetal-qemu-timer-cancel-task-second-cancel-notfound-probe-check.ps1`, and `scripts/baremetal-qemu-timer-cancel-task-zero-wake-telemetry-probe-check.ps1`.
+    - added matching host-regression tightening in `src/baremetal_main.zig`.
+    - the wrapper batch isolates five narrower guarantees that were previously only implied inside the broad task-cancel probe: single-task armed baseline capture, first-cancel collapse to zero live timer entries, preserved canceled-slot metadata on `timer0`, second-cancel `result_not_found`, and zero wake/dispatch telemetry through the full task-targeted cancel flow.
+  - bare-metal QEMU timer cancel-task interrupt-timeout recovery validation shipped:
+    - new script: `scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-probe-check.ps1`.
+    - added matching host regression in `src/baremetal_main.zig`.
+    - live PVH/QEMU+GDB sequence proves `command_timer_cancel_task` on a `task_wait_interrupt_for` waiter clears the timeout arm back to `none`, leaves `TIMER_ENTRY_COUNT=0`, and still allows the later real interrupt wake to land exactly once.
+    - key probe evidence: `ACK=8`, `LAST_OPCODE=7`, `LAST_RESULT=0`, `TASK0_STATE=1`, `WAIT_KIND0=0`, `WAIT_TIMEOUT0=0`, `TIMER_ENTRY_COUNT=0`, `WAKE_QUEUE_COUNT=1`, `WAKE0_REASON=2`, `WAKE0_VECTOR=200`.
+  - bare-metal QEMU timer cancel-task interrupt-timeout wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-arm-preservation-probe-check.ps1`, `scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-cancel-clear-probe-check.ps1`, `scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-interrupt-recovery-probe-check.ps1`, `scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-no-stale-timeout-probe-check.ps1`, and `scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-telemetry-preserve-probe-check.ps1`.
+    - the broad `scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-probe-check.ps1` path was hardened for wrapper reuse: it now emits explicit armed, post-cancel, and post-idle snapshots so wrappers fail directly on the live recovery boundaries instead of inferring from a single final receipt.
+    - the matching host regression in `src/baremetal_main.zig` now asserts timeout-arm clearing, zero pending wake/interrupt telemetry after cancel, and preserved interrupt telemetry after the later real wake.
+  - Bare-metal deadline-wait + wake-queue consumption depth expansion shipped:
+    - new opcodes: `command_task_wait_for`, `command_wake_queue_pop`.
+    - wake queue exports extended: `oc_wake_queue_tail_index`, `oc_wake_queue_pop`.
+    - runtime now supports atomic wait-with-deadline command flow and in-order wake queue consumption via explicit ring tail tracking.
+  - Bare-metal scheduler policy + priority depth expansion shipped:
+    - new control opcodes: `command_scheduler_set_policy`, `command_task_set_priority`.
+    - scheduler policy constants exported through ABI: `scheduler_policy_round_robin`, `scheduler_policy_priority`.
+    - scheduler selection now supports priority-aware dispatch while preserving default round-robin policy and cursor tie-break behavior.
+  - Bare-metal interrupt-wait filtering depth expansion shipped:
+    - new interrupt-wait opcode: `command_task_wait_interrupt` with `wait_interrupt_any_vector` sentinel semantics.
+    - scheduler interrupt wait telemetry export: `oc_scheduler_wait_interrupt_count`.
+    - interrupt wake path now filters by explicit wait condition (any or vector-specific), preventing unintended wakeups of manual-wait tasks on interrupt noise.
+  - Bare-metal interrupt-wait timeout depth expansion shipped:
+    - new interrupt-wait timeout opcode: `command_task_wait_interrupt_for`.
+    - scheduler timeout telemetry export: `oc_scheduler_wait_timeout_count`.
+    - runtime now supports deadline-based interrupt waits that wake with timer reason on expiry while still waking immediately on matching interrupts.
+  - Bare-metal tick-overflow hardening shipped:
+    - timer and interrupt wait deadlines now use saturating tick arithmetic to avoid wraparound wake bugs near `u64` tick ceiling.
+    - periodic timer re-arm now uses bounded arithmetic advancement instead of overflow-prone increment loops.
+    - runtime now provides contiguous page allocation/free on a bounded heap map and syscall registration/invocation/unregistration with dispatch telemetry.
+- Phase 4 complete:
+  - Guard pipeline with prompt-risk scoring + loop-guard enforcement (`src/security/guard.zig`, `src/security/loop_guard.zig`)
+  - RPC diagnostics surfaces: `security.audit` and `doctor`
+  - CLI diagnostics surfaces: `--doctor`, `--security-audit`, optional `--deep` and `--fix`
+  - Security audit deep probe and remediation actions (`src/security/audit.zig`)
+- Phase 5 complete:
+  - Real web login manager implemented (`src/bridge/web_login.zig`) with `web.login.start|wait|complete|status`
+  - Telegram command/reply runtime implemented (`src/channels/telegram_runtime.zig`) with `send` and `poll` RPC wiring
+  - Telegram command surface now handles `/auth` and `/model` flows with queued reply polling
+  - Added provider-aware guest/auth parity for browser-session providers:
+    - Qwen/GLM-5/Mercury-2 now expose explicit guest bypass metadata (`stay_logged_out`) through `browser.request` and OAuth provider catalog responses.
+    - `/auth guest <provider>` command path added for Telegram, plus callback-URL provider inference and robust callback code extraction (`query/fragment/path`) shared with web login.
+    - Browser request parsing now separates `engine` (`lightpanda`) from target `provider` so `qwen|zai|inception` no longer fail as unsupported engine values.
+    - free guest-chat provider aliases now normalize consistently across bridge, login manager, and Telegram runtime (`qwen-chat-free`, `glm-5-chat-free`, `mercury-2-chat-free` families).
+  - Expanded auth provider breadth:
+    - Added `minimax`, `kimi`, and `zhipuai` entries to OAuth provider catalog contracts.
+    - Extended Telegram provider alias + default-model normalization to cover those providers end-to-end.
+  - Added account-scoped auth lifecycle parity in Telegram runtime:
+    - provider+account binding keys with backward-compatible legacy lookup.
+    - `--force` session replacement for `/auth start`.
+    - account-aware `status/wait/guest/complete/cancel` parsing and messaging.
+  - Added auth UX parity improvements in Telegram runtime:
+    - `/auth providers` output now exposes mode/guest/popup metadata.
+    - `/auth bridge <provider>` returns provider-specific lightpanda guest/auth guidance.
+    - `/auth wait` now accepts positional timeout syntax in addition to `--timeout`.
+    - `/auth link|open` now re-surfaces pending auth URL/code/session details with provider/account aware completion commands.
+  - Added live Lightpanda bridge probe telemetry in dispatcher:
+    - `browser.request` and `browser.open` now run a real endpoint probe against `<endpoint>/json/version`.
+    - Probe telemetry is returned in the RPC payload (`probe.ok/url/statusCode/latencyMs/error`) alongside completion metadata.
+    - Request params now accept bridge overrides (`endpoint|bridgeEndpoint|lightpandaEndpoint`, `requestTimeoutMs|timeoutMs`) for parity-safe smoke and deployment checks.
+  - Added real browser completion execution path in dispatcher:
+    - `browser.request` now executes live Lightpanda completion calls when prompt/messages payloads are present (`POST <endpoint>/v1/chat/completions`).
+    - Responses now include `bridgeCompletion` telemetry with request URL, status code, assistant text extraction, latency, and failure reason surfaces.
+    - Completion parser now normalizes aliases and payload keys (`prompt|message|text`, `messages`, `max_tokens|maxTokens`, `loginSessionId|login_session_id`, `apiKey|api_key`) for parity with Go runtime behavior.
+  - Added direct provider completion fallback path (`chatgpt`/`claude`) in dispatcher:
+    - `browser.request` supports `directProvider`/`direct_provider`/`useProviderApi` flags to bypass Lightpanda completion relay when needed.
+    - Direct provider path supports optional completion streaming parse (`params.stream=true`) with SSE delta extraction for OpenAI and Anthropic response streams.
+    - API key resolution now supports explicit request keys and fallback secret lookups (config overlay + env aliases) for provider-specific key names.
+  - Added completion semantics hardening:
+    - Top-level `ok/status/message` now reflect bridge execution success/failure for completion requests (failure surfaces as `status=failed` with bridge error context).
+    - Assistant text extraction expanded to additional response shapes (`output_text`, `output[].content[]`, and array-form message content) to reduce empty-response false negatives.
+  - Added browser completion context-injection hardening:
+    - `browser.request` now accepts session-aware context controls (`sessionId|session_id`, `includeToolContext`, `includeMemoryContext`, `memoryContextLimit`).
+    - completion path now injects OpenClaw runtime tool-capability context plus session memory recap before bridge/direct-provider execution.
+    - response payload now includes `context` telemetry (`toolContextInjected`, `memoryContextInjected`, `memoryEntriesUsed`, `error`) to diagnose remote model claims about missing tools or memory.
+  - Added Telegram authorized-chat bridge-completion hardening:
+    - authorized non-command Telegram messages now attempt live Lightpanda completion (`provider/model/loginSession`) before echo fallback.
+    - fallback remains deterministic for unavailable bridge paths, preserving queue/reply continuity.
+    - `send` response now includes `replySource` telemetry (`bridge_completion`, `runtime_echo`, `auth_required`, `command`) for downstream transport validation and smoke diagnostics.
+  - Added Telegram Bot API connector path (receive -> route -> reply) alongside runtime model:
+    - new webhook ingress method: `channels.telegram.webhook.receive` (accepts Telegram update payloads, routes through runtime command handling, records memory history, and optionally delivers reply via Bot API).
+    - new direct delivery method: `channels.telegram.bot.send` (sends chat text to Telegram Bot API with dry-run + token fallback support).
+    - new parser/delivery module: `src/channels/telegram_bot_api.zig`.
+  - Added Telegram typing-action delivery depth:
+    - `src/channels/telegram_bot_api.zig` now includes `sendChatAction` with deterministic error telemetry.
+    - `channels.telegram.webhook.receive` now issues pre-reply typing actions when delivery is enabled (configurable via `typingAction`, defaults to `typing`).
+    - `channels.telegram.bot.send` now supports optional typing hints (`typingAction`/`typing`) and returns typing telemetry alongside delivery telemetry.
+    - Added dispatcher + bot API tests for typing action contract/error paths.
+  - Added Telegram long-reply chunk delivery depth:
+    - `src/channels/telegram_bot_api.zig` now includes UTF-8-aware Telegram message chunking (`splitMessageAlloc`) with whitespace-preferring split behavior and hard cap parity (`4096` runes).
+    - `channels.telegram.webhook.receive` and `channels.telegram.bot.send` now route outbound text through chunk-batch delivery with structured `deliveryBatch` telemetry (`chunkCount`, `deliveredChunkCount`, `messageIds`, `maxChunkRunes`, `chunkDelayMs`, `failedChunkIndex`).
+    - stream-style chunk controls added for both methods (`stream`, `streamChunkChars|chunkChars`, `streamChunkDelayMs|chunkDelayMs`) with deterministic bounds and defaults.
+    - Added regression tests for chunk splitting and dispatcher dry-run chunk telemetry.
+  - Added Telegram stream/typing config-default parity:
+    - runtime config now includes `telegram_live_streaming`, `telegram_stream_chunk_chars`, `telegram_stream_chunk_delay_ms`, `telegram_typing_indicators`, `telegram_typing_interval_ms`.
+    - dispatcher telegram bot/webhook delivery paths now consume those runtime defaults when request params omit stream/typing controls.
+    - env override wiring added for all new runtime telegram knobs (`OPENCLAW_ZIG_RUNTIME_TELEGRAM_*`).
+    - added regression test validating config-driven stream chunking + typing defaults without per-request overrides.
+  - Added Telegram streamed typing keepalive parity:
+    - chunked delivery now emits periodic typing pulses during long streamed replies instead of a single pre-send typing action.
+    - pulse cadence is now controlled by runtime/request typing interval (`runtime.telegram_typing_interval_ms`, `typingIntervalMs|typing_interval_ms`).
+    - delivery telemetry now includes `typingPulseCount` and `typingIntervalMs` for transport diagnostics.
+    - added regression tests for config-default typing interval and explicit typing interval override.
+  - Added Telegram channel-status config telemetry parity:
+    - `channels.status` now reports Telegram runtime stream/typing config state (`liveStreaming`, `streamChunkChars`, `streamChunkDelayMs`, `typingIndicators`, `typingIntervalMs`).
+    - dispatcher status contract tests now assert these fields to prevent future drift.
+  - Added channels.status compatibility envelope parity:
+    - `channels.status` now emits Go-style channel driver status envelope (`count`, `items[]`) while preserving existing Zig summary fields.
+    - compatibility items currently include `webchat`, `cli`, and `telegram` with `connected/running/defaultTarget/aliases/lastError`.
+    - Telegram connectivity is now inferred from resolved bot-token availability for deterministic status behavior.
+  - Added send-channel alias compatibility parity:
+    - `send` now accepts and normalizes channel aliases to Go-compatible canonical names (`webchat`, `cli`, `telegram`).
+    - normalized aliases include `web`, `console`, `terminal`, `tg`, and `tele`.
+    - omitted-channel sends now inherit the last known session channel (`send|chat.send|sessions.send`), with deterministic fallback to `webchat` for unknown/new sessions.
+    - omitted-channel fallback now uses persisted compat session-channel state (`sessionChannels`) first, then memory summaries as fallback.
+    - `connect` and `sessions.patch` upsert session-channel state, `sessions.delete` removes it, and `sessions.reset` preserves it (Go-aligned registry semantics).
+    - `poll` remains Telegram-only, preserving existing queue semantics while returning deterministic unsupported-channel errors for non-Telegram polling attempts.
+  - Dispatcher `channels.status` now includes telegram queue/target/auth telemetry
+  - Added auth + reply-loop smokes (`scripts/web-login-smoke-check.ps1`, `scripts/telegram-reply-loop-smoke-check.ps1`)
+  - Telegram reply-loop smoke now asserts `/auth link` parity guidance includes active code/session identifiers and completion command hints.
+- Phase 6 complete:
+  - Memory persistence primitives implemented (`src/memory/store.zig`) with append/history/stats and on-disk JSON persistence.
+  - Memory/runtime/channel optimization slice shipped:
+    - `Store.removeSession` and `Store.trim` now use linear compaction (no repeated front `orderedRemove`) and append overflow uses batched front removal (`src/memory/store.zig`).
+    - Runtime job queue now uses head-offset dequeue with amortized compaction to avoid repeated `orderedRemove(0)` shifting (`src/runtime/state.zig`).
+    - Telegram `poll` now drains queue prefixes in one compaction pass while preserving ordering (`src/channels/telegram_runtime.zig`).
+    - Added regression tests for memory ordering/trim, runtime compaction depth/order invariants, and telegram poll compaction ordering.
+  - Diagnostics optimization slice shipped:
+    - `doctor` now uses a process-local cached docker binary probe to avoid repeated `docker --version` process spawns during repeated diagnostics calls (`src/security/audit.zig`).
+    - Added doctor check-presence regression coverage for `docker.binary`.
+  - Channel retention hardening shipped:
+    - Telegram runtime now enforces bounded queue retention (`max_queue_entries`, default `4096`) and drops oldest entries via single-pass compaction to prevent unbounded memory growth under delayed polling (`src/channels/telegram_runtime.zig`).
+    - Added regression coverage to verify newest-entry retention ordering under queue cap.
+  - Gateway registry lookup optimization shipped:
+    - `registry.supports` now fast-paths exact lowercase method matches using `std.mem.eql` and only runs case-insensitive fallback scans when uppercase input is present (`src/gateway/registry.zig`).
+    - Added mixed-case compatibility regression check (`supports(\"HeAlTh\")`).
+  - Dispatcher bounded-history compaction shipped:
+    - Added shared front-compaction helper for owned bounded lists in dispatcher state and replaced repeated front `orderedRemove(0)` retention paths for events/update jobs/agent jobs/cron runs/node events/finetune jobs (`src/gateway/dispatcher.zig`).
+    - Added retention regression tests for compat event history and edge finetune history caps.
+  - Dispatcher memory parity slice shipped: `sessions.history`, `chat.history`, and `doctor.memory.status`.
+  - Edge handler parity slice shipped: `edge.wasm.marketplace.list`, `edge.router.plan`, `edge.swarm.plan`, `edge.multimodal.inspect`, and `edge.voice.transcribe`.
+  - Advanced edge handler parity slice shipped: `edge.enclave.status`, `edge.enclave.prove`, `edge.mesh.status`, `edge.homomorphic.compute`, `edge.finetune.status`, `edge.finetune.run`, `edge.identity.trust.status`, `edge.personality.profile`, `edge.handoff.plan`, `edge.marketplace.revenue.preview`, `edge.finetune.cluster.plan`, `edge.alignment.evaluate`, `edge.quantum.status`, and `edge.collaboration.plan`.
+  - Self-evolution depth expansion shipped for Zig finetune runtime:
+    - `edge.finetune.run` now normalizes provider aliases/model defaults, emits full trainer argv (`rank/epochs/lr/max-samples/output[/dataset]`), honors `OPENCLAW_ZIG_LORA_TRAINER_TIMEOUT_MS`, and executes real trainer command in non-dry-run mode with execution telemetry.
+    - `edge.finetune.status` now exposes richer job metadata (`statusReason`, `updatedAtMs`) and dataset source surfaces (`zvec` + `graphlite`).
+    - Added evolution job-control methods: `edge.finetune.job.get` and `edge.finetune.cancel`.
+  - Self-maintenance/update system slice shipped:
+    - Added `system.maintenance.plan` to synthesize doctor/security/memory liveness into actionable maintenance plans with health scoring.
+    - Added `system.maintenance.run` to execute auto-remediation actions (`security.audit` fix path, memory compaction, heartbeat restoration) and persist run status through update-job tracking.
+    - Added `system.maintenance.status` to expose latest maintenance run status plus current health and pending action counts.
+  - Added `edge.acceleration.status` parity contract and test coverage.
+  - Added runtime/wasm contract depth slice:
+    - `config.get` now returns gateway/runtime/browser/channel/memory/security/wasm snapshots with sandbox policy.
+    - `tools.catalog` now exposes wasm/runtime/browser/message tool families and counts.
+    - `edge.wasm.marketplace.list` now includes `witPackages` + `builderHints` parity metadata.
+    - explicit wasm lifecycle RPCs implemented: `edge.wasm.install`, `edge.wasm.execute`, and `edge.wasm.remove` (custom module state + sandbox enforcement).
+  - Added Go-compat alias surfaces for auth/runtime callers:
+    - `auth.oauth.providers|start|wait|complete|logout|import`
+    - `browser.open`, `chat.send`, and `sessions.send`
+  - Added compat observability/session surfaces with stateful behavior:
+    - usage/heartbeat/presence: `usage.status`, `usage.cost`, `last-heartbeat`, `set-heartbeats`, `system-presence`, `system-event`, `wake`
+    - session/log lifecycle: `sessions.list`, `sessions.preview`, `session.status`, `sessions.reset`, `sessions.delete`, `sessions.compact`, `sessions.usage`, `sessions.usage.timeseries`, `sessions.usage.logs`, `logs.tail`
+    - memory primitives expanded (`count`, `removeSession`, `trim`) to support real reset/delete/compact semantics.
+  - Added compat conversation/control surfaces with stateful behavior:
+    - `talk.config`, `talk.mode`, `voicewake.get`, `voicewake.set`
+    - `tts.status`, `tts.enable`, `tts.disable`, `tts.providers`, `tts.setProvider`, `tts.convert`
+    - `models.list`, `chat.abort`, `chat.inject`, `push.test`, `canvas.present`, `update.run`
+  - Added config/wizard/session-mutation compat surfaces:
+    - `config.set`, `config.patch`, `config.apply`, `config.schema`
+    - `wizard.start`, `wizard.next`, `wizard.cancel`, `wizard.status`
+    - `sessions.patch`, `sessions.resolve`, `secrets.reload`, `secrets.resolve`
+    - `secrets.resolve` now performs active secret resolution from config overlay keys (including wildcard matching) and environment aliases (`OPENCLAW_ZIG_*` with `OPENCLAW_GO_*` / `OPENCLAW_RS_*` fallbacks), instead of returning inactive placeholders only.
+  - Added compat agent/skills surfaces with stateful behavior:
+    - `agent`, `agent.identity.get`, `agent.wait`
+    - `agents.list`, `agents.create`, `agents.update`, `agents.delete`, `agents.files.list`, `agents.files.get`, `agents.files.set`
+    - `skills.status`, `skills.bins`, `skills.install`, `skills.update`
+  - Added compat cron surfaces with stateful behavior:
+    - `cron.list`, `cron.status`, `cron.add`, `cron.update`, `cron.remove`, `cron.run`, `cron.runs`
+    - stateful cron job/run lifecycle with run-history retention and status snapshots.
+  - Added compat device surfaces with stateful behavior:
+    - `device.pair.list`, `device.pair.approve`, `device.pair.reject`, `device.pair.remove`, `device.token.rotate`, `device.token.revoke`
+    - stateful pair/token lifecycle with update and revoke flows.
+  - Added compat node + exec-approval surfaces with stateful behavior:
+    - node: `node.pair.request|list|approve|reject|verify`, `node.rename`, `node.list`, `node.describe`, `node.invoke`, `node.invoke.result`, `node.event`, `node.canvas.capability.refresh`
+    - approvals: `exec.approvals.get|set|node.get|node.set`, `exec.approval.request|waitdecision|resolve`
+  - Method surface moved to `169` Zig methods (from `126`) while preserving Lightpanda-only browser policy and green validation gates.
+  - Added Zig-OS appliance control-plane methods with stateful behavior:
+    - `system.boot.status`, `system.boot.verify`, `system.boot.attest`, `system.boot.attest.verify`, `system.boot.policy.get`, `system.boot.policy.set`
+    - `system.rollback.plan`, `system.rollback.run`, `system.rollback.cancel`
+    - secure-boot measurement/signer verification telemetry, signed attestation (`statementDigest` + optional HMAC signature via `OPENCLAW_ZIG_BOOT_ATTEST_KEY`), attestation verification (`digest`/`nonce`/`timestamp` + optional signature validation), policy management (`enforceUpdateGate`, `verificationMaxAgeMs`, `requiredSigner`), and slot-aware rollback plan/apply/cancel flow (`A/B`) now persist through compat state with update-job/event traces.
+    - `update.run` now supports secure-boot gate enforcement with explicit blocked-state telemetry (`bootGate`) when verification is stale or missing.
+  - WASM lifecycle hardening now includes trust metadata + host-hook capability enforcement:
+    - install path supports hash/signature trust policy with deterministic verification errors.
+    - execute path rejects host hooks lacking declared capabilities and returns explicit deny telemetry.
+  - Added dispatcher contract tests for new edge methods and memory flows.
+  - Method/event parity is now tracked and enforced against Go + original stable + original beta baselines:
+    - Go release baseline (`adybag14-cyber/openclaw-go-port`): `134/134` covered in Zig.
+    - Original OpenClaw release baseline (`openclaw/openclaw`): `94/94` covered in Zig.
+    - Original OpenClaw beta baseline (`openclaw/openclaw` latest prerelease): `94/94` covered in Zig.
+    - Union baseline coverage: `135/135` covered in Zig.
+    - Gateway events baseline coverage: stable `19/19`, beta `19/19`, union `19/19` covered in Zig.
+    - Intentional Zig-only extras retained for edge/runtime depth: `34`.
+  - Hardened smoke scripts to avoid flaky `zig build run` startup timing by prebuilding and launching the binary directly (`zig-out/bin/openclaw-zig.exe`) with explicit readiness and exit diagnostics.
+- Toolchain/runtime notes (local Windows Zig master):
+  - Codeberg `master` is currently `0ae1c6b54acf112c7bbcc63a19f7ad8fa9842d2a`.
+  - Local Zig toolchain remains `0.16.0-dev.2703+0a412853a` (hash `0a412853a`) and is behind current Codeberg `master` (acknowledged).
+  - `scripts/zig-codeberg-master-check.ps1` now degrades gracefully when Codeberg is unreachable by falling back to the GitHub Zig mirror for master-hash freshness checks.
+  - Added Windows build workaround in `build.zig`:
+    - use `-fstrip` for executable to avoid missing `.pdb` install failure on this master toolchain.
+    - route `zig build test` through `zig test src/main.zig` on Windows to avoid build-runner `--listen` regression.
+  - Extended local cross-target diagnostics to include Android targets:
+    - Script: `scripts/zig-cross-target-matrix.ps1`
+    - Current local result: pass on `x86_64-windows`, `x86_64-linux`, `x86_64-macos`, `x86_64-linux-android`; fail on `aarch64-linux`, `aarch64-macos`, `aarch64-linux-android`, `arm-linux-androideabi`.
+    - Failing targets reproduce in minimal `build-exe` runs and point to local Zig Windows toolchain issues (`compiler_rt` / memory-allocation failure class), not project code regressions.
+  - Android ARMv7 CI linker fix:
+    - root cause in CI was `ld.lld: undefined symbol: __tls_get_addr` on `arm-linux-androideabi`.
+    - mitigation shipped in `build.zig`: force `single_threaded` for Android arm target to avoid TLS runtime linkage path.
+- Phase 7 complete:
+  - built `ReleaseFast` artifacts for `x86_64-windows`, `x86_64-linux`, and `x86_64-macos`
+  - generated `SHA256SUMS.txt` for release zips
+  - published GitHub preview release `v0.1.0-zig-preview.1`:
+    - https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/releases/tag/v0.1.0-zig-preview.1
+  - target note: `aarch64-linux` and `aarch64-macos` failed on the local Windows Zig master toolchain (`0.16.0-dev.2703+0a412853a`) with compiler exit code `5`, so the preview matrix was constrained to passing x86_64 targets.
+- Post-release hardening:
+  - added `scripts/release-preview.ps1` to automate deterministic preview artifact creation, checksum generation, and optional `gh release create` publishing.
+  - added a registry-wide dispatcher coverage test to assert every method in `registry.supported_methods` is actually dispatchable (no `-32601` method-not-found drift).
+  - added GitHub Actions workflow `.github/workflows/zig-ci.yml` to continuously run Zig master build/test and cross-target release build attempts.
+  - expanded CI cross-target coverage with Android targets (`x86_64-linux-android`, `aarch64-linux-android`, and `arm-linux-androideabi` required).
+  - added `scripts/zig-arm64-diagnose.ps1` to collect reproducible arm64 failure logs (`stdout`/`stderr`) for local Windows toolchain triage.
+  - added `scripts/zig-cross-target-matrix.ps1` to capture full desktop + Android compile matrix logs with JSON summary output.
+  - arm64 diagnostics now confirm a local toolchain failure class on this Windows Zig build (reproducible on minimal source): `compiler_rt` sub-compilation failure + `memory allocation failure`, with additional `invalid constraint: 'X'` for `aarch64-linux`.
+  - CI run `22645119953` validated that `aarch64-linux` and `aarch64-macos` cross-builds succeed on Ubuntu runners with Zig master, isolating the arm64 issue to the local Windows toolchain path.
+  - added release automation workflow `.github/workflows/release-preview.yml` so preview tags can be built + published from Linux runners with full `x86_64` + `aarch64` target coverage.
+  - expanded release preview matrix with Android artifacts: required `x86_64-android`, `aarch64-android`, and `armv7-android`.
+  - CI evidence update: run `22651999994` validated all Android cross-target jobs passed after ARMv7 TLS-link fix.
+  - release workflow smoke run `22645353103` succeeded and published `v0.1.0-zig-preview.ci-smoke` with `x86_64-windows`, `x86_64-linux`, `x86_64-macos`, `aarch64-linux`, `aarch64-macos`, and `SHA256SUMS.txt`.
+  - upgraded `scripts/check-go-method-parity.ps1` into a tri-baseline method/event parity gate and wired it into both CI workflows, enforcing that every method/event in:
+    - latest Go release baseline,
+    - latest original OpenClaw release baseline, and
+    - latest original OpenClaw prerelease (beta) baseline
+    is present in Zig before merge/release.
+  - release workflow now runs an explicit `validate` job (parity + `zig build` + `zig build test`) before matrix artifact builds, and fails early if the requested release tag already exists.
+  - parity gate now writes a JSON audit payload (`parity-go-zig.json`) and CI/release flows publish it as traceable parity evidence.
+  - release workflow smoke run `22646343174` validated parity evidence publication in release assets (`parity-go-zig.json`) for tag `v0.1.0-zig-preview.ci-parityjson`.
+  - parity gate now also writes markdown evidence (`parity-go-zig.md`) for human review, and both CI + release flows publish JSON + markdown together.
+  - release workflow smoke run `22646648616` validated dual parity evidence publication (`parity-go-zig.json`, `parity-go-zig.md`) for tag `v0.1.0-zig-preview.ci-paritymd`.
+  - added cross-platform runtime smoke script (`scripts/runtime-smoke-check.ps1`) and made it a required gate in `zig-ci` validate job (server boot + health + rpc + auth + telegram reply loop simulation).
+  - added update lifecycle smoke script (`scripts/update-lifecycle-smoke-check.ps1`) and made it a required gate in both `zig-ci` and `release-preview` validate jobs (`update.plan`, `update.run`, `update.status` lifecycle checks).
+  - added system maintenance smoke script (`scripts/system-maintenance-smoke-check.ps1`) and made it a required gate in both `zig-ci` and `release-preview` validate jobs (`system.maintenance.plan`, `system.maintenance.run`, `system.maintenance.status` lifecycle checks).
+  - added appliance control-plane smoke script (`scripts/appliance-control-plane-smoke-check.ps1`) and made it a required gate in both `zig-ci` and `release-preview` validate jobs.
+    - validates `system.boot.status`, `system.boot.policy.get/set`, `system.boot.verify` failure/success paths, signed `system.boot.attest` + `system.boot.attest.verify`, `system.rollback.plan/cancel/run`, and secure-boot-gated `update.run` block/allow behavior over real HTTP RPC.
+  - added bare-metal scheduler saturation proof:
+    - host regression `baremetal scheduler task table saturates and reuses terminated slots`
+    - live optional QEMU probe `scripts/baremetal-qemu-scheduler-saturation-probe-check.ps1`
+    - validates the 16-slot scheduler-task ceiling, `command_task_create -> result_no_space` on the 17th create, and slot reuse after `command_task_terminate` with a fresh task ID and replacement priority/budget over the PVH freestanding artifact.
+  - added bare-metal scheduler saturation wrapper validation:
+    - `scripts/baremetal-qemu-scheduler-saturation-baseline-probe-check.ps1`
+    - `scripts/baremetal-qemu-scheduler-saturation-overflow-preserve-probe-check.ps1`
+    - `scripts/baremetal-qemu-scheduler-saturation-terminate-state-probe-check.ps1`
+    - `scripts/baremetal-qemu-scheduler-saturation-reuse-state-probe-check.ps1`
+    - `scripts/baremetal-qemu-scheduler-saturation-final-state-probe-check.ps1`
+    - broad probe now emits dedicated overflow/terminate stage receipts so wrapper validation fails directly on the 16-slot fill, overflow no-space result, terminated-slot capture, reuse replacement semantics, and final scheduler state.
+  - compat persistence depth corrected for appliance state:
+    - `compat-state.json` now persists boot policy, boot verification telemetry, boot slot state, and rollback plan/run fields instead of only generic compat metadata.
+    - added restart acceptance script (`scripts/appliance-restart-recovery-smoke-check.ps1`) and made it a required gate in both `zig-ci` and `release-preview` validate jobs.
+    - the restart gate proves persisted boot policy + verification + update head + rollback plan survive stop/start and remain actionable after recovery.
+  - appliance staged rollout boundary depth shipped:
+    - `update.*` now treats `canary` as a first-class rollout lane instead of collapsing it into `edge`.
+    - `update.plan` channel metadata is now generated from the full update-channel table so new rollout lanes stay visible in the public RPC contract.
+    - added rollout acceptance script (`scripts/appliance-rollout-boundary-smoke-check.ps1`) and made it a required gate in both `zig-ci` and `release-preview` validate jobs.
+    - the rollout gate proves secure-boot block/allow behavior, real `canary` selection, successful canary apply, and stable promotion over live HTTP RPC.
+  - appliance minimal-profile acceptance depth shipped:
+    - live `minimal-appliance-v1` readiness contract now exists in `status`, `doctor`, `system.boot.status`, and `system.maintenance.*`.
+    - readiness requires persisted runtime state, enforced control-plane token auth, secure-boot enablement, update-gate enforcement, required signer policy, and current boot verification.
+    - `doctor` now reports `appliance.profile`, and maintenance planning surfaces `appliance.profile.minimal` when the contract is not satisfied.
+    - added `scripts/appliance-minimal-profile-smoke-check.ps1` and made it a required gate in both `zig-ci` and `release-preview` validate jobs.
+    - the readiness gate proves a live `not_ready -> ready` transition over HTTP RPC after setting boot policy and verifying the current measurement.
+  - appliance/bare-metal closure depth shipped:
+    - added `scripts/appliance-baremetal-closure-smoke-check.ps1` as a single FS6 acceptance gate over the existing validated appliance and bare-metal scripts.
+    - the closure gate proves appliance control-plane, minimal profile, rollout boundary, restart recovery, bare-metal smoke, and the optional bare-metal QEMU smoke/runtime/command-loop lane from one required receipt.
+    - local Windows QEMU PVH smoke exit-code handling is now normalized in the underlying smoke scripts, so the closure gate validates cleanly on the workstation as well as in CI.
+  - added bare-metal runtime profile (`src/baremetal_main.zig`) and build target (`zig build baremetal`) plus smoke gate (`scripts/baremetal-smoke-check.ps1`) in both `zig-ci` and `release-preview` validate jobs.
+  - release-preview packaging now ships the freestanding image artifact (`openclaw-zig-<version>-x86_64-freestanding-none.elf`) alongside desktop/android zips + checksums.
+  - bare-metal runtime now embeds Multiboot2 header and smoke gate checks ELF magic + Multiboot2 magic bytes to reduce boot-regression risk.
+  - bare-metal smoke gate now parses ELF section/symbol tables to enforce `.multiboot` section presence and required runtime exports (`_start`, `oc_tick`, `oc_tick_n`, `oc_status_ptr`, `oc_command_ptr`, `oc_kernel_info_ptr`, `oc_submit_command`, `kernel_info`, `multiboot2_header`).
+  - bare-metal smoke gate now enforces full Multiboot2 header invariants (field values + checksum + end-tag contract), reducing false-positive magic-only matches.
+  - optimized freestanding bare-metal builds now keep the `.multiboot` section alive because the final bare-metal executable disables section garbage collection in `build.zig`, and the generic `baremetal-smoke-check.ps1`, `baremetal-qemu-smoke-check.ps1`, and `zig-syntax-check.ps1` paths now validate the same `ReleaseFast` artifact lane used for release packaging.
+  - bare-metal ABI v2 depth expansion shipped:
+    - added shared ABI contracts module (`src/baremetal/abi.zig`) with explicit layout tests
+    - added command mailbox + kernel info exports and runtime command-processing loop in `src/baremetal_main.zig`
+    - validated with `zig build test --summary all` (`95/95`) and `scripts/baremetal-smoke-check.ps1`
+  - bare-metal x86 bootstrap depth expansion shipped:
+    - added descriptor-table + interrupt bootstrap module (`src/baremetal/x86_bootstrap.zig`)
+    - runtime now initializes descriptor tables via `x86_bootstrap.init()` on start/tick paths
+    - smoke gate required symbol set expanded with descriptor/interrupt exports (`oc_gdtr_ptr`, `oc_idtr_ptr`, `oc_gdt_ptr`, `oc_idt_ptr`, `oc_descriptor_tables_ready`, `oc_interrupt_stub`, `oc_trigger_interrupt`, `oc_interrupt_count`, `oc_last_interrupt_vector`)
+  - bare-metal QEMU boot smoke expansion shipped:
+    - new optional build flag: `-Dbaremetal-qemu-smoke=true` to trigger debug-exit path for deterministic boot-smoke checks.
+    - new script: `scripts/baremetal-qemu-smoke-check.ps1` (uses `isa-debug-exit`; auto-skips when QEMU is unavailable).
+  - bare-metal QEMU runtime progression validation shipped:
+    - new script: `scripts/baremetal-qemu-runtime-oc-tick-check.ps1` validates `_start` and runtime tick-loop progression (`oc_tick`) on non-smoke PVH artifacts via QEMU+GDB.
+    - PVH long-mode entry now enables SSE/XMM (`CR0`/`CR4` + `fninit`) before Zig runtime entry to prevent early bootstrap traps in `mem.zeroes` paths.
+  - bare-metal QEMU command-loop validation shipped:
+    - new script: `scripts/baremetal-qemu-command-loop-check.ps1` resolves `_start`, `spinPause`, `status`, and `command_mailbox` symbols from the freestanding ELF and injects a mailbox opcode through GDB under QEMU.
+    - current proof path validates `command_set_tick_batch_hint` end to end (`ack=1`, `last_opcode=6`, `last_result=0`, `ticks=7`, `tick_batch_hint=7`) so FS6 now has boot, runtime progression, and command-loop evidence instead of boot-only smoke.
+  - bare-metal QEMU mailbox-invariant validation shipped:
+    - runtime hardening in `src/baremetal_main.zig`: `processPendingCommand()` now rejects invalid mailbox `magic` / `api_version` before execution while still advancing `status.command_seq_ack`, and host regressions now cover invalid-header rejection, stale-sequence replay no-op semantics, deterministic `u64` wraparound, descriptor reinit/load through the mailbox, vector-counter reset isolation, and default-budget invalid-zero rejection.
+    - new scripts: `scripts/baremetal-qemu-mailbox-header-validation-probe-check.ps1`, `scripts/baremetal-qemu-mailbox-stale-seq-probe-check.ps1`, and `scripts/baremetal-qemu-mailbox-seq-wraparound-probe-check.ps1` reuse the freestanding command-loop PVH artifact and drive mailbox-header/sequence-control boundaries under QEMU+GDB.
+    - current proof path validates invalid header rejection without command execution, stale `command_seq` replay preserving the previous `ack`/history state, and deterministic `u64` mailbox-sequence wraparound with preserved `ack` rollover and command-history ordering.
+  - bare-metal QEMU descriptor bootdiag validation shipped:
+    - new script: `scripts/baremetal-qemu-descriptor-bootdiag-probe-check.ps1` resolves boot diagnostics and descriptor-load telemetry symbols from the freestanding ELF and drives boot/descriptor commands through the mailbox under QEMU+GDB.
+    - current proof path validates `command_reset_boot_diagnostics`, `command_capture_stack_pointer`, `command_set_boot_phase(init)`, invalid `command_set_boot_phase(99)`, `command_reinit_descriptor_tables`, and `command_load_descriptor_tables` end to end over the PVH freestanding artifact.
+    - key probe evidence: `ACK=6`, `LAST_OPCODE=10`, `BOOT_SEQ_AFTER_RESET=1`, `STACK_SNAPSHOT_AFTER_CAPTURE=17574432`, `PHASE_AFTER_SET_INIT=1`, `INVALID_RESULT=-22`, `DESCRIPTOR_INIT_AFTER_REINIT=2`, `LOAD_ATTEMPTS_FINAL=2`, `LOAD_SUCCESSES_FINAL=2`.
+    - new wrapper scripts: `scripts/baremetal-qemu-descriptor-bootdiag-baseline-probe-check.ps1`, `scripts/baremetal-qemu-descriptor-bootdiag-reset-capture-probe-check.ps1`, `scripts/baremetal-qemu-descriptor-bootdiag-set-init-probe-check.ps1`, `scripts/baremetal-qemu-descriptor-bootdiag-invalid-phase-probe-check.ps1`, and `scripts/baremetal-qemu-descriptor-bootdiag-final-state-probe-check.ps1`.
+    - host regression in `src/baremetal_main.zig` now asserts the reset/capture envelope more tightly: initial runtime phase, exact `phase_changes` behavior across init/invalid/reset, preserved captured stack snapshot across invalid phase transitions, and deterministic `boot_seq` increment on `command_reset_boot_diagnostics`.
+  - bare-metal QEMU bootdiag/history-clear validation shipped:
+    - new script: `scripts/baremetal-qemu-bootdiag-history-clear-probe-check.ps1` reuses the descriptor-bootdiag PVH artifact, baselines the live boot-diagnostics and history structs, and drives control commands through the mailbox under QEMU+GDB.
+    - current proof path validates `command_set_health_code`, `command_set_boot_phase(init)`, `command_capture_stack_pointer`, `command_reset_boot_diagnostics`, `command_clear_command_history`, and `command_clear_health_history` end to end over the PVH freestanding artifact.
+    - key probe evidence: pre-reset boot-diagnostics state `PRE_RESET_PHASE=1`, `PRE_RESET_LAST_SEQ=3`, `PRE_RESET_LAST_TICK=2`, `PRE_RESET_OBSERVED_TICK=3`, nonzero `PRE_RESET_STACK`, `PRE_RESET_PHASE_CHANGES=1`; post-reset state `BOOTDIAG_PHASE=2`, `BOOTDIAG_BOOT_SEQ=1`, `BOOTDIAG_LAST_SEQ=4`, `BOOTDIAG_LAST_TICK=3`, `BOOTDIAG_OBSERVED_TICK=4`, `BOOTDIAG_STACK=0`, `BOOTDIAG_PHASE_CHANGES=0`; `command_clear_command_history` collapses command history to `len=1` with event `(seq=5, opcode=19)`; `command_clear_health_history` collapses health history to `len=1` with event `(seq=1, health_code=200, ack=6)`.
+  - bare-metal QEMU bootdiag/history-clear wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-bootdiag-history-clear-baseline-probe-check.ps1`, `scripts/baremetal-qemu-bootdiag-history-clear-pre-reset-payloads-probe-check.ps1`, `scripts/baremetal-qemu-bootdiag-history-clear-post-reset-state-probe-check.ps1`, `scripts/baremetal-qemu-bootdiag-history-clear-command-event-probe-check.ps1`, and `scripts/baremetal-qemu-bootdiag-history-clear-health-preserve-probe-check.ps1`.
+    - the host regression in `src/baremetal_main.zig` now also proves the reset-event and restart-event payloads directly: exact `command_reset_boot_diagnostics` command-history event shape, exact post-reset health-history ack linkage, and exact command-driven boot-phase restart event metadata.
+    - the wrapper family reuses the broad bootdiag/history-clear lane but fails directly on the baseline/source marker, pre-reset boot-diagnostics payloads, post-reset collapse, command-history clear-event shape, and health-history preservation boundaries.
+  - bare-metal QEMU descriptor-table content validation shipped:
+    - new script: `scripts/baremetal-qemu-descriptor-table-content-probe-check.ps1` reuses the descriptor-bootdiag PVH artifact, resolves `gdtr`, `idtr`, `gdt`, `idt`, and `oc_interrupt_stub` symbols from the freestanding ELF, and drives descriptor reinit/load through the mailbox under QEMU+GDB.
+    - current proof path validates `gdtr.limit=63`, `idtr.limit=4095`, `gdtr.base == &gdt`, `idtr.base == &idt`, code/data `gdt` entry fields (`limit_low=65535`, `access=0x9A/0x92`, `granularity=0xAF`), and `idt[0]/idt[255]` selector/type/zero/stub wiring (`selector=0x08`, `type_attr=0x8E`, handler address `== oc_interrupt_stub`) after live `command_reinit_descriptor_tables` plus `command_load_descriptor_tables`.
+  - bare-metal QEMU descriptor-table-content wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-descriptor-table-content-baseline-probe-check.ps1`, `scripts/baremetal-qemu-descriptor-table-content-pointer-metadata-probe-check.ps1`, `scripts/baremetal-qemu-descriptor-table-content-gdt-entry-fields-probe-check.ps1`, `scripts/baremetal-qemu-descriptor-table-content-idt-entry-fields-probe-check.ps1`, and `scripts/baremetal-qemu-descriptor-table-content-interrupt-stub-mailbox-probe-check.ps1`.
+    - the host regression in `src/baremetal_main.zig` now also proves the full descriptor-table-content lane directly: descriptor reinit/load mailbox sequencing, `gdtr/idtr` limits+bases, exact code/data `gdt` entry fields, exact `idt[0]/idt[255]` selector/type/zero fields, and final interrupt-stub wiring.
+    - the wrapper family reuses the broad descriptor-table-content lane but fails directly on the baseline mailbox envelope, descriptor pointer metadata, exact GDT entry fields, exact IDT entry fields, and final interrupt-stub plus mailbox-state invariants.
+  - bare-metal QEMU descriptor-dispatch validation shipped:
+    - new script: `scripts/baremetal-qemu-descriptor-dispatch-probe-check.ps1` reuses the descriptor-bootdiag PVH artifact, drives live descriptor `reinit -> load -> clear state -> trigger interrupt -> trigger exception`, and snapshots interrupt/exception history-ring payloads under QEMU+GDB.
+    - current proof path validates `command_trigger_interrupt(44)` and `command_trigger_exception(13, 51966)` immediately after live descriptor reinit/load, with final counters/history payloads showing interrupt event `1` (`vector=44`, `is_exception=0`, `count=1`) and exception-backed interrupt event `2` plus exception event `1` (`vector=13`, `code=51966`, interrupt count `2`, exception count `1`).
+  - bare-metal QEMU descriptor-dispatch wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-descriptor-dispatch-baseline-probe-check.ps1`, `scripts/baremetal-qemu-descriptor-dispatch-telemetry-probe-check.ps1`, `scripts/baremetal-qemu-descriptor-dispatch-aggregate-state-probe-check.ps1`, `scripts/baremetal-qemu-descriptor-dispatch-interrupt-history-probe-check.ps1`, and `scripts/baremetal-qemu-descriptor-dispatch-exception-history-mailbox-probe-check.ps1`.
+    - the host regression in `src/baremetal_main.zig` now also proves the full descriptor-dispatch lane directly: descriptor reinit/load sequence numbers and opcodes, interrupt/exception counter resets, history clears, final aggregate interrupt/exception state, and exact interrupt/exception history payloads after `command_trigger_interrupt(44)` and `command_trigger_exception(13, 51966)`.
+    - the wrapper family reuses the broad descriptor-dispatch lane but fails directly on the bootstrap baseline, descriptor reinit/load telemetry deltas, final aggregate interrupt/exception state, exact interrupt-history payloads, and final exception-history plus mailbox receipt.
+  - bare-metal QEMU vector history overflow validation shipped:
+    - new script: `scripts/baremetal-qemu-vector-history-overflow-probe-check.ps1` reuses the descriptor-bootdiag PVH artifact and drives `command_reset_interrupt_counters`, `command_clear_interrupt_history`, `command_reset_vector_counters`, repeated `command_trigger_interrupt`, `command_reset_exception_counters`, `command_clear_exception_history`, and repeated `command_trigger_exception` end to end under QEMU+GDB.
+    - current proof path validates interrupt history saturation (`35 -> len 32 / overflow 3`) on vector `200`, then resets and validates exception history saturation (`19 -> len 16 / overflow 3`) on vector `13`, while per-vector telemetry still reports `interrupt_vector_count(200)=35`, `interrupt_vector_count(13)=19`, and `exception_vector_count(13)=19`.
+    - wrapper family shipped: `scripts/baremetal-qemu-vector-history-overflow-baseline-probe-check.ps1`, `scripts/baremetal-qemu-vector-history-overflow-interrupt-overflow-probe-check.ps1`, `scripts/baremetal-qemu-vector-history-overflow-exception-overflow-probe-check.ps1`, `scripts/baremetal-qemu-vector-history-overflow-vector-telemetry-probe-check.ps1`, and `scripts/baremetal-qemu-vector-history-overflow-mailbox-state-probe-check.ps1`.
+    - the wrappers reuse the broad QEMU probe but fail directly on the final mailbox baseline, phase-A interrupt overflow, phase-B exception overflow, phase-B vector telemetry, and final mailbox-state invariants.
+  - bare-metal QEMU vector history clear validation shipped:
+    - new script: `scripts/baremetal-qemu-vector-history-clear-probe-check.ps1` reuses the descriptor-bootdiag PVH artifact and drives `command_reset_interrupt_counters`, `command_clear_interrupt_history`, `command_reset_exception_counters`, `command_clear_exception_history`, `command_trigger_interrupt(200)`, and `command_trigger_exception(13, 51966)` end to end under QEMU+GDB.
+    - current proof path validates live pre-clear payloads for interrupt history event `1` (`vector=200`, `is_exception=0`, `code=0`) and event `2` (`vector=13`, `is_exception=1`, `code=51966`) plus exception history event `1` (`vector=13`, `code=51966`), then proves `command_reset_interrupt_counters` zeroes aggregate interrupt telemetry while preserving interrupt history len `2`, exception count `1`, and interrupt vector table entry `200=1`, proves `command_reset_exception_counters` zeroes aggregate exception telemetry while preserving exception history len `1`, interrupt history len `2`, and exception vector table entry `13=1`, and finally proves each mailbox clear command zeroes only its corresponding history ring/overflow counters.
+    - wrapper family shipped: `scripts/baremetal-qemu-vector-history-clear-baseline-probe-check.ps1`, `scripts/baremetal-qemu-vector-history-clear-pre-interrupt-payloads-probe-check.ps1`, `scripts/baremetal-qemu-vector-history-clear-pre-exception-payload-probe-check.ps1`, `scripts/baremetal-qemu-vector-history-clear-interrupt-reset-preserve-probe-check.ps1`, and `scripts/baremetal-qemu-vector-history-clear-exception-reset-final-state-probe-check.ps1`.
+    - the wrappers reuse the broad QEMU probe but fail directly on the final mailbox baseline, retained pre-clear interrupt payloads, retained pre-clear exception payload, interrupt-reset preservation plus interrupt-clear boundary, and exception-reset preservation plus final clear-state boundary.
+  - bare-metal QEMU command/health history validation shipped:
+    - new script: `scripts/baremetal-qemu-command-health-history-probe-check.ps1` reuses the descriptor-bootdiag PVH artifact, resets the live ring baselines at the first `spinPause`, and drives repeated `command_set_health_code` mailbox execution end to end under QEMU+GDB.
+    - current proof path validates command history saturation (`35 -> len 32 / overflow 3`) with retained oldest/newest command payloads (`seq=4/35`, `arg0=103/134`) and health history saturation (`71 -> len 64 / overflow 7`) with retained oldest/newest health payloads (`seq=8/71`, `health_code=103/200`, `ack=3/35`).
+    - validated with `zig build test --summary all` (`203/203`), `scripts/check-go-method-parity.ps1 -OutputJsonPath release/parity-go-zig.json`, `scripts/docs-status-check.ps1 -ParityJsonPath release/parity-go-zig.json`, and `scripts/baremetal-qemu-command-health-history-probe-check.ps1`.
+    - wrapper family shipped: `scripts/baremetal-qemu-command-health-history-baseline-probe-check.ps1`, `scripts/baremetal-qemu-command-health-history-command-shape-probe-check.ps1`, `scripts/baremetal-qemu-command-health-history-command-payloads-probe-check.ps1`, `scripts/baremetal-qemu-command-health-history-health-shape-probe-check.ps1`, and `scripts/baremetal-qemu-command-health-history-health-payloads-probe-check.ps1`.
+    - the wrappers reuse the broad QEMU probe but fail directly on the final mailbox baseline, command-ring shape, command oldest/newest payloads, health-ring shape, and health oldest/newest payloads.
+  - bare-metal QEMU command/health history overflow-clear validation shipped:
+    - new scripts: `scripts/baremetal-qemu-command-history-overflow-clear-probe-check.ps1` and `scripts/baremetal-qemu-health-history-overflow-clear-probe-check.ps1` compose the existing command/health-history and bootdiag/history-clear probes into dedicated overflow + clear + restart validations under QEMU+GDB.
+    - current proof path validates retained command-history overflow ordering (`seq 4 -> 35`), retained health-history overflow ordering (`seq 8 -> 71`), single-receipt clear collapse for each ring, and clean restart semantics while the companion ring keeps its overflow state until its own clear.
+    - wrapper family shipped: `scripts/baremetal-qemu-command-history-overflow-clear-baseline-probe-check.ps1`, `scripts/baremetal-qemu-command-history-overflow-clear-overflow-window-probe-check.ps1`, `scripts/baremetal-qemu-command-history-overflow-clear-overflow-payloads-probe-check.ps1`, `scripts/baremetal-qemu-command-history-overflow-clear-clear-event-probe-check.ps1`, and `scripts/baremetal-qemu-command-history-overflow-clear-restart-event-probe-check.ps1`; they fail directly on the broad-lane baseline, overflow-window shape, oldest/newest overflow payloads, clear-event collapse plus preserved health-history length, and post-clear restart-event payloads.
+    - wrapper family shipped: `scripts/baremetal-qemu-health-history-overflow-clear-baseline-probe-check.ps1`, `scripts/baremetal-qemu-health-history-overflow-clear-overflow-window-probe-check.ps1`, `scripts/baremetal-qemu-health-history-overflow-clear-overflow-payloads-probe-check.ps1`, `scripts/baremetal-qemu-health-history-overflow-clear-clear-event-probe-check.ps1`, and `scripts/baremetal-qemu-health-history-overflow-clear-command-preserve-probe-check.ps1`; they fail directly on the broad-lane baseline, overflow-window shape, retained oldest/newest health payloads plus trailing ack telemetry, clear-event collapse (`seq=1`, `code=200`, `mode=running`, `tick=6`, `ack=6`), and preserved command-history tail state.
+  - bare-metal QEMU mode/boot-phase history validation shipped:
+    - new script: `scripts/baremetal-qemu-mode-boot-phase-history-probe-check.ps1` reuses the descriptor-bootdiag PVH artifact, captures live command/runtime/panic reason ordering for both rings, clears them, then drives 33 `set_boot_phase(init)` + `set_mode(booting)` cycles under QEMU+GDB.
+    - current proof path validates semantic ordering (`runtime->init`, `init->runtime`, `runtime->panicked`) before the clear, then proves both 64-entry rings saturate to `66 -> len 64 / overflow 2` with retained oldest/newest payload ordering (`mode seq=3/66`, `boot seq=3/66`).
+    - wrapper family shipped: `scripts/baremetal-qemu-mode-boot-phase-history-baseline-probe-check.ps1`, `scripts/baremetal-qemu-mode-boot-phase-history-mode-semantics-probe-check.ps1`, `scripts/baremetal-qemu-mode-boot-phase-history-boot-semantics-probe-check.ps1`, `scripts/baremetal-qemu-mode-boot-phase-history-mode-overflow-window-probe-check.ps1`, and `scripts/baremetal-qemu-mode-boot-phase-history-boot-overflow-window-probe-check.ps1`; they fail directly on the broad-lane baseline, semantic mode ordering, semantic boot ordering, and the retained overflow-window shape/payloads for both 64-entry rings.
+    - validated with `zig build test --summary all` (`203/203`), `scripts/check-go-method-parity.ps1 -OutputJsonPath release/parity-go-zig.json`, `scripts/docs-status-check.ps1 -ParityJsonPath release/parity-go-zig.json`, and `scripts/baremetal-qemu-mode-boot-phase-history-probe-check.ps1`.
+  - bare-metal QEMU scheduler validation shipped:
+    - new script: `scripts/baremetal-qemu-scheduler-probe-check.ps1` resolves scheduler state/task symbols from the freestanding ELF and drives scheduler commands through the mailbox under QEMU+GDB.
+    - the probe validates `command_scheduler_reset`, `command_scheduler_set_timeslice`, `command_task_create`, `command_scheduler_set_policy`, and `command_scheduler_enable` end to end over the PVH freestanding artifact.
+    - current proof path validates `enabled=1`, `task_count=1`, `running_slot=0`, `dispatch_count>=1`, `timeslice=3`, `policy=priority`, and a live task with `priority=5`, `budget=12`, and nonzero run-count/budget-remaining telemetry.
+    - wrapper family shipped: `scripts/baremetal-qemu-scheduler-baseline-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-config-state-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-task-shape-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-progress-telemetry-probe-check.ps1`, and `scripts/baremetal-qemu-scheduler-mailbox-state-probe-check.ps1`; they fail directly on the same lane's `_start`/post-scheduler reachability, final scheduler config state, exact task shape, dispatch/budget progress telemetry, and final mailbox receipt boundaries.
+  - bare-metal QEMU scheduler priority/budget validation shipped:
+    - new script: `scripts/baremetal-qemu-scheduler-priority-budget-probe-check.ps1` resolves scheduler state, policy, and multi-slot task telemetry from the freestanding ELF and drives scheduler priority-depth commands through the mailbox under QEMU+GDB.
+    - the probe validates `command_scheduler_reset`, `command_wake_queue_clear`, `command_scheduler_disable`, `command_scheduler_set_default_budget`, two `command_task_create` calls, `command_scheduler_set_policy`, `command_scheduler_enable`, and `command_task_set_priority` end to end over the PVH freestanding artifact.
+    - current proof path validates `ACK=11`, `LAST_OPCODE=56`, `LAST_RESULT=-2`, `DEFAULT_BUDGET=9`, low task default-budget inheritance (`budget_ticks=9`, `budget_remaining=9`), high-priority task-first dispatch (`HIGH_RUN_BEFORE=1`, `LOW_RUN_BEFORE=0`), successful reprioritization of the low task to `15` with a subsequent dispatch-order flip (`LOW_RUN_AFTER=1`, `HIGH_RUN_AFTER=1`), invalid policy rejection (`INVALID_POLICY_RESULT=-22`) with preserved priority policy, and invalid-task priority rejection (`INVALID_TASK_RESULT=-2`) with preserved low-task priority and task count.
+  - bare-metal QEMU scheduler priority/budget wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-scheduler-priority-budget-baseline-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-priority-budget-default-budget-inheritance-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-priority-budget-priority-dominance-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-priority-budget-reprioritize-low-probe-check.ps1`, and `scripts/baremetal-qemu-scheduler-priority-budget-invalid-preserve-probe-check.ps1`.
+    - the wrappers reuse the broad live priority/budget probe and fail directly on the five narrow contracts for baseline scheduler/task bootstrap, zero-budget default-budget inheritance, initial high-priority dominance, low-task takeover after reprioritize, and invalid policy/task preservation.
+  - bare-metal QEMU scheduler default-budget invalid validation shipped:
+    - new script: `scripts/baremetal-qemu-scheduler-default-budget-invalid-probe-check.ps1` reuses the scheduler PVH artifact, resolves scheduler/task telemetry from the freestanding ELF, and drives a rejected `command_scheduler_set_default_budget(0)` path through the mailbox under QEMU+GDB.
+    - current proof path validates `result_invalid_argument` for zero default budget, preserved active `default_budget_ticks`, and later clean zero-budget task inheritance from the preserved scheduler default over the PVH freestanding artifact.
+  - bare-metal QEMU scheduler round-robin validation shipped:
+    - new script: `scripts/baremetal-qemu-scheduler-round-robin-probe-check.ps1` resolves scheduler state, policy, and multi-slot task telemetry from the freestanding ELF and drives the default scheduler policy through the mailbox under QEMU+GDB.
+    - the probe validates `command_scheduler_reset`, `command_wake_queue_clear`, `command_scheduler_disable`, two `command_task_create` calls, and `command_scheduler_enable` end to end over the PVH freestanding artifact.
+    - current proof path validates `ACK=6`, `LAST_OPCODE=24`, `LAST_RESULT=0`, `POLICY=0`, fair live rotation across a lower-priority first task and higher-priority second task (`FIRST/SECOND run_count 1/0 -> 1/1 -> 2/1`), and deterministic budget consumption (`3 -> 3 -> 2`) without switching into priority scheduling.
+  - bare-metal QEMU scheduler round-robin wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-scheduler-round-robin-baseline-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-round-robin-first-dispatch-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-round-robin-second-dispatch-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-round-robin-third-dispatch-probe-check.ps1`, and `scripts/baremetal-qemu-scheduler-round-robin-final-task-state-probe-check.ps1`.
+    - they reuse the broad scheduler round-robin probe but fail directly on the staged outputs for baseline task/policy bootstrap, first-dispatch first-task-only delivery, second-dispatch rotation onto the second task, third-dispatch return to the first task, and final scheduler/task-state telemetry after the third round-robin tick.
+  - bare-metal QEMU scheduler timeslice-update validation shipped:
+    - new script: `scripts/baremetal-qemu-scheduler-timeslice-update-probe-check.ps1` reuses the scheduler PVH artifact, resolves scheduler/task telemetry from the freestanding ELF, and drives live timeslice updates through the mailbox under QEMU+GDB.
+    - the probe validates `command_scheduler_reset`, `command_scheduler_enable`, `command_task_create`, two successful `command_scheduler_set_timeslice` updates, and an invalid zero-timeslice rejection end to end over the PVH freestanding artifact.
+    - current proof path validates `ACK=6`, `LAST_OPCODE=29`, `LAST_RESULT=-22`, active timeslice progression `1 -> 4 -> 2`, dispatch count `>=4`, and immediate budget-consumption changes on the same live task (`9 -> 5 -> 3 -> 1`) without letting the invalid zero request change the active timeslice.
+  - bare-metal QEMU scheduler timeslice wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-scheduler-timeslice-baseline-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-timeslice-update-4-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-timeslice-update-2-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-timeslice-invalid-zero-preserve-probe-check.ps1`, and `scripts/baremetal-qemu-scheduler-timeslice-final-task-state-probe-check.ps1`.
+    - they reuse the broad scheduler timeslice-update probe but fail directly on the staged outputs for baseline `PRE_*`, first update `MID_*_4`, second update `MID_*_2`, invalid-zero preservation (`ACK=6`, `LAST_OPCODE=29`, `LAST_RESULT=-22`, `TIMESLICE=2`), and final scheduler/task telemetry (`ENABLED=1`, `TASK_COUNT=1`, `RUNNING_SLOT=0`, `TASK0_BUDGET_REMAINING=1`).
+  - bare-metal QEMU timer-quantum wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-timer-quantum-baseline-probe-check.ps1`, `scripts/baremetal-qemu-timer-quantum-boundary-probe-check.ps1`, `scripts/baremetal-qemu-timer-quantum-preboundary-blocked-probe-check.ps1`, `scripts/baremetal-qemu-timer-quantum-wake-payload-probe-check.ps1`, and `scripts/baremetal-qemu-timer-quantum-final-state-probe-check.ps1`.
+    - the host regression in `src/baremetal_main.zig` was tightened to align with the live PVH probe: the task now matches the dedicated probe budget/priority (`9`, `2`), the armed timer entry is asserted before the boundary hold, and the final wake payload plus fired timer-entry metadata are asserted directly instead of relying only on wake-count growth.
+    - they reuse the broad timer-quantum probe but fail directly on the staged outputs for armed baseline capture (`ARMED_*`, `TASK0_*`), computed quantum-boundary hold (`EXPECTED_BOUNDARY_TICK`, `PRE_BOUNDARY_TICK`, `POST_WAKE_TICK`), blocked pre-boundary state (`PRE_BOUNDARY_WAKE_COUNT=0`, `PRE_BOUNDARY_TASK_STATE=6`, `PRE_BOUNDARY_DISPATCH_COUNT=0`), exact timer wake payload (`WAKE0_*`), and final timer/task-state telemetry (`ACK=7`, `LAST_OPCODE=42`, `TIMER_DISPATCH_COUNT=1`, `TIMER0_STATE=2`).
+  - bare-metal QEMU scheduler disable-enable validation shipped:
+    - new script: `scripts/baremetal-qemu-scheduler-disable-enable-probe-check.ps1` reuses the scheduler PVH artifact, resolves scheduler/task telemetry from the freestanding ELF, and drives live disable/re-enable commands through the mailbox under QEMU+GDB.
+    - the probe validates `command_scheduler_reset`, `command_scheduler_enable`, `command_task_create`, `command_scheduler_disable`, an idle disabled tick with no dispatch progress, and `command_scheduler_enable` resumption end to end over the PVH freestanding artifact.
+    - current proof path validates `ACK=5`, `LAST_OPCODE=24`, `LAST_RESULT=0`, frozen dispatch/budget while disabled (`DISPATCH_COUNT=1`, `RUN_COUNT=1`, `BUDGET_REMAINING=4` across idle disabled tick `5`), and resumed consumption on re-enable (`DISPATCH_COUNT=2`, `TASK0_RUN_COUNT=2`, `TASK0_BUDGET_REMAINING=3`).
+  - bare-metal QEMU scheduler disable-enable wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-scheduler-disable-enable-baseline-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-disable-enable-disabled-freeze-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-disable-enable-idle-preserve-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-disable-enable-resume-probe-check.ps1`, and `scripts/baremetal-qemu-scheduler-disable-enable-final-task-state-probe-check.ps1`.
+    - they reuse the broad scheduler disable-enable probe but fail directly on pre-disable baseline telemetry (`PRE_*`), disabled freeze-state (`DISABLED_*`), idle disabled preservation (`IDLE_DISABLED_*`), re-enable metadata (`ACK=5`, `LAST_OPCODE=24`, `LAST_RESULT=0`, `ENABLED=1`, `DISPATCH_COUNT=2`), and final resumed task telemetry (`TASK0_ID=1`, `TASK0_RUN_COUNT=2`, `TASK0_BUDGET_REMAINING=3`).
+  - bare-metal QEMU scheduler reset validation shipped:
+    - new script: `scripts/baremetal-qemu-scheduler-reset-probe-check.ps1` reuses the scheduler PVH artifact, resolves scheduler/task telemetry from the freestanding ELF, and drives live reset/create/re-enable sequencing through the mailbox under QEMU+GDB.
+    - the probe validates `command_scheduler_reset`, `command_scheduler_enable`, `command_task_create`, a second `command_scheduler_reset`, fresh `command_task_create`, and `command_scheduler_enable` end to end over the PVH freestanding artifact.
+    - current proof path validates pre-reset active state (`TASK0_ID=1`, `RUN_COUNT=1`, `BUDGET_REMAINING=4`), restored defaults after reset (`ENABLED=0`, `TASK_COUNT=0`, `RUNNING_SLOT=255`, `NEXT_TASK_ID=1`, `TIMESLICE=1`, `DEFAULT_BUDGET=8`), clean post-reset creation (`TASK0_ID=1`, `RUN_COUNT=0`, `BUDGET=6`), and resumed dispatch after re-enable (`DISPATCH_COUNT=1`, `TASK0_BUDGET_REMAINING=5`).
+  - bare-metal QEMU scheduler reset wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-scheduler-reset-baseline-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-reset-collapse-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-reset-id-restart-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-reset-defaults-preserve-probe-check.ps1`, and `scripts/baremetal-qemu-scheduler-reset-final-task-state-probe-check.ps1`.
+    - they reuse the broad scheduler reset probe and fail directly on the narrow boundaries for dirty active pre-reset telemetry (`PRE_RESET_*`), immediate reset collapse to defaults (`POST_RESET_*`), task-ID restart (`POST_RESET_NEXT_TASK_ID=1`, `POST_CREATE_TASK0_ID=1`, final `NEXT_TASK_ID=2`), restored scheduler defaults (`TIMESLICE=1`, `DEFAULT_BUDGET=8`), and final resumed task-state telemetry after re-enable (`ACK=6`, `TASK0_RUN_COUNT=1`, `TASK0_BUDGET_REMAINING=5`).
+  - bare-metal QEMU scheduler reset mixed-state validation shipped:
+    - runtime bug fixed in `src/baremetal_main.zig`: `oc_scheduler_reset()` now clears stale queued wakes and armed task timers tied to the removed task table instead of leaving orphaned wake/timer state behind after mixed wait load.
+    - new host regression: `baremetal scheduler reset clears stale waits wake queue and timer entries`.
+    - new script: `scripts/baremetal-qemu-scheduler-reset-mixed-state-probe-check.ps1` reuses the timer-reset PVH artifact, resolves scheduler/wait/timer/wake telemetry from the freestanding ELF, and drives mixed `task_wait_for`, `task_wait_interrupt_for`, and manual wake load through the mailbox under QEMU+GDB.
+    - current proof path validates dirty mixed pre-reset state (`PRE_WAKE_COUNT=1`, `PRE_TIMER_COUNT=1`), post-reset queue/timer cleanup (`POST_WAKE_COUNT=0`, `POST_TIMER_COUNT=0`), preserved timer configuration (`POST_QUANTUM=5`, `POST_NEXT_TIMER_ID=2`), no delayed wake after idle ticks, and fresh timer re-arming from the preserved ID space (`REARM_TIMER_ID=2`, `REARM_NEXT_TIMER_ID=3`).
+    - wrapper family added: `scripts/baremetal-qemu-scheduler-reset-mixed-state-baseline-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-reset-mixed-state-post-reset-collapse-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-reset-mixed-state-preserved-config-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-reset-mixed-state-idle-stability-probe-check.ps1`, and `scripts/baremetal-qemu-scheduler-reset-mixed-state-rearm-state-probe-check.ps1`, so the broad lane now fails directly on each mixed reset boundary instead of only the aggregate script.
+  - bare-metal QEMU scheduler policy-switch validation shipped:
+    - new script: `scripts/baremetal-qemu-scheduler-policy-switch-probe-check.ps1` reuses the scheduler PVH artifact, resolves scheduler/task telemetry plus the live policy byte from the freestanding ELF, and drives policy transitions through the mailbox under QEMU+GDB.
+    - the probe validates `command_scheduler_reset`, `command_wake_queue_clear`, `command_scheduler_disable`, two `command_task_create` calls, `command_scheduler_enable`, live `command_scheduler_set_policy` transitions between round-robin and priority, `command_task_set_priority`, and invalid policy rejection end to end over the PVH freestanding artifact.
+    - current proof path validates a round-robin baseline (`LOW_RUN=1`, `HIGH_RUN=1`), immediate priority-policy preference for the higher-priority task (`HIGH_RUN=2`, `HIGH_BUDGET_REMAINING=4`), low-task reprioritization on the next priority tick (`LOW_PRIORITY=15`, `LOW_RUN=2`), a clean return to round-robin (`RR_RETURN_HIGH_RUN=3`), and invalid policy `9` rejection without active-policy drift (`ACK=10`, `LAST_OPCODE=55`, `LAST_RESULT=-22`, final `POLICY=0`, final run counts `3/3`, final budgets `3/3`).
+  - bare-metal scheduler policy-switch wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-scheduler-policy-switch-rr-baseline-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-policy-switch-priority-dominance-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-policy-switch-reprioritize-low-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-policy-switch-rr-return-probe-check.ps1`, and `scripts/baremetal-qemu-scheduler-policy-switch-invalid-preserve-probe-check.ps1`.
+    - these wrappers reuse the broad scheduler policy-switch probe and fail directly on the narrow boundaries for round-robin baseline fairness, high-task dominance after switching to priority policy, low-task takeover after `command_task_set_priority`, round-robin return ordering after restoring policy `0`, and invalid policy rejection without dispatch/policy/budget drift.
+    - all five wrappers are wired into `zig-ci` and `release-preview` validate stages so scheduler policy-switch regressions now block CI at the narrow boundary level.
+  - bare-metal QEMU timer/wake validation shipped:
+    - new script: `scripts/baremetal-qemu-timer-wake-probe-check.ps1` resolves timer state/entry and wake-queue symbols from the freestanding ELF and drives timer commands through the mailbox under QEMU+GDB.
+    - the probe validates `command_timer_reset`, `command_timer_set_quantum`, `command_task_create`, and `command_task_wait_for` end to end over the PVH freestanding artifact.
+    - current proof path validates `ack=5`, `last_opcode=53`, `last_result=0`, `ticks=8`, `task_state=ready`, `run_count=0`, `timer_state.enabled=1`, `timer_count=0`, `pending_wake_count=1`, `dispatch_count=1`, `tick_quantum=3`, a fired timer entry for task `1`, and wake event telemetry (`reason=timer`, `vector=0`, `tick=last_fire_tick`).
+    - wrapper batch shipped: `scripts/baremetal-qemu-timer-wake-baseline-probe-check.ps1`, `scripts/baremetal-qemu-timer-wake-task-state-probe-check.ps1`, `scripts/baremetal-qemu-timer-wake-timer-telemetry-probe-check.ps1`, `scripts/baremetal-qemu-timer-wake-wake-payload-probe-check.ps1`, and `scripts/baremetal-qemu-timer-wake-mailbox-state-probe-check.ps1` now split that broad lane into isolated bootstrap baseline, final task-state telemetry, fired timer telemetry, exact timer wake payload, and final mailbox receipt checks, while the host regression now also proves fired timer-state telemetry directly in `src/baremetal_main.zig`.
+  - bare-metal QEMU timer-quantum validation shipped:
+    - new script: `scripts/baremetal-qemu-timer-quantum-probe-check.ps1` resolves scheduler/task state, timer state, timer entries, wake queue, wake-queue count, and command mailbox symbols from the freestanding ELF and drives `command_scheduler_reset`, `command_timer_reset`, `command_wake_queue_clear`, `command_scheduler_disable`, `command_task_create`, `command_timer_set_quantum`, and one-shot `command_timer_schedule` through the mailbox under QEMU+GDB.
+    - the probe validates `ACK=7`, `LAST_OPCODE=42`, `LAST_RESULT=0`, `ARMED_TICKS=7`, `ARMED_NEXT_FIRE_TICK=7`, `EXPECTED_BOUNDARY_TICK=9`, `PRE_BOUNDARY_TICK=8`, `PRE_BOUNDARY_WAKE_COUNT=0`, `PRE_BOUNDARY_TASK_STATE=6`, `PRE_BOUNDARY_DISPATCH_COUNT=0`, `POST_WAKE_TICK=10`, `TIMER_LAST_WAKE_TICK=9`, `WAKE0_TICK=9`, and proves the one-shot timer stays suppressed until the next quantum boundary over the PVH freestanding artifact.
+  - bare-metal QEMU periodic timer validation shipped:
+    - new script: `scripts/baremetal-qemu-periodic-timer-probe-check.ps1` resolves timer state/entry, wake-queue, scheduler, status, and command-mailbox symbols from the freestanding ELF and drives periodic timer commands through the mailbox under QEMU+GDB.
+    - the probe validates `command_scheduler_reset`, `command_timer_reset`, `command_wake_queue_clear`, `command_scheduler_disable`, `command_timer_set_quantum`, `command_task_create`, `command_timer_schedule_periodic`, `command_timer_disable`, and `command_timer_enable` end to end over the PVH freestanding artifact.
+    - current proof path validates the first periodic fire snapshot (`fire_count=1`, `dispatch_count=1`, `wake_count=1`), proves the disabled pause window preserves those counters, then validates the first resumed periodic fire snapshot (`ack=9`, `last_opcode=46`, `last_result=0`, `ticks=16`, `pending_wake_count=2`, `dispatch_count=2`, periodic flags still armed, `period_ticks=2`, `wake1.tick=14`) without drifting to a later fire.
+    - wrapper batch shipped: `scripts/baremetal-qemu-periodic-timer-baseline-probe-check.ps1`, `scripts/baremetal-qemu-periodic-timer-first-fire-probe-check.ps1`, `scripts/baremetal-qemu-periodic-timer-paused-window-probe-check.ps1`, `scripts/baremetal-qemu-periodic-timer-resumed-cadence-probe-check.ps1`, and `scripts/baremetal-qemu-periodic-timer-telemetry-preserve-probe-check.ps1` now split that broad lane into isolated scheduler/task/timer baseline, first-fire payload, paused-window hold, resumed cadence, and final telemetry checks, while the host regression in `src/baremetal_main.zig` now proves the same intermediate states directly.
+  - bare-metal QEMU periodic timer clamp validation shipped:
+    - new script: `scripts/baremetal-qemu-periodic-timer-clamp-probe-check.ps1` reuses the freestanding periodic-timer PVH artifact and drives `command_scheduler_reset`, `command_timer_reset`, `command_wake_queue_clear`, `command_scheduler_disable`, `command_task_create`, `command_task_wait`, and `command_timer_schedule_periodic` after forcing `status.ticks` to `u64::max-1` under QEMU+GDB.
+    - current proof path validates `ACK=7`, `LAST_OPCODE=49`, `LAST_RESULT=0`, `PRE_SCHEDULE_TICKS=18446744073709551614`, `ARM_TICKS=18446744073709551615`, `ARM_NEXT_FIRE=18446744073709551615`, `FIRE_COUNT=1`, `FIRE_LAST_TICK=18446744073709551615`, wake tick `18446744073709551615`, and a stable post-wrap hold at `HOLD_TICKS=1` with the periodic deadline still saturated to `18446744073709551615`.
+    - wrapper batch shipped: `scripts/baremetal-qemu-periodic-timer-clamp-baseline-probe-check.ps1`, `scripts/baremetal-qemu-periodic-timer-clamp-first-fire-probe-check.ps1`, `scripts/baremetal-qemu-periodic-timer-clamp-saturated-rearm-probe-check.ps1`, `scripts/baremetal-qemu-periodic-timer-clamp-post-wrap-hold-probe-check.ps1`, and `scripts/baremetal-qemu-periodic-timer-clamp-telemetry-preserve-probe-check.ps1` now split that broad lane into isolated baseline, first-fire wrap, saturated re-arm, post-wrap hold, and final wake-telemetry checks, while the host regression now also proves the same no-wrap semantics directly in `src/baremetal_main.zig`.
+  - bare-metal QEMU timer pressure validation shipped:
+    - new script: `scripts/baremetal-qemu-timer-pressure-probe-check.ps1` builds a dedicated PVH artifact, resolves scheduler/task and timer state/entry symbols, then drives `command_scheduler_reset`, `command_timer_reset`, `command_wake_queue_clear`, `command_scheduler_disable`, `command_task_create`, `command_timer_schedule`, and `command_timer_cancel_task` through the mailbox under QEMU+GDB.
+    - current proof path validates `ACK=38`, `LAST_OPCODE=42`, `LAST_RESULT=0`, a full 16-task / 16-timer live window (`FIRST_TIMER_ID=1`, `LAST_TIMER_ID=16`, `NEXT_TIMER_ID_AFTER_FULL=17`), cancellation of slot `5` (`REUSE_OLD_TIMER_ID=6`, `REUSE_CANCELED_STATE=3`), slot reuse with fresh timer ID `17`, and zero stray wake/dispatch activity (`WAKE_COUNT=0`, `DISPATCH_COUNT=0`).
+    - wrapper batch shipped: `scripts/baremetal-qemu-timer-pressure-baseline-probe-check.ps1`, `scripts/baremetal-qemu-timer-pressure-cancel-collapse-probe-check.ps1`, `scripts/baremetal-qemu-timer-pressure-reuse-slot-probe-check.ps1`, `scripts/baremetal-qemu-timer-pressure-reuse-next-fire-probe-check.ps1`, and `scripts/baremetal-qemu-timer-pressure-quiet-telemetry-probe-check.ps1` now split that broad lane into isolated saturation-baseline, cancel-collapse, slot-reuse, reused next-fire, and quiet-telemetry checks, while the host regression and broad probe now also assert preserved cancel-stage timer count, `next_timer_id`, and waiting-task state before reuse.
+  - bare-metal QEMU timer-reset recovery validation shipped:
+    - runtime bug fixed in `src/baremetal_main.zig`: `oc_timer_reset()` now clears pure timer waits back to manual waits and strips timeout arms from interrupt waits, instead of leaving stale timer-backed wait state behind after the timer table resets.
+    - new host test: `baremetal timer reset clears timer entries and timer-backed waits`
+    - new script: `scripts/baremetal-qemu-timer-reset-recovery-probe-check.ps1` builds a dedicated PVH artifact, resolves scheduler/task wait arrays, timer state/entries, wake queue, status, and command-mailbox symbols, then drives `command_task_wait_for`, `command_task_wait_interrupt_for`, `command_timer_set_quantum`, `command_timer_disable`, `command_timer_reset`, `command_scheduler_wake_task`, and `command_trigger_interrupt` through the mailbox under QEMU+GDB.
+    - current proof path validates dirty live timer state before reset, timer-state collapse back to baseline after reset, no delayed timeout wake after additional idle ticks, preserved manual + interrupt wake recovery, and fresh timer re-arming from `timer_id=1`.
+  - bare-metal QEMU periodic-interrupt validation shipped:
+    - new script: `scripts/baremetal-qemu-periodic-interrupt-probe-check.ps1` resolves scheduler wait-state arrays, timer state/entries, wake-queue state, interrupt state/history, status, and command-mailbox symbols from the freestanding ELF and drives mixed periodic timer plus interrupt commands through the mailbox under QEMU+GDB.
+    - the probe validates `command_scheduler_reset`, `command_timer_reset`, `command_wake_queue_clear`, `command_reset_interrupt_counters`, `command_scheduler_disable`, `command_timer_set_quantum`, `command_task_create`, `command_timer_schedule_periodic`, `command_task_wait_interrupt_for`, `command_trigger_interrupt`, and `command_timer_cancel_task` end to end over the PVH freestanding artifact.
+    - current proof path validates `ack=12`, `last_opcode=52`, `last_result=0`, `ticks=14`, `task_count=2`, interrupt deadline `15`, interrupt wake tick `12`, `dispatch_count=2`, `last_interrupt_count=1`, `timer0.fire_count=2`, wake queue ordering (`timer@10`, `interrupt@11`, `timer@12`), and proves no late timeout wake leaks after the interrupt path wins and the periodic source is cancelled.
+    - wrapper batch shipped: `scripts/baremetal-qemu-periodic-interrupt-baseline-fire-probe-check.ps1`, `scripts/baremetal-qemu-periodic-interrupt-interrupt-wake-payload-probe-check.ps1`, `scripts/baremetal-qemu-periodic-interrupt-periodic-cadence-probe-check.ps1`, `scripts/baremetal-qemu-periodic-interrupt-cancel-no-late-timeout-probe-check.ps1`, and `scripts/baremetal-qemu-periodic-interrupt-telemetry-ordering-probe-check.ps1`.
+    - direct host regression added in `src/baremetal_main.zig`: `baremetal periodic interrupt flow preserves cadence and cancels cleanly`.
+  - bare-metal QEMU interrupt-timeout validation shipped:
+    - new script: `scripts/baremetal-qemu-interrupt-timeout-probe-check.ps1` resolves scheduler wait-kind arrays, timer state, wake-queue state, and interrupt state symbols from the freestanding ELF and drives `task_wait_interrupt_for` through the mailbox under QEMU+GDB.
+    - the probe validates `command_scheduler_reset`, `command_timer_reset`, `command_task_create`, `command_task_wait_interrupt_for`, and `command_trigger_interrupt` end to end over the PVH freestanding artifact.
+    - current proof path validates `ack=7`, `last_opcode=7`, `last_result=0`, `ticks=16`, task `1` returns to `ready`, wait-kind/vector/timeout fields are cleared, `timer_dispatch_count=0`, `timer_last_interrupt_count=1`, a single interrupt wake event remains queued (`reason=interrupt`, `vector=31`, `timer_id=0`), and no second timer wake appears after eight additional ticks beyond the interrupt wake.
+    - wrapper batch shipped: `scripts/baremetal-qemu-interrupt-timeout-arm-preservation-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-interrupt-wake-payload-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-wait-clear-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-no-stale-timer-probe-check.ps1`, and `scripts/baremetal-qemu-interrupt-timeout-telemetry-preserve-probe-check.ps1`.
+    - the broad probe now emits a dedicated pre-interrupt armed-timeout snapshot so wrappers can fail directly on preserved interrupt-timeout waiting state before `command_trigger_interrupt`, and the tightened host regression now asserts direct wait-kind/vector/timeout clearing, zero timer dispatch, and preserved interrupt telemetry after the interrupt-first recovery path wins.
+  - bare-metal QEMU interrupt-timeout manual-wake validation shipped:
+    - new host test: `baremetal interrupt wait with timeout cancels cleanly on manual wake`
+    - new script: `scripts/baremetal-qemu-interrupt-timeout-manual-wake-probe-check.ps1` resolves scheduler wait-kind arrays, timeout tick state, timer state, wake-queue state, interrupt state, status, and command-mailbox symbols from the freestanding ELF and drives `command_task_wait_interrupt_for` followed by `command_scheduler_wake_task` under QEMU+GDB.
+    - the probe validates `command_scheduler_reset`, `command_timer_reset`, `command_wake_queue_clear`, `command_reset_interrupt_counters`, `command_task_create`, `command_task_wait_interrupt_for`, and `command_scheduler_wake_task` end to end over the PVH freestanding artifact.
+    - current proof path validates `ACK=7`, `LAST_OPCODE=45`, `LAST_RESULT=0`, `TICKS=16`, the waiter returns to `ready`, wait-kind/vector/timeout fields are cleared, `timer_dispatch_count=0`, `interrupt_count=0`, a single manual wake remains queued (`reason=manual`, `vector=0`, `timer_id=0`), and no delayed timer wake appears after eight additional ticks beyond the manual wake.
+    - wrapper batch shipped: `scripts/baremetal-qemu-interrupt-timeout-manual-wake-arm-preservation-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-manual-wake-queue-delivery-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-manual-wake-wait-clear-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-manual-wake-no-stale-timer-probe-check.ps1`, and `scripts/baremetal-qemu-interrupt-timeout-manual-wake-telemetry-preserve-probe-check.ps1`.
+    - the broad probe now emits a dedicated pre-wake armed-timeout snapshot so wrappers can fail directly on preserved interrupt-timeout waiting state before `command_scheduler_wake_task`, and the tightened host regression now asserts direct wait-kind/vector/timeout clearing plus zero-interrupt telemetry after manual recovery.
+  - bare-metal QEMU interrupt-timeout timer validation shipped:
+    - new script: `scripts/baremetal-qemu-interrupt-timeout-timer-probe-check.ps1` resolves scheduler wait-kind arrays, timeout tick state, timer state, wake-queue state, interrupt state, status, and command-mailbox symbols from the freestanding ELF and drives the no-interrupt `command_task_wait_interrupt_for` path through the mailbox under QEMU+GDB.
+    - the probe validates `command_scheduler_reset`, `command_timer_reset`, `command_wake_queue_clear`, `command_reset_interrupt_counters`, `command_scheduler_disable`, `command_task_create`, and `command_task_wait_interrupt_for` end to end over the PVH freestanding artifact with `timeoutTicks=2`.
+    - current proof path validates `ACK=7`, `LAST_OPCODE=58`, `LAST_RESULT=0`, `ARMED_TICKS=7`, `ARMED_WAIT_TIMEOUT=8`, `PRE_WAKE_TICK=8`, `POST_WAKE_TICK=9`, `WAKE0_REASON=1`, `WAKE0_VECTOR=0`, `WAKE0_TICK=8`, `TIMER_LAST_INTERRUPT_COUNT=0`, `INTERRUPT_COUNT=0`, and proves the waiter remains blocked at the deadline-preceding boundary before the timer wake lands with no duplicate wake after extra slack ticks.
+    - wrapper batch shipped: `scripts/baremetal-qemu-interrupt-timeout-timer-arm-preservation-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-timer-deadline-blocked-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-timer-wake-payload-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-timer-no-duplicate-wake-probe-check.ps1`, and `scripts/baremetal-qemu-interrupt-timeout-timer-telemetry-preserve-probe-check.ps1`.
+    - the broad probe now emits a dedicated pre-wake blocked snapshot so wrappers can fail directly on the deadline-edge waiting state with zero wake queue, and the tightened host regression now asserts direct wait-kind/vector/timeout clearing plus zero-interrupt telemetry on the timer-only recovery path.
+  - bare-metal QEMU interrupt-timeout clamp validation shipped:
+    - new script: `scripts/baremetal-qemu-interrupt-timeout-clamp-probe-check.ps1` resolves scheduler wait-kind arrays, timeout tick state, wake-queue state, status, and command-mailbox symbols from the freestanding ELF and drives a near-`u64::max` `command_task_wait_interrupt_for` sequence through the mailbox under QEMU+GDB.
+    - wrapper batch shipped: `scripts/baremetal-qemu-interrupt-timeout-clamp-baseline-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-clamp-arm-preservation-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-clamp-saturated-boundary-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-clamp-wake-payload-probe-check.ps1`, and `scripts/baremetal-qemu-interrupt-timeout-clamp-final-telemetry-probe-check.ps1`.
+    - the probe validates `command_scheduler_reset`, `command_timer_reset`, `command_wake_queue_clear`, `command_reset_interrupt_counters`, `command_scheduler_disable`, `command_task_create`, and `command_task_wait_interrupt_for` end to end over the PVH freestanding artifact with `status.ticks` seeded to `18446744073709551612`.
+    - current proof path validates `ACK=7`, `LAST_OPCODE=58`, `LAST_RESULT=0`, `ARM_TICKS=18446744073709551615`, `ARMED_WAIT_TIMEOUT=18446744073709551615`, `WAKE_TICKS=0`, `WAKE0_REASON=1`, `WAKE0_TICK=18446744073709551615`, and proves the queued timeout wake keeps the saturated deadline while the live wake boundary wraps cleanly to `0`.
+  - bare-metal QEMU wake-queue selective validation shipped:
+    - new script: `scripts/baremetal-qemu-wake-queue-selective-probe-check.ps1` resolves wake-queue, timer-state, status, and command-mailbox symbols from the freestanding ELF and drives mixed timer/interrupt/manual wake flows plus selective drain commands through the mailbox under QEMU+GDB.
+    - the probe validates `command_task_wait_for`, `command_task_wait_interrupt`, `command_trigger_interrupt`, `command_task_wait`, `command_scheduler_wake_task`, `command_wake_queue_pop_reason`, `command_wake_queue_pop_vector`, `command_wake_queue_pop_reason_vector`, and `command_wake_queue_pop_before_tick` end to end over the PVH freestanding artifact.
+    - current proof path validates a five-entry live queue (`timer`, `interrupt@13`, `interrupt@13`, `interrupt@31`, `manual`), then proves selective drains preserve FIFO order for survivors (`len 5 -> 4 -> 3 -> 2 -> 1`) and finish with only the manual wake entry remaining while queued wake telemetry stays stable after extra ticks.
+    - depth expansion: new generic telemetry query wrappers (`oc_wake_queue_count_query_ptr`, `oc_wake_queue_count_snapshot_ptr`) now let the same live PVH run prove vector counts (`13`, `31`), exact `interrupt@31` pair counts, before-tick counts, and invalid `reason+vector=0` rejection instead of relying only on survivor ordering.
+    - wrapper batch shipped: `scripts/baremetal-qemu-wake-queue-selective-baseline-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-selective-reason-drain-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-selective-vector-drain-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-selective-reason-vector-drain-probe-check.ps1`, and `scripts/baremetal-qemu-wake-queue-selective-before-tick-final-probe-check.ps1`.
+    - the broad probe now emits the full mixed selective sequence as dedicated stage receipts, and the tightened host regression now asserts the same queue/query boundaries directly, so wrappers fail independently on baseline composition, reason drain, vector drain, exact reason+vector drain, and the final before-tick/invalid-pair preserved-state boundary.
+  - bare-metal QEMU wake-queue selective-overflow validation shipped:
+    - new script: `scripts/baremetal-qemu-wake-queue-selective-overflow-probe-check.ps1` reuses the batch-pop PVH artifact, drives `66` alternating `interrupt@13` / `interrupt@31` wake cycles over a single task, then issues wrapped-ring selective drain commands under QEMU+GDB.
+    - the probe validates `command_scheduler_reset`, `command_wake_queue_clear`, `command_reset_interrupt_counters`, `command_scheduler_disable`, `command_task_create`, repeated `command_task_wait_interrupt`, repeated `command_trigger_interrupt`, `command_wake_queue_pop_vector`, and `command_wake_queue_pop_reason_vector` end to end over the PVH freestanding artifact.
+    - current proof path validates `ACK=139`, `LAST_OPCODE=62`, `LAST_RESULT=0`, a wrapped pre-drain queue (`count=64`, `head=2`, `tail=2`, `overflow=2`, `seq 3 -> 66`), a post-`pop_vector(13,31)` survivor window (`count=33`, first `seq=4/vector=31`, retained `seq=65/vector=13`, last `seq=66/vector=31`), and a final post-`pop_reason_vector(interrupt@13)` queue containing only `vector=31` wakes (`count=32`, `head=32`, `tail=0`, `overflow=2`).
+    - wrapper validation shipped: `scripts/baremetal-qemu-wake-queue-selective-overflow-baseline-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-selective-overflow-vector-drain-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-selective-overflow-vector-survivors-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-selective-overflow-reason-vector-drain-probe-check.ps1`, and `scripts/baremetal-qemu-wake-queue-selective-overflow-reason-vector-survivors-probe-check.ps1` now reuse the broad QEMU lane but fail directly on wrapped baseline shape, post-vector collapse, lone retained `interrupt@13` survivor ordering, post-reason+vector collapse, and final all-`vector=31` survivor ordering.
+    - host regression depth increased in `src/baremetal_main.zig`: the wrapped selective-overflow test now asserts exact `reason+vector` counts before drains, after `command_wake_queue_pop_vector`, and after `command_wake_queue_pop_reason_vector`, so the local test and QEMU wrappers enforce the same survivor contract.
+  - bare-metal QEMU wake-queue before-tick-overflow validation shipped:
+    - new script: `scripts/baremetal-qemu-wake-queue-before-tick-overflow-probe-check.ps1` reuses the batch-pop PVH artifact, drives `66` alternating `interrupt@13` / `interrupt@31` wake cycles over a single task, then reads the retained queue ticks back from the wrapped ring and feeds them into `command_wake_queue_pop_before_tick` under QEMU+GDB.
+    - the probe validates `command_scheduler_reset`, `command_wake_queue_clear`, `command_reset_interrupt_counters`, `command_scheduler_disable`, `command_task_create`, repeated `command_task_wait_interrupt`, repeated `command_trigger_interrupt`, and `command_wake_queue_pop_before_tick` end to end over the PVH freestanding artifact.
+    - current proof path validates `ACK=141`, `LAST_OPCODE=61`, `LAST_RESULT=-2`, a wrapped pre-drain queue (`count=64`, `head=2`, `tail=2`, `overflow=2`, `seq 3 -> 66`), a first threshold drain to `seq 35 -> 66` (`count=32`, `head=32`, `tail=0`), a second threshold drain to only `seq 66` (`count=1`, `head=1`, `tail=0`), and a final empty queue with stable overflow accounting plus the explicit empty-queue `result_not_found` path (`count=0`, `head=0`, `tail=0`, `overflow=2`).
+  - bare-metal QEMU wake-queue before-tick-overflow wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-wake-queue-before-tick-overflow-baseline-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-before-tick-overflow-first-cutoff-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-before-tick-overflow-first-survivor-window-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-before-tick-overflow-second-cutoff-probe-check.ps1`, and `scripts/baremetal-qemu-wake-queue-before-tick-overflow-final-empty-preserve-probe-check.ps1` reuse the broad wrapped deadline-drain QEMU lane and fail directly on narrow stage boundaries under QEMU+GDB.
+    - matching host-regression coverage in `src/baremetal_main.zig` now also proves the final rejected `command_wake_queue_pop_before_tick` call preserves empty queue shape (`count/head/tail = 0`), retains `overflow=2`, and leaves `oc_wake_queue_before_tick_count(565) == 0` instead of mutating wrapped-ring state after the empty/notfound boundary.
+  - bare-metal QEMU wake-queue reason-overflow validation shipped:
+    - new script: `scripts/baremetal-qemu-wake-queue-reason-overflow-probe-check.ps1` reuses the batch-pop PVH artifact, drives `66` alternating `manual` / `interrupt@13` wake cycles over a single task, then issues wrapped-ring `command_wake_queue_pop_reason` drains under QEMU+GDB.
+    - the probe validates `command_scheduler_reset`, `command_wake_queue_clear`, `command_reset_interrupt_counters`, `command_scheduler_disable`, `command_task_create`, repeated `command_task_wait`, repeated `command_scheduler_wake_task`, repeated `command_task_wait_interrupt`, repeated `command_trigger_interrupt`, and `command_wake_queue_pop_reason` end to end over the PVH freestanding artifact.
+    - current proof path validates `ACK=139`, `LAST_OPCODE=59`, `LAST_RESULT=0`, a wrapped pre-drain mixed-reason queue (`count=64`, `head=2`, `tail=2`, `overflow=2`, `seq 3 -> 66`, first `manual`, last `interrupt`), a post-`pop_reason(manual,31)` survivor window (`count=33`, first `seq=4/reason=interrupt`, retained `seq=65/reason=manual`, last `seq=66/reason=interrupt`), and a final post-`pop_reason(manual,99)` queue containing only interrupt wakes (`count=32`, `head=32`, `tail=0`, `overflow=2`).
+  - bare-metal QEMU wake-queue reason-overflow wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-wake-queue-reason-overflow-baseline-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-reason-overflow-manual-drain-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-reason-overflow-manual-survivors-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-reason-overflow-interrupt-drain-probe-check.ps1`, and `scripts/baremetal-qemu-wake-queue-reason-overflow-interrupt-survivors-probe-check.ps1` reuse the broad wrapped mixed-reason QEMU lane and fail directly on narrow stage boundaries under QEMU+GDB.
+    - matching host-regression coverage in `src/baremetal_main.zig` now proves exact `reason+vector` counts before any drain, after the partial manual drain, and after the final manual removal without relying only on survivor ordering.
+    - current wrapper set validates the overflow baseline (`manual=32`, `interrupt@13=32` across `seq 3 -> 66`), post-`pop_reason(manual,31)` collapse to `count=33`, lone retained `manual` survivor ordering at `seq 65`, post-`pop_reason(manual,99)` collapse to `count=32`, and final all-`interrupt` survivor ordering with stable wrapped-ring accounting.
+  - bare-metal QEMU wake-queue summary/age validation shipped:
+    - new script: `scripts/baremetal-qemu-wake-queue-summary-age-probe-check.ps1` resolves the exported wake-queue snapshot wrappers from the freestanding ELF and drives mixed timer/interrupt/manual wake flows plus selective drain commands through the mailbox under QEMU+GDB.
+    - the probe validates `oc_wake_queue_summary_ptr`, `oc_wake_queue_age_buckets_ptr_quantum_2`, `command_task_wait_for`, `command_task_wait_interrupt`, `command_trigger_interrupt`, `command_task_wait`, `command_scheduler_wake_task`, and `command_wake_queue_pop_reason_vector` end to end over the PVH freestanding artifact.
+    - current proof path validates a five-entry live queue (`timer`, `interrupt@13`, `interrupt@13`, `interrupt@31`, `manual`), exported summary snapshot parity (`len`, overflow, timer/interrupt/manual counts, non-zero vector count, stale count, oldest tick, newest tick), exported age-bucket parity (`current_tick`, `quantum_ticks=2`, stale count, stale-older-than-quantum count, future count), and post-drain snapshot changes after removing one `interrupt@13` wake (`len=4`, interrupt count `2`, non-zero vector count `2`, stale count `4`).
+  - bare-metal QEMU wake-queue count-snapshot wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-wake-queue-count-snapshot-baseline-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-count-snapshot-query1-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-count-snapshot-query2-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-count-snapshot-query3-probe-check.ps1`, and `scripts/baremetal-qemu-wake-queue-count-snapshot-nonmutating-read-probe-check.ps1` reuse the broad count-snapshot QEMU lane and fail directly on narrow stage boundaries under QEMU+GDB.
+    - matching host regression coverage in `src/baremetal_main.zig` now proves `oc_wake_queue_count_snapshot_ptr` stays live across queue mutations, including `wakeQueuePopReason`, `wakeQueuePopVector`, and query retargeting from `interrupt@13` to `manual`.
+    - current proof path validates baseline queue ordering (`task 1 -> 5`, `tick 10 -> 50`), staged query counts (`2/2/2`, `1/4/1`, `1/5/0`), and nonmutating mailbox-read invariants (`ACK=19`, `LAST_OPCODE=45`, `WAKE_QUEUE_COUNT == TIMER_PENDING_WAKE_COUNT == PRE_LEN`) against the PVH freestanding artifact.
+  - bare-metal QEMU wake-queue overflow validation shipped:
+    - new script: `scripts/baremetal-qemu-wake-queue-overflow-probe-check.ps1` builds a dedicated PVH artifact, drives `command_scheduler_reset`, `command_wake_queue_clear`, `command_scheduler_disable`, one `command_task_create`, then `66` `task_wait -> scheduler_wake_task` cycles through the mailbox under QEMU+GDB.
+    - the probe validates sustained manual wake pressure over the PVH freestanding artifact with a single live task and no scheduler side effects beyond the explicit mailbox flow.
+    - current proof path validates `ACK=136`, `LAST_OPCODE=45`, `LAST_RESULT=0`, `head=2`, `tail=2`, `overflow=2`, and retained oldest/newest manual wake payloads at `seq=3` and `seq=66`.
+  - bare-metal QEMU wake-queue overflow wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-wake-queue-overflow-baseline-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-overflow-shape-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-overflow-oldest-entry-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-overflow-newest-entry-probe-check.ps1`, and `scripts/baremetal-qemu-wake-queue-overflow-mailbox-state-probe-check.ps1` reuse the broad sustained-manual-pressure QEMU lane and fail directly on narrow stage boundaries under QEMU+GDB.
+    - matching host-regression coverage in `src/baremetal_main.zig` now also proves `oc_wake_queue_head_index()` and `oc_wake_queue_tail_index()` stay pinned at `2` once the wrapped 64-entry manual ring reaches `66` wakes.
+    - current wrapper set validates the `66`-wake baseline, wrapped ring shape (`count=64`, `head=2`, `tail=2`, `overflow=2`), retained oldest payload (`seq=3`), retained newest payload (`seq=66`), and final mailbox receipt (`ACK=136`, `LAST_OPCODE=45`, `LAST_RESULT=0`) over the PVH freestanding artifact.
+  - bare-metal QEMU wake-queue clear validation shipped:
+    - new script: `scripts/baremetal-qemu-wake-queue-clear-probe-check.ps1` builds a dedicated PVH artifact, drives the same `66`-wake wrapped manual ring, issues `command_wake_queue_clear`, then reuses the queue through one more `task_wait -> scheduler_wake_task` cycle under QEMU+GDB.
+    - current proof path validates `ACK=139`, `LAST_OPCODE=45`, `LAST_RESULT=0`, a wrapped pre-clear queue (`count=64`, `head=2`, `tail=2`, `overflow=2`, oldest `seq=3`, newest `seq=66`), a full post-clear collapse (`count/head/tail/overflow = 0`) with pending wake telemetry reset, and a clean reuse at `seq=1` over the same task id with `manual` wake reason.
+  - bare-metal QEMU wake-queue clear wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-wake-queue-clear-baseline-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-clear-collapse-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-clear-pending-reset-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-clear-reuse-shape-probe-check.ps1`, and `scripts/baremetal-qemu-wake-queue-clear-reuse-payload-probe-check.ps1`.
+    - matching host-regression coverage in `src/baremetal_main.zig` now proves `oc_timer_state_ptr().pending_wake_count` resets to `0` after clear, rises back to `1` after the reused manual wake, and the reused event preserves `manual` wake reason plus the expected task id/tick payload.
+    - current wrapper set validates the wrapped baseline (`count=64`, `head=2`, `tail=2`, `overflow=2`, oldest `seq=3`, newest `seq=66`), post-clear ring collapse, post-clear pending-wake reset, post-reuse queue shape (`count=1`, `head=1`, `tail=0`, `overflow=0`, pending wake count `1`, `seq=1`), and final post-reuse payload invariants.
+  - bare-metal QEMU timer-disable reenable validation shipped:
+    - new script: `scripts/baremetal-qemu-timer-disable-reenable-probe-check.ps1` resolves timer, scheduler, wake-queue, status, and command-mailbox symbols from the freestanding ELF and drives a pure `command_task_wait_for` one-shot timer waiter across `command_timer_disable` and `command_timer_enable` under QEMU+GDB.
+    - the probe validates `command_scheduler_reset`, `command_timer_reset`, `command_wake_queue_clear`, `command_scheduler_disable`, `command_task_create`, `command_task_wait_for`, `command_timer_disable`, and `command_timer_enable` end to end over the PVH freestanding artifact.
+    - current proof path validates `ACK=8`, `LAST_OPCODE=46`, `LAST_RESULT=0`, `ARMED_TICK=7`, `DISABLED_TICK=7`, `PAUSED_TICK=11`, `POST_WAKE_TICK=13`, `TIMER_ENTRY_COUNT=0`, `TIMER_DISPATCH_COUNT=1`, `WAKE_QUEUE_COUNT=1`, and `WAKE0_REASON=1`, proving the overdue one-shot wake lands exactly once after re-enable.
+  - bare-metal QEMU interrupt-timeout disable-enable validation shipped:
+    - new script: `scripts/baremetal-qemu-interrupt-timeout-disable-enable-probe-check.ps1` resolves scheduler wait-kind arrays, timeout tick state, timer state, wake-queue state, interrupt state, status, and command-mailbox symbols from the freestanding ELF and drives `command_task_wait_interrupt_for` across `command_timer_disable` and `command_timer_enable` under QEMU+GDB.
+    - the probe validates `command_scheduler_reset`, `command_timer_reset`, `command_wake_queue_clear`, `command_reset_interrupt_counters`, `command_scheduler_disable`, `command_task_create`, `command_task_wait_interrupt_for`, `command_timer_disable`, and `command_timer_enable` end to end over the PVH freestanding artifact.
+    - current proof path validates `ACK=9`, `LAST_OPCODE=46`, `LAST_RESULT=0`, `ARMED_TICKS=7`, `ARMED_WAIT_TIMEOUT=8`, `DISABLED_WAIT_KIND0=3`, `DISABLED_WAIT_TIMEOUT0=8`, `DISABLED_TASK0_STATE=6`, `DISABLED_WAKE_QUEUE_COUNT=0`, `PAUSED_TICK=12`, `PAUSED_WAIT_KIND0=3`, `PAUSED_WAIT_TIMEOUT0=8`, `PAUSED_TASK0_STATE=6`, `PAUSED_WAKE_QUEUE_COUNT=0`, `WAKE0_REASON=1`, `WAKE0_VECTOR=0`, `WAKE0_TICK=12`, `TIMER_PENDING_WAKE_COUNT=1`, and `INTERRUPT_COUNT=0`, proving the timeout arm survives disable, the waiter stays blocked even after the original deadline passes while timers remain disabled, and the overdue timer wake lands exactly once after re-enable with zero interrupt contamination.
+  - bare-metal QEMU interrupt-timeout disable-enable wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-interrupt-timeout-disable-enable-arm-preservation-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-disable-enable-deadline-hold-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-disable-enable-paused-window-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-disable-enable-deferred-timer-wake-probe-check.ps1`, and `scripts/baremetal-qemu-interrupt-timeout-disable-enable-telemetry-preserve-probe-check.ps1`.
+    - the broad `scripts/baremetal-qemu-interrupt-timeout-disable-enable-probe-check.ps1` path was hardened for wrapper reuse: whole-line value parsing replaced substring matching, explicit disable and paused-window snapshots are now exported, and the mixed proof now asserts those snapshots directly before it reaches the final deferred wake.
+    - the wrappers reuse that broad path but each fails directly on one contract boundary: preserved timeout arm immediately after disable, continued waiting past the original deadline while timers stay disabled, paused-window zero-wake stability, deferred timer-only wake after `command_timer_enable`, and preserved zero-interrupt telemetry across the later timer wake.
+    - this batch does not widen runtime surface area; it tightens CI failure localization around the disabled-timer timeout path so regressions land on the exact boundary that broke instead of inside the broad mixed-state probe.
+  - bare-metal QEMU interrupt-timeout disable-interrupt validation shipped:
+    - new script: `scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-probe-check.ps1` resolves the same timeout, timer, wake-queue, interrupt, status, and command-mailbox symbols from the freestanding ELF and drives `command_task_wait_interrupt_for` across `command_timer_disable` while a real interrupt arrives before `command_timer_enable` under QEMU+GDB.
+    - the probe validates `command_scheduler_reset`, `command_timer_reset`, `command_wake_queue_clear`, `command_reset_interrupt_counters`, `command_scheduler_disable`, `command_task_create`, `command_task_wait_interrupt_for`, `command_timer_disable`, `command_trigger_interrupt`, and `command_timer_enable` end to end over the PVH freestanding artifact.
+    - current proof path validates `ACK=12`, `LAST_OPCODE=46`, `LAST_RESULT=0`, `AFTER_INTERRUPT_WAKE_QUEUE_COUNT=1`, `AFTER_INTERRUPT_TIMER_COUNT=1`, `AFTER_INTERRUPT_INTERRUPT_TASK_STATE=1`, `AFTER_INTERRUPT_TIMER_TASK_STATE=6`, `PAUSED_WAKE_QUEUE_COUNT=1`, `PAUSED_TIMER_ENTRY_COUNT=1`, `PAUSED_TIMER_DISPATCH_COUNT=0`, `WAKE0_REASON=2`, `WAKE0_VECTOR=200`, `WAKE1_REASON=1`, `WAKE1_VECTOR=0`, `WAKE1_TIMER_ID=TIMER0_ID`, `TIMER_LAST_INTERRUPT_COUNT=1`, and `INTERRUPT_COUNT=1`, proving the interrupt wins immediately while timers are disabled, the one-shot arm survives the paused disabled window, the deferred timer wake appears only after re-enable, and the later timer wake preserves the earlier interrupt telemetry.
+  - bare-metal QEMU interrupt-timeout disable-interrupt wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-immediate-wake-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-timeout-clear-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-disabled-state-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-reenable-no-stale-timer-probe-check.ps1`, and `scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-telemetry-preserve-probe-check.ps1`.
+    - the broad `scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-probe-check.ps1` path was hardened for wrapper reuse: it now emits explicit disabled-window and settled-window snapshots so wrappers fail directly on intermediate state instead of inferring from a single final receipt.
+    - the wrappers reuse that broad path but each fails directly on one contract boundary: immediate interrupt wake while timers remain disabled, cleared timeout/wait-vector state after the interrupt wake, preserved disabled timer state after the wake, no stale timer wake after `command_timer_enable`, and preserved interrupt/last-wake telemetry across the later settle window.
+  - bare-metal QEMU timer-recovery wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-timer-disable-paused-state-probe-check.ps1`, `scripts/baremetal-qemu-timer-disable-reenable-oneshot-recovery-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-disable-reenable-timer-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-recovery-probe-check.ps1`, and `scripts/baremetal-qemu-timer-reset-wait-kind-isolation-probe-check.ps1`.
+    - the wrappers reuse the broad timer-disable and timer-reset QEMU probes, but each fails directly on a narrow contract boundary: disabled-window paused-state stability, pure one-shot overdue wake recovery after re-enable, timeout-backed timer-only recovery after re-enable, timeout-backed direct interrupt recovery while timers are disabled, and timer-reset wait-kind isolation between pure timer waits and interrupt waiters.
+    - this batch does not widen runtime surface area; it tightens failure localization in CI so timer-recovery regressions land on a single contract instead of inside a broad mixed-state probe.
+  - bare-metal QEMU timer-disable interrupt wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-timer-disable-interrupt-immediate-wake-probe-check.ps1`, `scripts/baremetal-qemu-timer-disable-interrupt-arm-preservation-probe-check.ps1`, `scripts/baremetal-qemu-timer-disable-interrupt-paused-window-probe-check.ps1`, `scripts/baremetal-qemu-timer-disable-interrupt-deferred-timer-wake-probe-check.ps1`, and `scripts/baremetal-qemu-timer-disable-interrupt-telemetry-preserve-probe-check.ps1`.
+    - the broad `scripts/baremetal-qemu-timer-disable-interrupt-probe-check.ps1` path was hardened for wrapper reuse: whole-line value parsing replaced substring matching, stale QEMU/GDB log files are cleared before each run, and the probe now exports explicit after-interrupt, paused-window, and final wake/telemetry fields for narrow assertions.
+    - the wrappers reuse that broad mixed path but each fails directly on one contract boundary: immediate interrupt wake while timers stay disabled, preserved armed one-shot timer state immediately after the interrupt, stable paused disabled-window state with no ghost wake/dispatch drift, deferred one-shot timer wake only after `command_timer_enable`, and preserved interrupt telemetry on the later timer wake.
+    - this batch does not widen runtime surface area; it tightens CI failure localization around the disabled-timer mixed path so regressions land on the exact boundary that broke instead of inside the broad mixed-state probe.
+  - bare-metal QEMU timer/scheduler reset wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-timer-reset-pure-wait-recovery-probe-check.ps1`, `scripts/baremetal-qemu-timer-reset-timeout-interrupt-recovery-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-reset-wake-clear-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-reset-timer-clear-probe-check.ps1`, and `scripts/baremetal-qemu-scheduler-reset-config-preservation-probe-check.ps1`.
+    - the broad scheduler-reset mixed-state probe was corrected to match the host-validated runtime contract: before `command_scheduler_reset` there is stale queued wake state plus pending timer bookkeeping, but no armed timer entry (`wake_queue_len=1`, `timer_entry_count=0`, `pending_wake_count=1`).
+    - the wrapper batch isolates five narrower guarantees that were previously only implied inside the broad probes: pure timer waiters recover through the first manual wake after `command_timer_reset`, timeout-backed interrupt waiters preserve interrupt mode while dropping only the stale timeout arm, `command_scheduler_reset` clears stale queued wakes, `command_scheduler_reset` clears stale pending timer bookkeeping, and timer quantum/`next_timer_id` survive scheduler reset for the first fresh re-arm.
+    - the probe validates `command_scheduler_reset`, `command_wake_queue_clear`, `command_scheduler_disable`, `command_task_create`, repeated `command_task_wait`, repeated `command_scheduler_wake_task`, and a wrapped-ring clear/reset path end to end over the PVH freestanding artifact.
+    - current proof path validates `ACK=139`, `LAST_OPCODE=45`, `LAST_RESULT=0`, pre-clear wrapped state (`count=64`, `head=2`, `tail=2`, `overflow=2`, `seq 3 -> 66`), post-clear reset (`count=0`, `head=0`, `tail=0`, `overflow=0`, `pending_wake_count=0`), and clean reuse (`count=1`, `head=1`, `tail=0`, `overflow=0`, `seq=1`, `reason=manual`).
+  - bare-metal QEMU wake-queue batch-pop validation shipped:
+    - new script: `scripts/baremetal-qemu-wake-queue-batch-pop-probe-check.ps1` builds a dedicated PVH artifact, drives the same `66`-wake overflow setup, then issues `command_wake_queue_pop` batch and default drains plus a final reuse cycle through the mailbox under QEMU+GDB.
+    - the probe validates post-overflow recovery over the PVH freestanding artifact with no queue clear/reset: a `62`-entry batch pop leaves `seq=65/66`, a default pop leaves only `seq=66`, a final drain empties the queue with `head=tail=2`, and the next manual wake reuses the ring at `seq=67`.
+  - bare-metal QEMU wake-queue batch-pop wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-wake-queue-batch-pop-overflow-baseline-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-batch-pop-survivor-pair-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-batch-pop-single-survivor-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-batch-pop-drain-empty-probe-check.ps1`, and `scripts/baremetal-qemu-wake-queue-batch-pop-refill-reuse-probe-check.ps1`.
+    - the wrapper batch reuses the broad live batch-pop probe and isolates five narrower boundaries that were previously only implied by the full overflow-to-refill sequence: overflow-baseline stability, retained survivor pair `seq=65/66`, single-survivor state after the zero-count pop, drained-empty queue state, and final refill/reuse receipt at `seq=67`.
+  - bare-metal QEMU wake-queue vector-pop validation shipped:
+    - new script: `scripts/baremetal-qemu-wake-queue-vector-pop-probe-check.ps1` builds a dedicated PVH artifact, drives `command_scheduler_reset`, `command_wake_queue_clear`, `command_reset_interrupt_counters`, `command_scheduler_disable`, then creates a four-entry live mixed queue through `command_task_wait`, `command_task_wait_interrupt`, `command_scheduler_wake_task`, and `command_trigger_interrupt` under QEMU+GDB.
+    - the probe validates the dedicated `command_wake_queue_pop_vector` lane over the PVH freestanding artifact: first removing only the oldest `interrupt@13` wake, then draining the remaining vector-`13` survivor, while preserving the surrounding `manual` and `interrupt@31` wakes in FIFO order.
+    - current proof path validates `ACK=19`, `LAST_OPCODE=60`, `LAST_RESULT=-2`, pre-drain queue order `task1/manual`, `task2/13`, `task3/13`, `task4/31`, mid-drain queue order `task1/manual`, `task3/13`, `task4/31`, post-drain queue order `task1/manual`, `task4/31`, and final vector `255` `result_not_found`.
+  - bare-metal QEMU wake-queue reason-vector-pop validation shipped:
+    - new script: `scripts/baremetal-qemu-wake-queue-reason-vector-pop-probe-check.ps1` builds a dedicated PVH artifact, drives `command_scheduler_reset`, `command_wake_queue_clear`, `command_reset_interrupt_counters`, `command_scheduler_disable`, then creates a four-entry live mixed queue through `command_task_wait`, `command_task_wait_interrupt`, `command_scheduler_wake_task`, and `command_trigger_interrupt` under QEMU+GDB.
+    - the probe validates the dedicated `command_wake_queue_pop_reason_vector` lane over the PVH freestanding artifact: first removing only the oldest exact `interrupt@13` pair, then draining the remaining `interrupt@13` survivor, while preserving the surrounding `manual` and `interrupt@19` wakes in FIFO order.
+    - current proof path validates `ACK=19`, `LAST_OPCODE=62`, `LAST_RESULT=-22`, pre-drain queue order `task1/manual`, `task2/13`, `task3/13`, `task4/19`, mid-drain queue order `task1/manual`, `task3/13`, `task4/19`, post-drain queue order `task1/manual`, `task4/19`, and final `reason+vector=0` `result_invalid_argument`.
+  - bare-metal QEMU wake-queue reason-vector-pop wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-wake-queue-reason-vector-pop-baseline-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-reason-vector-pop-first-match-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-reason-vector-pop-survivor-order-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-reason-vector-pop-invalid-pair-probe-check.ps1`, and `scripts/baremetal-qemu-wake-queue-reason-vector-pop-invalid-preserve-state-probe-check.ps1`.
+    - `scripts/baremetal-qemu-wake-queue-reason-vector-pop-probe-check.ps1` now emits deeper `MID_*` and `FINAL_*` stage receipts so wrappers fail directly on first exact-pair removal and invalid-pair nonmutation instead of inferring from the final broad receipt alone.
+    - `src/baremetal_main.zig` now also proves invalid `reason+vector=0` rejection leaves the final `interrupt@19` / `timer@13` survivor pair unchanged in the host suite.
+  - bare-metal QEMU allocator/syscall validation shipped:
+    - new script: `scripts/baremetal-qemu-allocator-syscall-probe-check.ps1` resolves allocator state/record, page bitmap, and syscall state/entry symbols from the freestanding ELF and drives allocator/syscall commands through the mailbox under QEMU+GDB.
+    - the probe validates `command_allocator_reset`, `command_allocator_alloc`, `command_allocator_free`, `command_syscall_reset`, `command_syscall_register`, `command_syscall_invoke`, `command_syscall_set_flags`, `command_syscall_disable`, `command_syscall_enable`, and `command_syscall_unregister` end to end over the PVH freestanding artifact, including the recovery path after re-enable.
+    - current proof path validates `ack=14`, `last_opcode=35`, `last_result=0`, `ticks=15`, first allocation at heap base `0x0010_0000`, `free_pages=254` after alloc, `page_len=2`, bitmap entries consumed then released, first syscall invoke result `47206`, blocked invoke result `-17`, disabled invoke result `-38`, re-enabled+flag-cleared invoke result `47206` with dispatch/invoke counts `2/2`, allocator returned to fully freed state, and syscall state returned to enabled/unregistered steady state.
+  - bare-metal QEMU syscall saturation validation shipped:
+    - new host regression: `test "baremetal syscall table saturates and reuses cleared slots"` in `src/baremetal_main.zig`
+    - new script: `scripts/baremetal-qemu-syscall-saturation-probe-check.ps1` resolves syscall state/entry symbols from the freestanding ELF and drives the full table-capacity boundary through the mailbox under QEMU+GDB.
+    - the probe validates `command_syscall_reset`, 64 successful `command_syscall_register` calls, 65th-entry `result_no_space`, reclaimed-slot reuse through `command_syscall_unregister` + `command_syscall_register`, and a clean post-reuse `command_syscall_invoke` over the PVH freestanding artifact.
+    - current proof path validates hosted `71/71`, live `ACK=69`, `LAST_OPCODE=36`, `LAST_RESULT=0`, `ENTRY_CAPACITY=64`, `ENTRY_COUNT=64`, `FULL_COUNT=64`, overflow result `-28`, reclaimed-slot reuse `6 -> 106`, reused token `42330`, and fresh dispatch/invoke telemetry (`DISPATCH_COUNT=1`, `STATE_LAST_RESULT=42326`, `INVOKE_TICK=68`).
+  - bare-metal QEMU syscall saturation-reset validation shipped:
+    - new host regression: `test "baremetal syscall reset clears saturated table and restarts dispatch state"` in `src/baremetal_main.zig`
+    - new script: `scripts/baremetal-qemu-syscall-saturation-reset-probe-check.ps1` resolves syscall state/entry symbols from the freestanding ELF and drives a fully saturated table, a real pre-reset invoke, `command_syscall_reset`, and a fresh post-reset register/invoke path through the mailbox under QEMU+GDB.
+    - the probe validates full 64-entry saturation, pre-reset dispatch telemetry (`dispatch_count=1`, `last_id=7`, real invoke result), `command_syscall_reset` collapse to enabled empty steady state, and a fresh syscall restart from slot `0` with clean invoke telemetry.
+    - current proof path validates hosted `72/72`, `ACK=69`, `LAST_OPCODE=36`, `LAST_RESULT=0`, `PRE_RESET_ENTRY_COUNT=64`, `PRE_RESET_DISPATCH_COUNT=1`, `PRE_RESET_LAST_RESULT=8276`, `POST_RESET_ENTRY_COUNT=0`, `POST_RESET_DISPATCH_COUNT=0`, `FRESH_ID=777`, `FRESH_TOKEN=53261`, `FRESH_INVOKE_COUNT=1`, and `STATE_LAST_RESULT=54173`.
+  - bare-metal allocator/syscall reset-depth validation shipped:
+    - new host regression: `test "baremetal allocator and syscall reset commands clear dirty runtime state"` in `src/baremetal_main.zig`
+    - the hosted bare-metal suite now dirties allocator state through `command_allocator_alloc` and syscall state through `command_syscall_register` + `command_syscall_invoke`, then proves `command_allocator_reset` and `command_syscall_reset` clear allocation/syscall runtime state and force post-reset `command_syscall_invoke` back to `result_not_found`.
+    - the live QEMU allocator/syscall probe was deepened in place to capture dirty pre-reset allocator/syscall telemetry and then drive `command_allocator_reset` + `command_syscall_reset` after the full alloc/register/invoke/block/disable/re-enable/clear-flags/unregister path.
+    - current proof path validates hosted `68/68`, live `ACK=16`, `LAST_OPCODE=37`, `LAST_RESULT=0`, pre-reset allocator/syscall counters (`alloc_ops=1`, `free_ops=1`, `peak_bytes=8192`, `dispatch_count=2`, `last_id=7`), and final reset state with allocator/syscall counters and entry records zeroed back to steady baseline.
+  - bare-metal allocator/syscall wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-allocator-syscall-baseline-probe-check.ps1`, `scripts/baremetal-qemu-allocator-syscall-alloc-stage-probe-check.ps1`, `scripts/baremetal-qemu-allocator-syscall-invoke-stage-probe-check.ps1`, `scripts/baremetal-qemu-allocator-syscall-guard-stage-probe-check.ps1`, and `scripts/baremetal-qemu-allocator-syscall-final-reset-state-probe-check.ps1`.
+    - `scripts/baremetal-qemu-allocator-syscall-probe-check.ps1` now serves as the shared evidence source for five narrow wrappers that fail directly on mailbox baseline, allocation-stage page/bitmap state, invoke-stage dispatch/result state, blocked/disabled/re-enabled guard semantics, and final allocator/syscall reset-baseline invariants.
+    - `src/baremetal_main.zig` now also proves allocator alloc/free telemetry (`alloc_ops`, `free_ops`, `bytes_in_use`, `peak_bytes_in_use`, `last_free_size`) and syscall register/invoke/unregister telemetry (`handler_token`, `last_result`, `invoke_count`, `last_arg`, final unused entry state`) in the hosted bare-metal suite before the live PVH/QEMU wrappers enforce the same lane boundaries.
+  - bare-metal QEMU syscall-control validation shipped:
+    - new host regression: `test "baremetal syscall control commands isolate mutation and invoke paths"` in `src/baremetal_main.zig`
+    - new script: `scripts/baremetal-qemu-syscall-control-probe-check.ps1` resolves syscall state/entry symbols from the freestanding ELF and drives an isolated syscall-only mutation lane through the mailbox under QEMU+GDB.
+    - the probe validates `command_syscall_reset`, `command_syscall_register` re-register without entry-count growth, `command_syscall_set_flags`, blocked `command_syscall_invoke`, `command_syscall_disable`, disabled invoke, `command_syscall_enable`, successful invoke, `command_syscall_unregister`, and missing-entry `command_syscall_set_flags` / `command_syscall_unregister` semantics end to end over the PVH freestanding artifact.
+    - current proof path validates hosted `70/70`, live `ACK=13`, `LAST_OPCODE=35`, `LAST_RESULT=-2`, updated token `0xCAFE`, blocked invoke `-17`, disabled invoke `-38`, successful invoke result `55489`, dispatch count `1`, final enabled state, and fully unregistered entry state with no synthetic residue.
+  - bare-metal QEMU allocator/syscall failure validation shipped:
+    - new script: `scripts/baremetal-qemu-allocator-syscall-failure-probe-check.ps1` resolves allocator state, command-result counters, and syscall state/entry symbols from the freestanding ELF and drives failure-path commands through the mailbox under QEMU+GDB.
+    - the probe validates `command_allocator_reset`, invalid-alignment `command_allocator_alloc`, no-space `command_allocator_alloc`, `command_syscall_reset`, `command_syscall_register`, blocked `command_syscall_invoke`, and disabled `command_syscall_invoke` end to end over the PVH freestanding artifact.
+    - current proof path validates `ack=11`, `last_opcode=36`, `last_result=-38`, allocator state remains fully free after failure paths, command-result counters record `ok=4`, `invalid=1`, `not_supported=1`, `other_error=2`, `total=8`, and the syscall entry remains blocked without synthetic invoke residue (`invoke_count=0`, `last_arg=0`, `last_result=0`).
+  - bare-metal QEMU allocator/syscall failure wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-allocator-syscall-failure-baseline-probe-check.ps1`, `scripts/baremetal-qemu-allocator-syscall-failure-invalid-align-probe-check.ps1`, `scripts/baremetal-qemu-allocator-syscall-failure-no-space-probe-check.ps1`, `scripts/baremetal-qemu-allocator-syscall-failure-blocked-probe-check.ps1`, and `scripts/baremetal-qemu-allocator-syscall-failure-final-state-probe-check.ps1`.
+    - together with the broad probe, the wrapper family now fails directly on final-mailbox state, invalid-alignment allocator preservation, no-space allocator preservation, blocked invoke state preservation, and final disabled-syscall/result-counter invariants.
+  - bare-metal QEMU command-result counters validation shipped:
+    - new script: `scripts/baremetal-qemu-command-result-counters-probe-check.ps1` resolves the live command-result counter struct from the freestanding ELF, clears the wake-queue baseline, and drives categorized mailbox results through QEMU+GDB.
+    - the probe validates `command_set_health_code`, invalid `command_set_mode`, unsupported opcode `65535`, empty-queue `command_wake_queue_pop`, and `command_reset_command_result_counters` end to end over the PVH freestanding artifact.
+    - current proof path validates pre-reset counters `ok=1`, `invalid=1`, `not_supported=1`, `other_error=1`, `total=4`, `last_result=-2`, `last_opcode=54`, `last_seq=5`, then validates the reset path collapses the live struct to `ok=1`, `invalid=0`, `not_supported=0`, `other_error=0`, `total=1`, `last_result=0`, `last_opcode=23`, `last_seq=6`.
+    - added wrapper scripts `scripts/baremetal-qemu-command-result-counters-baseline-probe-check.ps1`, `scripts/baremetal-qemu-command-result-counters-ok-bucket-probe-check.ps1`, `scripts/baremetal-qemu-command-result-counters-invalid-bucket-probe-check.ps1`, `scripts/baremetal-qemu-command-result-counters-not-supported-bucket-probe-check.ps1`, and `scripts/baremetal-qemu-command-result-counters-other-error-bucket-probe-check.ps1` so the pre-reset envelope and each mailbox result bucket fail independently while `scripts/baremetal-qemu-reset-command-result-preserve-runtime-probe-check.ps1` continues to enforce the post-reset runtime-preservation lane.
+  - bare-metal QEMU reset-counters validation shipped:
+    - new script: `scripts/baremetal-qemu-reset-counters-probe-check.ps1` reuses the descriptor-bootdiag PVH artifact, dirties live interrupt, exception, scheduler, allocator, syscall, timer, wake-queue, mode, boot-phase, command-history, and health-history state through the mailbox, then drives `command_reset_counters` under QEMU+GDB.
+    - current proof path validates pre-reset dirty state (`PRE_PANIC_COUNT=1`, `PRE_INTERRUPT_COUNT=2`, `PRE_EXCEPTION_COUNT=1`, `PRE_INTERRUPT_VECTOR_200=1`, `PRE_EXCEPTION_VECTOR_13=1`, `PRE_COMMAND_HISTORY_LEN=12`, `PRE_HEALTH_HISTORY_LEN=15`, `PRE_SCHEDULER_TASK_COUNT=1`, `PRE_ALLOCATOR_ALLOCATION_COUNT=1`, `PRE_SYSCALL_ENTRY_COUNT=1`, `PRE_TIMER_ENTRY_COUNT=1`, `PRE_WAKE_QUEUE_LEN=1`, `PRE_TIMER_QUANTUM=3`) and post-reset collapse (`POST_PANIC_COUNT=0`, `POST_INTERRUPT_COUNT=0`, `POST_EXCEPTION_COUNT=0`, `POST_COMMAND_HISTORY_LEN=1`, `POST_HEALTH_HISTORY_LEN=1`, `POST_MODE_HISTORY_LEN=0`, `POST_BOOT_HISTORY_LEN=0`, `POST_COMMAND_RESULT_TOTAL=1`, `POST_SCHEDULER_TASK_COUNT=0`, `POST_ALLOCATOR_ALLOCATION_COUNT=0`, `POST_SYSCALL_ENTRY_COUNT=0`, `POST_TIMER_ENTRY_COUNT=0`, `POST_WAKE_QUEUE_LEN=0`, `POST_TIMER_QUANTUM=1`).
+    - `build.zig` now runs `src/baremetal_main.zig` as part of the default `zig build test` gate, and the previously hidden wake-queue assertion drift was corrected so hosted + bare-metal suites are both green from the standard test entrypoint.
+    - the probe is wired into both `zig-ci` and `release-preview` validate stages so full reset regression now blocks CI.
+  - bare-metal QEMU task-lifecycle validation shipped:
+    - new script: `scripts/baremetal-qemu-task-lifecycle-probe-check.ps1` resolves scheduler state, task slots, wake-queue state, status, and command-mailbox symbols from the freestanding ELF and drives task lifecycle commands under QEMU+GDB.
+    - the probe validates `command_task_wait`, `command_scheduler_wake_task`, `command_task_resume`, and `command_task_terminate` end to end over the PVH freestanding artifact, then proves a post-terminate manual wake attempt is rejected with `result_not_found`.
+    - current proof path validates `ACK=10`, `LAST_OPCODE=45`, `LAST_RESULT=-2`, `TASK_ID=1`, first manual wake queue length `1`, second manual wake queue length `2`, both wait transitions at task state `6`, both wake transitions at task state `1`, and final terminate state `4` with task count returning to `0` after queued wakes for the terminated task are purged.
+  - bare-metal QEMU task-lifecycle wrapper coverage shipped:
+    - new scripts: `scripts/baremetal-qemu-task-lifecycle-wait1-baseline-probe-check.ps1`, `scripts/baremetal-qemu-task-lifecycle-wake1-manual-probe-check.ps1`, `scripts/baremetal-qemu-task-lifecycle-wait2-baseline-probe-check.ps1`, `scripts/baremetal-qemu-task-lifecycle-wake2-manual-probe-check.ps1`, and `scripts/baremetal-qemu-task-lifecycle-terminate-rejected-wake-probe-check.ps1`.
+    - the wrapper family reuses the broad task-lifecycle PVH/QEMU probe but fails directly on the narrow boundaries for the first wait baseline, first manual wake delivery, second wait baseline, second manual wake delivery after `command_task_resume`, and final terminate plus rejected-wake telemetry once queue entries for the terminated task have been cleared.
+    - `src/baremetal_main.zig` now mirrors the full lifecycle lane directly in the host suite, including explicit opcode assertions for `task_wait`, `scheduler_wake_task`, `task_resume`, `task_terminate`, and the rejected post-terminate wake path.
+  - bare-metal QEMU active-task terminate validation shipped:
+    - new script: `scripts/baremetal-qemu-active-task-terminate-probe-check.ps1` reuses the scheduler PVH artifact, resolves scheduler/task telemetry plus the live status and command-mailbox state from the freestanding ELF, and drives active `command_task_terminate` transitions under QEMU+GDB.
+    - the probe validates `command_scheduler_reset`, `command_wake_queue_clear`, `command_scheduler_disable`, two `command_task_create` calls, `command_scheduler_set_policy(priority)`, `command_scheduler_enable`, a live terminate of the currently running high-priority task, an idempotent repeat terminate on that already terminated task, and a final terminate of the remaining task end to end over the PVH freestanding artifact.
+    - current proof path validates pre-terminate active state (`TASK_COUNT=2`, `RUNNING_SLOT=1`, `LOW_RUN=0`, `HIGH_RUN=1`, `HIGH_BUDGET_REMAINING=5`), immediate failover after the first terminate (`POST_TERMINATE_TASK_COUNT=1`, `POST_TERMINATE_RUNNING_SLOT=0`, `POST_TERMINATE_LOW_RUN=1`, `POST_TERMINATE_LOW_BUDGET_REMAINING=5`, `POST_TERMINATE_HIGH_STATE=4`), idempotent repeat terminate semantics (`REPEAT_TERMINATE_RESULT=0`, `REPEAT_TERMINATE_LOW_RUN=2`, `REPEAT_TERMINATE_LOW_BUDGET_REMAINING=4`), and final empty-run collapse (`ACK=10`, `LAST_OPCODE=28`, `LAST_RESULT=0`, `TASK_COUNT=0`, `RUNNING_SLOT=255`, `DISPATCH_COUNT=3`, `LOW_STATE=4`, `HIGH_STATE=4`).
+  - bare-metal QEMU active-task terminate wrapper coverage shipped:
+    - new scripts: `scripts/baremetal-qemu-active-task-terminate-baseline-probe-check.ps1`, `scripts/baremetal-qemu-active-task-terminate-failover-probe-check.ps1`, `scripts/baremetal-qemu-active-task-terminate-repeat-idempotent-probe-check.ps1`, `scripts/baremetal-qemu-active-task-terminate-survivor-progress-probe-check.ps1`, and `scripts/baremetal-qemu-active-task-terminate-final-collapse-probe-check.ps1`.
+    - the wrapper family reuses the broad active-task terminate PVH/QEMU probe but fails directly on the narrow boundaries for the pre-terminate active baseline, immediate failover to the low-priority survivor, repeat-idempotent terminate receipt, survivor progress after the repeat terminate, and final empty-run collapse telemetry.
+    - `src/baremetal_main.zig` now also asserts `status.last_command_opcode == command_task_terminate` across all three terminate stages and confirms both task records end in the terminated state with zero remaining budget at the final collapse point.
+  - bare-metal QEMU task-terminate mixed-state validation shipped:
+    - runtime fix in `src/baremetal_main.zig`: `schedulerTerminateTask()` now removes queued wake events belonging to the terminated task in addition to canceling armed timer entries.
+    - new host test: `baremetal task terminate clears mixed timer and wake state for the target task only`.
+    - new script: `scripts/baremetal-qemu-task-terminate-mixed-state-probe-check.ps1` reuses the timer-reset PVH artifact, resolves scheduler/task/wait/timer/wake telemetry from the freestanding ELF, and drives mixed `command_task_wait_for`, `command_scheduler_wake_task`, survivor wake, and `command_task_terminate` transitions under QEMU+GDB.
+    - current proof path validates pre-terminate mixed state on current runtime semantics (`PRE_WAKE_COUNT=2`, `PRE_PENDING_WAKE_COUNT=2`, `PRE_TIMER_COUNT=0`, `PRE_NEXT_TIMER_ID=2`, `PRE_WAKE0_TASK_ID=terminated`, `PRE_WAKE1_TASK_ID=survivor`, `PRE_TIMER0_STATE=3`), targeted cleanup after terminate (`POST_TASK_COUNT=1`, `POST_WAKE_COUNT=1`, `POST_PENDING_WAKE_COUNT=1`, `POST_TIMER_COUNT=0`, `POST_TIMER0_STATE=3`, `POST_TASK0_STATE=4`, `POST_TASK1_STATE=1`, `POST_WAKE0_TASK_ID=survivor`), and idle stability with no ghost timer wake (`AFTER_IDLE_WAKE_COUNT=1`, `AFTER_IDLE_PENDING_WAKE_COUNT=1`, `AFTER_IDLE_TIMER_COUNT=0`, `AFTER_IDLE_TIMER_DISPATCH_COUNT=0`).
+    - the probe is now back in the active CI baseline alongside the narrower direct recovery probes for timeout-backed terminate cleanup, scheduler-wake timer cleanup, and timer-cancel-task interrupt-timeout cleanup.
+  - bare-metal QEMU direct wake-queue reason-pop validation shipped:
+    - existing host test coverage in `src/baremetal_main.zig`: `baremetal wake queue reason pop command removes only matching reasons`.
+    - new script: `scripts/baremetal-qemu-wake-queue-reason-pop-probe-check.ps1` reuses the vector-pop PVH artifact shape, resolves scheduler/wake/status/mailbox telemetry from the freestanding ELF, and drives a four-entry mixed queue (`manual`, `interrupt@13`, `interrupt@13`, `interrupt@31`) under QEMU+GDB.
+    - current proof path validates FIFO reason-selective removal (`PRE_COUNT=4`, `MID_COUNT=3`, `MID_TASK1=task3`, `POST_COUNT=1`, `POST_TASK0=task1`) and invalid-reason rejection (`ACK=19`, `LAST_OPCODE=59`, `LAST_RESULT=-22`) without vector/overflow setup noise.
+  - bare-metal QEMU wake-queue reason-pop wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-wake-queue-reason-pop-baseline-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-reason-pop-first-match-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-reason-pop-survivor-order-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-reason-pop-invalid-reason-probe-check.ps1`, and `scripts/baremetal-qemu-wake-queue-reason-pop-invalid-preserve-state-probe-check.ps1`.
+    - `scripts/baremetal-qemu-wake-queue-reason-pop-probe-check.ps1` now emits richer `MID_*` and `FINAL_*` stage receipts so wrapper probes fail directly on first-pop survivor ordering and invalid-reason nonmutation, not just the final broad receipt.
+    - `src/baremetal_main.zig` now also proves invalid-reason and not-found reason-pop commands preserve the remaining queue state in the host suite.
+  - bare-metal QEMU wake-queue vector-pop wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-wake-queue-vector-pop-baseline-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-vector-pop-first-match-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-vector-pop-survivor-order-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-vector-pop-invalid-vector-probe-check.ps1`, and `scripts/baremetal-qemu-wake-queue-vector-pop-invalid-preserve-state-probe-check.ps1`.
+    - `scripts/baremetal-qemu-wake-queue-vector-pop-probe-check.ps1` now emits richer `MID_*` and `FINAL_*` stage receipts so wrapper probes fail directly on first-pop survivor ordering and invalid-vector nonmutation, not just the final broad receipt.
+    - `src/baremetal_main.zig` now also proves invalid-vector vector-pop commands preserve the remaining queue state in the host suite.
+  - bare-metal QEMU timer-cancel wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-timer-cancel-baseline-probe-check.ps1`, `scripts/baremetal-qemu-timer-cancel-cancel-collapse-probe-check.ps1`, `scripts/baremetal-qemu-timer-cancel-canceled-entry-preserve-probe-check.ps1`, `scripts/baremetal-qemu-timer-cancel-second-cancel-notfound-probe-check.ps1`, and `scripts/baremetal-qemu-timer-cancel-zero-wake-telemetry-probe-check.ps1`.
+    - the wrapper batch reuses the broad dedicated timer-cancel lane and fails directly on the armed baseline, cancel collapse to zero live entries, preserved canceled-slot metadata, second-cancel `result_not_found`, and zero wake/dispatch telemetry.
+    - `src/baremetal_main.zig` now also proves the second cancel preserves canceled-slot/task-wait state while wake and dispatch telemetry remain at zero.
+  - bare-metal QEMU direct wake-queue before-tick validation shipped:
+    - existing host test coverage in `src/baremetal_main.zig`: `baremetal wake queue before-tick pop command removes stale entries`.
+    - new script: `scripts/baremetal-qemu-wake-queue-before-tick-probe-check.ps1` reuses the vector-pop PVH artifact shape, resolves scheduler/wake/status/mailbox telemetry from the freestanding ELF, captures live queue ticks under QEMU+GDB, and drives dedicated `command_wake_queue_pop_before_tick` drains on a four-entry mixed queue.
+    - current proof path validates the single-oldest stale drain (`PRE_TICK0 -> MID_COUNT=3`), bounded deadline-window drain (`PRE_TICK2 -> POST_COUNT=1`, survivor `POST_TASK0=task4`), and final empty-window `result_not_found` (`ACK=19`, `LAST_OPCODE=61`, `LAST_RESULT=-2`) without overflow-only setup.
+  - bare-metal QEMU task-terminate interrupt-timeout wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-task-terminate-interrupt-timeout-baseline-probe-check.ps1`, `scripts/baremetal-qemu-task-terminate-interrupt-timeout-target-clear-probe-check.ps1`, `scripts/baremetal-qemu-task-terminate-interrupt-timeout-interrupt-telemetry-probe-check.ps1`, `scripts/baremetal-qemu-task-terminate-interrupt-timeout-no-stale-timeout-probe-check.ps1`, and `scripts/baremetal-qemu-task-terminate-interrupt-timeout-mailbox-state-probe-check.ps1`.
+    - `scripts/baremetal-qemu-task-terminate-interrupt-timeout-probe-check.ps1` now emits explicit `PRE_*` armed-state receipts plus `POST_*` terminate-clear receipts so wrappers fail directly on the exact boundary that drifted instead of inferring state from the final settled telemetry.
+    - the wrapper family reuses the broad timeout-backed terminate lane but isolates five narrower guarantees: armed interrupt-timeout baseline before terminate, immediate target-clear collapse to `task_state=terminated`, preserved interrupt telemetry after the follow-up interrupt, settled no-stale-timeout invariants after the slack window, and final mailbox plus budget state on the terminated task.
+  - bare-metal QEMU panic-recovery validation shipped:
+    - new host test: `baremetal panic flag freezes scheduler until mode recovery under active load` proves `command_trigger_panic_flag` freezes dispatch and budget burn, `command_set_mode(mode_running)` resumes the same task immediately, and `command_set_boot_phase(runtime)` restores boot diagnostics while dispatch continues.
+    - new script: `scripts/baremetal-qemu-panic-recovery-probe-check.ps1` reuses the scheduler PVH artifact, resolves scheduler/task telemetry plus boot diagnostics, live status, and command-mailbox state from the freestanding ELF, and drives panic + recovery transitions under QEMU+GDB.
+    - the probe validates live panic freeze and recovery semantics under active scheduler load, including panic freeze (`PANIC_MODE=255`, `PANIC_DISPATCH_COUNT=1`), idle panic stability (`IDLE_PANIC_DISPATCH_COUNT=1`, `IDLE_PANIC_RUN_COUNT=1`), mode recovery (`RECOVER_MODE=1`, `RECOVER_DISPATCH_COUNT=2`, `RECOVER_RUN_COUNT=2`), and boot-phase restoration (`ACK=7`, `LAST_OPCODE=16`, `LAST_RESULT=0`, `BOOT_PHASE=2`, `TASK0_RUN_COUNT=3`, `TASK0_BUDGET_REMAINING=3`).
+  - bare-metal QEMU panic-recovery wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-panic-recovery-baseline-probe-check.ps1`, `scripts/baremetal-qemu-panic-recovery-freeze-state-probe-check.ps1`, `scripts/baremetal-qemu-panic-recovery-idle-preserve-probe-check.ps1`, `scripts/baremetal-qemu-panic-recovery-mode-recovery-probe-check.ps1`, and `scripts/baremetal-qemu-panic-recovery-final-task-state-probe-check.ps1`.
+    - the wrapper batch reuses the broad panic-recovery probe and isolates five narrower contracts: pre-panic baseline state, panic freeze-state under `mode_panicked`, idle panic preservation with no extra dispatch, mode-recovery resume semantics after `command_set_mode(mode_running)`, and final task-state/telemetry after `command_set_boot_phase(runtime)`.
+    - the host regression now also asserts scheduler task-count/running-slot stability and direct last-command opcode semantics across panic, mode recovery, and boot-phase restoration so the wrapper batch matches the live runtime contract exactly.
+  - bare-metal QEMU panic-wake recovery validation shipped:
+    - new host test: `baremetal panic preserves interrupt and timer wakes until recovery` proves `command_trigger_panic_flag` holds scheduler dispatch at `0` while both an interrupt waiter and a timer waiter become ready, then `command_set_mode(mode_running)` and `command_set_boot_phase(runtime)` resume the preserved ready queue in order.
+    - new script: `scripts/baremetal-qemu-panic-wake-recovery-probe-check.ps1` reuses the scheduler PVH artifact, resolves scheduler/task telemetry plus timer state, wake queue, boot diagnostics, live status, and command-mailbox state from the freestanding ELF, and drives panic + interrupt wake + timer wake + recovery transitions under QEMU+GDB.
+    - the probe validates preserved wake semantics across panic mode, including interrupt wake capture (`PANIC_WAKE1_TASK_COUNT=1`, `PANIC_WAKE1_DISPATCH_COUNT=0`, `PANIC_WAKE1_REASON=2`, `PANIC_WAKE1_VECTOR=200`), timer wake capture without resumed dispatch (`PANIC_WAKE2_TASK_COUNT=2`, `PANIC_WAKE2_DISPATCH_COUNT=0`, `PANIC_WAKE2_PENDING_WAKE_COUNT=2`, `PANIC_WAKE2_REASON=1`), first recovery dispatch (`RECOVER1_DISPATCH_COUNT=1`, `RECOVER1_RUNNING_SLOT=0`, `RECOVER1_TASK0_BUDGET_REMAINING=5`), and final boot-phase restoration (`ACK=13`, `LAST_OPCODE=16`, `LAST_RESULT=0`, `BOOT_PHASE=2`, `TASK_COUNT=2`, `RUNNING_SLOT=1`, `TASK1_BUDGET_REMAINING=6`).
+  - bare-metal QEMU panic-wake recovery wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-panic-wake-recovery-baseline-probe-check.ps1`, `scripts/baremetal-qemu-panic-wake-recovery-freeze-state-probe-check.ps1`, `scripts/baremetal-qemu-panic-wake-recovery-preserved-wakes-probe-check.ps1`, `scripts/baremetal-qemu-panic-wake-recovery-mode-recovery-probe-check.ps1`, and `scripts/baremetal-qemu-panic-wake-recovery-final-task-state-probe-check.ps1`.
+    - the wrapper batch reuses the broad panic-wake recovery probe and isolates five narrower contracts: pre-panic waiting baseline, panic freeze-state under `mode_panicked`, preserved interrupt+timer wake queue delivery while dispatch remains frozen, mode-recovery dispatch resume after `command_set_mode(mode_running)`, and final recovered task-state/telemetry after `command_set_boot_phase(runtime)`.
+    - the host regression `baremetal panic preserves interrupt and timer wakes until recovery` now also asserts last-command opcode semantics plus scheduler task-count/running-slot stability before panic, during panic freeze, after mode recovery, and after boot-phase restoration.
+  - bare-metal QEMU timer-ID cancel validation shipped:
+    - new script: `scripts/baremetal-qemu-timer-cancel-probe-check.ps1` resolves scheduler state, timer state/entries, wake queue, status, and command-mailbox symbols from the freestanding ELF and drives `command_timer_schedule` followed by `command_timer_cancel` under QEMU+GDB.
+    - the probe validates that the live timer ID captured from the armed entry is the one canceled, `timer_entry_count` collapses from `1` to `0`, the canceled slot keeps `state=3` and its next-fire tick, and a second `command_timer_cancel` against the same timer ID returns `result_not_found`.
+    - current proof path validates `ACK=8`, `LAST_OPCODE=43`, `LAST_RESULT=-2`, captured timer ID `1`, armed next-fire tick `15`, canceled entry count `0`, preserved canceled timer slot metadata, waiting task state `6`, and empty wake queue telemetry.
+  - bare-metal QEMU vector-counter reset validation shipped:
+    - new script: `scripts/baremetal-qemu-vector-counter-reset-probe-check.ps1` resolves interrupt state plus the interrupt/exception per-vector counter tables from the freestanding ELF and drives `command_reset_interrupt_counters`, `command_reset_exception_counters`, live interrupt/exception dispatch, then `command_reset_vector_counters` under QEMU+GDB.
+    - the probe validates vectors `10`, `200`, and `14` accumulate as expected before reset, then the interrupt/exception per-vector tables collapse back to `0` while aggregate interrupt count `4`, aggregate exception count `3`, and last-vector telemetry for exception vector `14` remain intact.
+    - current proof path validates `ACK=8`, `LAST_OPCODE=15`, `LAST_RESULT=0`, `PRE_INT_VECTOR10=2`, `PRE_INT_VECTOR200=1`, `PRE_INT_VECTOR14=1`, `PRE_EXC_VECTOR10=2`, `PRE_EXC_VECTOR14=1`, `POST_INTERRUPT_COUNT=4`, `POST_EXCEPTION_COUNT=3`, and all printed post-reset vector counters at `0`.
+  - bare-metal QEMU vector-counter-reset wrapper validation shipped:
+    - matching host regression strengthening in `src/baremetal_main.zig` now also asserts preserved last interrupt/exception vectors, preserved last exception code, and cleared `interrupt_vector_count(13)` alongside the existing preserved aggregate/history invariants.
+    - new wrapper scripts: `scripts/baremetal-qemu-vector-counter-reset-baseline-probe-check.ps1`, `scripts/baremetal-qemu-vector-counter-reset-dirty-aggregate-probe-check.ps1`, `scripts/baremetal-qemu-vector-counter-reset-dirty-vector-table-probe-check.ps1`, `scripts/baremetal-qemu-reset-vector-counters-preserve-aggregate-probe-check.ps1`, `scripts/baremetal-qemu-reset-vector-counters-preserve-last-vector-probe-check.ps1`, `scripts/baremetal-qemu-vector-counter-reset-zeroed-tables-probe-check.ps1`, and `scripts/baremetal-qemu-vector-counter-reset-mailbox-state-probe-check.ps1`.
+    - the wrappers reuse the broad QEMU probe but fail directly on seven narrow boundaries: baseline artifact/mailbox state, dirty aggregate counts, dirty pre-reset per-vector tables, preserved aggregate totals, preserved last-vector telemetry, zeroed post-reset vector tables, and the final `command_reset_vector_counters` mailbox receipt.
+  - bare-metal feature-flags/tick-batch validation shipped:
+    - new host test: `test "baremetal feature flags and tick batch hint commands update status"` in `src/baremetal_main.zig`.
+    - new script: `scripts/baremetal-qemu-feature-flags-tick-batch-probe-check.ps1` builds a dedicated PVH artifact, drives `command_set_feature_flags` and `command_set_tick_batch_hint` over the live mailbox under QEMU+GDB, and leaves no stale QEMU/GDB process or fixed-port collision on reruns.
+    - the probe validates feature flags update to `0xA55AA55A`, the runtime tick batch changes from `1` to `4` (ticks `1 -> 5`), and a zero batch hint is rejected with `LAST_RESULT=-22` while `tick_batch_hint` stays at `4`.
+  - bare-metal QEMU interrupt-filter validation shipped:
+    - new script: `scripts/baremetal-qemu-interrupt-filter-probe-check.ps1` resolves scheduler state, task slots, wait arrays, wake queue, interrupt counters, status, and command-mailbox symbols from the freestanding ELF and drives `command_task_wait_interrupt` under QEMU+GDB.
+    - the probe validates interrupt-any wake, vector-scoped non-match filtering, matching-vector wake, and invalid-vector rejection end to end over the PVH freestanding artifact.
+    - current proof path validates `ACK=14`, `LAST_OPCODE=57`, `LAST_RESULT=-22`, `TASK_COUNT=2`, first wake on vector `200`, vector-specific waiter still armed after non-matching `200`, final wake on vector `13`, `INTERRUPT_COUNT=3`, and `LAST_INTERRUPT_VECTOR=13`.
+  - bare-metal QEMU interrupt-filter wrapper validation shipped:
+    - matching host regression strengthening in `src/baremetal_main.zig` now asserts the interrupt-any waiting baseline, exact any-wake payload, blocked vector-scoped nonmatch state, exact matching-vector wake payload, and invalid-vector preserved mailbox/wake invariants, including direct `scheduler_wait_kind` / `scheduler_wait_interrupt_vector` checks for both task slots.
+    - new wrapper scripts: `scripts/baremetal-qemu-interrupt-filter-any-baseline-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-filter-any-wake-payload-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-filter-vector-blocked-nonmatch-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-filter-vector-match-wake-payload-probe-check.ps1`, and `scripts/baremetal-qemu-interrupt-filter-invalid-vector-preserve-state-probe-check.ps1`.
+    - the wrappers reuse the broad QEMU probe but fail directly on five narrow boundaries: the any-vector waiting baseline (`count=1`, `kind=3`, `vector=0`, runnable count `0`, state `6`), the exact any-wake payload (`reason=interrupt`, `vector=200`, task count `1`), the preserved vector-scoped nonmatch state after interrupt `200`, the exact matching-vector wake payload on `13`, and final invalid-vector rejection with preserved ready-state/mailbox and wake payload invariants.
+  - bare-metal QEMU masked-interrupt timeout validation shipped:
+    - new host test: `baremetal masked interrupt wait with timeout falls back to timer wake`
+    - new script: `scripts/baremetal-qemu-masked-interrupt-timeout-probe-check.ps1` resolves scheduler state, timer state, wake queue, interrupt counters, interrupt-mask telemetry, status, and command-mailbox symbols from the freestanding ELF and drives `command_interrupt_mask_apply_profile(external_all)`, `command_task_wait_interrupt_for`, and `command_trigger_interrupt(200)` under QEMU+GDB.
+    - the probe validates that masked vector `200` is ignored with no wake-queue entry or interrupt-count growth while the task remains waiting, then the timeout path wakes with `reason=timer`, `vector=0`, and `wake_tick=11` against the PVH freestanding artifact.
+  - bare-metal QEMU masked-interrupt timeout wrapper batch shipped:
+    - strengthened host regression: `baremetal masked interrupt wait with timeout falls back to timer wake` now also asserts preserved `external_all` mask profile, masked-ignore telemetry, retained last-masked vector `200`, and final zero delivered-interrupt telemetry around the timeout fallback.
+    - new wrapper scripts: `scripts/baremetal-qemu-masked-interrupt-timeout-mask-preserve-probe-check.ps1`, `scripts/baremetal-qemu-masked-interrupt-timeout-no-wake-probe-check.ps1`, `scripts/baremetal-qemu-masked-interrupt-timeout-wait-preserve-probe-check.ps1`, `scripts/baremetal-qemu-masked-interrupt-timeout-timer-fallback-probe-check.ps1`, and `scripts/baremetal-qemu-masked-interrupt-timeout-telemetry-preserve-probe-check.ps1`.
+    - the wrappers reuse the broad QEMU probe but fail directly on five narrow boundaries: preserved `external_all` profile and masked-vector telemetry, zero queued wake after the masked interrupt, preserved armed wait/deadline before timeout, timer-only fallback wake semantics, and preserved zero-interrupt plus masked-ignore telemetry on the final settled state.
+  - bare-metal QEMU timer-disable interrupt validation shipped:
+    - runtime bug fixed in `src/baremetal_main.zig`: interrupt-driven wake processing now runs before the timer-enabled guard inside `timerTick`, so `command_timer_disable` no longer suppresses `command_task_wait_interrupt` wakeups.
+    - new script: `scripts/baremetal-qemu-timer-disable-interrupt-probe-check.ps1` resolves scheduler state, timer state, timer entries, wake queue, interrupt counters, status, and command-mailbox symbols from the freestanding ELF and drives `command_task_wait_interrupt`, `command_task_wait_for`, `command_timer_disable`, `command_trigger_interrupt`, and `command_timer_enable` under QEMU+GDB.
+    - the probe validates that timer dispatch stays blocked while timers are disabled, interrupt wake delivery on vector `200` still occurs immediately, and the deferred one-shot timer wake is delivered only after timers are re-enabled over the PVH freestanding artifact.
+  - bare-metal QEMU mode/boot-phase setter validation shipped:
+    - new host test: `baremetal direct mode and boot phase setters are isolated, idempotent, and reject invalid values`
+    - new script: `scripts/baremetal-qemu-mode-boot-phase-setter-probe-check.ps1` reuses the descriptor-bootdiag PVH artifact and drives isolated `command_set_boot_phase` plus `command_set_mode` setter sequences under QEMU+GDB.
+    - the probe validates same-value `mode_running` and `boot_phase_runtime` no-op behavior, a direct `runtime -> init` boot-phase command transition, invalid boot-phase `99` and invalid mode `77` rejection without clobbering retained state/history, and direct `running -> mode_panicked -> running` setter transitions without touching panic counters or boot-phase state.
+  - bare-metal QEMU mode/boot-phase setter wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-mode-boot-phase-setter-baseline-probe-check.ps1`, `scripts/baremetal-qemu-mode-boot-phase-setter-boot-noop-invalid-probe-check.ps1`, `scripts/baremetal-qemu-mode-boot-phase-setter-mode-invalid-probe-check.ps1`, `scripts/baremetal-qemu-mode-boot-phase-setter-mode-history-probe-check.ps1`, and `scripts/baremetal-qemu-mode-boot-phase-setter-boot-history-probe-check.ps1`
+    - the wrapper family splits the broad setter lane into isolated checks for final mailbox baseline, boot no-op plus invalid preservation, invalid mode preservation, exact mode-history payload ordering, and exact boot-phase-history payload ordering over the PVH freestanding artifact.
+  - bare-metal QEMU mode/boot-phase history clear validation shipped:
+    - new script: `scripts/baremetal-qemu-mode-boot-phase-history-clear-probe-check.ps1` reuses the descriptor-bootdiag PVH artifact and drives `command_set_boot_phase`, `command_set_mode`, `command_trigger_panic_flag`, `command_clear_mode_history`, and `command_clear_boot_phase_history` under QEMU+GDB.
+    - the probe validates that the mode and boot-phase history rings capture the expected pre-clear panic transitions, each clear command independently resets only its target ring to `len/head/overflow/seq = 0` while preserving the companion ring until its own clear, and the next live transitions restart both rings at `seq=1`.
+    - wrapper family shipped: `scripts/baremetal-qemu-mode-boot-phase-history-clear-baseline-probe-check.ps1`, `scripts/baremetal-qemu-mode-boot-phase-history-clear-pre-semantics-probe-check.ps1`, `scripts/baremetal-qemu-mode-boot-phase-history-clear-mode-collapse-preserve-boot-probe-check.ps1`, `scripts/baremetal-qemu-mode-boot-phase-history-clear-boot-collapse-probe-check.ps1`, and `scripts/baremetal-qemu-mode-boot-phase-history-clear-restart-semantics-probe-check.ps1`; they fail directly on the broad clear-lane baseline, retained pre-clear panic payloads, mode-ring collapse with preserved boot-history state, boot-ring collapse, and dual-ring restart semantics after the two clear commands.
+  - bare-metal QEMU mode/boot-phase overflow-clear validation shipped:
+    - new scripts: `scripts/baremetal-qemu-mode-history-overflow-clear-probe-check.ps1` and `scripts/baremetal-qemu-boot-phase-history-overflow-clear-probe-check.ps1` compose the existing mode/boot-phase history and history-clear probes into dedicated overflow + clear + restart validations under QEMU+GDB.
+    - current proof path validates retained wrapped-ring ordering (`seq 3 -> 66`) for both histories, dedicated clear collapse for the targeted ring only, and `seq=1` restart semantics while the companion ring remains intact until its own clear.
+  - bare-metal QEMU mode-history overflow-clear wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-mode-history-overflow-clear-baseline-probe-check.ps1`, `scripts/baremetal-qemu-mode-history-overflow-clear-overflow-window-probe-check.ps1`, `scripts/baremetal-qemu-mode-history-overflow-clear-overflow-payloads-probe-check.ps1`, `scripts/baremetal-qemu-mode-history-overflow-clear-clear-collapse-probe-check.ps1`, and `scripts/baremetal-qemu-mode-history-overflow-clear-restart-event-probe-check.ps1` reuse the composed overflow-clear lane and fail directly on the final mailbox baseline, wrapped overflow-window shape, retained oldest/newest mode payloads, dedicated clear collapse with preserved boot-history length, and post-clear restart-event ordering.
+  - bare-metal QEMU boot-phase-history overflow-clear wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-boot-phase-history-overflow-clear-baseline-probe-check.ps1`, `scripts/baremetal-qemu-boot-phase-history-overflow-clear-overflow-window-probe-check.ps1`, `scripts/baremetal-qemu-boot-phase-history-overflow-clear-overflow-payloads-probe-check.ps1`, `scripts/baremetal-qemu-boot-phase-history-overflow-clear-clear-collapse-probe-check.ps1`, and `scripts/baremetal-qemu-boot-phase-history-overflow-clear-restart-event-probe-check.ps1` reuse the composed overflow-clear lane and fail directly on the final mailbox baseline, wrapped overflow-window shape, retained oldest/newest boot-phase payloads, dedicated clear collapse with preserved mode-history length, and post-clear restart-event ordering.
+  - bare-metal QEMU manual-wait interrupt validation shipped:
+    - new script: `scripts/baremetal-qemu-manual-wait-interrupt-probe-check.ps1` resolves scheduler state, task slot, manual wait-kind state, wake queue, interrupt counters, status, and command-mailbox symbols from the freestanding ELF and drives `command_task_wait`, `command_trigger_interrupt`, and `command_scheduler_wake_task` under QEMU+GDB.
+    - the probe validates that a manual waiter is not spuriously woken by interrupt delivery, then validates explicit recovery through manual wake over the PVH freestanding artifact.
+    - current proof path validates `ACK=9`, `LAST_OPCODE=45`, `LAST_RESULT=0`, manual wait-kind `1` before and after interrupt `44`, `AFTER_INTERRUPT_WAKE_QUEUE_LEN=0`, `AFTER_INTERRUPT_INTERRUPT_COUNT=1`, `MANUAL_WAKE_QUEUE_LEN=1`, `MANUAL_WAKE_REASON=3`, and `LAST_INTERRUPT_VECTOR=44`.
+  - bare-metal QEMU manual-wait interrupt wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-manual-wait-interrupt-baseline-probe-check.ps1`, `scripts/baremetal-qemu-manual-wait-interrupt-wait-preserve-probe-check.ps1`, `scripts/baremetal-qemu-manual-wait-interrupt-interrupt-no-wake-probe-check.ps1`, `scripts/baremetal-qemu-manual-wait-interrupt-manual-wake-payload-probe-check.ps1`, and `scripts/baremetal-qemu-manual-wait-interrupt-final-telemetry-probe-check.ps1` compose the existing broad probe into dedicated checks over the same QEMU+GDB lane.
+    - matching host regression strengthening in `src/baremetal_main.zig` now asserts the waiting baseline, preserved manual wait-kind before the interrupt, blocked post-interrupt state with empty wake queue, explicit manual-wake payload, and stable final ready-state plus interrupt telemetry after slack ticks.
+    - current wrapper proof path validates the one-task waiting baseline (`task_id > 0`, priority `0`, waiting state `6`, runnable count `0`, manual wait-kind `1`), blocked post-interrupt state with empty wake queue, preserved interrupt telemetry for vector `44`, exact manual wake payload for the same task, and final ready-state/mailbox invariants (`ACK=9`, `LAST_OPCODE=45`, `LAST_RESULT=0`).
+  - bare-metal QEMU wake-queue FIFO validation shipped:
+    - new script: `scripts/baremetal-qemu-wake-queue-fifo-probe-check.ps1` resolves scheduler state, task slot, wake-queue ring state, status, and command-mailbox symbols from the freestanding ELF and drives repeated `command_task_wait`, `command_task_resume`, and `command_wake_queue_pop` under QEMU+GDB.
+    - the probe validates that `command_wake_queue_pop` removes the logical oldest queued manual wake first, preserves the second queued wake as the new logical head via tail tracking, and returns `result_not_found` once the queue is empty over the PVH freestanding artifact.
+    - current proof path validates `ACK=11`, `LAST_OPCODE=54`, `LAST_RESULT=-2`, queued manual wake sequence/tick pairs `1@5` and `2@7`, first post-pop head `seq=2` / `tick=7`, and final queue length `0`.
+  - bare-metal QEMU wake-queue FIFO wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-wake-queue-fifo-baseline-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-fifo-first-pop-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-fifo-survivor-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-fifo-drain-empty-probe-check.ps1`, and `scripts/baremetal-qemu-wake-queue-fifo-notfound-preserve-probe-check.ps1`.
+    - the wrappers reuse the broad FIFO lane but fail directly on the two-entry baseline, first-pop oldest-first removal, survivor payload preservation, drained-empty collapse, and final `result_not_found` plus empty-state invariants over the PVH freestanding artifact.
+    - matching host-regression tightening in `src/baremetal_main.zig` now asserts queued task/reason/tick payload preservation before and after the first pop plus the final rejected-pop opcode/empty-state contract.
+  - bare-metal QEMU wake-queue summary/age wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-wake-queue-summary-age-baseline-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-summary-age-pre-summary-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-summary-age-pre-age-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-summary-age-post-summary-probe-check.ps1`, and `scripts/baremetal-qemu-wake-queue-summary-age-post-age-probe-check.ps1`.
+    - the broad `scripts/baremetal-qemu-wake-queue-summary-age-probe-check.ps1` lane now emits explicit `PRE_*`, `POST_*`, and `FINAL_*` receipts so narrow wrappers can fail directly on exported summary-pointer and age-bucket invariants without reimplementing the full QEMU+GDB flow.
+    - the wrappers reuse the broad exported-summary lane but fail directly on the five-entry baseline shape, pre-drain summary snapshot, pre-drain age-bucket snapshot, post-drain summary snapshot, and post-drain age-bucket plus final-stability invariants over the PVH freestanding artifact.
+    - matching host-regression tightening in `src/baremetal_main.zig` now asserts post-drain summary counts, oldest/newest tick preservation, post-drain age-bucket counters, and invalid-pair nonmutation of both summary and age snapshots.
+  - bare-metal mailbox interrupt-control expansion shipped:
+    - new command opcodes wired in runtime: `command_trigger_interrupt`, `command_reset_interrupt_counters`, `command_reinit_descriptor_tables`.
+    - reset path now clears runtime interrupt counters via bootstrap export to keep command-driven diagnostics deterministic.
+  - bare-metal interrupt-state telemetry expansion shipped:
+    - new exports: `oc_descriptor_init_count` and `oc_interrupt_state_ptr`.
+    - smoke gate symbol contract expanded so telemetry exports cannot regress silently.
+  - bare-metal descriptor-load telemetry + control expansion shipped:
+    - new exports: `oc_descriptor_tables_loaded`, `oc_descriptor_load_attempt_count`, `oc_descriptor_load_success_count`, `oc_try_load_descriptor_tables`.
+    - new command opcode wired: `command_load_descriptor_tables`.
+  - bare-metal exception/fault telemetry expansion shipped:
+    - new exports: `oc_last_exception_vector`, `oc_exception_count`, `oc_reset_exception_counters`.
+    - new command opcode wired: `command_reset_exception_counters`.
+  - bare-metal exception payload path expansion shipped:
+    - new exports: `oc_last_exception_code`, `oc_trigger_exception`, `oc_exception_stub`.
+    - new command opcode wired: `command_trigger_exception` using mailbox payload (`arg0=vector`, `arg1=fault_code`).
+  - bare-metal exception history ring expansion shipped:
+    - new exports: `oc_exception_history_capacity`, `oc_exception_history_len`, `oc_exception_history_head_index`, `oc_exception_history_overflow_count`, `oc_exception_history_event`, `oc_exception_history_clear`.
+    - new command opcode wired: `command_clear_exception_history`.
+  - bare-metal interrupt history ring expansion shipped:
+    - new exports: `oc_interrupt_history_capacity`, `oc_interrupt_history_len`, `oc_interrupt_history_head_index`, `oc_interrupt_history_overflow_count`, `oc_interrupt_history_event`, `oc_interrupt_history_clear`.
+    - new command opcode wired: `command_clear_interrupt_history`.
+  - bare-metal vector-counter telemetry expansion shipped:
+    - new exports: `oc_interrupt_vector_counts_ptr`, `oc_interrupt_vector_count`, `oc_exception_vector_counts_ptr`, `oc_exception_vector_count`, `oc_reset_vector_counters`.
+    - new command opcode wired: `command_reset_vector_counters`.
+  - CI recovery note (2026-03-04):
+    - fixed Zig master API regression in Telegram runtime env lookup (`.block = .global` on `std.process.Environ`), which broke `zig-ci` validate and all cross-target jobs on run `22668754695`.
+    - implemented injected environ wiring (`telegram_runtime.setEnviron`) and switched env lookup to `std.process.Environ.getAlloc(process_environ, ...)`.
+    - fix commit `e204e60`; validation run `22669040232` fully green across validate + cross-target matrix.
+    - docs-pages re-verified by manual dispatch run `22669207780` with build+deploy success.
+  - Docs status drift gate slice (2026-03-05):
+    - new script: `scripts/docs-status-check.ps1` added to enforce README/docs status snapshot parity with gate artifacts (`parity-go-zig.json`) and latest release metadata.
+    - wired into `zig-ci` (`validate` stage after parity gate) and `docs-pages` (before `mkdocs build --strict`) to block stale status docs from shipping.
+    - first CI attempt surfaced environment-specific exit propagation from `gh` CLI release lookup (`zig-ci` run `22698812368`).
+    - fix commit `bcc0e68` switched release-tag lookup to GitHub REST API for deterministic CI behavior.
+    - verification runs after fix: `zig-ci` `22698898719` success and `docs-pages` `22698975595` success.
+  - Zig freshness evidence slice (2026-03-05):
+    - `scripts/zig-codeberg-master-check.ps1` made cross-platform and CI-safe by resolving zig executable via `-ZigExePath`, `OPENCLAW_ZIG_EXE`, repo-local Windows default, then PATH fallback.
+    - script now supports JSON evidence output (`-OutputJsonPath`) while retaining Codeberg primary + GitHub mirror fallback hash resolution.
+    - `zig-ci` now runs freshness snapshot as non-blocking observability step and publishes `zig-master-freshness.json` artifact for build provenance context.
+    - `release-preview` now mirrors this evidence path: validate stage generates freshness snapshot, publish stage attaches `zig-master-freshness.json` to release assets when available.
+    - `release-preview` validate stage now includes docs snapshot drift enforcement (`scripts/docs-status-check.ps1`) after parity generation, so release previews fail fast if README/docs status blocks drift from live parity metadata.
+    - local preview pipeline (`scripts/release-preview.ps1`) now mirrors CI validate semantics: cross-platform zig resolution + optional freshness evidence capture + `python-pack-check` + docs-status gate before packaging.
+  - bare-metal wake queue reason-selective drain slice shipped:
+    - new opcode: `command_wake_queue_pop_reason` for selective queue draining by wake reason (`timer`, `interrupt`, `manual`) with bounded count semantics (`count=0` -> pop one).
+    - new export: `oc_wake_queue_reason_count(reason)` for reason-specific telemetry without mutating queue state.
+    - wake queue compaction preserves FIFO ordering for non-matching events during selective drains.
+    - validated with `zig build test --summary all` (`118/118`) and `scripts/baremetal-smoke-check.ps1`.
+  - bare-metal wake queue vector-selective drain slice shipped:
+    - new opcode: `command_wake_queue_pop_vector` for selective queue draining by wake vector (`arg0=vector`, `arg1=count`, `count=0` -> pop one).
+    - new export: `oc_wake_queue_vector_count(vector)` for vector-specific telemetry without mutating queue state.
+    - wake queue compaction preserves FIFO ordering for non-matching events during vector-selective drains.
+    - validated with `zig build test --summary all` (`118/118`) and `scripts/baremetal-smoke-check.ps1`.
+  - bare-metal wake queue stale-entry drain slice shipped:
+    - new opcode: `command_wake_queue_pop_before_tick` for selective queue draining by wake deadline (`arg0=max_tick`, `arg1=count`, `count=0` -> pop one).
+    - new export: `oc_wake_queue_before_tick_count(max_tick)` for deadline-specific telemetry without mutating queue state.
+    - wake queue compaction preserves FIFO ordering for non-matching events during deadline-selective drains.
+    - validated with `zig build test --summary all` (`118/118`) and `scripts/baremetal-smoke-check.ps1`.
+    - wrapper batch shipped: `scripts/baremetal-qemu-wake-queue-before-tick-baseline-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-before-tick-first-cutoff-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-before-tick-bounded-drain-probe-check.ps1`, `scripts/baremetal-qemu-wake-queue-before-tick-notfound-probe-check.ps1`, and `scripts/baremetal-qemu-wake-queue-before-tick-notfound-preserve-state-probe-check.ps1` now split that broad lane into isolated baseline, first-cutoff, bounded-drain, notfound, and preserved-final-state checks, while the host regression now also asserts the final survivor remains intact after the rejected drain.
+  - bare-metal wake queue reason+vector selective drain slice shipped:
+    - new opcode: `command_wake_queue_pop_reason_vector` for exact-pair queue draining (`arg0=reason|(vector<<8)`, `arg1=count`, `count=0` -> pop one).
+    - new export: `oc_wake_queue_reason_vector_count(reason, vector)` for exact reason+vector telemetry without mutating queue state.
+    - wake queue compaction preserves FIFO ordering for non-matching events during exact-pair selective drains.
+    - validated with `zig build test --summary all` (`118/118`) and `scripts/baremetal-smoke-check.ps1`.
+  - bare-metal wake queue summary snapshot slice shipped:
+    - new export: `oc_wake_queue_summary()` for compact diagnostics snapshots (`len`, `overflow_count`, reason mix, `nonzero_vector_count`, `stale_count`, `oldest_tick`, `newest_tick`).
+    - ABI contract extended with `BaremetalWakeQueueSummary` size/layout checks.
+    - validated with `zig build test --summary all` (`118/118`) and `scripts/baremetal-smoke-check.ps1`.
+  - bare-metal wake queue age-bucket snapshot slice shipped:
+    - new export: `oc_wake_queue_age_buckets(quantum_ticks)` for compact age diagnostics (`current_tick`, `quantum_ticks`, `stale_count`, `stale_older_than_quantum_count`, `future_count`).
+    - ABI contract extended with `BaremetalWakeQueueAgeBuckets` size/layout checks.
+    - validated with `zig build test --summary all` (`118/118`) and `scripts/baremetal-smoke-check.ps1`.
+  - bare-metal wake queue count-snapshot slice shipped:
+    - new live script: `scripts/baremetal-qemu-wake-queue-count-snapshot-probe-check.ps1` reuses the mixed timer/interrupt/manual wake generation lane and exercises `oc_wake_queue_count_query_ptr` + `oc_wake_queue_count_snapshot_ptr` under QEMU+GDB without mutating queue state.
+    - current proof path validates `ACK=19`, `LAST_OPCODE=45`, `LAST_RESULT=0`, queue order `1/2/3/4/5`, and three snapshot queries: `interrupt@13<=11 -> 2/2/2`, `interrupt@31<=17 -> 1/4/1`, `manual@31<=20 -> 1/5/0`.
+    - validated locally with `scripts/baremetal-qemu-wake-queue-count-snapshot-probe-check.ps1` and `-SkipBuild`.
+  - bare-metal interrupt mask control slice shipped:
+    - new mailbox opcodes: `command_interrupt_mask_set` (`arg0=vector`, `arg1=masked 0|1`), `command_interrupt_mask_clear_all`, `command_interrupt_mask_reset_ignored_counts`, and `command_interrupt_mask_apply_profile`.
+    - new x86 bootstrap exports: `oc_interrupt_mask_ptr`, `oc_interrupt_mask_is_set`, `oc_interrupt_masked_count`, `oc_interrupt_mask_ignored_count`, `oc_interrupt_mask_profile`, `oc_interrupt_last_masked_vector`, `oc_interrupt_mask_ignored_vector_counts_ptr`, `oc_interrupt_mask_ignored_vector_count`, `oc_interrupt_mask_set`, `oc_interrupt_mask_clear_all`, `oc_interrupt_mask_reset_ignored_counts`, `oc_interrupt_mask_apply_profile`.
+    - runtime now suppresses masked non-exception vectors while preserving exception delivery semantics for vectors `<32`.
+    - profile-aware masking now supports deterministic windows (`none`, `external_all`, `external_high`) with automatic `custom` profile drift tracking after manual per-vector edits.
+    - validated with `zig build test --summary all` (`124/124`) and `scripts/baremetal-smoke-check.ps1`.
+  - bare-metal interrupt-mask wrapper isolation batch shipped:
+    - new wrapper probes: `scripts/baremetal-qemu-interrupt-mask-custom-profile-preserve-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-mask-invalid-input-preserve-state-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-mask-reset-ignored-preserve-mask-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-mask-profile-boundary-probe-check.ps1`, and `scripts/baremetal-qemu-interrupt-mask-exception-delivery-probe-check.ps1`.
+    - `baremetal-qemu-interrupt-mask-control-probe-check.ps1` now emits immediate post-invalid state snapshots so wrapper probes can prove invalid vector/state rejection does not clobber the live custom profile.
+    - `baremetal-qemu-interrupt-mask-profile-probe-check.ps1` now emits immediate post-reset mask-table snapshots so wrapper probes can prove `command_interrupt_mask_reset_ignored_counts` clears telemetry without mutating the active custom mask set.
+    - the wrapper batch isolates five contracts that were previously only implied by the larger live sequences: custom-profile preservation, invalid-input state preservation, ignored-count reset isolation, `external_high` boundary plus invalid-profile rejection, and masked-external vs non-maskable-exception delivery.
+  - bare-metal interrupt-mask profile wrapper validation shipped:
+    - new wrapper probes: `scripts/baremetal-qemu-interrupt-mask-profile-external-all-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-mask-profile-unmask-recovery-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-mask-profile-custom-profile-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-mask-profile-reset-ignored-counts-probe-check.ps1`, and `scripts/baremetal-qemu-interrupt-mask-profile-none-clear-all-probe-check.ps1`.
+    - `baremetal-qemu-interrupt-mask-profile-probe-check.ps1` is now exercised directly through the full profile lifecycle instead of relying only on the broad sequence plus the separate boundary wrapper.
+    - the wrapper batch isolates the five narrow profile guarantees that were previously only implied by the broader sequence: `external_all` masked baseline, unmask wake recovery on vector `200`, `custom` drift with ignored-count accumulation, ignored-count reset without mask mutation, and final `none` / `clear_all` recovery while preserving wake/task state.
+  - bare-metal QEMU interrupt-mask/exception wrapper validation shipped:
+    - new wrapper probes: `scripts/baremetal-qemu-interrupt-mask-exception-baseline-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-mask-exception-masked-interrupt-blocked-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-mask-exception-delivery-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-mask-exception-history-capture-probe-check.ps1`, and `scripts/baremetal-qemu-interrupt-mask-exception-final-state-probe-check.ps1`.
+    - `baremetal-qemu-interrupt-mask-exception-probe-check.ps1` now emits run-stamped GDB/QEMU log paths so repeated wrapper invocations cannot collide on shared log names.
+    - the wrapper batch isolates five contracts that were previously only implied by the broad exception sequence: masked baseline posture, blocked external-interrupt suppression, exception wake delivery, retained interrupt/exception history receipts, and final ready-state wake payload integrity.
+  - bare-metal QEMU interrupt-mask/exception validation shipped:
+    - new script: `scripts/baremetal-qemu-interrupt-mask-exception-probe-check.ps1`.
+    - live PVH/QEMU+GDB sequence proves `command_interrupt_mask_apply_profile(external_all)` blocks vector `200` without waking the waiting task, while `command_trigger_exception(13, 51966)` still wakes the task and records interrupt/exception histories.
+    - key probe evidence: `TASK0_STATE_AFTER_MASK=6`, `WAKE_QUEUE_COUNT_AFTER_MASK=0`, `MASKED_INTERRUPT_IGNORED_COUNT=1`, `INTERRUPT_COUNT=1`, `EXCEPTION_COUNT=1`, `WAKE0_REASON=2`, `WAKE0_VECTOR=13`.
+    - probe is wired into both `zig-ci` and `release-preview` validate stages so interrupt-mask regressions now block CI.
+  - bare-metal QEMU interrupt-mask profile validation shipped:
+    - new script: `scripts/baremetal-qemu-interrupt-mask-profile-probe-check.ps1`.
+    - live PVH/QEMU+GDB sequence proves `command_interrupt_mask_apply_profile(external_all)` blocks vector `200`, `command_interrupt_mask_set(200, 0)` restores wake delivery on vector `200`, `command_interrupt_mask_set(201, 1)` preserves `custom` profile drift while ignored counts accumulate, `command_interrupt_mask_reset_ignored_counts` clears the ignored-count telemetry, `command_interrupt_mask_apply_profile(external_high)` enforces the `63/64` boundary, invalid profile `9` is rejected, and `command_interrupt_mask_clear_all` restores the `none` profile.
+    - key probe evidence: `ACK=18`, `LAST_OPCODE=64`, `EXTERNAL_ALL_MASKED_COUNT=224`, `UNMASK_WAKE0_VECTOR=200`, `CUSTOM_IGNORED_200=1`, `CUSTOM_IGNORED_201=1`, `RESET_IGNORED_COUNT=0`, `EXTERNAL_HIGH_MASKED_COUNT=192`, `EXTERNAL_HIGH_MASKED_63=0`, `EXTERNAL_HIGH_MASKED_64=1`, `INVALID_PROFILE_RESULT=-22`, `NONE_PROFILE=0`.
+    - probe is wired into both `zig-ci` and `release-preview` validate stages so live interrupt-mask profile regressions now block CI.
+  - bare-metal QEMU interrupt-mask control validation shipped:
+    - new script: `scripts/baremetal-qemu-interrupt-mask-control-probe-check.ps1`.
+    - live PVH/QEMU+GDB sequence proves the direct control lane without profile-switch indirection: `command_interrupt_mask_set(200, 1)` blocks vector `200`, `command_interrupt_mask_set(200, 0)` restores wake delivery, invalid vector `300` and invalid mask state `2` are rejected with `-22`, `command_interrupt_mask_set(201, 1)` accumulates ignored-count telemetry while retaining `custom` profile drift, `command_interrupt_mask_reset_ignored_counts` clears the ignored-count telemetry, and final `command_interrupt_mask_clear_all` restores the `none` profile with both per-vector mask bits cleared.
+    - key probe evidence: `ACK=17`, `LAST_OPCODE=64`, `LAST_RESULT=0`, `SET_MASKED_IGNORED_COUNT=1`, `SET_MASKED_PROFILE=255`, `SET_MASKED_MASKED_COUNT=1`, `UNMASKED_WAKE0_VECTOR=200`, `UNMASKED_WAKE0_REASON=2`, `INVALID_VECTOR_RESULT=-22`, `INVALID_STATE_RESULT=-22`, `SECONDARY_MASKED_COUNT=1`, `SECONDARY_IGNORED_COUNT=2`, `RESET_IGNORED_COUNT=0`, `INTERRUPT_MASK_PROFILE=0`, `INTERRUPT_MASKED_COUNT=0`.
+    - probe is wired into both `zig-ci` and `release-preview` validate stages so direct interrupt-mask mutation regressions now block CI.
+    - wrapper family shipped: `scripts/baremetal-qemu-interrupt-mask-control-baseline-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-mask-control-unmask-delivery-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-mask-control-invalid-preserve-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-mask-control-reset-ignored-probe-check.ps1`, and `scripts/baremetal-qemu-interrupt-mask-control-final-state-probe-check.ps1`.
+    - wrapper family reuses the broad direct-control lane and fails directly on the five narrow boundaries: masked baseline, unmask wake delivery, invalid vector/state preservation, ignored-count reset after secondary direct mask, and final clear-all steady-state recovery.
+  - bare-metal allocator saturation reset validation shipped:
+    - new script: `scripts/baremetal-qemu-allocator-saturation-reset-probe-check.ps1`.
+    - added matching host regression in `src/baremetal_main.zig`.
+    - live PVH/QEMU+GDB sequence fills all `64` allocator records with one-page allocations, proves the next `command_allocator_alloc` returns `result_no_space`, runs `command_allocator_reset`, proves counters/bitmap/records collapse to steady baseline, and then proves a fresh two-page allocation restarts cleanly from slot `0`.
+    - key probe evidence: `ACK=68`, `LAST_OPCODE=32`, `LAST_RESULT=0`, `PRE_RESET_ALLOCATION_COUNT=64`, `PRE_RESET_FREE_PAGES=192`, `POST_RESET_ALLOCATION_COUNT=0`, `POST_RESET_FREE_PAGES=256`, `FRESH_PTR=1048576`, `FRESH_PAGE_LEN=2`.
+    - probe is wired into both `zig-ci` and `release-preview` validate stages so allocator-table reset regressions now block CI.
+  - bare-metal allocator saturation reset wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-allocator-saturation-reset-baseline-probe-check.ps1`, `scripts/baremetal-qemu-allocator-saturation-reset-saturated-shape-probe-check.ps1`, `scripts/baremetal-qemu-allocator-saturation-reset-last-record-probe-check.ps1`, `scripts/baremetal-qemu-allocator-saturation-reset-post-reset-baseline-probe-check.ps1`, and `scripts/baremetal-qemu-allocator-saturation-reset-fresh-restart-probe-check.ps1`.
+    - these wrappers reuse the broad allocator saturation-reset PVH/QEMU lane and fail directly on five narrower contracts: final mailbox baseline, saturated table shape, retained last-record metadata, post-reset allocator baseline, and fresh two-page restart semantics.
+  - bare-metal allocator saturation reuse validation shipped:
+    - new script: `scripts/baremetal-qemu-allocator-saturation-reuse-probe-check.ps1`.
+    - added matching host regression in `src/baremetal_main.zig`.
+    - live PVH/QEMU+GDB sequence fills all `64` allocator records with one-page allocations, proves the next `command_allocator_alloc` returns `result_no_space`, frees allocator record slot `5`, proves that slot becomes reusable while the table returns to full occupancy, and proves first-fit page search advances to pages `64-65` because page `6` still blocks the freed region.
+    - key probe evidence: `ACK=68`, `LAST_OPCODE=32`, `LAST_RESULT=0`, `PRE_FREE_REUSE_RECORD_PTR=1069056`, `POST_FREE_LAST_FREE_PTR=1069056`, `POST_REUSE_PTR=1310720`, `POST_REUSE_PAGE_START=64`, `POST_REUSE_PAGE_LEN=2`, `POST_REUSE_ALLOCATION_COUNT=64`, `POST_REUSE_FREE_PAGES=191`, `POST_REUSE_BITMAP64=1`, `POST_REUSE_BITMAP65=1`.
+    - probe is wired into both `zig-ci` and `release-preview` validate stages so allocator-table reuse regressions now block CI.
+  - bare-metal allocator saturation reuse wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-allocator-saturation-reuse-baseline-probe-check.ps1`, `scripts/baremetal-qemu-allocator-saturation-reuse-full-table-shape-probe-check.ps1`, `scripts/baremetal-qemu-allocator-saturation-reuse-no-space-preserve-probe-check.ps1`, `scripts/baremetal-qemu-allocator-saturation-reuse-freed-slot-state-probe-check.ps1`, and `scripts/baremetal-qemu-allocator-saturation-reuse-fresh-restart-probe-check.ps1`.
+    - these wrappers reuse the broad allocator saturation-reuse PVH/QEMU lane and fail directly on five narrower contracts: final mailbox baseline, saturated-table shape, preserved no-space metadata, freed-slot cleanup state, and the fresh two-page restart semantics.
+  - bare-metal allocator/syscall reset validation shipped:
+    - new script: `scripts/baremetal-qemu-allocator-syscall-reset-probe-check.ps1`.
+    - added matching host regression in `src/baremetal_main.zig`.
+    - live PVH/QEMU+GDB sequence dirties allocator state with `command_allocator_alloc(8192, 4096)`, dirties syscall state with `command_syscall_register(12, 0xCAFE)` plus `command_syscall_invoke(12, 0x55AA)`, then runs dedicated `command_allocator_reset` and `command_syscall_reset` to prove both subsystems collapse independently back to steady baseline.
+    - key probe evidence: `ACK=8`, `LAST_OPCODE=36`, `LAST_RESULT=-2`, dirty allocator count `1`, dirty syscall dispatch count `1`, post-reset allocator count `0`, post-reset free pages `256`, post-reset syscall entry count `0`, post-reset syscall dispatch count `0`.
+    - probe is wired into both `zig-ci` and `release-preview` validate stages so dedicated allocator/syscall reset regressions now block CI.
+  - bare-metal allocator/syscall reset wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-allocator-syscall-reset-dirty-allocator-probe-check.ps1`, `scripts/baremetal-qemu-allocator-syscall-reset-dirty-syscall-probe-check.ps1`, `scripts/baremetal-qemu-allocator-syscall-reset-post-reset-allocator-baseline-probe-check.ps1`, `scripts/baremetal-qemu-allocator-syscall-reset-post-reset-syscall-baseline-probe-check.ps1`, and `scripts/baremetal-qemu-allocator-syscall-reset-missing-entry-after-reset-probe-check.ps1`.
+    - these wrappers reuse the broad live allocator/syscall reset probe and fail directly on five narrower guarantees: dirty allocator state capture before reset, dirty syscall state capture before reset, allocator baseline restoration after reset, syscall baseline restoration after reset, and the final missing-entry invoke receipt after both resets.
+  - bare-metal allocator free-failure validation shipped:
+    - new script: `scripts/baremetal-qemu-allocator-free-failure-probe-check.ps1`.
+    - added matching host regression in `src/baremetal_main.zig`.
+    - live PVH/QEMU+GDB sequence allocates two pages, proves wrong-pointer `command_allocator_free` returns `result_not_found`, wrong-size returns `result_invalid_argument`, successful free updates `last_free_*`, double-free returns `result_not_found`, and a fresh allocation still restarts from page `0`.
+    - key probe evidence: `ACK=7`, `LAST_OPCODE=32`, `LAST_RESULT=0`, `ALLOC_PTR=1048576`, `BAD_PTR_RESULT=-2`, `BAD_SIZE_RESULT=-22`, `GOOD_FREE_RESULT=0`, `DOUBLE_FREE_RESULT=-2`, `GOOD_FREE_LAST_FREE_PTR=1048576`, `GOOD_FREE_LAST_FREE_SIZE=8192`, `REALLOC_PTR=1048576`, `REALLOC_PAGE_START=0`, `REALLOC_PAGE_LEN=1`, `REALLOC_FREE_PAGES=255`.
+    - probe is wired into both `zig-ci` and `release-preview` validate stages so allocator-free failure regressions now block CI.
+  - bare-metal allocator free-failure wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-allocator-free-failure-baseline-probe-check.ps1`, `scripts/baremetal-qemu-allocator-free-failure-bad-pointer-preserve-probe-check.ps1`, `scripts/baremetal-qemu-allocator-free-failure-bad-size-preserve-probe-check.ps1`, `scripts/baremetal-qemu-allocator-free-failure-good-free-metadata-probe-check.ps1`, and `scripts/baremetal-qemu-allocator-free-failure-double-free-realloc-probe-check.ps1`.
+    - these wrappers reuse the broad allocator free-failure probe and fail directly on five narrower guarantees: initial allocation baseline, wrong-pointer `result_not_found` preservation, wrong-size `result_invalid_argument` preservation, successful free metadata update, and double-free plus clean realloc restart.
+  - bare-metal reset/control isolation hardening slice shipped:
+    - added six host regressions in `src/baremetal_main.zig` covering isolated reset/clear boundaries for `command_clear_command_history`, `command_clear_health_history`, `command_reset_command_result_counters`, `command_reset_boot_diagnostics`, `command_capture_stack_pointer`, and `command_reset_counters` config preservation.
+    - `scripts/baremetal-qemu-command-result-counters-probe-check.ps1` now proves `mode` and `last_health_code` are preserved across `command_reset_command_result_counters`.
+    - `scripts/baremetal-qemu-bootdiag-history-clear-probe-check.ps1` now proves boot-phase history survives `command_reset_boot_diagnostics`, health history survives `command_clear_command_history`, and command history survives `command_clear_health_history`.
+    - `scripts/baremetal-qemu-reset-counters-probe-check.ps1` now proves `command_reset_counters` preserves `feature_flags=0xA55AA55A` and `tick_batch_hint=4`, including the resulting post-reset tick step size.
+  - bare-metal reset-preservation wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-reset-counters-preserve-config-probe-check.ps1`, `scripts/baremetal-qemu-reset-bootdiag-preserve-state-probe-check.ps1`, `scripts/baremetal-qemu-clear-command-history-preserve-health-probe-check.ps1`, `scripts/baremetal-qemu-clear-health-history-preserve-command-probe-check.ps1`, and `scripts/baremetal-qemu-reset-command-result-preserve-runtime-probe-check.ps1`.
+    - each wrapper reuses the broader live QEMU probe for its subsystem, then asserts the narrow reset-preservation boundary directly so these contracts fail independently in `zig-ci` and `release-preview`.
+    - `scripts/baremetal-qemu-reset-counters-probe-check.ps1` was aligned with current runtime semantics by expecting zero live timer entries at the pre-reset snapshot while still requiring preserved timer quantum and wake-queue evidence.
+  - bare-metal reset-counters wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-reset-counters-baseline-probe-check.ps1`, `scripts/baremetal-qemu-reset-counters-vector-reset-probe-check.ps1`, `scripts/baremetal-qemu-reset-counters-history-reset-probe-check.ps1`, `scripts/baremetal-qemu-reset-counters-subsystem-reset-probe-check.ps1`, and `scripts/baremetal-qemu-reset-counters-command-result-probe-check.ps1`.
+    - the wrapper batch reuses the broad live reset-counters probe and isolates five narrower contracts: final mailbox/status reset envelope, vector aggregate/history collapse, command/health/mode/boot history collapse, subsystem baseline collapse across scheduler/allocator/syscall/timer/wake state, and final command-result receipt shape after `command_reset_counters`.
+  - bare-metal syscall wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-syscall-reregister-preserve-count-probe-check.ps1`, `scripts/baremetal-qemu-syscall-blocked-invoke-preserve-state-probe-check.ps1`, `scripts/baremetal-qemu-syscall-disabled-invoke-preserve-state-probe-check.ps1`, `scripts/baremetal-qemu-syscall-saturation-overflow-preserve-full-probe-check.ps1`, `scripts/baremetal-qemu-syscall-saturation-reuse-slot-probe-check.ps1`, and `scripts/baremetal-qemu-syscall-saturation-reset-restart-probe-check.ps1`.
+    - expanded the dedicated `syscall-control` mutation lane into a direct stage wrapper family with `scripts/baremetal-qemu-syscall-control-baseline-probe-check.ps1`, `scripts/baremetal-qemu-syscall-control-register-stage-probe-check.ps1`, `scripts/baremetal-qemu-syscall-control-reregister-stage-probe-check.ps1`, `scripts/baremetal-qemu-syscall-control-blocked-state-probe-check.ps1`, `scripts/baremetal-qemu-syscall-control-enabled-invoke-stage-probe-check.ps1`, `scripts/baremetal-qemu-syscall-control-unregister-cleanup-stage-probe-check.ps1`, and `scripts/baremetal-qemu-syscall-control-final-state-probe-check.ps1`, plus stronger host assertions on register, re-register, blocked invoke, enabled invoke, and unregister cleanup state.
+    - expanded the dedicated `syscall-saturation-reset` lane into a full wrapper family with `scripts/baremetal-qemu-syscall-saturation-reset-baseline-probe-check.ps1`, `scripts/baremetal-qemu-syscall-saturation-reset-pre-reset-shape-probe-check.ps1`, `scripts/baremetal-qemu-syscall-saturation-reset-post-reset-baseline-probe-check.ps1`, `scripts/baremetal-qemu-syscall-saturation-reset-restart-probe-check.ps1`, and `scripts/baremetal-qemu-syscall-saturation-reset-fresh-invoke-probe-check.ps1`, plus stronger host assertions on the dirty invoke/reset/fresh-register/fresh-invoke opcode progression.
+    - expanded the dedicated `syscall-saturation-reset` lane into a full wrapper family with `scripts/baremetal-qemu-syscall-saturation-reset-baseline-probe-check.ps1`, `scripts/baremetal-qemu-syscall-saturation-reset-pre-reset-shape-probe-check.ps1`, `scripts/baremetal-qemu-syscall-saturation-reset-post-reset-baseline-probe-check.ps1`, `scripts/baremetal-qemu-syscall-saturation-reset-restart-probe-check.ps1`, and `scripts/baremetal-qemu-syscall-saturation-reset-fresh-invoke-probe-check.ps1`, plus stronger host assertions on the dirty invoke/reset/fresh-register/fresh-invoke opcode progression.
+    - the wrapper batch reuses the broad live syscall probes and isolates six narrower contracts: re-register token update without entry-count growth, blocked invoke preservation, disabled invoke preservation, full-table retention across saturation overflow, reclaimed-slot replacement semantics, and fresh slot-zero restart after `command_syscall_reset`.
+    - the direct stage wrappers are wired into both `zig-ci` and `release-preview`, so syscall-control regressions now fail at the narrow register, re-register, blocked invoke, enabled invoke, unregister cleanup, and final steady-state boundaries instead of only inside the larger mutation or saturation sequences.
+  - bare-metal interrupt/exception reset-isolation wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-reset-interrupt-counters-preserve-history-probe-check.ps1`, `scripts/baremetal-qemu-reset-exception-counters-preserve-history-probe-check.ps1`, `scripts/baremetal-qemu-clear-interrupt-history-preserve-exception-probe-check.ps1`, `scripts/baremetal-qemu-reset-vector-counters-preserve-aggregate-probe-check.ps1`, and `scripts/baremetal-qemu-reset-vector-counters-preserve-last-vector-probe-check.ps1`.
+    - each wrapper reuses one of the broad live vector probes, then asserts the narrow interrupt/exception preservation boundary directly so drift in aggregate resets, sibling-history preservation, or last-vector telemetry now fails independently in `zig-ci` and `release-preview`.
+    - the wrapper parsers were hardened for Windows CRLF output so the proof surface stays deterministic on local PowerShell and GitHub Actions runners.
+  - bare-metal task-resume timer-clear validation shipped:
+    - new script: `scripts/baremetal-qemu-task-resume-timer-clear-probe-check.ps1`.
+    - added matching host regression in `src/baremetal_main.zig`.
+    - narrowed runtime behavior so only `command_task_resume` cancels a timer-backed wait; generic `command_scheduler_wake_task` semantics remain unchanged.
+    - live PVH/QEMU+GDB sequence proves a timer-backed wait resumes through exactly one manual wake, the armed timer entry is canceled in place, no ghost timer wake appears after idle ticks, timer quantum is preserved, and fresh timer scheduling restarts from the preserved `next_timer_id`.
+    - key probe evidence: `ACK=8`, `LAST_OPCODE=27`, `LAST_RESULT=0`, `PRE_TIMER_COUNT=1`, `POST_RESUME_TIMER_COUNT=0`, `POST_RESUME_WAKE_COUNT=1`, `POST_RESUME_WAKE_REASON=3`, `POST_IDLE_WAKE_COUNT=1`, `POST_IDLE_TIMER_COUNT=0`, `REARM_TIMER_ID=2`, `REARM_NEXT_TIMER_ID=3`.
+    - probe is wired into both `zig-ci` and `release-preview` validate stages so timer-backed task-resume regressions now block CI.
+  - bare-metal task-resume timer-clear wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-task-resume-timer-clear-baseline-probe-check.ps1`, `scripts/baremetal-qemu-task-resume-timer-clear-wait-clear-probe-check.ps1`, `scripts/baremetal-qemu-task-resume-timer-clear-canceled-entry-preserve-probe-check.ps1`, `scripts/baremetal-qemu-task-resume-timer-clear-manual-wake-payload-probe-check.ps1`, and `scripts/baremetal-qemu-task-resume-timer-clear-rearm-telemetry-probe-check.ps1`.
+    - the broad probe now emits direct wait-clear and wake payload fields (`POST_RESUME_WAIT_KIND`, `POST_RESUME_WAIT_TIMEOUT`, `POST_RESUME_WAKE_TIMER_ID`) so wrapper failures point at the exact timer-backed resume boundary instead of only later end-state counts.
+    - the host regression now also asserts cleared wait-kind/timeout state, preserved canceled timer metadata, exact manual wake payload semantics, and preserved timer `next_timer_id` / dispatch telemetry before the post-resume rearm.
+    - the wrapper family reuses the broad timer-backed resume lane but fails directly on the pre-resume waiting baseline, cleared wait-kind/timeout state after `command_task_resume`, preserved canceled-slot metadata, exact manual wake payload, and final no-stale-timer plus rearm/telemetry invariants.
+  - bare-metal task-terminate mixed-state wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-task-terminate-mixed-state-baseline-probe-check.ps1`, `scripts/baremetal-qemu-task-terminate-mixed-state-target-clear-probe-check.ps1`, `scripts/baremetal-qemu-task-terminate-mixed-state-survivor-wake-probe-check.ps1`, `scripts/baremetal-qemu-task-terminate-mixed-state-wait-clear-probe-check.ps1`, and `scripts/baremetal-qemu-task-terminate-mixed-state-idle-stability-probe-check.ps1`.
+    - the broad mixed-state probe now emits explicit `POST_QUANTUM`, `POST_WAIT_KIND0`, `POST_WAIT_KIND1`, `POST_WAIT_TIMEOUT0`, `POST_WAIT_TIMEOUT1`, `AFTER_IDLE_NEXT_TIMER_ID`, and `AFTER_IDLE_QUANTUM` fields so wrapper failures bind to the exact terminate-cleanup boundary instead of inferring state from queue counts alone.
+    - the host regression now also asserts survivor-slot wait clear, preserved timer quantum, and preserved `next_timer_id` after the idle settle window.
+    - the wrapper family reuses the broad mixed terminate lane but fails directly on the pre-terminate wrapped baseline, immediate target-clear collapse, survivor wake preservation, explicit wait-kind/timeout clearing, and settled idle no-stale-dispatch plus preserved quantum/next-timer invariants.
+  - bare-metal task-resume interrupt-timeout validation shipped:
+    - new script: `scripts/baremetal-qemu-task-resume-interrupt-timeout-probe-check.ps1`.
+    - added matching host regression in `src/baremetal_main.zig`.
+    - live PVH/QEMU+GDB sequence proves `command_task_resume` on a `task_wait_interrupt_for` waiter clears the pending timeout back to `none`, queues exactly one manual wake, prevents any delayed timer wake after additional slack ticks, and leaves the timer subsystem at `next_timer_id=1`.
+    - key probe evidence: `ACK=7`, `LAST_OPCODE=51`, `LAST_RESULT=0`, `WAIT_KIND0=0`, `WAIT_TIMEOUT0=0`, `TIMER_ENTRY_COUNT=0`, `TIMER_NEXT_TIMER_ID=1`, `WAKE_QUEUE_COUNT=1`, `WAKE0_REASON=3`.
+    - probe is wired into both `zig-ci` and `release-preview` validate stages so interrupt-timeout task-resume regressions now block CI.
+  - bare-metal pure-interrupt recovery validation shipped:
+    - new scripts: `scripts/baremetal-qemu-task-resume-interrupt-probe-check.ps1` and `scripts/baremetal-qemu-interrupt-manual-wake-probe-check.ps1`.
+    - added matching host regressions in `src/baremetal_main.zig`.
+    - live PVH/QEMU+GDB sequence proves `command_task_resume` and `command_scheduler_wake_task` both clear a pure `command_task_wait_interrupt` waiter back to `none`, queue exactly one manual wake, and prevent a later interrupt from creating a second wake while still incrementing interrupt telemetry.
+    - key probe evidence: task-resume path `ACK=8`, `LAST_OPCODE=7`, `LAST_RESULT=0`, `WAIT_KIND0=0`, `WAIT_TIMEOUT0=0`, `TIMER_ENTRY_COUNT=0`, `TIMER_NEXT_TIMER_ID=1`, `WAKE_QUEUE_COUNT=1`, `WAKE0_REASON=3`, `INTERRUPT_COUNT=1`; manual-wake path `ACK=8`, `LAST_OPCODE=7`, `LAST_RESULT=0`, `WAIT_KIND0=0`, `WAIT_TIMEOUT0=0`, `TIMER_ENTRY_COUNT=0`, `WAKE_QUEUE_COUNT=1`, `WAKE0_REASON=3`, `INTERRUPT_COUNT=1`.
+    - both probes are wired into `zig-ci` and `release-preview` validate stages so pure-interrupt recovery regressions now block CI.
+  - bare-metal timer/manual/terminate recovery validation shipped:
+    - new scripts: `scripts/baremetal-qemu-scheduler-wake-timer-clear-probe-check.ps1`, `scripts/baremetal-qemu-task-terminate-interrupt-timeout-probe-check.ps1`, and `scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-probe-check.ps1`.
+    - added matching host regressions in `src/baremetal_main.zig` for scheduler-wake timer cleanup and timeout-backed terminate cleanup.
+    - live PVH/QEMU+GDB sequences prove:
+      - `command_scheduler_wake_task` on a pure timer waiter clears the armed timer entry, queues exactly one manual wake, prevents later ghost timer wake delivery after idle ticks, and preserves fresh timer scheduling from the current `next_timer_id`.
+      - `command_task_terminate` on a timeout-backed interrupt waiter clears the timeout/wait state back to steady baseline, leaves queued wake and timer state empty, and prevents later ghost interrupt or timeout wake delivery for the terminated task.
+      - `command_interrupt_mask_clear_all` restores wake delivery after direct mask manipulation, resets ignored-count telemetry to `0`, and returns the runtime to mask profile `none`.
+    - key probe evidence: scheduler-wake path `ACK=8`, `LAST_OPCODE=53`, `LAST_RESULT=0`, `PRE_TIMER_COUNT=1`, `POST_RESUME_TIMER_COUNT=0`, `POST_RESUME_WAKE_COUNT=1`, `POST_IDLE_TIMER_COUNT=0`, `REARM_TIMER_ID=2`; task-terminate path `ACK=8`, `LAST_OPCODE=7`, `LAST_RESULT=0`, `TASK0_STATE=4`, `WAIT_KIND0=0`, `WAIT_TIMEOUT0=0`, `TIMER_ENTRY_COUNT=0`, `WAKE_QUEUE_COUNT=0`, `INTERRUPT_COUNT=1`; interrupt-mask clear-all recovery path `WAKE0_VECTOR=200`, `WAKE0_REASON=2`, `INTERRUPT_MASK_PROFILE=0`, `MASKED_INTERRUPT_IGNORED_COUNT=0`.
+    - the new direct recovery probes are wired into `zig-ci` and `release-preview` validate stages and supersede the older inherited mixed-state terminate wrapper path as the active CI baseline.
+  - bare-metal scheduler-wake timer-clear wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-scheduler-wake-timer-clear-baseline-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-wake-timer-clear-wait-clear-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-wake-timer-clear-canceled-entry-preserve-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-wake-timer-clear-manual-wake-probe-check.ps1`, and `scripts/baremetal-qemu-scheduler-wake-timer-clear-rearm-telemetry-probe-check.ps1`.
+    - the host regression now also asserts preserved `next_timer_id` through the wake-clear path plus zero timer entries and preserved timer quantum across the later idle settle window.
+    - the wrapper family reuses the broad pure-timer scheduler-wake lane but fails directly on the armed waiting baseline, cleared wait/timer state after `command_scheduler_wake_task`, preserved canceled timer-entry state, exact manual wake payload, and final rearm/dispatch telemetry invariants.
+  - mixed task-recovery wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-task-resume-interrupt-timeout-wait-clear-probe-check.ps1`, `scripts/baremetal-qemu-task-resume-interrupt-timeout-manual-wake-probe-check.ps1`, `scripts/baremetal-qemu-scheduler-wake-timer-clear-manual-wake-probe-check.ps1`, `scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-interrupt-recovery-probe-check.ps1`, and `scripts/baremetal-qemu-task-terminate-mixed-state-survivor-probe-check.ps1`.
+    - these wrappers reuse the broad mixed recovery probes and fail directly on the narrow boundaries for cleared timeout-backed wait state after `command_task_resume`, exactly-one manual wake after timeout-backed resume, pure-timer manual wake cleanup after `command_scheduler_wake_task`, preserved later real interrupt delivery after `command_timer_cancel_task`, and survivor-only queued wake preservation across mixed terminate cleanup.
+    - all five wrappers are wired into `zig-ci` and `release-preview` validate stages so mixed task-recovery/control regressions now block CI at the narrow boundary level.
+  - bare-metal task-resume interrupt-timeout wrapper validation completed:
+    - new scripts: `scripts/baremetal-qemu-task-resume-interrupt-timeout-ready-state-probe-check.ps1`, `scripts/baremetal-qemu-task-resume-interrupt-timeout-no-stale-timeout-probe-check.ps1`, and `scripts/baremetal-qemu-task-resume-interrupt-timeout-telemetry-preserve-probe-check.ps1`.
+    - together with the existing `wait-clear` and `manual-wake` wrappers, the full five-wrapper family now reuses `scripts/baremetal-qemu-task-resume-interrupt-timeout-probe-check.ps1` and fails directly on ready-task baseline, cleared wait state, manual wake payload, settled no-stale-timeout window, and final mailbox/interrupt telemetry invariants.
+    - the completed wrapper family is wired into `zig-ci` and `release-preview`, so timeout-backed `command_task_resume` regressions now block CI at the narrow boundary level instead of only inside the broad mixed recovery probe.
+  - bare-metal task-resume interrupt wrapper validation completed:
+    - new scripts: `scripts/baremetal-qemu-task-resume-interrupt-ready-state-probe-check.ps1`, `scripts/baremetal-qemu-task-resume-interrupt-wait-clear-probe-check.ps1`, `scripts/baremetal-qemu-task-resume-interrupt-manual-wake-probe-check.ps1`, `scripts/baremetal-qemu-task-resume-interrupt-no-late-interrupt-probe-check.ps1`, and `scripts/baremetal-qemu-task-resume-interrupt-telemetry-preserve-probe-check.ps1`.
+    - these wrappers reuse `scripts/baremetal-qemu-task-resume-interrupt-probe-check.ps1` and fail directly on ready-task baseline, cleared interrupt wait state, exact manual wake payload, preserved single-wake state after the later real interrupt, and final mailbox/interrupt telemetry invariants.
+    - the completed wrapper family is wired into `zig-ci` and `release-preview`, so pure-interrupt `command_task_resume` regressions now block CI at the narrow boundary level instead of only inside the broad pure-interrupt recovery probe.
+  - bare-metal interrupt manual-wake wrapper validation completed:
+    - new scripts: `scripts/baremetal-qemu-interrupt-manual-wake-baseline-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-manual-wake-wait-clear-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-manual-wake-manual-wake-payload-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-manual-wake-no-second-wake-probe-check.ps1`, and `scripts/baremetal-qemu-interrupt-manual-wake-telemetry-preserve-probe-check.ps1`.
+    - these wrappers reuse `scripts/baremetal-qemu-interrupt-manual-wake-probe-check.ps1` and fail directly on ready-task baseline, cleared wait-kind/vector/timeout state after `command_scheduler_wake_task`, exact manual wake payload semantics, preserved single-wake state after the later real interrupt, and final mailbox plus timer/interrupt telemetry invariants.
+    - the completed wrapper family is wired into `zig-ci` and `release-preview`, so pure-interrupt manual-wake regressions now block CI at the narrow boundary level instead of only inside the broad recovery probe.
+  - bare-metal feature-flags/tick-batch wrapper validation normalized:
+    - family scripts: `scripts/baremetal-qemu-feature-flags-tick-batch-baseline-probe-check.ps1`, `scripts/baremetal-qemu-feature-flags-tick-batch-valid-update-probe-check.ps1`, `scripts/baremetal-qemu-feature-flags-tick-batch-invalid-preserve-probe-check.ps1`, `scripts/baremetal-qemu-feature-flags-tick-batch-mailbox-state-probe-check.ps1`, and `scripts/baremetal-qemu-feature-flags-tick-batch-state-preserve-probe-check.ps1`.
+    - `scripts/baremetal-qemu-feature-flags-tick-batch-probe-check.ps1` emits explicit stage snapshots for baseline flag success, valid tick-batch update, invalid-zero rejection, mailbox-state stability, and final preserved-state checks.
+    - the older standalone names remain as compatibility aliases, but CI/release now use the normalized family-prefixed wrappers.
+  - bare-metal interrupt-mask clear-all recovery wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-baseline-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-clear-collapse-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-wake-delivery-probe-check.ps1`, `scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-history-payload-probe-check.ps1`, and `scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-mailbox-state-probe-check.ps1`.
+    - these wrappers reuse `scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-probe-check.ps1` and fail directly on the masked baseline, the clear-all collapse of profile/masked-count/ignored telemetry, restored wake delivery for vector `200`, preserved single interrupt-history payload, and the final mailbox opcode/sequence invariants.
+  - bare-metal mailbox header wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-mailbox-invalid-magic-preserve-state-probe-check.ps1`, `scripts/baremetal-qemu-mailbox-invalid-api-version-preserve-state-probe-check.ps1`, `scripts/baremetal-qemu-mailbox-header-ack-sequence-probe-check.ps1`, `scripts/baremetal-qemu-mailbox-header-tick-batch-recovery-probe-check.ps1`, and `scripts/baremetal-qemu-mailbox-valid-recovery-probe-check.ps1`.
+    - `scripts/baremetal-qemu-mailbox-header-validation-probe-check.ps1` now emits explicit invalid-header and final recovery stage snapshots so wrappers fail directly on the narrow header-control boundaries instead of inferring from a single final receipt.
+    - these wrappers isolate five narrow contracts that were previously only implied by the larger live sequence: invalid `magic` preservation, invalid `api_version` preservation, staged `ack`/mailbox-sequence advancement across rejected headers, staged tick-batch recovery after the valid header, and valid recovery after header rejection.
+  - bare-metal mailbox wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-mailbox-stale-seq-preserve-state-probe-check.ps1` and `scripts/baremetal-qemu-mailbox-seq-wraparound-recovery-probe-check.ps1`.
+    - `scripts/baremetal-qemu-mailbox-stale-seq-probe-check.ps1` and `scripts/baremetal-qemu-mailbox-seq-wraparound-probe-check.ps1` now emit explicit stage snapshots so wrappers fail directly on intermediate mailbox-control boundaries instead of inferring from a single final receipt.
+    - these wrappers isolate the remaining narrow contracts that were previously only implied by the larger live sequences: stale-replay no-op preservation and clean sequence-wraparound recovery.
+  - bare-metal mailbox sequence-wraparound stage wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-mailbox-seq-wraparound-baseline-probe-check.ps1`, `scripts/baremetal-qemu-mailbox-seq-wraparound-pre-wrap-state-probe-check.ps1`, `scripts/baremetal-qemu-mailbox-seq-wraparound-pre-wrap-mailbox-sequence-probe-check.ps1`, `scripts/baremetal-qemu-mailbox-seq-wraparound-post-wrap-state-probe-check.ps1`, and `scripts/baremetal-qemu-mailbox-seq-wraparound-post-wrap-mailbox-state-probe-check.ps1`.
+    - `scripts/baremetal-qemu-mailbox-seq-wraparound-probe-check.ps1` now serves as a staged wraparound harness, while `src/baremetal_main.zig` also asserts the exact wrap-boundary command-history payloads for `seq=max_u32,arg0=6` and `seq=0,arg0=7`.
+    - these wrappers isolate five narrow staged contracts that were previously only implied by the larger live sequence: broad baseline receipt presence, pre-wrap state, pre-wrap mailbox sequence, post-wrap state, and post-wrap mailbox/tick state after the `u32` rollover.
+  - bare-metal mailbox stale-seq stage wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-mailbox-stale-seq-baseline-probe-check.ps1`, `scripts/baremetal-qemu-mailbox-stale-seq-first-state-probe-check.ps1`, `scripts/baremetal-qemu-mailbox-stale-seq-stale-preserve-probe-check.ps1`, `scripts/baremetal-qemu-mailbox-stale-seq-fresh-recovery-state-probe-check.ps1`, and `scripts/baremetal-qemu-mailbox-stale-seq-final-mailbox-state-probe-check.ps1`.
+    - `scripts/baremetal-qemu-mailbox-stale-seq-probe-check.ps1` now serves as a staged stale-replay harness, while `src/baremetal_main.zig` also asserts the retained event payload for `seq=1,arg0=4` and the fresh recovery event payload for `seq=2,arg0=6`.
+    - these wrappers isolate five narrow staged contracts that were previously only implied by the larger live sequence: broad baseline receipt presence, first accepted mailbox state, stale replay preservation, fresh recovery state, and final mailbox/tick state after the fresh `seq=2` command.
+  - bare-metal timer-disable reenable wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-timer-disable-reenable-arm-preservation-probe-check.ps1`, `scripts/baremetal-qemu-timer-disable-reenable-deadline-hold-probe-check.ps1`, `scripts/baremetal-qemu-timer-disable-reenable-deferred-wake-order-probe-check.ps1`, `scripts/baremetal-qemu-timer-disable-reenable-wake-payload-probe-check.ps1`, and `scripts/baremetal-qemu-timer-disable-reenable-dispatch-drain-probe-check.ps1`.
+    - these wrappers reuse the broad `scripts/baremetal-qemu-timer-disable-reenable-probe-check.ps1` run and fail directly on the narrow boundaries for arm preservation at disable time, overdue deadline hold while timers are paused, deferred wake ordering after re-enable, timer-only wake payload retention, and single-dispatch queue drain semantics.
+    - all five wrappers are wired into `zig-ci` and `release-preview` validate stages so pure timer disable/re-enable regressions now block CI at the narrow boundary level.
+  - bare-metal timer-reset-recovery wrapper validation shipped:
+    - new scripts: `scripts/baremetal-qemu-timer-reset-recovery-baseline-probe-check.ps1`, `scripts/baremetal-qemu-timer-reset-recovery-post-reset-collapse-probe-check.ps1`, `scripts/baremetal-qemu-timer-reset-recovery-wait-isolation-probe-check.ps1`, `scripts/baremetal-qemu-timer-reset-recovery-manual-wake-payload-probe-check.ps1`, and `scripts/baremetal-qemu-timer-reset-recovery-interrupt-rearm-probe-check.ps1`.
+    - `scripts/baremetal-qemu-timer-reset-recovery-probe-check.ps1` now emits explicit pre-reset and post-reset timer/task/wait snapshots, idle-settle state, and rearm telemetry so wrapper failures bind to the exact recovery boundary instead of only the final broad receipt.
+    - the host regression now also asserts post-reset task states and wait kinds, explicit manual/interrupt wake-state clearing, and the rearmed timer wait semantics after recovery.
+    - the wrapper family reuses the broad timer-reset lane but fails directly on the dirty armed baseline, immediate post-reset timer collapse, preserved pure-timer/manual plus interrupt-any wait isolation after reset, exact manual wake payload semantics, and final interrupt wake plus rearm telemetry invariants.
+  - Week-3 control-plane completion slice shipped:
+    - gateway now exposes `GET /ui` for minimal bootstrap control operations (`status`, `doctor`, `logs.tail`, `node.pair.list`) through a token-aware browser panel.
+    - node-pair protocol handling consolidated across payload variants: request aliases (`node_id/deviceId`) and action aliases (`pair_id/nodePairId/id` + optional `status|decision`) now normalize into the same state transitions and response schema.
+    - node-pair responses now include a consolidated `pairing` envelope for easier adapter compatibility, and `node.pair.list` now mirrors `items` into `pairs`.
+    - validated with `zig build test --summary all` (`117/117`).
+
+
+
+
+- Strict FS2 direct-provider success proof now covers the provider matrix beyond the OpenAI-compatible lane:
+  - `scripts/browser-request-openrouter-direct-provider-success-smoke-check.ps1` proves HTTP `200`, `executionPath="direct-provider"`, assistant text, explicit API-key auth telemetry, and the expected OpenRouter default model payload (`openrouter/auto`).
+  - `scripts/browser-request-opencode-direct-provider-success-smoke-check.ps1` proves the same for OpenCode with the expected default model payload (`opencode/default`).
+  - `scripts/telegram-webhook-receive-smoke-check.ps1` proves strict ingress success and outbound reply delivery against the configurable Telegram Bot API endpoint path.
+  - `scripts/telegram-bot-send-delivery-smoke-check.ps1` proves strict outbound delivery, typing pulses, chunk/message accounting, and payload capture against the configurable Telegram Bot API endpoint path.
+  - all FS2 strict proofs are now enforced in `zig-ci` and `release-preview`, so the hosted phase can advance beyond FS2 from the local source-of-truth baseline.
+- FS5.5 service/display/runtime depth slice (current head):
+  - `src/protocol/tcp.zig` now accepts valid partial cumulative ACK advancement on both pure ACK packets and payload-carrying packets while preserving retransmit clear semantics once all in-flight payload is acknowledged.
+  - `src/baremetal/rtl8139.zig` keeps the real hardware datapath on the corrected external-send path while the broad live TCP probe in `src/baremetal_main.zig` now installs a probe-only send hook to preserve deterministic loopback proofing without reverting the real RTL8139 datapath fix.
+  - `src/baremetal/trust_store.zig` now provides the canonical persisted trust-store layout under `/runtime/trust/bundles/<name>.der` plus active selection through `/runtime/trust/active.txt`, with RAM-disk and ATA-backed persistence tests.
+  - `src/baremetal/tool_exec.zig` now exposes `trust-list`, `trust-info`, `trust-select`, `app-list`, `app-info`, `app-state`, `app-history`, `app-stdout`, `app-stderr`, `app-trust`, `app-connector`, and `app-run` builtins on top of that store.
+  - `src/baremetal/package_store.zig` now extends the canonical persisted package layout with `/packages/<name>/assets/...`, manifest `asset_root` / `asset_count` / `asset_bytes` metadata, `/packages/<name>/meta/app.txt` launch/display/trust metadata, persisted app-manifest readback, persisted package-display profile updates, and trust-bundle validation during launch-profile load.
+  - `src/baremetal/package_store.zig`, `src/baremetal/tool_exec.zig`, `src/baremetal/tool_service.zig`, and `src/baremetal_main.zig` now add package-integrity verification on that same persisted layout: manifest `script_checksum`, `app_manifest_checksum`, and `asset_tree_checksum` fields, `package-verify`, typed `PKGVERIFY`, hosted tamper detection via `field=script_checksum`, and a live RTL8139 TCP success receipt against the persisted package tree.
+  - `src/baremetal/app_runtime.zig` now provides the persisted app-runtime surface under `/runtime/apps/<name>/last_run.txt`, `/runtime/apps/<name>/history.log`, `/runtime/apps/<name>/stdout.log`, and `/runtime/apps/<name>/stderr.log`, including bounded app list/info/state/history/stdout/stderr queries plus last-run receipt persistence on the shared filesystem/storage path.
+  - `src/baremetal/app_runtime.zig` now also persists the bounded autorun registry under `/runtime/apps/autorun.txt`, with duplicate-safe add/remove handling and RAM-disk plus ATA-backed persistence tests.
+  - `src/baremetal/tool_exec.zig` now also exposes `app-autorun-list`, `app-autorun-add`, `app-autorun-remove`, and `app-autorun-run` on top of that persisted autorun surface.
+  - `src/baremetal/tool_service.zig` now extends the typed TCP service seam with `EXEC`, `INSTALL`, `MANIFEST`, `PKGAPP`, `PKGDISPLAY`, `PKGPUT`, `PKGLS`, `PKGGET`, `PKGDELETE`, `APPLIST`, `APPINFO`, `APPSTATE`, `APPHISTORY`, `APPSTDOUT`, `APPSTDERR`, `APPTRUST`, `APPCONNECTOR`, `APPRUN`, `APPDELETE`, `DISPLAYINFO`, `DISPLAYMODES`, `DISPLAYSET`, `TRUSTPUT`, `TRUSTLIST`, `TRUSTINFO`, and `TRUSTSELECT`, returning structured `exit=... stdout_len=... stderr_len=...` payloads, runtime-layout manifest/install receipts, package-app/package-asset/uninstall payloads, persisted app-lifecycle receipts, persisted app stdout/stderr receipts, or persisted trust-store receipts on top of the freestanding tool/filesystem path.
+  - `src/baremetal/tool_service.zig` now also extends that seam with `APPAUTORUNLIST`, `APPAUTORUNADD`, `APPAUTORUNREMOVE`, and `APPAUTORUNRUN`.
+  - `src/baremetal/package_store.zig` now snapshots, reports, deletes, prunes, and restores canonical package trees under `/packages/<name>/releases/<release>/...`, including the canonical script, package metadata, app metadata, asset subtree, and deterministic `saved_seq` / `saved_tick` metadata on both RAM-disk and ATA-backed storage.
+  - `src/baremetal/tool_exec.zig` now also exposes `package-release-list`, `package-release-info`, `package-release-save`, `package-release-activate`, `package-release-delete`, and `package-release-prune` on top of that persisted release surface.
+  - `src/baremetal/tool_service.zig` now also extends the typed TCP service seam with `PKGRELEASELIST`, `PKGRELEASEINFO`, `PKGRELEASESAVE`, `PKGRELEASEACTIVATE`, `PKGRELEASEDELETE`, and `PKGRELEASEPRUNE`.
+  - `src/baremetal/package_store.zig` now also persists release-channel targets under `/packages/<name>/channels/<channel>.txt`, with `channelListAlloc`, `channelInfoAlloc`, `setPackageReleaseChannel`, and `activatePackageReleaseChannel` on top of the existing persisted release surface.
+  - `src/baremetal/tool_exec.zig` now also exposes `package-release-channel-list`, `package-release-channel-info`, `package-release-channel-set`, and `package-release-channel-activate`.
+  - `src/baremetal/tool_service.zig` now also extends the typed TCP service seam with `PKGCHANNELLIST`, `PKGCHANNELINFO`, `PKGCHANNELSET`, and `PKGCHANNELACTIVATE`.
+  - `src/baremetal/edid.zig`, `src/baremetal/display_output.zig`, `src/baremetal/virtio_gpu.zig`, and `scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1` now export and prove EDID-derived display capability flags plus bounded render/present/flush behavior over the live `virtio-gpu-pci` controller path.
+  - `src/baremetal/display_output.zig` now derives the exported connector type from EDID capability flags, and the live virtio-gpu proof validates that inferred connector type instead of hard-coding the path as always `virtual`.
+  - `src/pal/framebuffer.zig`, `src/baremetal/tool_exec.zig`, `src/baremetal/tool_service.zig`, and `src/baremetal_main.zig` now expose explicit per-output mode retargeting through `display-output-set`, typed `DISPLAYOUTPUTSET`, and `oc_display_output_set`, plus explicit connector-preferred and output-preferred restore through `display-activate-preferred`, `DISPLAYACTIVATEPREFERRED`, `display-activate-output-preferred`, and `DISPLAYACTIVATEOUTPUTPREFERRED`; the live probe validates the connected output transitions to `1024x768`, oversized requests are rejected, and the same scanout is then restored to the EDID-preferred `1280x800`.
+  - `src/baremetal/display_profile_store.zig` now persists connector-aware display profiles under `/runtime/display-profiles/profiles/<name>.txt` plus `/runtime/display-profiles/active.txt`, `src/baremetal/tool_exec.zig` now exposes `display-profile-list`, `display-profile-info`, `display-profile-active`, `display-profile-save`, `display-profile-apply`, and `display-profile-delete`, `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `DISPLAYPROFILELIST`, `DISPLAYPROFILEINFO`, `DISPLAYPROFILEACTIVE`, `DISPLAYPROFILESAVE`, `DISPLAYPROFILEAPPLY`, and `DISPLAYPROFILEDELETE`, and the host + live virtio-gpu proofs now cover save -> list -> info -> mutate -> apply -> active -> preferred-restore -> delete on the persisted display-profile surface.
+  - `src/baremetal/display_output.zig` now restores a previously reduced mode up to the preferred output bounds, which fixes the non-hardware virtio-gpu host model so saved profiles can reapply a larger valid mode after an intermediate shrink, and the same preferred-mode contract is now enforced on the live controller path through explicit connector/output preferred activation.
+  - `src/baremetal/display_output.zig` now also exports richer EDID-backed sink detail on the active/output surface including declared-interface type, manufacturer name, manufacture week/year, EDID version/revision, extension count, and bounded display name; `src/baremetal/virtio_gpu.zig` now carries that same metadata through the real `virtio-gpu-pci` controller path; `src/baremetal/tool_exec.zig` now exposes `display-output-detail` plus `display-interface-detail`; `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `DISPLAYOUTPUTDETAIL` plus `DISPLAYINTERFACEDETAIL`; and the host + live virtio-gpu proofs now validate bounded manufacturer/name export, non-zero EDID version/revision, sane manufacture year, and extension-count consistency with the exported CEA/DisplayID capability flags.
+  - `src/baremetal/abi.zig` now exports explicit CEA underscan / YCbCr 4:4:4 / YCbCr 4:2:2 capability bits, `src/baremetal/edid.zig` now parses those flags from the live sink payload, `src/baremetal/tool_exec.zig` now exposes `display-output-capabilities` plus `display-interface-capabilities`, `src/baremetal/tool_service.zig` plus `src/baremetal/tool_service/codec.zig` now expose typed `DISPLAYOUTPUTCAPABILITIES` plus `DISPLAYINTERFACECAPABILITIES`, and the host + live virtio-gpu proofs now validate exact framed capability payloads plus missing-interface rejection on the real controller path.
+  - `src/pal/tls_client_light.zig` now provides the bounded freestanding TLS client used by the PAL network layer.
+  - `src/pal/net.zig` now carries a real freestanding `https://` POST transport path on top of the RTL8139 + TCP seam for the deterministic live probe, keeps structured TLS stage/transport diagnostics for failure classification, surfaces precise last-certificate-error buckets, explicitly flushes the underlying transport after TLS writer flush so ciphertext is actually emitted on the live path, and now binds the live proof to the persisted trust-store selection path instead of an ad hoc filesystem file.
+  - `src/protocol/tcp.zig` now accepts valid option-bearing headers and valid `ACK+payload` packets without requiring `PSH`, which was necessary for the live HTTPS response path.
+  - `src/baremetal_main.zig` now drives the live RTL8139 TCP proof through typed trust-store install/list/info/select exchange, typed package-app/package-display/package-asset exchange with direct filesystem readback, typed `APPLIST` / `APPINFO` / `APPSTATE` / `APPHISTORY` / `APPSTDOUT` / `APPSTDERR` / `APPTRUST` / `APPCONNECTOR` / `APPRUN` exchange with persisted `/runtime/apps/<name>/last_run.txt`, `/runtime/apps/<name>/history.log`, `/runtime/apps/<name>/stdout.log`, and `/runtime/apps/<name>/stderr.log` readback, typed `DISPLAYINFO` / `DISPLAYMODES` / `DISPLAYSET` exchange, selected trust-bundle path readback, live display-mode application during `run-package`, and persisted HTTPS trust-store loading.
+  - `src/baremetal_main.zig` now also drives the live RTL8139 TCP proof through `APPAUTORUNADD`, `APPAUTORUNLIST`, `APPAUTORUNRUN`, and `APPAUTORUNREMOVE`, with persisted `/runtime/apps/autorun.txt`, `/runtime/apps/aux/last_run.txt`, and `/runtime/apps/aux/stdout.log` readback.
+  - `src/baremetal_main.zig` now also drives the live RTL8139 TCP proof through `PKGRELEASESAVE`, canonical package mutation, `PKGRELEASEINFO`, `PKGRELEASELIST`, `PKGRELEASEACTIVATE`, `PKGRELEASEDELETE`, and `PKGRELEASEPRUNE`, with restored `PKGRUN`, restored `/packages/<name>/bin/main.oc` readback, restored package asset readback through `PKGGET`, and deterministic newest-release retention after prune.
+  - `src/baremetal_main.zig` now also drives the live RTL8139 TCP proof through `PKGCHANNELSET`, `PKGCHANNELINFO`, `PKGCHANNELLIST`, canonical package mutation, and `PKGCHANNELACTIVATE`, with restored `PKGRUN`, restored `/packages/<name>/bin/main.oc` readback, and restored `config/app.json` readback through the selected release-channel target.
+  - `src/baremetal/runtime_bridge.zig` now provides the shared bare-metal runtime seam, `src/baremetal/tool_exec.zig` now exposes `runtime-snapshot`, `runtime-sessions`, and `runtime-session`, `src/baremetal/tool_service.zig` now exposes `RUNTIMECALL`, `RUNTIMESNAPSHOT`, `RUNTIMESESSIONS`, and `RUNTIMESESSION`, `src/runtime/tool_runtime.zig` now keeps `runtime.session.get` lifetime-safe, and `src/pal/fs.zig` now routes logical `/runtime/...` paths through the bare-metal filesystem during hosted FS5.5 validation so runtime persistence lands on the same RAM-disk/ATA-backed surface as the rest of the bare-metal stack.
+  - `src/baremetal_main.zig` now keeps the broad live RTL8139 TCP proof on the stable package/trust/app/display seam and adds a dedicated `runRtl8139RuntimeServiceProbe()` live path for runtime file-write/exec/read plus `RUNTIMESNAPSHOT`, `RUNTIMESESSIONS`, and `RUNTIMESESSION`, with persisted `/runtime/state/runtime-state.json` and `/runtime/tmp/service-runtime.txt` readback over the same live service seam.
+  - `src/baremetal/filesystem.zig` now carries a `128`-entry filesystem budget so the deeper FS5.5 package/trust/app/autorun/workspace runtime state fits on the persisted surface without live-service `NoSpace` failures.
+  - `scripts/baremetal-qemu-rtl8139-https-post-probe-check.ps1` plus `scripts/qemu-rtl8139-https-post-server.ps1` now prove the live freestanding HTTPS transport path end to end against a deterministic self-hosted TLS harness, including direct-IP transport (`https://10.0.2.2:8443/...`), TCP connect, TLS handshake, HTTPS POST write, HTTPS response readback, persistent filesystem-backed trust-store selection plus bounded CA-bundle verification with fixed probe time, and allocator-owned body buffering.
+  - the raw `debugcon` byte trail used to isolate the original `ClientHello` stall was removed after closure; the durable stage/counter diagnostics remain.
+  - full validation after the package-release retention slice is green:
+    - `zig build test --summary all` -> hosted `365/365`, bare-metal host `315 passed / 1 skipped`
+    - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1 -TimeoutSeconds 120` -> pass
+    - parity gate -> pass (`union 141/141`, `events 19/19`)
+    - docs status gate -> pass
+    - targeted package lifecycle tests in `src/baremetal/package_store.zig`, `src/baremetal/tool_exec.zig`, `src/baremetal/tool_service.zig`, and `src/baremetal_main.zig` all pass
+    - the real regressions found during the slice were stale framed payload-length expectations after widening the delete/prune receipts and a too-large `PKGRELEASEINFO` reply for the single-payload live TCP proof path; the service receipts and live proof now use the current release-retention contract and chunk the larger info response correctly
+  - current local validation after the runtime-service slice is green:
+    - `zig build test --summary all` -> hosted `368/368`, bare-metal host `333 passed / 1 skipped`
+    - `src/runtime/tool_runtime.zig` runtime RPC-frame bridge tests pass end to end
+    - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1 -TimeoutSeconds 120` -> pass on the restored broad TCP/package/trust/app/display seam
+    - `scripts/baremetal-qemu-rtl8139-runtime-service-probe-check.ps1 -TimeoutSeconds 120` proves runtime file-write/exec/read plus persisted runtime-state and data-file readback over the dedicated live TCP runtime-service seam
+    - parity gate -> pass (`union 141/141`, `events 19/19`)
+    - docs status gate -> pass
+    - the real regressions fixed during the slice were a dangling `sessionId` slice in `runtime.session.get`, Windows-hosted path separator drift for the logical `/runtime/state` contract, and hosted-test PAL filesystem leakage that kept the runtime bridge off the persisted bare-metal filesystem surface
+  - current local validation after the display-detail slice is green:
+    - `zig build test --summary all` -> hosted `427/427`, bare-metal host `404 passed / 1 skipped`
+    - `scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1 -TimeoutSeconds 120` -> pass
+    - `scripts/baremetal-qemu-framebuffer-console-probe-check.ps1 -ModeWidth 1280 -ModeHeight 720 -TimeoutSeconds 120` -> pass
+    - parity gate -> pass (`union 141/141`, `events 19/19`)
+    - docs status gate -> pass
+    - the real regression fixed during the slice was an over-tight live proof assumption about a hard-coded QEMU sink identity; the live controller proof now validates stable EDID/detail invariants instead of vendor-string literals
+  - current local validation after the master-Zig Windows refresh + workspace slice is green:
+    - local Windows GitHub mirror install target is now `47d2e5de90faec1221f61255c36e2be81c9e3db3` via `toolchains/zig-master/current`
+    - current Codeberg `master` is newer (`f8997aca8f62eef4968e4abf817ece4eb4e91c38`), so freshness mismatch remains explicit
+    - `build.zig` no longer uses the stale Windows system-command workaround that produced fake-green `All 0 tests passed`; the normal test runner path is restored
+    - `scripts/zig-codeberg-master-check.ps1` now resolves local hash identity from installed mirror metadata when `zig version` is too coarse to include a commit suffix
+    - `zig build test --summary all` on the refreshed local master toolchain -> hosted `378/378`, bare-metal host `346 passed / 1 skipped`
+    - `scripts/.tmp-debug-rtl8139-tcp-probe-check.ps1 -TimeoutSeconds 120` -> pass on the local `Debug` probe lane
+    - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1 -TimeoutSeconds 120` -> pass on the stable local `ReleaseSafe` probe lane
+    - `scripts/baremetal-qemu-rtl8139-https-post-probe-check.ps1 -TimeoutSeconds 120` -> pass on the same refreshed toolchain
+    - parity gate -> pass (`union 141/141`, `events 19/19`)
+    - docs status gate -> pass
+    - `scripts/baremetal/pvh_boot.S` now carries a `262144`-byte PVH boot/runtime stack so the broader FS5.5 probe depth stays stable on the local master toolchain
+  - current FS5.5 app-plan slice is now locally closed on the same branch:
+    - `src/baremetal/app_runtime.zig` now persists bounded app plans under `/runtime/apps/<name>/plans/<plan>.txt` with active-plan selection via `/runtime/apps/<name>/active_plan.txt`
+    - `src/baremetal/tool_exec.zig` now exposes `app-plan-list`, `app-plan-info`, `app-plan-active`, `app-plan-save`, `app-plan-apply`, and `app-plan-delete`
+    - `src/baremetal/tool_service.zig` now exposes `APPPLANLIST`, `APPPLANINFO`, `APPPLANACTIVE`, `APPPLANSAVE`, `APPPLANAPPLY`, and `APPPLANDELETE`
+    - the broad live RTL8139 TCP proof now covers save -> list -> info -> apply -> delete plus restored release/trust/display/autorun state readback on the persisted app-plan surface
+  - current FS5.5 app-suite slice is now locally closed on the same branch:
+    - `src/baremetal/app_runtime.zig` now persists bounded app-suite definitions under `/runtime/app-suites/<suite>.txt` with one `package:plan` entry per line
+    - `src/baremetal/tool_exec.zig` now exposes `app-suite-list`, `app-suite-info`, `app-suite-save`, `app-suite-apply`, `app-suite-run`, and `app-suite-delete`
+    - `src/baremetal/tool_service.zig` now exposes `APPSUITELIST`, `APPSUITEINFO`, `APPSUITESAVE`, `APPSUITEAPPLY`, `APPSUITERUN`, and `APPSUITEDELETE`
+    - host validation now proves RAM-disk and ATA-backed suite persistence plus suite-driven active-plan restoration across multiple apps
+    - the broad live RTL8139 TCP proof now covers save -> list -> info -> apply -> run -> delete plus restored active-plan, autorun, and stdout readback on the persisted app-suite surface
+  - current FS5.5 app-suite-release slice is now locally closed on the same branch:
+    - `src/baremetal/app_runtime.zig` now persists bounded app-suite release snapshots under `/runtime/app-suite-releases/<suite>/<release>/suite.txt` plus `release.txt`
+    - `src/baremetal/tool_exec.zig` now exposes `app-suite-release-list`, `app-suite-release-info`, `app-suite-release-save`, `app-suite-release-activate`, `app-suite-release-delete`, and `app-suite-release-prune`
+    - `src/baremetal/tool_service.zig` now exposes `APPSUITERELEASELIST`, `APPSUITERELEASEINFO`, `APPSUITERELEASESAVE`, `APPSUITERELEASEACTIVATE`, `APPSUITERELEASEDELETE`, and `APPSUITERELEASEPRUNE`
+    - host validation now proves RAM-disk and ATA-backed app-suite-release persistence with deterministic `saved_seq` / `saved_tick` metadata
+    - the broad live RTL8139 TCP proof now covers save -> mutate -> list -> info -> activate -> delete -> prune plus restored suite readback on the persisted app-suite-release surface
+  - current FS5.5 app-suite-release-channel slice is now locally closed on the same branch:
+    - `src/baremetal/app_runtime.zig` now persists bounded app-suite release-channel targets under `/runtime/app-suite-release-channels/<suite>/<channel>.txt`, with `suiteChannelListAlloc`, `suiteChannelInfoAlloc`, `setSuiteReleaseChannel`, and `activateSuiteReleaseChannel`
+    - `src/baremetal/tool_exec.zig` now exposes `app-suite-release-channel-list`, `app-suite-release-channel-info`, `app-suite-release-channel-set`, and `app-suite-release-channel-activate`
+    - `src/baremetal/tool_service.zig` now exposes `APPSUITECHANNELLIST`, `APPSUITECHANNELINFO`, `APPSUITECHANNELSET`, and `APPSUITECHANNELACTIVATE`
+    - host validation now proves RAM-disk and ATA-backed app-suite-release-channel persistence plus restored suite info through channel activation
+    - the broad live RTL8139 TCP proof now covers set -> persisted channel-target readback -> list -> info -> activate plus restored suite readback through the selected suite release channel
+  - current FS5.5 workspace slice is now locally closed on the same branch:
+    - `src/baremetal/workspace_runtime.zig` now persists bounded workspace definitions under `/runtime/workspaces/<name>.txt` with saved suite/trust/display/channel orchestration state plus `/runtime/workspace-runs/<name>/last_run.txt`, `history.log`, `stdout.log`, `stderr.log`, the bounded workspace autorun registry `/runtime/workspace-runs/autorun.txt`, and versioned release snapshots under `/runtime/workspace-releases/<name>/<release>/workspace.txt` plus `release.txt`
+    - `src/baremetal/tool_exec.zig` now exposes `workspace-list`, `workspace-info`, `workspace-save`, `workspace-apply`, `workspace-run`, `workspace-state`, `workspace-history`, `workspace-stdout`, `workspace-stderr`, `workspace-delete`, `workspace-release-list`, `workspace-release-info`, `workspace-release-save`, `workspace-release-activate`, `workspace-release-delete`, `workspace-release-prune`, `workspace-autorun-list`, `workspace-autorun-add`, `workspace-autorun-remove`, and `workspace-autorun-run`
+    - `src/baremetal/tool_service.zig` now exposes `WORKSPACELIST`, `WORKSPACEINFO`, `WORKSPACESAVE`, `WORKSPACEAPPLY`, `WORKSPACERUN`, `WORKSPACESTATE`, `WORKSPACEHISTORY`, `WORKSPACESTDOUT`, `WORKSPACESTDERR`, `WORKSPACEDELETE`, `WORKSPACERELEASELIST`, `WORKSPACERELEASEINFO`, `WORKSPACERELEASESAVE`, `WORKSPACERELEASEACTIVATE`, `WORKSPACERELEASEDELETE`, `WORKSPACERELEASEPRUNE`, `WORKSPACEAUTORUNLIST`, `WORKSPACEAUTORUNADD`, `WORKSPACEAUTORUNREMOVE`, and `WORKSPACEAUTORUNRUN`
+    - host validation now proves RAM-disk and ATA-backed workspace persistence plus workspace release save/list/info/activate/delete/prune, workspace autorun registry persistence, persisted runtime-receipt readback, restored canonical package script content, trust-bundle selection, display mode, and app-suite active-plan markers
+    - the broad live RTL8139 TCP proof now covers save -> list -> info -> apply -> run -> state -> history -> stdout -> stderr -> delete plus workspace release save -> mutate -> list -> info -> activate -> delete -> prune, workspace autorun add -> list -> run -> remove, persisted `/runtime/workspace-runs/autorun.txt` readback, persisted release file readback, restored workspace info, restored canonical package content, persisted runtime-receipt readback, and delete cleanup on the workspace surface
+    - `src/baremetal/workspace_runtime.zig` now also persists workspace plans under `/runtime/workspace-plans/<name>/<plan>.txt` plus `/runtime/workspace-plans/<name>/active.txt`, with `planListAlloc`, `planInfoAlloc`, `activePlanInfoAlloc`, `savePlan`, `applyPlan`, and `deletePlan`
+    - `src/baremetal/tool_exec.zig` now also exposes `workspace-plan-list`, `workspace-plan-info`, `workspace-plan-active`, `workspace-plan-save`, `workspace-plan-apply`, and `workspace-plan-delete`
+    - `src/baremetal/tool_service.zig` now also exposes `WORKSPACEPLANLIST`, `WORKSPACEPLANINFO`, `WORKSPACEPLANACTIVE`, `WORKSPACEPLANSAVE`, `WORKSPACEPLANAPPLY`, and `WORKSPACEPLANDELETE`
+    - host validation now also proves RAM-disk and ATA-backed workspace-plan persistence plus restored suite/trust/display/channel state after plan apply
+    - the broad live RTL8139 TCP proof now also covers workspace plan save -> list -> info -> apply -> active -> restore -> delete with restored suite/trust/display/channel readback on the persisted workspace surface
+    - `src/baremetal/workspace_runtime.zig` now also persists workspace plan releases under `/runtime/workspace-plan-releases/<name>/<plan>/<release>/plan.txt` plus `release.txt`, with `planReleaseListAlloc`, `planReleaseInfoAlloc`, `snapshotPlanRelease`, `activatePlanRelease`, `deletePlanRelease`, and `prunePlanReleases`
+    - `src/baremetal/tool_exec.zig` now also exposes `workspace-plan-release-list`, `workspace-plan-release-info`, `workspace-plan-release-save`, `workspace-plan-release-activate`, `workspace-plan-release-delete`, and `workspace-plan-release-prune`
+    - `src/baremetal/tool_service.zig` now also exposes `WORKSPACEPLANRELEASELIST`, `WORKSPACEPLANRELEASEINFO`, `WORKSPACEPLANRELEASESAVE`, `WORKSPACEPLANRELEASEACTIVATE`, `WORKSPACEPLANRELEASEDELETE`, and `WORKSPACEPLANRELEASEPRUNE`
+    - host validation now also proves RAM-disk and ATA-backed workspace-plan-release persistence with deterministic `saved_seq` / `saved_tick` metadata plus restored workspace-plan info through release activation
+    - the broad live RTL8139 TCP proof now also covers workspace plan release save -> mutate -> list -> info -> activate -> delete -> prune plus persisted plan/metadata readback and restored workspace-plan info
+    - `src/baremetal/workspace_runtime.zig` now also persists workspace release-channel targets under `/runtime/workspace-release-channels/<name>/<channel>.txt`, with `channelListAlloc`, `channelInfoAlloc`, `setWorkspaceReleaseChannel`, and `activateWorkspaceReleaseChannel`
+    - `src/baremetal/tool_exec.zig` now also exposes `workspace-release-channel-list`, `workspace-release-channel-info`, `workspace-release-channel-set`, and `workspace-release-channel-activate`
+    - `src/baremetal/tool_service.zig` now also exposes `WORKSPACECHANNELLIST`, `WORKSPACECHANNELINFO`, `WORKSPACECHANNELSET`, and `WORKSPACECHANNELACTIVATE`
+    - host validation now also proves RAM-disk and ATA-backed workspace release-channel persistence plus restored workspace info through channel activation
+    - the broad live RTL8139 TCP proof now also covers workspace release channel set -> info -> list -> activate, persisted channel-target readback, and restored workspace info through the selected workspace release channel
+    - `src/baremetal/workspace_runtime.zig` now also persists workspace suites under `/runtime/workspace-suites/<suite>.txt`, with `suiteListAlloc`, `suiteEntriesAlloc`, `suiteInfoAlloc`, `saveSuite`, `applySuite`, and `deleteSuite`
+    - `src/baremetal/tool_exec.zig` now also exposes `workspace-suite-list`, `workspace-suite-info`, `workspace-suite-save`, `workspace-suite-apply`, `workspace-suite-run`, and `workspace-suite-delete`
+    - `src/baremetal/tool_service.zig` now also exposes `WORKSPACESUITELIST`, `WORKSPACESUITEINFO`, `WORKSPACESUITESAVE`, `WORKSPACESUITEAPPLY`, `WORKSPACESUITERUN`, and `WORKSPACESUITEDELETE`
+    - host validation now also proves RAM-disk and ATA-backed workspace-suite persistence on top of the existing workspace orchestration surface
+    - the broad live RTL8139 TCP proof now also covers workspace suite save -> persisted suite-file readback -> list -> info -> apply -> run -> delete plus post-delete suite absence
+    - `src/baremetal/workspace_runtime.zig` now also persists workspace suite releases under `/runtime/workspace-suite-releases/<suite>/<release>/suite.txt` plus `release.txt`, with `suiteReleaseListAlloc`, `suiteReleaseInfoAlloc`, `snapshotSuiteRelease`, `activateSuiteRelease`, `deleteSuiteRelease`, and `pruneSuiteReleases`
+    - `src/baremetal/tool_exec.zig` now also exposes `workspace-suite-release-list`, `workspace-suite-release-info`, `workspace-suite-release-save`, `workspace-suite-release-activate`, `workspace-suite-release-delete`, and `workspace-suite-release-prune`
+    - `src/baremetal/tool_service.zig` now also exposes `WORKSPACESUITERELEASELIST`, `WORKSPACESUITERELEASEINFO`, `WORKSPACESUITERELEASESAVE`, `WORKSPACESUITERELEASEACTIVATE`, `WORKSPACESUITERELEASEDELETE`, and `WORKSPACESUITERELEASEPRUNE`
+    - host validation now also proves RAM-disk and ATA-backed workspace-suite-release persistence with deterministic `saved_seq` / `saved_tick` metadata
+    - the broad live RTL8139 TCP proof now also covers workspace suite release save -> mutate -> list -> info -> activate -> delete -> prune plus restored suite readback and post-delete suite-release absence
+    - `src/baremetal/workspace_runtime.zig` now also persists workspace suite release-channel targets under `/runtime/workspace-suite-release-channels/<suite>/<channel>.txt`, with `suiteChannelListAlloc`, `suiteChannelInfoAlloc`, `setSuiteReleaseChannel`, and `activateSuiteReleaseChannel`
+    - `src/baremetal/tool_exec.zig` now also exposes `workspace-suite-release-channel-list`, `workspace-suite-release-channel-info`, `workspace-suite-release-channel-set`, and `workspace-suite-release-channel-activate`
+    - `src/baremetal/tool_service.zig` now also exposes `WORKSPACESUITECHANNELLIST`, `WORKSPACESUITECHANNELINFO`, `WORKSPACESUITECHANNELSET`, and `WORKSPACESUITECHANNELACTIVATE`
+    - host validation now also proves RAM-disk and ATA-backed workspace-suite-release-channel persistence plus restored suite readback through channel activation
+    - the broad live RTL8139 TCP proof now also covers workspace suite release-channel set -> persisted channel-target readback -> list -> info -> activate plus restored suite readback through the selected workspace-suite release channel
+    - `src/baremetal/filesystem.zig` now carries a `128`-entry filesystem budget so the deeper FS5.5 package/trust/app/workspace/workspace-plan/workspace-suite release surface no longer fails with live-service `NoSpace`
+    - current local validation after the workspace-plan slice is green:
+      - `zig build test --summary all` -> `398/398` passed
+      - `scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1 -TimeoutSeconds 120` -> pass
+      - parity gate -> pass (`union 141/141`, `events 19/19`)
+      - docs status gate -> pass
+      - the real regressions fixed during the slice were proof-order drift that referenced pruned package release `r2` after the earlier release lifecycle moved on to `r3`, a wrong staged delete payload length constant for `WORKSPACEPLANDELETE`, brittle exact-length assertions on the new `WORKSPACEPLANRELEASE*` service responses, and the new plan-release surface itself (`WORKSPACEPLANRELEASE*` parsing, handlers, runtime persistence, and live proof expectations); the runtime, CLI, typed service, and live proof now match the current workspace-plan-release contract
+    - `build.zig` now runs the compiled native test executables directly on Windows, which avoids the current Zig master `--listen=-` test-runner hang while keeping the real hosted and baremetal-host test matrix intact

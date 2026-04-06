@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: GPL-2.0-only
+param(
+    [switch] $SkipBuild
+)
+
+$ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
+$probe = Join-Path $PSScriptRoot "baremetal-qemu-command-result-counters-probe-check.ps1"
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
+
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_COMMAND_RESULT_COUNTERS_PROBE=skipped\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_COMMAND_RESULT_COUNTERS_BASELINE_PROBE' `
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_COMMAND_RESULT_COUNTERS_BASELINE_PROBE_SOURCE' `
+    -SkippedSourceValue 'baremetal-qemu-command-result-counters-probe-check.ps1' `
+    -FailureLabel 'command-result counters'
+$probeText = $probeState.Text
+
+$preAck = Extract-IntValue -Text $probeText -Name 'PRE_ACK'
+$preLastOpcode = Extract-IntValue -Text $probeText -Name 'PRE_LAST_OPCODE'
+$preLastResult = Extract-IntValue -Text $probeText -Name 'PRE_LAST_RESULT'
+$preTicks = Extract-IntValue -Text $probeText -Name 'PRE_TICKS'
+$preMode = Extract-IntValue -Text $probeText -Name 'PRE_MODE'
+$preHealthCode = Extract-IntValue -Text $probeText -Name 'PRE_HEALTH_CODE'
+$preCounterTotal = Extract-IntValue -Text $probeText -Name 'PRE_COUNTER_TOTAL'
+$preCounterLastSeq = Extract-IntValue -Text $probeText -Name 'PRE_COUNTER_LAST_SEQ'
+
+if ($null -in @($preAck, $preLastOpcode, $preLastResult, $preTicks, $preMode, $preHealthCode, $preCounterTotal, $preCounterLastSeq)) {
+    throw 'Missing baseline command-result counter fields.'
+}
+if ($preAck -ne 5) { throw "Expected PRE_ACK=5. got $preAck" }
+if ($preLastOpcode -ne 54) { throw "Expected PRE_LAST_OPCODE=54. got $preLastOpcode" }
+if ($preLastResult -ne -2) { throw "Expected PRE_LAST_RESULT=-2. got $preLastResult" }
+if ($preTicks -lt 4) { throw "Expected PRE_TICKS>=4. got $preTicks" }
+if ($preMode -ne 1) { throw "Expected PRE_MODE=1. got $preMode" }
+if ($preHealthCode -ne 200) { throw "Expected PRE_HEALTH_CODE=200. got $preHealthCode" }
+if ($preCounterTotal -ne 4) { throw "Expected PRE_COUNTER_TOTAL=4. got $preCounterTotal" }
+if ($preCounterLastSeq -ne 5) { throw "Expected PRE_COUNTER_LAST_SEQ=5. got $preCounterLastSeq" }
+
+Write-Output 'BAREMETAL_QEMU_COMMAND_RESULT_COUNTERS_BASELINE_PROBE=pass'
+Write-Output "PRE_ACK=$preAck"
+Write-Output "PRE_LAST_OPCODE=$preLastOpcode"
+Write-Output "PRE_LAST_RESULT=$preLastResult"
+Write-Output "PRE_TICKS=$preTicks"
+Write-Output "PRE_MODE=$preMode"
+Write-Output "PRE_HEALTH_CODE=$preHealthCode"
+Write-Output "PRE_COUNTER_TOTAL=$preCounterTotal"
+Write-Output "PRE_COUNTER_LAST_SEQ=$preCounterLastSeq"

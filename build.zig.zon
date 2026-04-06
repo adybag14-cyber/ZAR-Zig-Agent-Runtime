@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0-only
+.{
+    .name = .openclaw_zig_port,
+    .version = "0.0.0",
+    .fingerprint = 0xcd8da85f3bc2c9e9,
+    .minimum_zig_version = "0.14.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "docs",
+        "LICENSE",
+        "README.md",
+    },
+}

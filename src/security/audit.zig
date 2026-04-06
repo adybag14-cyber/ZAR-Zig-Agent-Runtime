@@ -1,0 +1,1014 @@
+// SPDX-License-Identifier: GPL-2.0-only
+const builtin = @import("builtin");
+const std = @import("std");
+const config = @import("../config.zig");
+const guard = @import("guard.zig");
+const time_util = @import("../util/time.zig");
+
+pub const Finding = struct {
+    checkId: []const u8,
+    severity: []const u8,
+    title: []const u8,
+    detail: []const u8,
+    remediation: ?[]const u8 = null,
+};
+
+pub const Summary = struct {
+    critical: usize,
+    warn: usize,
+    info: usize,
+};
+
+pub const DeepGateway = struct {
+    attempted: bool,
+    target: []const u8,
+    ok: bool,
+    @"error": ?[]const u8 = null,
+};
+
+pub const DeepPolicyBundle = struct {
+    attempted: bool,
+    path: []const u8,
+    exists: bool,
+    parseOk: bool,
+    @"error": ?[]const u8 = null,
+};
+
+pub const DeepReport = struct {
+    gateway: DeepGateway,
+    policyBundle: DeepPolicyBundle,
+};
+
+pub const FixAction = struct {
+    kind: []const u8,
+    target: []const u8,
+    ok: bool,
+    skipped: ?[]const u8 = null,
+    @"error": ?[]const u8 = null,
+};
+
+pub const FixResult = struct {
+    ok: bool,
+    complete: bool,
+    changes: []const []const u8,
+    actions: []FixAction,
+    unresolved: []const []const u8,
+};
+
+pub const Report = struct {
+    ts: i64,
+    summary: Summary,
+    findings: []Finding,
+    deep: ?DeepReport = null,
+    fix: ?FixResult = null,
+
+    pub fn deinit(self: *Report, allocator: std.mem.Allocator) void {
+        allocator.free(self.findings);
+        if (self.fix) |fix| {
+            allocator.free(fix.changes);
+            allocator.free(fix.actions);
+            allocator.free(fix.unresolved);
+        }
+    }
+};
+
+pub const DoctorCheck = struct {
+    id: []const u8,
+    status: []const u8,
+    message: []const u8,
+    detail: []const u8,
+};
+
+pub const DoctorReport = struct {
+    checks: []DoctorCheck,
+    security: Report,
+    configHash: [64]u8,
+
+    pub fn deinit(self: *DoctorReport, allocator: std.mem.Allocator) void {
+        allocator.free(self.checks);
+        self.security.deinit(allocator);
+    }
+};
+
+pub const Options = struct {
+    deep: bool = false,
+    fix: bool = false,
+};
+
+var docker_available_cached: ?bool = null;
+
+pub fn optionsFromFrame(allocator: std.mem.Allocator, frame_json: []const u8) !Options {
+    var out: Options = .{};
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, frame_json, .{});
+    defer parsed.deinit();
+    if (parsed.value != .object) return out;
+    const params = parsed.value.object.get("params") orelse return out;
+    if (params != .object) return out;
+
+    if (params.object.get("deep")) |value| {
+        out.deep = boolFromJson(value, false);
+    }
+    if (params.object.get("fix")) |value| {
+        out.fix = boolFromJson(value, false);
+    }
+    return out;
+}
+
+pub fn run(
+    allocator: std.mem.Allocator,
+    cfg: config.Config,
+    runtime_guard: *const guard.Guard,
+    options: Options,
+) !Report {
+    var findings = std.ArrayList(Finding).empty;
+    defer findings.deinit(allocator);
+    const io = std.Io.Threaded.global_single_threaded.io();
+
+    if (!isLoopbackBind(cfg.http_bind)) {
+        try findings.append(allocator, .{
+            .checkId = "gateway.bind.public",
+            .severity = "warn",
+            .title = "Gateway bind is publicly reachable",
+            .detail = "http_bind should be loopback-scoped for local control plane usage",
+            .remediation = "set OPENCLAW_ZIG_HTTP_BIND=127.0.0.1 for production defaults",
+        });
+    }
+
+    const gateway_token = std.mem.trim(u8, cfg.gateway.auth_token, " \t\r\n");
+    const gateway_token_required = cfg.gateway.require_token or !isLoopbackBind(cfg.http_bind);
+    if (!cfg.gateway.require_token and !isLoopbackBind(cfg.http_bind)) {
+        try findings.append(allocator, .{
+            .checkId = "gateway.auth.token.policy_override",
+            .severity = "warn",
+            .title = "Gateway token policy override is active",
+            .detail = "http_bind is non-loopback, so token auth is enforced even with require_token=false",
+            .remediation = "set OPENCLAW_ZIG_GATEWAY_REQUIRE_TOKEN=true to make intent explicit",
+        });
+    } else if (!cfg.gateway.require_token) {
+        try findings.append(allocator, .{
+            .checkId = "gateway.auth.token.disabled",
+            .severity = "warn",
+            .title = "Gateway token authentication is disabled",
+            .detail = "gateway requires no auth token for /rpc requests",
+            .remediation = "set OPENCLAW_ZIG_GATEWAY_REQUIRE_TOKEN=true and configure OPENCLAW_ZIG_GATEWAY_AUTH_TOKEN",
+        });
+    }
+    if (gateway_token_required and gateway_token.len == 0) {
+        try findings.append(allocator, .{
+            .checkId = "gateway.auth.token.missing",
+            .severity = "critical",
+            .title = "Gateway token authentication is required but token is missing",
+            .detail = "token auth is required by explicit config or non-loopback bind policy, but OPENCLAW_ZIG_GATEWAY_AUTH_TOKEN is empty",
+            .remediation = "set a non-empty OPENCLAW_ZIG_GATEWAY_AUTH_TOKEN value",
+        });
+    }
+
+    if (!cfg.gateway.rate_limit_enabled) {
+        try findings.append(allocator, .{
+            .checkId = "gateway.rate_limit.disabled",
+            .severity = "warn",
+            .title = "Gateway rate limiting is disabled",
+            .detail = "gateway /rpc endpoint has no request burst controls",
+            .remediation = "set OPENCLAW_ZIG_GATEWAY_RATE_LIMIT_ENABLED=true",
+        });
+    } else if (cfg.gateway.rate_limit_window_ms == 0 or cfg.gateway.rate_limit_max_requests == 0) {
+        try findings.append(allocator, .{
+            .checkId = "gateway.rate_limit.invalid",
+            .severity = "warn",
+            .title = "Gateway rate limit thresholds are invalid",
+            .detail = "rate limit window/max requests must be positive values",
+            .remediation = "set positive OPENCLAW_ZIG_GATEWAY_RATE_LIMIT_WINDOW_MS and OPENCLAW_ZIG_GATEWAY_RATE_LIMIT_MAX_REQUESTS",
+        });
+    }
+
+    if (!cfg.security.loop_guard_enabled) {
+        try findings.append(allocator, .{
+            .checkId = "security.loop_guard.disabled",
+            .severity = "warn",
+            .title = "Loop guard is disabled",
+            .detail = "security.loop_guard_enabled=false weakens replay/loop defense",
+            .remediation = "enable OPENCLAW_ZIG_SECURITY_LOOP_GUARD_ENABLED=true",
+        });
+    }
+
+    if (cfg.security.loop_guard_enabled and (cfg.security.loop_guard_window_ms == 0 or cfg.security.loop_guard_max_hits == 0)) {
+        try findings.append(allocator, .{
+            .checkId = "security.loop_guard.thresholds.invalid",
+            .severity = "warn",
+            .title = "Loop guard thresholds are invalid",
+            .detail = "loop_guard_window_ms and loop_guard_max_hits must be positive",
+            .remediation = "set positive loop guard thresholds",
+        });
+    }
+
+    if (cfg.security.risk_review_threshold < 40 or cfg.security.risk_block_threshold < 60) {
+        try findings.append(allocator, .{
+            .checkId = "security.risk_thresholds.permissive",
+            .severity = "warn",
+            .title = "Risk thresholds are permissive",
+            .detail = "review/block thresholds are lower than recommended minimums",
+            .remediation = "set review >= 40 and block >= 60",
+        });
+    }
+
+    const state_path = std.mem.trim(u8, cfg.state_path, " \t\r\n");
+    if (state_path.len == 0 or startsWithIgnoreCase(state_path, "memory://")) {
+        try findings.append(allocator, .{
+            .checkId = "runtime.state_path.in_memory",
+            .severity = "info",
+            .title = "Runtime state path is not persisted",
+            .detail = "runtime state path is empty or memory-backed and will not survive restart",
+            .remediation = "set OPENCLAW_ZIG_STATE_PATH to a persisted directory or file path",
+        });
+    }
+
+    if (std.mem.trim(u8, cfg.security.blocked_message_patterns, " \t\r\n").len == 0) {
+        try findings.append(allocator, .{
+            .checkId = "security.blocked_patterns.empty",
+            .severity = "warn",
+            .title = "Blocked message patterns are empty",
+            .detail = "no deny signatures configured in blocked message patterns",
+            .remediation = "configure blocked patterns for prompt-injection signatures",
+        });
+    }
+
+    const policy_path = std.mem.trim(u8, cfg.security.policy_bundle_path, " \t\r\n");
+    if (policy_path.len == 0 or startsWithIgnoreCase(policy_path, "memory://")) {
+        try findings.append(allocator, .{
+            .checkId = "security.policy_bundle.unset",
+            .severity = "info",
+            .title = "Policy bundle path is not persisted",
+            .detail = "policy bundle path is empty or memory-backed",
+            .remediation = "set OPENCLAW_ZIG_SECURITY_POLICY_BUNDLE_PATH to a file path",
+        });
+    } else {
+        if (std.Io.Dir.cwd().statFile(io, policy_path, .{})) |info| {
+            if (info.kind == .directory) {
+                try findings.append(allocator, .{
+                    .checkId = "security.policy_bundle.is_dir",
+                    .severity = "warn",
+                    .title = "Policy bundle path points to a directory",
+                    .detail = "policy bundle path must reference a JSON file",
+                    .remediation = "set policy bundle path to a JSON file path",
+                });
+            }
+        } else |_| {
+            try findings.append(allocator, .{
+                .checkId = "security.policy_bundle.stat_failed",
+                .severity = "warn",
+                .title = "Policy bundle file cannot be inspected",
+                .detail = "policy bundle path does not exist or is inaccessible",
+                .remediation = "ensure policy bundle file exists and is readable",
+            });
+        }
+    }
+
+    const guard_snapshot = runtime_guard.snapshot();
+    if (guard_snapshot.blockedPatternCount == 0) {
+        try findings.append(allocator, .{
+            .checkId = "security.guard.patterns.empty",
+            .severity = "warn",
+            .title = "Runtime guard has zero blocked patterns",
+            .detail = "guard pattern list is empty after configuration parse",
+            .remediation = "configure blocked patterns or restore defaults",
+        });
+    }
+
+    const fix_result = if (options.fix) try applyFixes(allocator, cfg) else null;
+    const deep_result = if (options.deep) try buildDeepReport(allocator, cfg) else null;
+
+    const owned_findings = try findings.toOwnedSlice(allocator);
+    return .{
+        .ts = time_util.nowMs(),
+        .summary = summarize(owned_findings),
+        .findings = owned_findings,
+        .deep = deep_result,
+        .fix = fix_result,
+    };
+}
+
+pub fn doctor(
+    allocator: std.mem.Allocator,
+    cfg: config.Config,
+    runtime_guard: *const guard.Guard,
+    options: Options,
+) !DoctorReport {
+    var security = try run(allocator, cfg, runtime_guard, options);
+    errdefer security.deinit(allocator);
+
+    var checks = std.ArrayList(DoctorCheck).empty;
+    defer checks.deinit(allocator);
+
+    try checks.append(allocator, .{
+        .id = "gateway.bind_scope",
+        .status = if (isLoopbackBind(cfg.http_bind)) "pass" else "warn",
+        .message = cfg.http_bind,
+        .detail = "prefer loopback bind for local control endpoints",
+    });
+    const gateway_token = std.mem.trim(u8, cfg.gateway.auth_token, " \t\r\n");
+    const gateway_token_required = cfg.gateway.require_token or !isLoopbackBind(cfg.http_bind);
+    try checks.append(allocator, .{
+        .id = "gateway.auth_token",
+        .status = if (!gateway_token_required) "warn" else if (gateway_token.len == 0) "fail" else "pass",
+        .message = if (!gateway_token_required) "disabled" else if (gateway_token.len == 0) "missing" else "configured",
+        .detail = "token auth is required by explicit setting or non-loopback bind policy",
+    });
+    try checks.append(allocator, .{
+        .id = "gateway.rate_limit",
+        .status = if (!cfg.gateway.rate_limit_enabled) "warn" else if (cfg.gateway.rate_limit_window_ms == 0 or cfg.gateway.rate_limit_max_requests == 0) "fail" else "pass",
+        .message = if (!cfg.gateway.rate_limit_enabled) "disabled" else if (cfg.gateway.rate_limit_window_ms == 0 or cfg.gateway.rate_limit_max_requests == 0) "invalid" else "enabled",
+        .detail = "gateway rpc rate limit thresholds should be enabled with positive window and quota",
+    });
+    try checks.append(allocator, .{
+        .id = "security.loop_guard",
+        .status = if (cfg.security.loop_guard_enabled) "pass" else "warn",
+        .message = if (cfg.security.loop_guard_enabled) "enabled" else "disabled",
+        .detail = "loop guard blocks repetitive tool calls",
+    });
+    const state_path = std.mem.trim(u8, cfg.state_path, " \t\r\n");
+    const persisted_state_path = state_path.len > 0 and !startsWithIgnoreCase(state_path, "memory://");
+    try checks.append(allocator, .{
+        .id = "runtime.state_path",
+        .status = if (persisted_state_path) "pass" else "warn",
+        .message = if (state_path.len > 0) state_path else "unset",
+        .detail = if (persisted_state_path) "runtime state path is persisted" else "runtime state path is in-memory and non-persistent",
+    });
+    const policy_path = std.mem.trim(u8, cfg.security.policy_bundle_path, " \t\r\n");
+    const policy_probe = probePolicyBundle(policy_path);
+    try checks.append(allocator, .{
+        .id = "security.policy_bundle",
+        .status = if (!policy_probe.attempted) "warn" else if (policy_probe.parseOk) "pass" else "warn",
+        .message = if (policy_path.len > 0) policy_path else "unset",
+        .detail = if (!policy_probe.attempted)
+            "policy bundle is unset or memory-backed"
+        else if (policy_probe.parseOk)
+            "persisted policy bundle configured"
+        else
+            (policy_probe.@"error" orelse "policy bundle deep probe failed"),
+    });
+    try checks.append(allocator, .{
+        .id = "security.audit.summary",
+        .status = if (security.summary.critical > 0) "fail" else if (security.summary.warn > 0) "warn" else "pass",
+        .message = "derived",
+        .detail = "derived from security.audit findings",
+    });
+    const docker_available = dockerAvailableCached();
+    try checks.append(allocator, .{
+        .id = "docker.binary",
+        .status = if (docker_available) "pass" else "warn",
+        .message = if (docker_available) "available" else "unavailable",
+        .detail = "docker is used by smoke/system validation",
+    });
+
+    return .{
+        .checks = try checks.toOwnedSlice(allocator),
+        .security = security,
+        .configHash = config.fingerprintHex(cfg),
+    };
+}
+
+fn summarize(findings: []const Finding) Summary {
+    var out: Summary = .{ .critical = 0, .warn = 0, .info = 0 };
+    for (findings) |item| {
+        if (std.mem.eql(u8, item.severity, "critical")) out.critical += 1 else if (std.mem.eql(u8, item.severity, "warn")) out.warn += 1 else out.info += 1;
+    }
+    return out;
+}
+
+fn applyFixes(allocator: std.mem.Allocator, cfg: config.Config) !FixResult {
+    var changes = std.ArrayList([]const u8).empty;
+    defer changes.deinit(allocator);
+    var actions = std.ArrayList(FixAction).empty;
+    defer actions.deinit(allocator);
+    var unresolved = std.ArrayList([]const u8).empty;
+    defer unresolved.deinit(allocator);
+    const io = std.Io.Threaded.global_single_threaded.io();
+
+    var ok = true;
+    const state_path = std.mem.trim(u8, cfg.state_path, " \t\r\n");
+    if (state_path.len == 0 or startsWithIgnoreCase(state_path, "memory://")) {
+        try actions.append(allocator, .{
+            .kind = "config",
+            .target = "OPENCLAW_ZIG_STATE_PATH",
+            .ok = false,
+            .skipped = "manual config update required",
+        });
+        try unresolved.append(allocator, "set OPENCLAW_ZIG_STATE_PATH to a persisted directory or file path");
+    }
+
+    const policy_raw = std.mem.trim(u8, cfg.security.policy_bundle_path, " \t\r\n");
+    const policy_memory_backed = policy_raw.len == 0 or startsWithIgnoreCase(policy_raw, "memory://");
+    var policy_path = policy_raw;
+    if (policy_memory_backed) {
+        policy_path = ".openclaw-zig/security-policy.json";
+        try actions.append(allocator, .{
+            .kind = "config",
+            .target = "OPENCLAW_ZIG_SECURITY_POLICY_BUNDLE_PATH",
+            .ok = false,
+            .skipped = "manual config update required",
+        });
+        try unresolved.append(allocator, "set OPENCLAW_ZIG_SECURITY_POLICY_BUNDLE_PATH to a persisted file path");
+    }
+
+    if (std.fs.path.dirname(policy_path)) |dir_name| {
+        std.Io.Dir.cwd().createDirPath(io, dir_name) catch |err| {
+            ok = false;
+            try actions.append(allocator, .{
+                .kind = "mkdir",
+                .target = dir_name,
+                .ok = false,
+                .@"error" = @errorName(err),
+            });
+            return .{
+                .ok = false,
+                .complete = false,
+                .changes = try changes.toOwnedSlice(allocator),
+                .actions = try actions.toOwnedSlice(allocator),
+                .unresolved = try unresolved.toOwnedSlice(allocator),
+            };
+        };
+        try actions.append(allocator, .{
+            .kind = "mkdir",
+            .target = dir_name,
+            .ok = true,
+        });
+    }
+
+    const default_policy =
+        \\{
+        \\  "version": 1,
+        \\  "generatedBy": "openclaw-zig-security-audit-fix",
+        \\  "default_action": "allow",
+        \\  "tool_policies": {},
+        \\  "blocked_message_patterns": ["ignore previous instructions", "system prompt", "jailbreak"]
+        \\}
+    ;
+
+    std.Io.Dir.cwd().writeFile(io, .{ .sub_path = policy_path, .data = default_policy }) catch |err| {
+        ok = false;
+        try actions.append(allocator, .{
+            .kind = "write",
+            .target = policy_path,
+            .ok = false,
+            .@"error" = @errorName(err),
+        });
+        return .{
+            .ok = false,
+            .complete = false,
+            .changes = try changes.toOwnedSlice(allocator),
+            .actions = try actions.toOwnedSlice(allocator),
+            .unresolved = try unresolved.toOwnedSlice(allocator),
+        };
+    };
+    if (policy_memory_backed) {
+        try changes.append(allocator, "created policy bundle template at .openclaw-zig/security-policy.json");
+    } else {
+        try changes.append(allocator, "created policy bundle file");
+    }
+    try actions.append(allocator, .{
+        .kind = "write",
+        .target = policy_path,
+        .ok = true,
+    });
+
+    return .{
+        .ok = ok,
+        .complete = ok and unresolved.items.len == 0,
+        .changes = try changes.toOwnedSlice(allocator),
+        .actions = try actions.toOwnedSlice(allocator),
+        .unresolved = try unresolved.toOwnedSlice(allocator),
+    };
+}
+
+fn buildDeepReport(allocator: std.mem.Allocator, cfg: config.Config) !DeepReport {
+    _ = allocator;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const target = try std.fmt.allocPrint(std.heap.page_allocator, "{s}:{d}", .{ cfg.http_bind, cfg.http_port });
+    defer std.heap.page_allocator.free(target);
+
+    const gateway = blk: {
+        const address = std.Io.net.IpAddress.resolve(io, cfg.http_bind, cfg.http_port) catch |err| {
+            break :blk DeepGateway{
+                .attempted = true,
+                .target = target,
+                .ok = false,
+                .@"error" = @errorName(err),
+            };
+        };
+        var stream = address.connect(io, .{ .mode = .stream, .protocol = .tcp, .timeout = .{
+            .duration = .{
+                .clock = .awake,
+                .raw = std.Io.Duration.fromMilliseconds(1500),
+            },
+        } }) catch |err| {
+            break :blk DeepGateway{
+                .attempted = true,
+                .target = target,
+                .ok = false,
+                .@"error" = @errorName(err),
+            };
+        };
+        stream.close(io);
+        break :blk DeepGateway{
+            .attempted = true,
+            .target = target,
+            .ok = true,
+        };
+    };
+
+    const policy = probePolicyBundle(cfg.security.policy_bundle_path);
+    return .{
+        .gateway = gateway,
+        .policyBundle = policy,
+    };
+}
+
+fn probePolicyBundle(path: []const u8) DeepPolicyBundle {
+    const trimmed = std.mem.trim(u8, path, " \t\r\n");
+    if (trimmed.len == 0 or startsWithIgnoreCase(trimmed, "memory://")) {
+        return .{
+            .attempted = false,
+            .path = trimmed,
+            .exists = false,
+            .parseOk = true,
+        };
+    }
+
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const stat = std.Io.Dir.cwd().statFile(io, trimmed, .{}) catch |err| {
+        return .{
+            .attempted = true,
+            .path = trimmed,
+            .exists = false,
+            .parseOk = false,
+            .@"error" = @errorName(err),
+        };
+    };
+    if (stat.kind == .directory) {
+        return .{
+            .attempted = true,
+            .path = trimmed,
+            .exists = true,
+            .parseOk = false,
+            .@"error" = "path is a directory",
+        };
+    }
+
+    const raw = std.Io.Dir.cwd().readFileAlloc(io, trimmed, std.heap.page_allocator, .limited(512 * 1024)) catch |err| {
+        return .{
+            .attempted = true,
+            .path = trimmed,
+            .exists = true,
+            .parseOk = false,
+            .@"error" = @errorName(err),
+        };
+    };
+    defer std.heap.page_allocator.free(raw);
+    var parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, raw, .{}) catch |err| {
+        return .{
+            .attempted = true,
+            .path = trimmed,
+            .exists = true,
+            .parseOk = false,
+            .@"error" = @errorName(err),
+        };
+    };
+    parsed.deinit();
+    return .{
+        .attempted = true,
+        .path = trimmed,
+        .exists = true,
+        .parseOk = true,
+    };
+}
+
+fn isLoopbackBind(bind: []const u8) bool {
+    const trimmed = std.mem.trim(u8, bind, " \t\r\n");
+    if (trimmed.len == 0) return false;
+    return std.ascii.eqlIgnoreCase(trimmed, "127.0.0.1") or
+        std.ascii.eqlIgnoreCase(trimmed, "::1") or
+        std.ascii.eqlIgnoreCase(trimmed, "localhost");
+}
+
+fn dockerAvailableCached() bool {
+    if (docker_available_cached) |cached| return cached;
+    const probed = commandAvailable("docker");
+    docker_available_cached = probed;
+    return probed;
+}
+
+fn commandAvailable(command: []const u8) bool {
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const timeout: std.Io.Timeout = switch (builtin.os.tag) {
+        .windows => .none,
+        else => .{
+            .duration = .{
+                .clock = .awake,
+                .raw = std.Io.Duration.fromMilliseconds(2_000),
+            },
+        },
+    };
+    const result = std.process.run(std.heap.page_allocator, io, .{
+        .argv = &[_][]const u8{ command, "--version" },
+        .stdout_limit = .limited(1024),
+        .stderr_limit = .limited(1024),
+        .timeout = timeout,
+    }) catch return false;
+    defer std.heap.page_allocator.free(result.stdout);
+    defer std.heap.page_allocator.free(result.stderr);
+    return true;
+}
+
+fn boolFromJson(value: std.json.Value, fallback: bool) bool {
+    return switch (value) {
+        .bool => |b| b,
+        .string => |s| blk: {
+            const trimmed = std.mem.trim(u8, s, " \t\r\n");
+            if (trimmed.len == 0) break :blk fallback;
+            if (std.ascii.eqlIgnoreCase(trimmed, "true") or std.mem.eql(u8, trimmed, "1") or std.ascii.eqlIgnoreCase(trimmed, "yes") or std.ascii.eqlIgnoreCase(trimmed, "on")) break :blk true;
+            if (std.ascii.eqlIgnoreCase(trimmed, "false") or std.mem.eql(u8, trimmed, "0") or std.ascii.eqlIgnoreCase(trimmed, "no") or std.ascii.eqlIgnoreCase(trimmed, "off")) break :blk false;
+            break :blk fallback;
+        },
+        .integer => |i| i != 0,
+        else => fallback,
+    };
+}
+
+fn startsWithIgnoreCase(value: []const u8, prefix: []const u8) bool {
+    if (value.len < prefix.len) return false;
+    for (prefix, 0..) |ch, idx| {
+        if (std.ascii.toLower(value[idx]) != std.ascii.toLower(ch)) return false;
+    }
+    return true;
+}
+
+test "security audit warns when bind is not loopback" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.http_bind = "0.0.0.0";
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try run(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+    try std.testing.expect(report.summary.warn >= 1);
+}
+
+test "doctor includes docker binary check" {
+    const allocator = std.testing.allocator;
+    const cfg = config.defaults();
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try doctor(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found = false;
+    for (report.checks) |check| {
+        if (std.mem.eql(u8, check.id, "docker.binary")) {
+            found = true;
+            try std.testing.expect(
+                std.mem.eql(u8, check.status, "pass") or std.mem.eql(u8, check.status, "warn"),
+            );
+        }
+    }
+    try std.testing.expect(found);
+}
+
+test "security audit reports in-memory runtime state path" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.state_path = "memory://runtime-state";
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try run(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found = false;
+    for (report.findings) |finding| {
+        if (std.mem.eql(u8, finding.checkId, "runtime.state_path.in_memory")) {
+            found = true;
+            try std.testing.expect(std.mem.eql(u8, finding.severity, "info"));
+        }
+    }
+    try std.testing.expect(found);
+}
+
+test "security audit fix reports manual runtime and policy config blockers" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.state_path = "memory://runtime-state";
+    cfg.security.policy_bundle_path = "memory://security-policy.json";
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try run(allocator, cfg, &runtime_guard, .{ .fix = true });
+    defer report.deinit(allocator);
+
+    const fix = report.fix orelse return error.TestUnexpectedResult;
+    try std.testing.expect(fix.ok);
+    try std.testing.expect(!fix.complete);
+    try std.testing.expectEqual(@as(usize, 2), fix.unresolved.len);
+    try std.testing.expect(std.mem.indexOf(u8, fix.unresolved[0], "OPENCLAW_ZIG_STATE_PATH") != null);
+    try std.testing.expect(std.mem.indexOf(u8, fix.unresolved[1], "OPENCLAW_ZIG_SECURITY_POLICY_BUNDLE_PATH") != null);
+
+    var found_state_action = false;
+    var found_policy_action = false;
+    var found_policy_template = false;
+    for (fix.actions) |action| {
+        if (std.mem.eql(u8, action.target, "OPENCLAW_ZIG_STATE_PATH")) {
+            found_state_action = true;
+            try std.testing.expect(!action.ok);
+            try std.testing.expect(std.mem.eql(u8, action.kind, "config"));
+            try std.testing.expect(std.mem.eql(u8, action.skipped orelse "", "manual config update required"));
+        }
+        if (std.mem.eql(u8, action.target, "OPENCLAW_ZIG_SECURITY_POLICY_BUNDLE_PATH")) {
+            found_policy_action = true;
+            try std.testing.expect(!action.ok);
+            try std.testing.expect(std.mem.eql(u8, action.kind, "config"));
+            try std.testing.expect(std.mem.eql(u8, action.skipped orelse "", "manual config update required"));
+        }
+        if (std.mem.eql(u8, action.target, ".openclaw-zig/security-policy.json")) {
+            found_policy_template = true;
+            try std.testing.expect(action.ok);
+        }
+    }
+    try std.testing.expect(found_state_action);
+    try std.testing.expect(found_policy_action);
+    try std.testing.expect(found_policy_template);
+    try std.testing.expect(std.mem.indexOf(u8, fix.changes[0], "policy bundle template") != null);
+}
+
+test "doctor exposes runtime state path and policy bundle posture checks" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.state_path = "memory://runtime-state";
+    cfg.security.policy_bundle_path = "memory://security-policy.json";
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try doctor(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found_state_path = false;
+    var found_policy_bundle = false;
+    for (report.checks) |check| {
+        if (std.mem.eql(u8, check.id, "runtime.state_path")) {
+            found_state_path = true;
+            try std.testing.expect(std.mem.eql(u8, check.status, "warn"));
+            try std.testing.expect(std.mem.eql(u8, check.message, "memory://runtime-state"));
+        }
+        if (std.mem.eql(u8, check.id, "security.policy_bundle")) {
+            found_policy_bundle = true;
+            try std.testing.expect(std.mem.eql(u8, check.status, "warn"));
+            try std.testing.expect(std.mem.eql(u8, check.message, "memory://security-policy.json"));
+        }
+    }
+    try std.testing.expect(found_state_path);
+    try std.testing.expect(found_policy_bundle);
+}
+
+test "security audit includes gateway auth warning when token gate is disabled" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.gateway.require_token = false;
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try run(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found = false;
+    for (report.findings) |finding| {
+        if (std.mem.eql(u8, finding.checkId, "gateway.auth.token.disabled")) {
+            found = true;
+            try std.testing.expect(std.mem.eql(u8, finding.severity, "warn"));
+        }
+    }
+    try std.testing.expect(found);
+}
+
+test "doctor exposes gateway auth token check" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.gateway.require_token = true;
+    cfg.gateway.auth_token = "";
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try doctor(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found = false;
+    for (report.checks) |check| {
+        if (std.mem.eql(u8, check.id, "gateway.auth_token")) {
+            found = true;
+            try std.testing.expect(std.mem.eql(u8, check.status, "fail"));
+        }
+    }
+    try std.testing.expect(found);
+}
+
+test "doctor includes deterministic config hash" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report_a = try doctor(allocator, cfg, &runtime_guard, .{});
+    defer report_a.deinit(allocator);
+    const hash_a = report_a.configHash;
+    try std.testing.expect(hash_a.len == 64);
+
+    cfg.gateway.require_token = true;
+    var report_b = try doctor(allocator, cfg, &runtime_guard, .{});
+    defer report_b.deinit(allocator);
+    try std.testing.expect(!std.mem.eql(u8, &hash_a, &report_b.configHash));
+}
+
+test "security audit reports bind policy override when non-loopback token enforcement is implicit" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.http_bind = "0.0.0.0";
+    cfg.gateway.require_token = false;
+    cfg.gateway.auth_token = "edge-token";
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try run(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found = false;
+    for (report.findings) |finding| {
+        if (std.mem.eql(u8, finding.checkId, "gateway.auth.token.policy_override")) {
+            found = true;
+            try std.testing.expect(std.mem.eql(u8, finding.severity, "warn"));
+        }
+    }
+    try std.testing.expect(found);
+}
+
+test "doctor fails gateway auth check when non-loopback bind has no token" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.http_bind = "0.0.0.0";
+    cfg.gateway.require_token = false;
+    cfg.gateway.auth_token = "";
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try doctor(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found = false;
+    for (report.checks) |check| {
+        if (std.mem.eql(u8, check.id, "gateway.auth_token")) {
+            found = true;
+            try std.testing.expect(std.mem.eql(u8, check.status, "fail"));
+        }
+    }
+    try std.testing.expect(found);
+}
+
+test "security audit treats hardened public gateway auth and rate limit posture as compliant" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.http_bind = "0.0.0.0";
+    cfg.gateway.require_token = true;
+    cfg.gateway.auth_token = "edge-token";
+    cfg.gateway.rate_limit_enabled = true;
+    cfg.gateway.rate_limit_window_ms = 60_000;
+    cfg.gateway.rate_limit_max_requests = 300;
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try run(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    for (report.findings) |finding| {
+        try std.testing.expect(!std.mem.eql(u8, finding.checkId, "gateway.auth.token.disabled"));
+        try std.testing.expect(!std.mem.eql(u8, finding.checkId, "gateway.auth.token.missing"));
+        try std.testing.expect(!std.mem.eql(u8, finding.checkId, "gateway.auth.token.policy_override"));
+        try std.testing.expect(!std.mem.eql(u8, finding.checkId, "gateway.rate_limit.disabled"));
+        try std.testing.expect(!std.mem.eql(u8, finding.checkId, "gateway.rate_limit.invalid"));
+    }
+}
+
+test "security audit reports gateway rate limit warning when disabled" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.gateway.rate_limit_enabled = false;
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try run(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found = false;
+    for (report.findings) |finding| {
+        if (std.mem.eql(u8, finding.checkId, "gateway.rate_limit.disabled")) {
+            found = true;
+            try std.testing.expect(std.mem.eql(u8, finding.severity, "warn"));
+        }
+    }
+    try std.testing.expect(found);
+}
+
+test "security audit reports gateway rate limit warning when thresholds are invalid" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.gateway.rate_limit_enabled = true;
+    cfg.gateway.rate_limit_window_ms = 0;
+    cfg.gateway.rate_limit_max_requests = 0;
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try run(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found = false;
+    for (report.findings) |finding| {
+        if (std.mem.eql(u8, finding.checkId, "gateway.rate_limit.invalid")) {
+            found = true;
+            try std.testing.expect(std.mem.eql(u8, finding.severity, "warn"));
+        }
+    }
+    try std.testing.expect(found);
+}
+
+test "doctor passes hardened public gateway auth and rate limit checks" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.http_bind = "0.0.0.0";
+    cfg.gateway.require_token = true;
+    cfg.gateway.auth_token = "edge-token";
+    cfg.gateway.rate_limit_enabled = true;
+    cfg.gateway.rate_limit_window_ms = 60_000;
+    cfg.gateway.rate_limit_max_requests = 300;
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try doctor(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found_auth = false;
+    var found_rate = false;
+    for (report.checks) |check| {
+        if (std.mem.eql(u8, check.id, "gateway.auth_token")) {
+            found_auth = true;
+            try std.testing.expect(std.mem.eql(u8, check.status, "pass"));
+            try std.testing.expect(std.mem.eql(u8, check.message, "configured"));
+        } else if (std.mem.eql(u8, check.id, "gateway.rate_limit")) {
+            found_rate = true;
+            try std.testing.expect(std.mem.eql(u8, check.status, "pass"));
+            try std.testing.expect(std.mem.eql(u8, check.message, "enabled"));
+        }
+    }
+    try std.testing.expect(found_auth);
+    try std.testing.expect(found_rate);
+}
+
+test "doctor warns when gateway rate limit is disabled" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.gateway.rate_limit_enabled = false;
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try doctor(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found = false;
+    for (report.checks) |check| {
+        if (std.mem.eql(u8, check.id, "gateway.rate_limit")) {
+            found = true;
+            try std.testing.expect(std.mem.eql(u8, check.status, "warn"));
+            try std.testing.expect(std.mem.eql(u8, check.message, "disabled"));
+        }
+    }
+    try std.testing.expect(found);
+}
+
+test "doctor fails when gateway rate limit thresholds are invalid" {
+    const allocator = std.testing.allocator;
+    var cfg = config.defaults();
+    cfg.gateway.rate_limit_enabled = true;
+    cfg.gateway.rate_limit_window_ms = 0;
+    cfg.gateway.rate_limit_max_requests = 0;
+    var runtime_guard = try guard.Guard.init(allocator, cfg.security);
+    defer runtime_guard.deinit();
+
+    var report = try doctor(allocator, cfg, &runtime_guard, .{});
+    defer report.deinit(allocator);
+
+    var found = false;
+    for (report.checks) |check| {
+        if (std.mem.eql(u8, check.id, "gateway.rate_limit")) {
+            found = true;
+            try std.testing.expect(std.mem.eql(u8, check.status, "fail"));
+            try std.testing.expect(std.mem.eql(u8, check.message, "invalid"));
+        }
+    }
+    try std.testing.expect(found);
+}

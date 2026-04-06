@@ -1,0 +1,3111 @@
+name: zig-ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Zig (0.16.0-dev.2736+3b515fbed) primary
+        id: setup_zig_primary
+        continue-on-error: true
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0-dev.2736+3b515fbed
+          use-cache: true
+
+      - name: Setup Zig (0.16.0-dev.2736+3b515fbed) mirror fallback
+        id: setup_zig_mirror_mach
+        if: steps.setup_zig_primary.outcome == 'failure'
+        continue-on-error: true
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0-dev.2736+3b515fbed
+          mirror: https://pkg.machengine.org/zig
+          use-cache: true
+
+      - name: Setup Zig (0.16.0-dev.2736+3b515fbed) mirror fallback (ziglang.org)
+        if: steps.setup_zig_primary.outcome == 'failure' && steps.setup_zig_mirror_mach.outcome == 'failure'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0-dev.2736+3b515fbed
+          mirror: https://ziglang.org/builds
+          use-cache: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Zig version
+        run: zig version
+
+      - name: Zig master freshness snapshot (Codeberg with mirror fallback)
+        shell: pwsh
+        continue-on-error: true
+        run: ./scripts/zig-codeberg-master-check.ps1 -OutputJsonPath zig-master-freshness.json
+
+      - name: Zig GitHub mirror release snapshot
+        shell: pwsh
+        continue-on-error: true
+        run: ./scripts/zig-github-mirror-release-check.ps1 -GitHubToken "${{ github.token }}" -OutputJsonPath zig-github-mirror-release.json -OutputMarkdownPath zig-github-mirror-release.md
+
+      - name: Validate npm package (dry-run)
+        working-directory: npm/openclaw-zig-rpc-client
+        run: npm pack --dry-run
+
+      - name: Validate python package (tests + build)
+        shell: pwsh
+        run: ./scripts/python-pack-check.ps1
+
+      - name: Regenerate RPC reference
+        shell: pwsh
+        run: ./scripts/generate-rpc-reference.ps1
+
+      - name: Verify RPC reference is up to date
+        run: git diff --exit-code -- docs/rpc-reference.md
+
+      - name: Build (Debug)
+        run: zig build --summary all
+
+      - name: Test
+        run: zig build test --summary all
+
+      - name: Benchmark smoke lane
+        shell: pwsh
+        run: ./scripts/benchmark-smoke-check.ps1 -SkipBuild
+
+      - name: Benchmark smoke lane (RTL8139 NIC loopback)
+        shell: pwsh
+        run: ./scripts/benchmark-smoke-check.ps1 -SkipBuild -Filter network.rtl8139_udp_loopback
+
+      - name: Benchmark smoke lane (E1000 NIC loopback)
+        shell: pwsh
+        run: ./scripts/benchmark-smoke-check.ps1 -SkipBuild -Filter network.e1000_udp_loopback
+
+      - name: Method parity gate (Go latest release + original latest release + original latest beta)
+        shell: pwsh
+        run: ./scripts/check-go-method-parity.ps1 -GitHubToken "${{ github.token }}" -GoTag v2.14.0-go -OriginalRef v2026.3.13-1 -OriginalBetaRef v2026.3.13-beta.1 -OutputJsonPath parity-go-zig.json -OutputMarkdownPath parity-go-zig.md
+
+      - name: Docs status drift gate
+        shell: pwsh
+        run: ./scripts/docs-status-check.ps1 -ParityJsonPath parity-go-zig.json -GitHubToken "${{ github.token }}"
+
+      - name: Upload parity report
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-methods
+          path: |
+            parity-go-zig.json
+            parity-go-zig.md
+
+      - name: Upload Zig freshness snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zig-master-freshness
+          path: zig-master-freshness.json
+          if-no-files-found: ignore
+
+      - name: Upload Zig GitHub mirror release snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zig-github-mirror-release
+          path: |
+            zig-github-mirror-release.json
+            zig-github-mirror-release.md
+          if-no-files-found: ignore
+
+      - name: Build release (x86_64-linux)
+        run: zig build -Dtarget=x86_64-linux -Doptimize=ReleaseFast --summary all
+
+      - name: Setup Zig (0.16.0-dev.2736+3b515fbed) for bare-metal lane
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0-dev.2736+3b515fbed
+          use-cache: true
+
+      - name: Export pinned Zig for bare-metal lane
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIG_BIN="$(command -v zig)"
+          echo "OPENCLAW_ZIG_BIN=${ZIG_BIN}" >> "$GITHUB_ENV"
+          echo "BAREMETAL_ZIG_BIN=${ZIG_BIN}" >> "$GITHUB_ENV"
+
+      - name: Bare-metal Zig version
+        shell: pwsh
+        run: |
+          Write-Output "BAREMETAL_ZIG_BIN=$env:BAREMETAL_ZIG_BIN"
+          & $env:OPENCLAW_ZIG_BIN version
+
+      - name: Bare-metal smoke check (freestanding build)
+        shell: pwsh
+        run: ./scripts/baremetal-smoke-check.ps1
+
+      - name: Bare-metal i386 smoke check (freestanding build)
+        shell: pwsh
+        run: ./scripts/baremetal-i386-smoke-check.ps1
+
+      - name: Bare-metal QEMU smoke check (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-smoke-check.ps1 -SkipBuild
+
+      - name: Bare-metal QEMU i386 smoke check (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-smoke-check.ps1
+
+      - name: Bare-metal QEMU i386 platform probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-platform-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 platform probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-platform-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 firmware platform probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-platform-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware platform probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-platform-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 firmware AP-startup probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-ap-startup-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware AP-startup probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-ap-startup-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 firmware SMP work probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-work-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware SMP work probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-work-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 firmware SMP batch probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-batch-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware SMP batch probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-batch-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 firmware SMP multi probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-multi-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware SMP multi probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-multi-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 firmware SMP concurrent probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-concurrent-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware SMP concurrent probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-concurrent-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 firmware SMP owned probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-owned-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware SMP owned probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-owned-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 firmware SMP redistribution probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-redistribution-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware SMP redistribution probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-redistribution-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 firmware SMP priority probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware SMP priority probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 firmware SMP priority rotation probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-rotation-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware SMP priority rotation probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-rotation-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 firmware SMP priority fanout probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-fanout-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware SMP priority fanout probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-fanout-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 firmware SMP priority saturation probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-saturation-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware SMP priority saturation probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-saturation-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 firmware SMP priority reprioritization probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-reprioritization-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware SMP priority reprioritization probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-reprioritization-probe-check.ps1 -MemoryMiB 1024
+      - name: Bare-metal QEMU i386 firmware SMP priority failover probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-failover-probe-check.ps1
+      - name: Bare-metal QEMU i386 firmware SMP priority failover probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-failover-probe-check.ps1 -MemoryMiB 1024
+      - name: Bare-metal QEMU i386 firmware SMP priority backfill probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-backfill-probe-check.ps1
+      - name: Bare-metal QEMU i386 firmware SMP priority backfill probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-backfill-probe-check.ps1 -MemoryMiB 1024
+      - name: Bare-metal QEMU i386 firmware SMP priority window probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-window-probe-check.ps1
+      - name: Bare-metal QEMU i386 firmware SMP priority window probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-window-probe-check.ps1 -MemoryMiB 1024
+      - name: Bare-metal QEMU i386 firmware SMP priority fairness probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-fairness-probe-check.ps1
+      - name: Bare-metal QEMU i386 firmware SMP priority fairness probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-fairness-probe-check.ps1 -MemoryMiB 1024
+      - name: Bare-metal QEMU i386 firmware SMP priority rebalance probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-rebalance-probe-check.ps1
+      - name: Bare-metal QEMU i386 firmware SMP priority rebalance probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-rebalance-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 firmware SMP priority debt probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-debt-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware SMP priority debt probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-debt-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 firmware SMP priority admission probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-admission-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware SMP priority admission probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-admission-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 firmware SMP priority aging probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-aging-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware SMP priority aging probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-aging-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 firmware SMP priority fairshare probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-fairshare-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware SMP priority fairshare probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-fairshare-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 firmware SMP priority quota probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-quota-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 firmware SMP priority quota probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-quota-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 SMP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-smp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 ATA storage probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-ata-storage-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 ATA storage probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-ata-storage-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 E1000 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 VGA console probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-vga-console-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 ARP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-arp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 IPv4 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-ipv4-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 UDP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-udp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 TCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-tcp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 framebuffer console probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-framebuffer-console-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-gpu display probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-gpu-display-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 DHCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-dhcp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 DNS probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-dns-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 HTTP POST probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-http-post-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 HTTPS POST probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-https-post-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 tool-service probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-tool-service-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 full-stack probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-full-stack-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 E1000 full-stack probe 1GiB (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-e1000-full-stack-probe-check.ps1 -MemoryMiB 1024
+
+      - name: Bare-metal QEMU i386 RTL8139 ARP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-arp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 IPv4 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-ipv4-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 UDP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-udp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 TCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-tcp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 runtime-service probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-runtime-service-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 DHCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-dhcp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 DNS probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-dns-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 HTTP POST probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-http-post-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 HTTPS POST probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-https-post-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 gateway probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-gateway-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 RTL8139 full-stack probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-rtl8139-full-stack-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-net probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-net-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-net ARP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-net-arp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-net IPv4 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-net-ipv4-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-net UDP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-net-udp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-net TCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-net-tcp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-net DHCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-net-dhcp-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-net DNS probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-net-dns-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-net HTTP POST probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-net-http-post-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-net HTTPS POST probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-net-https-post-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-net tool-service probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-net-tool-service-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-block probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-block-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-block installer probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-block-installer-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-block mount probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-block-mount-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-block ext2 mount probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-block-ext2-mount-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-block fat32 mount probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-block-fat32-mount-probe-check.ps1
+
+      - name: Bare-metal QEMU i386 virtio-block mount control probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-i386-virtio-block-mount-control-probe-check.ps1
+
+      - name: Bare-metal QEMU runtime probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-runtime-oc-tick-check.ps1
+
+      - name: Bare-metal QEMU command-loop probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-loop-check.ps1
+
+      - name: Bare-metal QEMU ATA storage probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-ata-storage-probe-check.ps1
+
+      - name: Bare-metal QEMU ATA GPT installer probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-ata-gpt-installer-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-block probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-block-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-block installer probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-block-installer-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-block mount probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-block mount control probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-block-mount-control-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-block ext2 mount probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-block-ext2-mount-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-block fat32 mount probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-block-fat32-mount-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-net probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-net-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-net ARP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-net-arp-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-net IPv4 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-net-ipv4-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-net UDP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-net-udp-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-net DHCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-net-dhcp-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-net DNS probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-net-dns-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-net TCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-net-tcp-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-net tool-service probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-net-tool-service-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-net HTTP POST probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-net-http-post-probe-check.ps1
+
+      - name: Bare-metal QEMU virtio-net HTTPS POST probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-net-https-post-probe-check.ps1
+
+      - name: Bare-metal QEMU RTL8139 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-rtl8139-probe-check.ps1
+
+      - name: Bare-metal QEMU E1000 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-e1000-probe-check.ps1
+
+      - name: Bare-metal QEMU E1000 ARP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-e1000-arp-probe-check.ps1
+
+      - name: Bare-metal QEMU E1000 IPv4 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-e1000-ipv4-probe-check.ps1
+
+      - name: Bare-metal QEMU E1000 UDP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-e1000-udp-probe-check.ps1
+
+      - name: Bare-metal QEMU E1000 TCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-e1000-tcp-probe-check.ps1
+
+      - name: Bare-metal QEMU E1000 DHCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-e1000-dhcp-probe-check.ps1
+
+      - name: Bare-metal QEMU E1000 DNS probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-e1000-dns-probe-check.ps1
+
+      - name: Bare-metal QEMU E1000 tool-service probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1
+
+      - name: Bare-metal QEMU E1000 HTTP POST probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-e1000-http-post-probe-check.ps1
+
+      - name: Bare-metal QEMU E1000 HTTPS POST probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-e1000-https-post-probe-check.ps1
+
+      - name: Bare-metal QEMU RTL8139 ARP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1
+
+      - name: Bare-metal QEMU RTL8139 IPv4 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1
+
+      - name: Bare-metal QEMU RTL8139 UDP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1
+
+      - name: Bare-metal QEMU RTL8139 TCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1
+
+      - name: Bare-metal QEMU RTL8139 runtime service probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-rtl8139-runtime-service-probe-check.ps1
+
+      - name: Bare-metal QEMU RTL8139 DHCP probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-rtl8139-dhcp-probe-check.ps1
+
+      - name: Bare-metal QEMU RTL8139 DNS probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-rtl8139-dns-probe-check.ps1
+
+      - name: Bare-metal QEMU RTL8139 gateway probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-rtl8139-gateway-probe-check.ps1
+
+      - name: Bare-metal QEMU tool exec probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-tool-exec-probe-check.ps1
+
+      - name: Bare-metal QEMU tool runtime probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-tool-runtime-probe-check.ps1
+
+      - name: Bare-metal QEMU framebuffer console probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-framebuffer-console-probe-check.ps1
+
+      - name: Bare-metal QEMU framebuffer console hires probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-framebuffer-console-probe-check.ps1 -ModeWidth 1024 -ModeHeight 768
+
+      - name: Bare-metal QEMU framebuffer console widescreen probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-framebuffer-console-probe-check.ps1 -ModeWidth 1280 -ModeHeight 720
+
+      - name: Bare-metal QEMU virtio-gpu display probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox header validation probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-header-validation-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox stale-seq probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-stale-seq-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox seq-wraparound probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-seq-wraparound-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox invalid-magic preserve-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-invalid-magic-preserve-state-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox invalid-api-version preserve-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-invalid-api-version-preserve-state-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox header ack-sequence probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-header-ack-sequence-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox header tick-batch recovery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-header-tick-batch-recovery-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox valid recovery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-valid-recovery-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox stale-seq preserve-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-stale-seq-preserve-state-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox stale-seq baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-stale-seq-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox stale-seq first-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-stale-seq-first-state-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox stale-seq stale-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-stale-seq-stale-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox stale-seq fresh-recovery state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-stale-seq-fresh-recovery-state-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox stale-seq final mailbox state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-stale-seq-final-mailbox-state-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox seq-wraparound recovery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-seq-wraparound-recovery-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox seq-wraparound baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-seq-wraparound-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox seq-wraparound pre-wrap state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-seq-wraparound-pre-wrap-state-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox seq-wraparound pre-wrap mailbox sequence probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-seq-wraparound-pre-wrap-mailbox-sequence-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox seq-wraparound post-wrap state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-seq-wraparound-post-wrap-state-probe-check.ps1
+
+      - name: Bare-metal QEMU mailbox seq-wraparound post-wrap mailbox state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mailbox-seq-wraparound-post-wrap-mailbox-state-probe-check.ps1
+
+      - name: Bare-metal QEMU feature flags tick batch probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-feature-flags-tick-batch-probe-check.ps1
+
+      - name: Bare-metal QEMU feature-flags tick-batch baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-feature-flags-tick-batch-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU feature-flags tick-batch valid-update probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-feature-flags-tick-batch-valid-update-probe-check.ps1
+
+      - name: Bare-metal QEMU feature-flags tick-batch invalid-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-feature-flags-tick-batch-invalid-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU feature-flags tick-batch mailbox-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-feature-flags-tick-batch-mailbox-state-probe-check.ps1
+
+      - name: Bare-metal QEMU feature-flags tick-batch state-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-feature-flags-tick-batch-state-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor bootdiag probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-bootdiag-probe-check.ps1
+      - name: Bare-metal QEMU descriptor bootdiag baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-bootdiag-baseline-probe-check.ps1
+      - name: Bare-metal QEMU descriptor bootdiag reset-capture probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-bootdiag-reset-capture-probe-check.ps1
+      - name: Bare-metal QEMU descriptor bootdiag set-init probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-bootdiag-set-init-probe-check.ps1
+      - name: Bare-metal QEMU descriptor bootdiag invalid-phase probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-bootdiag-invalid-phase-probe-check.ps1
+      - name: Bare-metal QEMU descriptor bootdiag final-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-bootdiag-final-state-probe-check.ps1
+
+      - name: Bare-metal QEMU PS/2 input probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-ps2-input-probe-check.ps1
+
+      - name: Bare-metal QEMU PS/2 input baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-ps2-input-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU PS/2 keyboard event payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-ps2-keyboard-event-payload-probe-check.ps1
+
+      - name: Bare-metal QEMU PS/2 keyboard modifier queue probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-ps2-keyboard-modifier-queue-probe-check.ps1
+
+      - name: Bare-metal QEMU PS/2 mouse accumulator state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-ps2-mouse-accumulator-state-probe-check.ps1
+
+      - name: Bare-metal QEMU PS/2 mouse packet payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-ps2-mouse-packet-payload-probe-check.ps1
+
+      - name: Bare-metal QEMU bootdiag history clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-bootdiag-history-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU bootdiag history clear baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-bootdiag-history-clear-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU bootdiag history clear pre-reset payloads probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-bootdiag-history-clear-pre-reset-payloads-probe-check.ps1
+
+      - name: Bare-metal QEMU bootdiag history clear post-reset state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-bootdiag-history-clear-post-reset-state-probe-check.ps1
+
+      - name: Bare-metal QEMU bootdiag history clear command-event probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-bootdiag-history-clear-command-event-probe-check.ps1
+
+      - name: Bare-metal QEMU bootdiag history clear health-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-bootdiag-history-clear-health-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU reset-bootdiag preserve-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-bootdiag-preserve-state-probe-check.ps1
+
+      - name: Bare-metal QEMU clear-command-history preserve-health probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-clear-command-history-preserve-health-probe-check.ps1
+
+      - name: Bare-metal QEMU clear-health-history preserve-command probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-clear-health-history-preserve-command-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor table content probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-table-content-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor table content baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-table-content-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor table content pointer metadata probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-table-content-pointer-metadata-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor table content GDT entry fields probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-table-content-gdt-entry-fields-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor table content IDT entry fields probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-table-content-idt-entry-fields-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor table content interrupt stub mailbox probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-table-content-interrupt-stub-mailbox-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor dispatch probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-dispatch-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor dispatch baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-dispatch-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor dispatch telemetry probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-dispatch-telemetry-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor dispatch aggregate-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-dispatch-aggregate-state-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor dispatch interrupt-history probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-dispatch-interrupt-history-probe-check.ps1
+
+      - name: Bare-metal QEMU descriptor dispatch exception-history-mailbox probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-descriptor-dispatch-exception-history-mailbox-probe-check.ps1
+
+      - name: Bare-metal QEMU vector counter reset probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-counter-reset-probe-check.ps1
+
+      - name: Bare-metal QEMU vector counter reset baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-counter-reset-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU vector counter reset dirty aggregate probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-counter-reset-dirty-aggregate-probe-check.ps1
+
+      - name: Bare-metal QEMU vector counter reset dirty vector table probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-counter-reset-dirty-vector-table-probe-check.ps1
+
+      - name: Bare-metal QEMU reset vector counters preserve aggregate probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-vector-counters-preserve-aggregate-probe-check.ps1
+
+      - name: Bare-metal QEMU reset vector counters preserve last vector probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-vector-counters-preserve-last-vector-probe-check.ps1
+
+      - name: Bare-metal QEMU vector counter reset zeroed tables probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-counter-reset-zeroed-tables-probe-check.ps1
+
+      - name: Bare-metal QEMU vector counter reset mailbox state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-counter-reset-mailbox-state-probe-check.ps1
+
+      - name: Bare-metal QEMU vector history overflow probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-history-overflow-probe-check.ps1
+
+      - name: Bare-metal QEMU vector history overflow baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-history-overflow-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU vector history overflow interrupt-overflow probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-history-overflow-interrupt-overflow-probe-check.ps1
+
+      - name: Bare-metal QEMU vector history overflow exception-overflow probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-history-overflow-exception-overflow-probe-check.ps1
+
+      - name: Bare-metal QEMU vector history overflow vector-telemetry probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-history-overflow-vector-telemetry-probe-check.ps1
+
+      - name: Bare-metal QEMU vector history overflow mailbox-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-history-overflow-mailbox-state-probe-check.ps1
+
+      - name: Bare-metal QEMU vector history clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-history-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU vector history clear baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-history-clear-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU vector history clear pre-interrupt payloads probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-history-clear-pre-interrupt-payloads-probe-check.ps1
+
+      - name: Bare-metal QEMU vector history clear pre-exception payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-history-clear-pre-exception-payload-probe-check.ps1
+
+      - name: Bare-metal QEMU vector history clear interrupt-reset preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-history-clear-interrupt-reset-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU vector history clear exception-reset final-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-vector-history-clear-exception-reset-final-state-probe-check.ps1
+
+      - name: Bare-metal QEMU reset-interrupt-counters preserve-history probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-interrupt-counters-preserve-history-probe-check.ps1
+
+      - name: Bare-metal QEMU reset-exception-counters preserve-history probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-exception-counters-preserve-history-probe-check.ps1
+
+      - name: Bare-metal QEMU clear-interrupt-history preserve-exception probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-clear-interrupt-history-preserve-exception-probe-check.ps1
+
+      - name: Bare-metal QEMU reset-vector-counters preserve-aggregate probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-vector-counters-preserve-aggregate-probe-check.ps1
+
+      - name: Bare-metal QEMU reset-vector-counters preserve-last-vector probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-vector-counters-preserve-last-vector-probe-check.ps1
+
+      - name: Bare-metal QEMU command-health history probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-health-history-probe-check.ps1
+
+      - name: Bare-metal QEMU command-health history baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-health-history-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU command-health history command-shape probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-health-history-command-shape-probe-check.ps1
+
+      - name: Bare-metal QEMU command-health history command-payloads probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-health-history-command-payloads-probe-check.ps1
+
+      - name: Bare-metal QEMU command-health history health-shape probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-health-history-health-shape-probe-check.ps1
+
+      - name: Bare-metal QEMU command-health history health-payloads probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-health-history-health-payloads-probe-check.ps1
+
+      - name: Bare-metal QEMU command-history overflow clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-history-overflow-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU health-history overflow clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-health-history-overflow-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU health-history overflow clear baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-health-history-overflow-clear-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU health-history overflow clear overflow-window probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-health-history-overflow-clear-overflow-window-probe-check.ps1
+
+      - name: Bare-metal QEMU health-history overflow clear overflow-payloads probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-health-history-overflow-clear-overflow-payloads-probe-check.ps1
+
+      - name: Bare-metal QEMU health-history overflow clear clear-event probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-health-history-overflow-clear-clear-event-probe-check.ps1
+
+      - name: Bare-metal QEMU health-history overflow clear command-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-health-history-overflow-clear-command-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase history probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-history-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase history baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-history-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase history mode-semantics probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-history-mode-semantics-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase history boot-semantics probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-history-boot-semantics-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase history mode-overflow-window probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-history-mode-overflow-window-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase history boot-overflow-window probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-history-boot-overflow-window-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase setter probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-setter-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase setter baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-setter-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase setter boot-noop-invalid probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-setter-boot-noop-invalid-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase setter mode-invalid probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-setter-mode-invalid-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase setter mode-history probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-setter-mode-history-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase setter boot-history probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-setter-boot-history-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase history clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-history-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase history clear baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-history-clear-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase history clear pre-semantics probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-history-clear-pre-semantics-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase history clear mode-collapse preserve-boot probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-history-clear-mode-collapse-preserve-boot-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase history clear boot-collapse probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-history-clear-boot-collapse-probe-check.ps1
+
+      - name: Bare-metal QEMU mode/boot-phase history clear restart-semantics probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-boot-phase-history-clear-restart-semantics-probe-check.ps1
+
+      - name: Bare-metal QEMU mode-history overflow clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-history-overflow-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU mode-history overflow clear baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-history-overflow-clear-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU mode-history overflow clear overflow-window probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-history-overflow-clear-overflow-window-probe-check.ps1
+
+      - name: Bare-metal QEMU mode-history overflow clear overflow-payloads probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-history-overflow-clear-overflow-payloads-probe-check.ps1
+
+      - name: Bare-metal QEMU mode-history overflow clear collapse probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-history-overflow-clear-clear-collapse-probe-check.ps1
+
+      - name: Bare-metal QEMU mode-history overflow clear restart-event probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-mode-history-overflow-clear-restart-event-probe-check.ps1
+
+      - name: Bare-metal QEMU boot-phase-history overflow clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-boot-phase-history-overflow-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU boot-phase-history overflow clear baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-boot-phase-history-overflow-clear-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU boot-phase-history overflow clear overflow-window probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-boot-phase-history-overflow-clear-overflow-window-probe-check.ps1
+
+      - name: Bare-metal QEMU boot-phase-history overflow clear overflow-payloads probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-boot-phase-history-overflow-clear-overflow-payloads-probe-check.ps1
+
+      - name: Bare-metal QEMU boot-phase-history overflow clear clear-collapse probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-boot-phase-history-overflow-clear-clear-collapse-probe-check.ps1
+
+      - name: Bare-metal QEMU boot-phase-history overflow clear restart-event probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-boot-phase-history-overflow-clear-restart-event-probe-check.ps1
+
+      - name: Runtime smoke check (serve + rpc)
+        shell: pwsh
+        run: ./scripts/runtime-smoke-check.ps1 -SkipBuild
+
+      - name: Hermes hosted coding-agent smoke check (serve + rpc)
+        shell: pwsh
+        run: ./scripts/hermes-port-runtime-smoke-check.ps1 -SkipBuild
+
+      - name: Gateway auth smoke check (token gate for rpc + websocket)
+        shell: pwsh
+        run: ./scripts/gateway-auth-smoke-check.ps1 -SkipBuild
+
+      - name: Security secret-store smoke check (strict FS4 secret/auth lane)
+        shell: pwsh
+        run: ./scripts/security-secret-store-smoke-check.ps1 -SkipBuild
+
+      - name: WebSocket smoke check (/ws rpc frames)
+        shell: pwsh
+        run: ./scripts/websocket-smoke-check.ps1 -SkipBuild
+
+      - name: Web login smoke check (strict FS2 browser-session auth lane)
+        shell: pwsh
+        run: ./scripts/web-login-smoke-check.ps1 -SkipBuild
+
+      - name: Browser completion success smoke check (strict FS2 bridge completion lane)
+        shell: pwsh
+        run: ./scripts/browser-request-success-smoke-check.ps1 -SkipBuild
+
+      - name: Browser memory-context smoke check (strict FS3 consumer lane)
+        shell: pwsh
+        run: ./scripts/browser-request-memory-context-smoke-check.ps1 -SkipBuild
+
+      - name: Direct-provider browser completion success smoke check (strict FS2 direct-provider lane)
+        shell: pwsh
+        run: ./scripts/browser-request-direct-provider-success-smoke-check.ps1 -SkipBuild
+
+      - name: OpenRouter direct-provider completion success smoke check (strict FS2 direct-provider lane)
+        shell: pwsh
+        run: ./scripts/browser-request-openrouter-direct-provider-success-smoke-check.ps1 -SkipBuild
+
+      - name: OpenCode direct-provider completion success smoke check (strict FS2 direct-provider lane)
+        shell: pwsh
+        run: ./scripts/browser-request-opencode-direct-provider-success-smoke-check.ps1 -SkipBuild
+
+      - name: Telegram reply-loop smoke check (strict FS2 command/reply lane)
+        shell: pwsh
+        run: ./scripts/telegram-reply-loop-smoke-check.ps1 -SkipBuild
+
+      - name: Telegram reply memory-context smoke check (strict FS3 consumer lane)
+        shell: pwsh
+        run: ./scripts/telegram-reply-memory-context-smoke-check.ps1 -SkipBuild
+
+      - name: Telegram webhook receive success smoke check (strict FS2 ingress lane)
+        shell: pwsh
+        run: ./scripts/telegram-webhook-receive-smoke-check.ps1 -SkipBuild
+
+      - name: Telegram bot-send delivery success smoke check (strict FS2 delivery lane)
+        shell: pwsh
+        run: ./scripts/telegram-bot-send-delivery-smoke-check.ps1 -SkipBuild
+
+      - name: Edge WASM lifecycle smoke check (strict FS5 wasm lane)
+        shell: pwsh
+        run: ./scripts/edge-wasm-lifecycle-smoke-check.ps1 -SkipBuild
+
+      - name: Edge finetune lifecycle smoke check (strict FS5 finetune lane)
+        shell: pwsh
+        run: ./scripts/edge-finetune-lifecycle-smoke-check.ps1 -SkipBuild
+
+      - name: Update lifecycle smoke check (plan/run/status)
+        shell: pwsh
+        run: ./scripts/update-lifecycle-smoke-check.ps1 -SkipBuild
+
+      - name: System maintenance smoke check (plan/run/status)
+        shell: pwsh
+        run: ./scripts/system-maintenance-smoke-check.ps1 -SkipBuild
+
+      - name: Appliance control-plane smoke check (boot/rollback/update gate)
+        shell: pwsh
+        run: ./scripts/appliance-control-plane-smoke-check.ps1 -SkipBuild
+
+      - name: Appliance restart recovery smoke check (persisted control-plane replay)
+        shell: pwsh
+        run: ./scripts/appliance-restart-recovery-smoke-check.ps1 -SkipBuild
+
+      - name: Appliance rollout boundary smoke check (canary to stable promotion)
+        shell: pwsh
+        run: ./scripts/appliance-rollout-boundary-smoke-check.ps1 -SkipBuild
+
+      - name: Appliance minimal profile smoke check (readiness contract)
+        shell: pwsh
+        run: ./scripts/appliance-minimal-profile-smoke-check.ps1 -SkipBuild
+
+      - name: FS6 appliance-baremetal closure gate
+        shell: pwsh
+        run: ./scripts/appliance-baremetal-closure-smoke-check.ps1 -SkipBuild
+
+      - name: Bare-metal QEMU scheduler probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler config-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-config-state-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler task-shape probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-task-shape-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler progress telemetry probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-progress-telemetry-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler mailbox-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-mailbox-state-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler priority budget probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-priority-budget-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler priority budget baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-priority-budget-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler priority budget default-budget inheritance probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-priority-budget-default-budget-inheritance-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler priority budget priority-dominance probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-priority-budget-priority-dominance-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler priority budget reprioritize-low probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-priority-budget-reprioritize-low-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler priority budget invalid-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-priority-budget-invalid-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler default-budget invalid probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-default-budget-invalid-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler round robin probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-round-robin-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler round robin baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-round-robin-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler round robin first-dispatch probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-round-robin-first-dispatch-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler round robin second-dispatch probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-round-robin-second-dispatch-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler round robin third-dispatch probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-round-robin-third-dispatch-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler round robin final task-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-round-robin-final-task-state-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler timeslice update probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-timeslice-update-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler timeslice baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-timeslice-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler timeslice update-4 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-timeslice-update-4-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler timeslice update-2 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-timeslice-update-2-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler timeslice invalid-zero preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-timeslice-invalid-zero-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler timeslice final task-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-timeslice-final-task-state-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler disable enable probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-disable-enable-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler disable-enable baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-disable-enable-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler disable-enable disabled-freeze probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-disable-enable-disabled-freeze-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler disable-enable idle-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-disable-enable-idle-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler disable-enable resume probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-disable-enable-resume-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler disable-enable final task-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-disable-enable-final-task-state-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler reset probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-reset-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler reset baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-reset-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler reset collapse probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-reset-collapse-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler reset id-restart probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-reset-id-restart-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler reset defaults-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-reset-defaults-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler reset final task-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-reset-final-task-state-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler reset mixed-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-reset-mixed-state-probe-check.ps1
+      - name: Bare-metal QEMU scheduler reset mixed-state baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-reset-mixed-state-baseline-probe-check.ps1
+      - name: Bare-metal QEMU scheduler reset mixed-state post-reset collapse probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-reset-mixed-state-post-reset-collapse-probe-check.ps1
+      - name: Bare-metal QEMU scheduler reset mixed-state preserved-config probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-reset-mixed-state-preserved-config-probe-check.ps1
+      - name: Bare-metal QEMU scheduler reset mixed-state idle-stability probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-reset-mixed-state-idle-stability-probe-check.ps1
+      - name: Bare-metal QEMU scheduler reset mixed-state rearm-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-reset-mixed-state-rearm-state-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler reset wake-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-reset-wake-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler reset timer-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-reset-timer-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler reset config-preservation probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-reset-config-preservation-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler policy switch probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-policy-switch-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler policy-switch rr-baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-policy-switch-rr-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler policy-switch priority-dominance probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-policy-switch-priority-dominance-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler policy-switch reprioritize-low probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-policy-switch-reprioritize-low-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler policy-switch rr-return probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-policy-switch-rr-return-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler policy-switch invalid-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-policy-switch-invalid-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler saturation probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-saturation-probe-check.ps1
+      - name: Bare-metal QEMU scheduler saturation baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-saturation-baseline-probe-check.ps1 -SkipBuild
+      - name: Bare-metal QEMU scheduler saturation overflow-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-saturation-overflow-preserve-probe-check.ps1 -SkipBuild
+      - name: Bare-metal QEMU scheduler saturation terminate-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-saturation-terminate-state-probe-check.ps1 -SkipBuild
+      - name: Bare-metal QEMU scheduler saturation reuse-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-saturation-reuse-state-probe-check.ps1 -SkipBuild
+      - name: Bare-metal QEMU scheduler saturation final-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-saturation-final-state-probe-check.ps1 -SkipBuild
+
+      - name: Bare-metal QEMU timer wake probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-wake-probe-check.ps1
+
+      - name: Bare-metal QEMU timer wake baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-wake-baseline-probe-check.ps1 -SkipBuild
+
+      - name: Bare-metal QEMU timer wake task-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-wake-task-state-probe-check.ps1 -SkipBuild
+
+      - name: Bare-metal QEMU timer wake timer-telemetry probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-wake-timer-telemetry-probe-check.ps1 -SkipBuild
+
+      - name: Bare-metal QEMU timer wake wake-payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-wake-wake-payload-probe-check.ps1 -SkipBuild
+
+      - name: Bare-metal QEMU timer wake mailbox-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-wake-mailbox-state-probe-check.ps1 -SkipBuild
+
+      - name: Bare-metal QEMU timer quantum probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-quantum-probe-check.ps1
+
+      - name: Bare-metal QEMU timer quantum baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-quantum-baseline-probe-check.ps1 -SkipBuild
+
+      - name: Bare-metal QEMU timer quantum boundary probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-quantum-boundary-probe-check.ps1 -SkipBuild
+
+      - name: Bare-metal QEMU timer quantum preboundary blocked probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-quantum-preboundary-blocked-probe-check.ps1 -SkipBuild
+
+      - name: Bare-metal QEMU timer quantum wake payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-quantum-wake-payload-probe-check.ps1 -SkipBuild
+
+      - name: Bare-metal QEMU timer quantum final state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-quantum-final-state-probe-check.ps1 -SkipBuild
+
+      - name: Bare-metal QEMU timer cancel task probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-cancel-task-probe-check.ps1
+
+      - name: Bare-metal QEMU timer cancel task baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-cancel-task-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU timer cancel task cancel-collapse probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-cancel-task-cancel-collapse-probe-check.ps1
+
+      - name: Bare-metal QEMU timer cancel task canceled-entry preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-cancel-task-canceled-entry-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU timer cancel task second-cancel notfound probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-cancel-task-second-cancel-notfound-probe-check.ps1
+
+      - name: Bare-metal QEMU timer cancel task zero-wake telemetry probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-cancel-task-zero-wake-telemetry-probe-check.ps1
+
+      - name: Bare-metal QEMU timer cancel task interrupt-timeout probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-probe-check.ps1
+
+      - name: Bare-metal QEMU timer cancel task interrupt-timeout interrupt-recovery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-interrupt-recovery-probe-check.ps1
+
+      - name: Bare-metal QEMU timer cancel task interrupt-timeout arm-preservation probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-arm-preservation-probe-check.ps1
+
+      - name: Bare-metal QEMU timer cancel task interrupt-timeout cancel-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-cancel-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU timer cancel task interrupt-timeout no-stale-timeout probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-no-stale-timeout-probe-check.ps1
+
+      - name: Bare-metal QEMU timer cancel task interrupt-timeout telemetry-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-telemetry-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU timer cancel probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-cancel-probe-check.ps1
+
+      - name: Bare-metal QEMU timer cancel baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-cancel-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU timer cancel collapse probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-cancel-cancel-collapse-probe-check.ps1
+
+      - name: Bare-metal QEMU timer cancel canceled-entry preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-cancel-canceled-entry-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU timer cancel second-cancel notfound probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-cancel-second-cancel-notfound-probe-check.ps1
+
+      - name: Bare-metal QEMU timer cancel zero-wake telemetry probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-cancel-zero-wake-telemetry-probe-check.ps1
+
+      - name: Bare-metal QEMU timer pressure probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-pressure-probe-check.ps1
+
+      - name: Bare-metal QEMU timer pressure baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-pressure-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU timer pressure cancel-collapse probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-pressure-cancel-collapse-probe-check.ps1
+
+      - name: Bare-metal QEMU timer pressure reuse-slot probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-pressure-reuse-slot-probe-check.ps1
+
+      - name: Bare-metal QEMU timer pressure reuse-next-fire probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-pressure-reuse-next-fire-probe-check.ps1
+
+      - name: Bare-metal QEMU timer pressure quiet-telemetry probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-pressure-quiet-telemetry-probe-check.ps1
+
+      - name: Bare-metal QEMU timer reset recovery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-reset-recovery-probe-check.ps1
+
+      - name: Bare-metal QEMU timer reset recovery baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-reset-recovery-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU timer reset recovery post-reset collapse probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-reset-recovery-post-reset-collapse-probe-check.ps1
+
+      - name: Bare-metal QEMU timer reset recovery wait-isolation probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-reset-recovery-wait-isolation-probe-check.ps1
+
+      - name: Bare-metal QEMU timer reset recovery manual-wake payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-reset-recovery-manual-wake-payload-probe-check.ps1
+
+      - name: Bare-metal QEMU timer reset recovery interrupt-rearm probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-reset-recovery-interrupt-rearm-probe-check.ps1
+
+      - name: Bare-metal QEMU task resume timer-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-timer-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU task resume timer-clear baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-timer-clear-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU task resume timer-clear wait-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-timer-clear-wait-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU task resume timer-clear canceled-entry preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-timer-clear-canceled-entry-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU task resume timer-clear manual-wake payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-timer-clear-manual-wake-payload-probe-check.ps1
+
+      - name: Bare-metal QEMU task resume timer-clear rearm-telemetry probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-timer-clear-rearm-telemetry-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler wake timer-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-wake-timer-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler wake timer-clear manual-wake probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-wake-timer-clear-manual-wake-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler wake timer-clear baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-wake-timer-clear-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler wake timer-clear wait-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-wake-timer-clear-wait-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler wake timer-clear canceled-entry-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-wake-timer-clear-canceled-entry-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU scheduler wake timer-clear rearm-telemetry probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-scheduler-wake-timer-clear-rearm-telemetry-probe-check.ps1
+
+      - name: Bare-metal QEMU task resume interrupt probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-interrupt-probe-check.ps1
+
+      - name: Bare-metal QEMU task resume interrupt ready-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-interrupt-ready-state-probe-check.ps1
+
+      - name: Bare-metal QEMU task resume interrupt wait-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-interrupt-wait-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU task resume interrupt manual-wake probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-interrupt-manual-wake-probe-check.ps1
+
+      - name: Bare-metal QEMU task resume interrupt no-late-interrupt probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-interrupt-no-late-interrupt-probe-check.ps1
+
+      - name: Bare-metal QEMU task resume interrupt telemetry-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-interrupt-telemetry-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU task resume interrupt-timeout probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-interrupt-timeout-probe-check.ps1
+
+      - name: Bare-metal QEMU task resume interrupt-timeout wait-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-interrupt-timeout-wait-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU task resume interrupt-timeout manual-wake probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-interrupt-timeout-manual-wake-probe-check.ps1
+
+      - name: Bare-metal QEMU task resume interrupt-timeout ready-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-interrupt-timeout-ready-state-probe-check.ps1
+
+      - name: Bare-metal QEMU task resume interrupt-timeout no-stale-timeout probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-interrupt-timeout-no-stale-timeout-probe-check.ps1
+
+      - name: Bare-metal QEMU task resume interrupt-timeout telemetry-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-resume-interrupt-timeout-telemetry-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic timer probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-timer-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic timer baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-timer-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic timer first-fire probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-timer-first-fire-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic timer paused-window probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-timer-paused-window-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic timer resumed-cadence probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-timer-resumed-cadence-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic timer telemetry-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-timer-telemetry-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic timer clamp probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-timer-clamp-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic timer clamp baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-timer-clamp-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic timer clamp first-fire probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-timer-clamp-first-fire-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic timer clamp saturated-rearm probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-timer-clamp-saturated-rearm-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic timer clamp post-wrap hold probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-timer-clamp-post-wrap-hold-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic timer clamp telemetry-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-timer-clamp-telemetry-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic interrupt probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-interrupt-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic interrupt baseline fire probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-interrupt-baseline-fire-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic interrupt interrupt-wake-payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-interrupt-interrupt-wake-payload-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic interrupt periodic-cadence probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-interrupt-periodic-cadence-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic interrupt cancel-no-late-timeout probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-interrupt-cancel-no-late-timeout-probe-check.ps1
+
+      - name: Bare-metal QEMU periodic interrupt telemetry-ordering probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-periodic-interrupt-telemetry-ordering-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout arm-preservation probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-arm-preservation-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout interrupt-wake-payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-interrupt-wake-payload-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout wait-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-wait-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout no-stale-timer probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-no-stale-timer-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout telemetry-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-telemetry-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt manual wake probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-manual-wake-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt manual wake baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-manual-wake-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt manual wake wait-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-manual-wake-wait-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt manual wake manual-wake-payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-manual-wake-manual-wake-payload-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt manual wake no-second-wake probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-manual-wake-no-second-wake-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt manual wake telemetry-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-manual-wake-telemetry-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout manual wake probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-manual-wake-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout manual wake arm-preservation probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-manual-wake-arm-preservation-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout manual wake queue-delivery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-manual-wake-queue-delivery-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout manual wake wait-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-manual-wake-wait-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout manual wake no-stale-timer probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-manual-wake-no-stale-timer-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout manual wake telemetry-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-manual-wake-telemetry-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout timer probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-timer-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout timer arm-preservation probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-timer-arm-preservation-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout timer deadline-blocked probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-timer-deadline-blocked-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout timer wake-payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-timer-wake-payload-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout timer no-duplicate-wake probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-timer-no-duplicate-wake-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout timer telemetry-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-timer-telemetry-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU masked interrupt timeout probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-masked-interrupt-timeout-probe-check.ps1
+
+      - name: Bare-metal QEMU masked interrupt-timeout mask-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-masked-interrupt-timeout-mask-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU masked interrupt-timeout no-wake probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-masked-interrupt-timeout-no-wake-probe-check.ps1
+
+      - name: Bare-metal QEMU masked interrupt-timeout wait-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-masked-interrupt-timeout-wait-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU masked interrupt-timeout timer-fallback probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-masked-interrupt-timeout-timer-fallback-probe-check.ps1
+
+      - name: Bare-metal QEMU masked interrupt-timeout telemetry-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-masked-interrupt-timeout-telemetry-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt timeout clamp probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-clamp-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout clamp baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-clamp-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout clamp arm-preservation probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-clamp-arm-preservation-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout clamp saturated-boundary probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-clamp-saturated-boundary-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout clamp wake-payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-clamp-wake-payload-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout clamp final-telemetry probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-clamp-final-telemetry-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt filter probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-filter-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt filter any baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-filter-any-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt filter any wake payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-filter-any-wake-payload-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt filter vector blocked nonmatch probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-filter-vector-blocked-nonmatch-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt filter vector match wake payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-filter-vector-match-wake-payload-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt filter invalid vector preserve-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-filter-invalid-vector-preserve-state-probe-check.ps1
+
+      - name: Bare-metal QEMU timer-disable interrupt probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-disable-interrupt-probe-check.ps1
+
+      - name: Bare-metal QEMU timer-disable interrupt immediate-wake probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-disable-interrupt-immediate-wake-probe-check.ps1
+
+      - name: Bare-metal QEMU timer-disable interrupt arm-preservation probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-disable-interrupt-arm-preservation-probe-check.ps1
+
+      - name: Bare-metal QEMU timer-disable interrupt paused-window probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-disable-interrupt-paused-window-probe-check.ps1
+
+      - name: Bare-metal QEMU timer-disable interrupt deferred-timer-wake probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-disable-interrupt-deferred-timer-wake-probe-check.ps1
+
+      - name: Bare-metal QEMU timer-disable interrupt telemetry-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-disable-interrupt-telemetry-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU timer-disable reenable probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-disable-reenable-probe-check.ps1
+
+      - name: Bare-metal QEMU timer-disable paused-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-disable-paused-state-probe-check.ps1
+
+      - name: Bare-metal QEMU timer-disable reenable one-shot recovery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-disable-reenable-oneshot-recovery-probe-check.ps1
+
+      - name: Bare-metal QEMU timer-disable reenable arm-preservation probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-disable-reenable-arm-preservation-probe-check.ps1
+
+      - name: Bare-metal QEMU timer-disable reenable deadline-hold probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-disable-reenable-deadline-hold-probe-check.ps1
+
+      - name: Bare-metal QEMU timer-disable reenable deferred-wake-order probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-disable-reenable-deferred-wake-order-probe-check.ps1
+
+      - name: Bare-metal QEMU timer-disable reenable wake-payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-disable-reenable-wake-payload-probe-check.ps1
+
+      - name: Bare-metal QEMU timer-disable reenable dispatch-drain probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-disable-reenable-dispatch-drain-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout disable-enable probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-disable-enable-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout disable-enable arm-preservation probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-disable-enable-arm-preservation-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout disable-enable deadline-hold probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-disable-enable-deadline-hold-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout disable-enable paused-window probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-disable-enable-paused-window-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout disable-enable deferred-timer-wake probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-disable-enable-deferred-timer-wake-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout disable-enable telemetry-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-disable-enable-telemetry-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout disable-reenable timer probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-disable-reenable-timer-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout disable-interrupt probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout disable-interrupt immediate-wake probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-immediate-wake-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout disable-interrupt timeout-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-timeout-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout disable-interrupt disabled-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-disabled-state-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout disable-interrupt reenable-no-stale-timer probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-reenable-no-stale-timer-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout disable-interrupt telemetry-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-telemetry-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt-timeout disable-interrupt recovery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-recovery-probe-check.ps1
+
+      - name: Bare-metal QEMU timer-reset wait-kind isolation probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-reset-wait-kind-isolation-probe-check.ps1
+
+      - name: Bare-metal QEMU timer-reset pure-wait recovery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-reset-pure-wait-recovery-probe-check.ps1
+
+      - name: Bare-metal QEMU timer-reset timeout-interrupt recovery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-timer-reset-timeout-interrupt-recovery-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask profile probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-profile-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask profile external-all probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-profile-external-all-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask profile unmask-recovery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-profile-unmask-recovery-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask profile custom-profile probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-profile-custom-profile-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask profile reset-ignored-counts probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-profile-reset-ignored-counts-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask control probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-control-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask control baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-control-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask control unmask-delivery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-control-unmask-delivery-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask control invalid-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-control-invalid-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask control reset-ignored probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-control-reset-ignored-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask control final-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-control-final-state-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask clear-all recovery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask clear-all recovery baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask clear-all recovery clear-collapse probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-clear-collapse-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask clear-all recovery wake-delivery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-wake-delivery-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask clear-all recovery history-payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-history-payload-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask clear-all recovery mailbox-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-mailbox-state-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask custom-profile preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-custom-profile-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask invalid-input preserve-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-invalid-input-preserve-state-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask reset-ignored preserve-mask probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-reset-ignored-preserve-mask-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask profile boundary probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-profile-boundary-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask profile none-clear-all probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-profile-none-clear-all-probe-check.ps1
+
+      - name: Bare-metal QEMU task terminate interrupt-timeout probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-terminate-interrupt-timeout-probe-check.ps1
+
+      - name: Bare-metal QEMU task terminate interrupt-timeout baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-terminate-interrupt-timeout-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU task terminate interrupt-timeout target-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-terminate-interrupt-timeout-target-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU task terminate interrupt-timeout interrupt-telemetry probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-terminate-interrupt-timeout-interrupt-telemetry-probe-check.ps1
+
+      - name: Bare-metal QEMU task terminate interrupt-timeout no-stale-timeout probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-terminate-interrupt-timeout-no-stale-timeout-probe-check.ps1
+
+      - name: Bare-metal QEMU task terminate interrupt-timeout mailbox-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-terminate-interrupt-timeout-mailbox-state-probe-check.ps1
+
+      - name: Bare-metal QEMU task terminate mixed-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-terminate-mixed-state-probe-check.ps1
+
+      - name: Bare-metal QEMU task terminate mixed-state survivor probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-terminate-mixed-state-survivor-probe-check.ps1
+
+      - name: Bare-metal QEMU task terminate mixed-state baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-terminate-mixed-state-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU task terminate mixed-state target-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-terminate-mixed-state-target-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU task terminate mixed-state survivor-wake probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-terminate-mixed-state-survivor-wake-probe-check.ps1
+
+      - name: Bare-metal QEMU task terminate mixed-state wait-clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-terminate-mixed-state-wait-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU task terminate mixed-state idle-stability probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-terminate-mixed-state-idle-stability-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue selective probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-selective-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue selective baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-selective-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue selective reason-drain probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-selective-reason-drain-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue selective vector-drain probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-selective-vector-drain-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue selective reason-vector-drain probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-selective-reason-vector-drain-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue selective before-tick final probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-selective-before-tick-final-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue selective overflow probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-selective-overflow-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue selective overflow baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-selective-overflow-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue selective overflow vector-drain probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-selective-overflow-vector-drain-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue selective overflow vector-survivors probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-selective-overflow-vector-survivors-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue selective overflow reason-vector-drain probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-selective-overflow-reason-vector-drain-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue selective overflow reason-vector-survivors probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-selective-overflow-reason-vector-survivors-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue before tick overflow probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-before-tick-overflow-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue before tick overflow baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-before-tick-overflow-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue before tick overflow first-cutoff probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-before-tick-overflow-first-cutoff-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue before tick overflow first-survivor-window probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-before-tick-overflow-first-survivor-window-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue before tick overflow second-cutoff probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-before-tick-overflow-second-cutoff-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue before tick overflow final-empty-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-before-tick-overflow-final-empty-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue before tick probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-before-tick-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue before tick baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-before-tick-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue before tick first-cutoff probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-before-tick-first-cutoff-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue before tick bounded-drain probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-before-tick-bounded-drain-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue before tick notfound probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-before-tick-notfound-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue before tick notfound-preserve-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-before-tick-notfound-preserve-state-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason overflow probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-overflow-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-overflow baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-overflow-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-overflow manual-drain probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-overflow-manual-drain-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-overflow manual-survivors probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-overflow-manual-survivors-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-overflow interrupt-drain probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-overflow-interrupt-drain-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-overflow interrupt-survivors probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-overflow-interrupt-survivors-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason pop probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-pop-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-pop baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-pop-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-pop first-match probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-pop-first-match-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-pop survivor-order probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-pop-survivor-order-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-pop invalid-reason probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-pop-invalid-reason-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-pop invalid-preserve-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-pop-invalid-preserve-state-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue FIFO probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-fifo-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue FIFO baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-fifo-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue FIFO first-pop probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-fifo-first-pop-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue FIFO survivor probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-fifo-survivor-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue FIFO drain-empty probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-fifo-drain-empty-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue FIFO notfound-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-fifo-notfound-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue summary age probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-summary-age-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue summary/age baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-summary-age-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue summary/age pre-summary probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-summary-age-pre-summary-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue summary/age pre-age probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-summary-age-pre-age-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue summary/age post-summary probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-summary-age-post-summary-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue summary/age post-age probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-summary-age-post-age-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue count snapshot probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-count-snapshot-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue count-snapshot baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-count-snapshot-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue count-snapshot query1 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-count-snapshot-query1-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue count-snapshot query2 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-count-snapshot-query2-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue count-snapshot query3 probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-count-snapshot-query3-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue count-snapshot nonmutating-read probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-count-snapshot-nonmutating-read-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue batch pop probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-batch-pop-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue batch-pop overflow-baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-batch-pop-overflow-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue batch-pop survivor-pair probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-batch-pop-survivor-pair-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue batch-pop single-survivor probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-batch-pop-single-survivor-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue batch-pop drain-empty probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-batch-pop-drain-empty-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue batch-pop refill-reuse probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-batch-pop-refill-reuse-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue vector pop probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-vector-pop-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue vector-pop baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-vector-pop-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue vector-pop first-match probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-vector-pop-first-match-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue vector-pop survivor-order probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-vector-pop-survivor-order-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue vector-pop invalid-vector probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-vector-pop-invalid-vector-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue vector-pop invalid-preserve-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-vector-pop-invalid-preserve-state-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-vector pop probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-vector-pop-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-vector pop baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-vector-pop-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-vector pop first-match probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-vector-pop-first-match-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-vector pop survivor-order probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-vector-pop-survivor-order-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-vector pop invalid-pair probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-vector-pop-invalid-pair-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue reason-vector pop invalid-preserve-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-reason-vector-pop-invalid-preserve-state-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue overflow probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-overflow-probe-check.ps1
+      - name: Bare-metal QEMU wake queue overflow baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-overflow-baseline-probe-check.ps1 -SkipBuild
+      - name: Bare-metal QEMU wake queue overflow shape probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-overflow-shape-probe-check.ps1 -SkipBuild
+      - name: Bare-metal QEMU wake queue overflow oldest-entry probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-overflow-oldest-entry-probe-check.ps1 -SkipBuild
+      - name: Bare-metal QEMU wake queue overflow newest-entry probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-overflow-newest-entry-probe-check.ps1 -SkipBuild
+      - name: Bare-metal QEMU wake queue overflow mailbox-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-overflow-mailbox-state-probe-check.ps1 -SkipBuild
+
+      - name: Bare-metal QEMU wake queue clear probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-clear-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue clear baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-clear-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue clear collapse probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-clear-collapse-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue clear pending-reset probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-clear-pending-reset-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue clear reuse-shape probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-clear-reuse-shape-probe-check.ps1
+
+      - name: Bare-metal QEMU wake queue clear reuse-payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-wake-queue-clear-reuse-payload-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator syscall probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-syscall-probe-check.ps1
+      - name: Bare-metal QEMU allocator syscall baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-syscall-baseline-probe-check.ps1
+      - name: Bare-metal QEMU allocator syscall alloc-stage probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-syscall-alloc-stage-probe-check.ps1
+      - name: Bare-metal QEMU allocator syscall invoke-stage probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-syscall-invoke-stage-probe-check.ps1
+      - name: Bare-metal QEMU allocator syscall guard-stage probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-syscall-guard-stage-probe-check.ps1
+      - name: Bare-metal QEMU allocator syscall final-reset-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-syscall-final-reset-state-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator syscall reset probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-syscall-reset-probe-check.ps1
+      - name: Bare-metal QEMU allocator syscall reset dirty-allocator probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-syscall-reset-dirty-allocator-probe-check.ps1
+      - name: Bare-metal QEMU allocator syscall reset dirty-syscall probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-syscall-reset-dirty-syscall-probe-check.ps1
+      - name: Bare-metal QEMU allocator syscall reset post-reset allocator baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-syscall-reset-post-reset-allocator-baseline-probe-check.ps1
+      - name: Bare-metal QEMU allocator syscall reset post-reset syscall baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-syscall-reset-post-reset-syscall-baseline-probe-check.ps1
+      - name: Bare-metal QEMU allocator syscall reset missing-entry probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-syscall-reset-missing-entry-after-reset-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall saturation probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-saturation-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall saturation reset probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-saturation-reset-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall saturation reset baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-saturation-reset-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall saturation reset pre-reset shape probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-saturation-reset-pre-reset-shape-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall saturation reset post-reset baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-saturation-reset-post-reset-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall saturation reset restart probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-saturation-reset-restart-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall saturation reset fresh invoke probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-saturation-reset-fresh-invoke-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator saturation reset probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-saturation-reset-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator saturation reset baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-saturation-reset-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator saturation reset saturated-shape probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-saturation-reset-saturated-shape-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator saturation reset last-record probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-saturation-reset-last-record-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator saturation reset post-reset baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-saturation-reset-post-reset-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator saturation reset fresh-restart probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-saturation-reset-fresh-restart-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator saturation reuse probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-saturation-reuse-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator saturation reuse baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-saturation-reuse-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator saturation reuse full-table-shape probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-saturation-reuse-full-table-shape-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator saturation reuse no-space-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-saturation-reuse-no-space-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator saturation reuse freed-slot-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-saturation-reuse-freed-slot-state-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator saturation reuse fresh-restart probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-saturation-reuse-fresh-restart-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator free failure probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-free-failure-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator free failure baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-free-failure-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator free failure bad pointer preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-free-failure-bad-pointer-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator free failure bad size preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-free-failure-bad-size-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator free failure good free metadata probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-free-failure-good-free-metadata-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator free failure double free realloc probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-free-failure-double-free-realloc-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall control probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-control-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall control baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-control-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall control register-stage probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-control-register-stage-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall control reregister-stage probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-control-reregister-stage-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall control blocked-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-control-blocked-state-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall control enabled-invoke-stage probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-control-enabled-invoke-stage-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall control unregister-cleanup-stage probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-control-unregister-cleanup-stage-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall control final-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-control-final-state-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall saturation overflow preserve-full probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-saturation-overflow-preserve-full-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall saturation reuse-slot probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-saturation-reuse-slot-probe-check.ps1
+
+      - name: Bare-metal QEMU syscall saturation-reset restart probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-syscall-saturation-reset-restart-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator syscall failure probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-syscall-failure-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator syscall failure baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-syscall-failure-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator syscall failure invalid-align probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-syscall-failure-invalid-align-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator syscall failure no-space probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-syscall-failure-no-space-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator syscall failure blocked probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-syscall-failure-blocked-probe-check.ps1
+
+      - name: Bare-metal QEMU allocator syscall failure final-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-allocator-syscall-failure-final-state-probe-check.ps1
+
+      - name: Bare-metal QEMU command result counters probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-result-counters-probe-check.ps1
+
+      - name: Bare-metal QEMU command-result counters baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-result-counters-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU command-result counters ok-bucket probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-result-counters-ok-bucket-probe-check.ps1
+
+      - name: Bare-metal QEMU command-result counters invalid-bucket probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-result-counters-invalid-bucket-probe-check.ps1
+
+      - name: Bare-metal QEMU command-result counters not-supported-bucket probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-result-counters-not-supported-bucket-probe-check.ps1
+
+      - name: Bare-metal QEMU command-result counters other-error-bucket probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-command-result-counters-other-error-bucket-probe-check.ps1
+
+      - name: Bare-metal QEMU reset-command-result preserve-runtime probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-command-result-preserve-runtime-probe-check.ps1
+
+      - name: Bare-metal QEMU reset counters probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-counters-probe-check.ps1
+
+      - name: Bare-metal QEMU reset-counters preserve-config probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-counters-preserve-config-probe-check.ps1
+
+      - name: Bare-metal QEMU reset-counters baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-counters-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU reset-counters vector-reset probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-counters-vector-reset-probe-check.ps1
+
+      - name: Bare-metal QEMU reset-counters history-reset probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-counters-history-reset-probe-check.ps1
+
+      - name: Bare-metal QEMU reset-counters subsystem-reset probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-counters-subsystem-reset-probe-check.ps1
+
+      - name: Bare-metal QEMU reset-counters command-result probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-reset-counters-command-result-probe-check.ps1
+
+      - name: Bare-metal QEMU task lifecycle probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-lifecycle-probe-check.ps1
+
+      - name: Bare-metal QEMU task lifecycle wait1-baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-lifecycle-wait1-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU task lifecycle wake1-manual probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-lifecycle-wake1-manual-probe-check.ps1
+
+      - name: Bare-metal QEMU task lifecycle wait2-baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-lifecycle-wait2-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU task lifecycle wake2-manual probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-lifecycle-wake2-manual-probe-check.ps1
+
+      - name: Bare-metal QEMU task lifecycle terminate-rejected-wake probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-task-lifecycle-terminate-rejected-wake-probe-check.ps1
+
+      - name: Bare-metal QEMU active-task terminate probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-active-task-terminate-probe-check.ps1
+
+      - name: Bare-metal QEMU active-task terminate baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-active-task-terminate-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU active-task terminate failover probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-active-task-terminate-failover-probe-check.ps1
+
+      - name: Bare-metal QEMU active-task terminate repeat-idempotent probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-active-task-terminate-repeat-idempotent-probe-check.ps1
+
+      - name: Bare-metal QEMU active-task terminate survivor-progress probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-active-task-terminate-survivor-progress-probe-check.ps1
+
+      - name: Bare-metal QEMU active-task terminate final-collapse probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-active-task-terminate-final-collapse-probe-check.ps1
+
+      - name: Bare-metal QEMU panic recovery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-panic-recovery-probe-check.ps1
+
+      - name: Bare-metal QEMU panic-recovery baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-panic-recovery-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU panic-recovery freeze-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-panic-recovery-freeze-state-probe-check.ps1
+
+      - name: Bare-metal QEMU panic-recovery idle-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-panic-recovery-idle-preserve-probe-check.ps1
+
+      - name: Bare-metal QEMU panic-recovery mode-recovery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-panic-recovery-mode-recovery-probe-check.ps1
+
+      - name: Bare-metal QEMU panic-recovery final-task-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-panic-recovery-final-task-state-probe-check.ps1
+
+      - name: Bare-metal QEMU panic wake recovery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-panic-wake-recovery-probe-check.ps1
+      - name: Bare-metal QEMU panic-wake baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-panic-wake-recovery-baseline-probe-check.ps1
+      - name: Bare-metal QEMU panic-wake freeze-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-panic-wake-recovery-freeze-state-probe-check.ps1
+      - name: Bare-metal QEMU panic-wake preserved-wakes probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-panic-wake-recovery-preserved-wakes-probe-check.ps1
+      - name: Bare-metal QEMU panic-wake mode-recovery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-panic-wake-recovery-mode-recovery-probe-check.ps1
+      - name: Bare-metal QEMU panic-wake final-task-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-panic-wake-recovery-final-task-state-probe-check.ps1
+
+      - name: Bare-metal QEMU manual wait interrupt probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-manual-wait-interrupt-probe-check.ps1
+      - name: Bare-metal QEMU manual wait interrupt baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-manual-wait-interrupt-baseline-probe-check.ps1
+      - name: Bare-metal QEMU manual wait interrupt wait-preserve probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-manual-wait-interrupt-wait-preserve-probe-check.ps1
+      - name: Bare-metal QEMU manual wait interrupt interrupt-no-wake probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-manual-wait-interrupt-interrupt-no-wake-probe-check.ps1
+      - name: Bare-metal QEMU manual wait interrupt manual-wake payload probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-manual-wait-interrupt-manual-wake-payload-probe-check.ps1
+      - name: Bare-metal QEMU manual wait interrupt final-telemetry probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-manual-wait-interrupt-final-telemetry-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask exception probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-exception-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask exception baseline probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-exception-baseline-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask exception masked-interrupt blocked probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-exception-masked-interrupt-blocked-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask exception-delivery probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-exception-delivery-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask exception history-capture probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-exception-history-capture-probe-check.ps1
+
+      - name: Bare-metal QEMU interrupt mask exception final-state probe (optional)
+        shell: pwsh
+        run: ./scripts/baremetal-qemu-interrupt-mask-exception-final-state-probe-check.ps1
+
+  cross-targets:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-macos
+            artifact_name: openclaw-zig-x86_64-macos
+            binary_name: openclaw-zig
+            optional: false
+          - target: x86_64-linux-android
+            artifact_name: openclaw-zig-x86_64-android
+            binary_name: openclaw-zig
+            optional: false
+          - target: aarch64-linux-android
+            artifact_name: openclaw-zig-aarch64-android
+            binary_name: openclaw-zig
+            optional: false
+          - target: arm-linux-androideabi
+            artifact_name: openclaw-zig-armv7-android
+            binary_name: openclaw-zig
+            optional: false
+          - target: aarch64-linux
+            artifact_name: openclaw-zig-aarch64-linux
+            binary_name: openclaw-zig
+            optional: true
+          - target: aarch64-macos
+            artifact_name: openclaw-zig-aarch64-macos
+            binary_name: openclaw-zig
+            optional: true
+    continue-on-error: ${{ matrix.optional }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Zig (0.16.0-dev.2736+3b515fbed) primary
+        id: setup_zig_primary
+        continue-on-error: true
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0-dev.2736+3b515fbed
+          use-cache: true
+
+      - name: Setup Zig (0.16.0-dev.2736+3b515fbed) mirror fallback
+        id: setup_zig_mirror_mach
+        if: steps.setup_zig_primary.outcome == 'failure'
+        continue-on-error: true
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0-dev.2736+3b515fbed
+          mirror: https://pkg.machengine.org/zig
+          use-cache: true
+
+      - name: Setup Zig (0.16.0-dev.2736+3b515fbed) mirror fallback (ziglang.org)
+        if: steps.setup_zig_primary.outcome == 'failure' && steps.setup_zig_mirror_mach.outcome == 'failure'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0-dev.2736+3b515fbed
+          mirror: https://ziglang.org/builds
+          use-cache: true
+
+      - name: Zig version
+        run: zig version
+
+      - name: Build release target
+        run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseFast --summary all
+
+      - name: Stage artifact
+        run: |
+          mkdir -p out
+          cp zig-out/bin/${{ matrix.binary_name }} out/${{ matrix.binary_name }}
+          cp README.md out/README.md
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: out/**

@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling>=1.26.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openclaw-zig-rpc-client"
+version = "0.2.0.dev32"
+description = "Python JSON-RPC client for ZAR-Zig-Agent-Runtime gateway endpoints."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "GPL-2.0-only"
+license-files = ["LICENSE"]
+authors = [
+  { name = "Ady" }
+]
+keywords = ["openclaw", "zig", "rpc", "json-rpc", "agent"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries",
+]
+
+[project.urls]
+Homepage = "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime"
+Repository = "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime"
+Issues = "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/issues"
+
+[project.scripts]
+openclaw-zig-rpc = "openclaw_zig_rpc_client.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openclaw_zig_rpc_client"]
+

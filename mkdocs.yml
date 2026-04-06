@@ -1,0 +1,38 @@
+site_name: ZAR-Zig-Agent-Runtime Docs
+site_description: Full documentation for ZAR-Zig-Agent-Runtime
+site_url: https://adybag14-cyber.github.io/ZAR-Zig-Agent-Runtime/
+repo_url: https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime
+repo_name: adybag14-cyber/ZAR-Zig-Agent-Runtime
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Architecture: architecture.md
+  - Feature Coverage: feature-coverage.md
+  - RPC Reference: rpc-reference.md
+  - Security & Diagnostics: security-and-diagnostics.md
+  - Browser & Auth: browser-auth.md
+  - Telegram Channel: telegram-channel.md
+  - Memory & Edge: memory-edge.md
+  - Operations: operations.md
+  - GitHub Pages Deployment: github-pages.md
+  - Port Tracking:
+      - Plan: zig-port/PORT_PLAN.md
+      - Checklist: zig-port/PHASE_CHECKLIST.md
+      - FS5.6 License Refresh: zig-port/FS5_6_LICENSE_REFRESH.md
+      - Local Toolchain: zig-port/ZIG_TOOLCHAIN_LOCAL.md

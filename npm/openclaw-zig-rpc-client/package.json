@@ -1,0 +1,43 @@
+{
+  "name": "@adybag14-cyber/openclaw-zig-rpc-client",
+  "version": "0.2.0-zig-edge.32",
+  "description": "Node.js RPC client for ZAR-Zig-Agent-Runtime gateway endpoints.",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "type": "commonjs",
+  "license": "GPL-2.0-only",
+  "author": "Ady",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime.git",
+    "directory": "npm/openclaw-zig-rpc-client"
+  },
+  "bugs": {
+    "url": "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime/issues"
+  },
+  "homepage": "https://github.com/adybag14-cyber/ZAR-Zig-Agent-Runtime#readme",
+  "keywords": [
+    "openclaw",
+    "zig",
+    "rpc",
+    "json-rpc",
+    "lightpanda",
+    "agent"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "pack:check": "npm pack --dry-run"
+  }
+}
+

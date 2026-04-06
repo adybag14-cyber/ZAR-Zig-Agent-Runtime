@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: GPL-2.0-only
+param(
+    [switch] $SkipBuild
+)
+
+$ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
+$probe = Join-Path $PSScriptRoot "baremetal-qemu-scheduler-wake-timer-clear-probe-check.ps1"
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
+
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_SCHEDULER_WAKE_TIMER_CLEAR_PROBE=skipped\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_SCHEDULER_WAKE_TIMER_CLEAR_BASELINE_PROBE' `
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_SCHEDULER_WAKE_TIMER_CLEAR_BASELINE_PROBE_SOURCE' `
+    -SkippedSourceValue 'baremetal-qemu-scheduler-wake-timer-clear-probe-check.ps1' `
+    -FailureLabel 'scheduler-wake timer-clear' `
+    -EchoOnSuccess:$false `
+    -EchoOnSkip:$true `
+    -EchoOnFailure:$true `
+    -TrimEchoText:$true `
+    -EmitSkippedSourceReceipt:$false
+$probeText = $probeState.Text
+
+$ack = Extract-IntValue -Text $probeText -Name 'ACK'
+$lastOpcode = Extract-IntValue -Text $probeText -Name 'LAST_OPCODE'
+$lastResult = Extract-IntValue -Text $probeText -Name 'LAST_RESULT'
+$ticks = Extract-IntValue -Text $probeText -Name 'TICKS'
+$taskId = Extract-IntValue -Text $probeText -Name 'TASK_ID'
+$preTaskState = Extract-IntValue -Text $probeText -Name 'PRE_TASK_STATE'
+$preTimerCount = Extract-IntValue -Text $probeText -Name 'PRE_TIMER_COUNT'
+$preNextTimerId = Extract-IntValue -Text $probeText -Name 'PRE_NEXT_TIMER_ID'
+
+if ($null -in @($ack, $lastOpcode, $lastResult, $ticks, $taskId, $preTaskState, $preTimerCount, $preNextTimerId)) {
+    throw 'Missing expected scheduler-wake timer-clear baseline fields in probe output.'
+}
+if ($ack -ne 8) { throw "Expected ACK=8. got $ack" }
+if ($lastOpcode -ne 53) { throw "Expected LAST_OPCODE=53. got $lastOpcode" }
+if ($lastResult -ne 0) { throw "Expected LAST_RESULT=0. got $lastResult" }
+if ($ticks -lt 8) { throw "Expected TICKS>=8. got $ticks" }
+if ($taskId -le 0) { throw "Expected TASK_ID>0. got $taskId" }
+if ($preTaskState -ne 6) { throw "Expected PRE_TASK_STATE=6. got $preTaskState" }
+if ($preTimerCount -ne 1) { throw "Expected PRE_TIMER_COUNT=1. got $preTimerCount" }
+if ($preNextTimerId -ne 2) { throw "Expected PRE_NEXT_TIMER_ID=2. got $preNextTimerId" }
+
+Write-Output 'BAREMETAL_QEMU_SCHEDULER_WAKE_TIMER_CLEAR_BASELINE_PROBE=pass'
+Write-Output "ACK=$ack"
+Write-Output "LAST_OPCODE=$lastOpcode"
+Write-Output "LAST_RESULT=$lastResult"
+Write-Output "TASK_ID=$taskId"
+Write-Output "PRE_TASK_STATE=$preTaskState"
+Write-Output "PRE_TIMER_COUNT=$preTimerCount"
+Write-Output "PRE_NEXT_TIMER_ID=$preNextTimerId"

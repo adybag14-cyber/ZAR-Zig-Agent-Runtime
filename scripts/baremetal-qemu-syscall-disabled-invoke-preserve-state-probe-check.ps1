@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: GPL-2.0-only
+param(
+    [switch] $SkipBuild,
+    [int] $TimeoutSeconds = 40,
+    [int] $GdbPort = 1287
+)
+
+$ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
+$probe = Join-Path $PSScriptRoot "baremetal-qemu-syscall-control-probe-check.ps1"
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
+
+function Extract-IntValue {
+    param([string] $Text, [string] $Name)
+    $match = [regex]::Match($Text, '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$')
+    if (-not $match.Success) { return $null }
+    return [int64]::Parse($match.Groups[1].Value)
+}
+
+$invoke = @{ TimeoutSeconds = $TimeoutSeconds; GdbPort = $GdbPort }
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_SYSCALL_CONTROL_PROBE=skipped\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_SYSCALL_DISABLED_INVOKE_PRESERVE_STATE_PROBE' `
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_SYSCALL_DISABLED_INVOKE_PRESERVE_STATE_PROBE_SOURCE' `
+    -SkippedSourceValue 'baremetal-qemu-syscall-control-probe-check.ps1' `
+    -FailureLabel 'Syscall control' `
+    -EchoOnSuccess:$false `
+    -EchoOnSkip:$true `
+    -EchoOnFailure:$true `
+    -TrimEchoText:$true `
+    -EmitSkippedSourceReceipt:$true `
+    -InvokeArgs $invoke
+$text = $probeState.Text
+$outputText = $probeState.Text
+function Extract-IntValue {
+    param([string] $Text, [string] $Name)
+    $match = [regex]::Match($Text, '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$')
+    if (-not $match.Success) { return $null }
+    return [int64]::Parse($match.Groups[1].Value)
+}
+
+$disabledResult = Extract-IntValue -Text $outputText -Name 'DISABLED_RESULT'
+$enabled = Extract-IntValue -Text $outputText -Name 'ENABLED'
+$dispatchCount = Extract-IntValue -Text $outputText -Name 'DISPATCH_COUNT'
+$stateLastResult = Extract-IntValue -Text $outputText -Name 'STATE_LAST_RESULT'
+
+if ($disabledResult -ne -38) { throw "Expected DISABLED_RESULT=-38. got $disabledResult" }
+if ($enabled -ne 1) { throw "Expected final ENABLED=1 after re-enable. got $enabled" }
+if ($dispatchCount -ne 1) { throw "Expected final DISPATCH_COUNT=1 after the later successful invoke only. got $dispatchCount" }
+if ($stateLastResult -ne 55489) { throw "Expected STATE_LAST_RESULT=55489 from the later successful invoke. got $stateLastResult" }
+
+Write-Output 'BAREMETAL_QEMU_SYSCALL_DISABLED_INVOKE_PRESERVE_STATE_PROBE=pass'
+Write-Output 'BAREMETAL_QEMU_SYSCALL_DISABLED_INVOKE_PRESERVE_STATE_PROBE_SOURCE=baremetal-qemu-syscall-control-probe-check.ps1'
+Write-Output "DISABLED_RESULT=$disabledResult"
+Write-Output "ENABLED=$enabled"
+Write-Output "DISPATCH_COUNT=$dispatchCount"
+Write-Output "STATE_LAST_RESULT=$stateLastResult"

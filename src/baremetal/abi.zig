@@ -1,0 +1,1943 @@
+// SPDX-License-Identifier: GPL-2.0-only
+const std = @import("std");
+
+pub const status_magic: u32 = 0x4f43424d; // "OCBM"
+pub const command_magic: u32 = 0x4f43434d; // "OCCM"
+pub const kernel_info_magic: u32 = 0x4f434b49; // "OCKI"
+pub const boot_diag_magic: u32 = 0x4f434244; // "OCBD"
+pub const console_magic: u32 = 0x4f43434e; // "OCCN"
+pub const framebuffer_magic: u32 = 0x4f434642; // "OCFB"
+pub const display_output_magic: u32 = 0x4f43444f; // "OCDO"
+pub const storage_magic: u32 = 0x4f435354; // "OCST"
+pub const ethernet_magic: u32 = 0x4f434554; // "OCET"
+pub const tool_layout_magic: u32 = 0x4f43544c; // "OCTL"
+pub const filesystem_magic: u32 = 0x4f434653; // "OCFS"
+pub const keyboard_magic: u32 = 0x4f434b42; // "OCKB"
+pub const mouse_magic: u32 = 0x4f434d53; // "OCMS"
+pub const acpi_magic: u32 = 0x4f434150; // "OCAP"
+pub const cpu_magic: u32 = 0x4f434350; // "OCCP"
+pub const lapic_magic: u32 = 0x4f434c50; // "OCLP"
+pub const ioapic_magic: u32 = 0x4f434950; // "OCIP"
+pub const pic_magic: u32 = 0x4f435043; // "OCPC"
+pub const pit_magic: u32 = 0x4f435054; // "OCPT"
+pub const pm_timer_magic: u32 = 0x4f43504d; // "OCPM"
+pub const ap_startup_magic: u32 = 0x4f434153; // "OCAS"
+pub const ap_multi_magic: u32 = 0x4f43414d; // "OCAM"
+pub const ap_slot_magic: u32 = 0x4f43534c; // "OCSL"
+pub const ap_ownership_magic: u32 = 0x4f43414f; // "OCAO"
+pub const ap_failover_magic: u32 = 0x4f434146; // "OCAF"
+pub const ap_backfill_magic: u32 = 0x4f434142; // "OCAB"
+pub const ap_window_magic: u32 = 0x4f434157; // "OCAW"
+pub const ap_fairness_magic: u32 = 0x4f434652; // "OCFR"
+pub const ap_rebalance_magic: u32 = 0x4f435242; // "OCRB"
+pub const ap_debt_magic: u32 = 0x4f434144; // "OCAD"
+pub const ap_admission_magic: u32 = 0x4f43414d; // "OCAM"
+pub const ap_aging_magic: u32 = 0x4f434147; // "OCAG"
+pub const ap_fairshare_magic: u32 = 0x4f434648; // "OCFH"
+pub const ap_quota_magic: u32 = 0x4f435154; // "OCQT"
+
+pub const api_version: u16 = 2;
+
+pub const mode_booting: u8 = 0;
+pub const mode_running: u8 = 1;
+pub const mode_panicked: u8 = 255;
+
+pub const boot_phase_preinit: u8 = 0;
+pub const boot_phase_init: u8 = 1;
+pub const boot_phase_runtime: u8 = 2;
+pub const boot_phase_panicked: u8 = 255;
+
+pub const feature_os_hosted_runtime: u32 = 1 << 0;
+pub const feature_baremetal_runtime: u32 = 1 << 1;
+pub const feature_lightpanda_bridge_policy: u32 = 1 << 2;
+pub const feature_memory_edge_contracts: u32 = 1 << 3;
+pub const feature_command_mailbox: u32 = 1 << 4;
+pub const feature_multiboot2_header: u32 = 1 << 5;
+pub const feature_kernel_info_export: u32 = 1 << 6;
+pub const feature_descriptor_tables_export: u32 = 1 << 7;
+pub const feature_interrupt_stub_export: u32 = 1 << 8;
+pub const feature_interrupt_mailbox_control: u32 = 1 << 9;
+pub const feature_interrupt_state_export: u32 = 1 << 10;
+pub const feature_descriptor_load_export: u32 = 1 << 11;
+pub const feature_exception_telemetry_export: u32 = 1 << 12;
+pub const feature_exception_code_payload_export: u32 = 1 << 13;
+pub const feature_exception_history_export: u32 = 1 << 14;
+pub const feature_interrupt_history_export: u32 = 1 << 15;
+pub const feature_vector_counters_export: u32 = 1 << 16;
+pub const feature_boot_diagnostics_export: u32 = 1 << 17;
+pub const feature_command_history_export: u32 = 1 << 18;
+pub const feature_health_history_export: u32 = 1 << 19;
+pub const feature_mode_history_export: u32 = 1 << 20;
+pub const feature_boot_phase_history_export: u32 = 1 << 21;
+pub const feature_command_result_counters_export: u32 = 1 << 22;
+pub const feature_scheduler_export: u32 = 1 << 23;
+pub const feature_allocator_export: u32 = 1 << 24;
+pub const feature_syscall_table_export: u32 = 1 << 25;
+pub const feature_timer_export: u32 = 1 << 26;
+pub const feature_wake_queue_export: u32 = 1 << 27;
+pub const feature_syscall_abi_v2: u32 = 1 << 28;
+pub const feature_interrupt_mask_export: u32 = 1 << 29;
+pub const feature_console_export: u32 = 1 << 30;
+pub const feature_storage_export: u32 = @as(u32, 1) << 31;
+
+pub const kernel_abi_multiboot2: u32 = 1 << 0;
+pub const kernel_abi_command_mailbox: u32 = 1 << 1;
+pub const kernel_abi_panic_counter: u32 = 1 << 2;
+pub const kernel_abi_tick_batch: u32 = 1 << 3;
+pub const kernel_abi_descriptor_tables: u32 = 1 << 4;
+pub const kernel_abi_interrupt_stub: u32 = 1 << 5;
+pub const kernel_abi_interrupt_mailbox: u32 = 1 << 6;
+pub const kernel_abi_interrupt_state: u32 = 1 << 7;
+pub const kernel_abi_descriptor_load: u32 = 1 << 8;
+pub const kernel_abi_exception_telemetry: u32 = 1 << 9;
+pub const kernel_abi_exception_payload: u32 = 1 << 10;
+pub const kernel_abi_exception_history: u32 = 1 << 11;
+pub const kernel_abi_interrupt_history: u32 = 1 << 12;
+pub const kernel_abi_vector_counters: u32 = 1 << 13;
+pub const kernel_abi_boot_diagnostics: u32 = 1 << 14;
+pub const kernel_abi_command_history: u32 = 1 << 15;
+pub const kernel_abi_health_history: u32 = 1 << 16;
+pub const kernel_abi_mode_history: u32 = 1 << 17;
+pub const kernel_abi_boot_phase_history: u32 = 1 << 18;
+pub const kernel_abi_command_result_counters: u32 = 1 << 19;
+pub const kernel_abi_scheduler: u32 = 1 << 20;
+pub const kernel_abi_allocator: u32 = 1 << 21;
+pub const kernel_abi_syscall_table: u32 = 1 << 22;
+pub const kernel_abi_timer: u32 = 1 << 23;
+pub const kernel_abi_wake_queue: u32 = 1 << 24;
+pub const kernel_abi_syscall_abi_v2: u32 = 1 << 25;
+pub const kernel_abi_interrupt_mask: u32 = 1 << 26;
+pub const kernel_abi_console: u32 = 1 << 27;
+pub const kernel_abi_storage: u32 = 1 << 28;
+
+pub const command_nop: u16 = 0;
+pub const command_set_health_code: u16 = 1;
+pub const command_set_feature_flags: u16 = 2;
+pub const command_reset_counters: u16 = 3;
+pub const command_set_mode: u16 = 4;
+pub const command_trigger_panic_flag: u16 = 5;
+pub const command_set_tick_batch_hint: u16 = 6;
+pub const command_trigger_interrupt: u16 = 7;
+pub const command_reset_interrupt_counters: u16 = 8;
+pub const command_reinit_descriptor_tables: u16 = 9;
+pub const command_load_descriptor_tables: u16 = 10;
+pub const command_reset_exception_counters: u16 = 11;
+pub const command_trigger_exception: u16 = 12;
+pub const command_clear_exception_history: u16 = 13;
+pub const command_clear_interrupt_history: u16 = 14;
+pub const command_reset_vector_counters: u16 = 15;
+pub const command_set_boot_phase: u16 = 16;
+pub const command_reset_boot_diagnostics: u16 = 17;
+pub const command_capture_stack_pointer: u16 = 18;
+pub const command_clear_command_history: u16 = 19;
+pub const command_clear_health_history: u16 = 20;
+pub const command_clear_mode_history: u16 = 21;
+pub const command_clear_boot_phase_history: u16 = 22;
+pub const command_reset_command_result_counters: u16 = 23;
+pub const command_scheduler_enable: u16 = 24;
+pub const command_scheduler_disable: u16 = 25;
+pub const command_scheduler_reset: u16 = 26;
+pub const command_task_create: u16 = 27;
+pub const command_task_terminate: u16 = 28;
+pub const command_scheduler_set_timeslice: u16 = 29;
+pub const command_scheduler_set_default_budget: u16 = 30;
+pub const command_allocator_reset: u16 = 31;
+pub const command_allocator_alloc: u16 = 32;
+pub const command_allocator_free: u16 = 33;
+pub const command_syscall_register: u16 = 34;
+pub const command_syscall_unregister: u16 = 35;
+pub const command_syscall_invoke: u16 = 36;
+pub const command_syscall_reset: u16 = 37;
+pub const command_syscall_enable: u16 = 38;
+pub const command_syscall_disable: u16 = 39;
+pub const command_syscall_set_flags: u16 = 40;
+pub const command_timer_reset: u16 = 41;
+pub const command_timer_schedule: u16 = 42;
+pub const command_timer_cancel: u16 = 43;
+pub const command_wake_queue_clear: u16 = 44;
+pub const command_scheduler_wake_task: u16 = 45;
+pub const command_timer_enable: u16 = 46;
+pub const command_timer_disable: u16 = 47;
+pub const command_timer_set_quantum: u16 = 48;
+pub const command_timer_schedule_periodic: u16 = 49;
+pub const command_task_wait: u16 = 50;
+pub const command_task_resume: u16 = 51;
+pub const command_timer_cancel_task: u16 = 52;
+pub const command_task_wait_for: u16 = 53;
+pub const command_wake_queue_pop: u16 = 54;
+pub const command_scheduler_set_policy: u16 = 55;
+pub const command_task_set_priority: u16 = 56;
+pub const command_task_wait_interrupt: u16 = 57;
+pub const command_task_wait_interrupt_for: u16 = 58;
+pub const command_wake_queue_pop_reason: u16 = 59;
+pub const command_wake_queue_pop_vector: u16 = 60;
+pub const command_wake_queue_pop_before_tick: u16 = 61;
+pub const command_wake_queue_pop_reason_vector: u16 = 62;
+pub const command_interrupt_mask_set: u16 = 63;
+pub const command_interrupt_mask_clear_all: u16 = 64;
+pub const command_interrupt_mask_reset_ignored_counts: u16 = 65;
+pub const command_interrupt_mask_apply_profile: u16 = 66;
+
+pub const mode_change_reason_boot: u8 = 0;
+pub const mode_change_reason_command: u8 = 1;
+pub const mode_change_reason_panic: u8 = 2;
+pub const mode_change_reason_runtime_tick: u8 = 3;
+pub const mode_change_reason_reset: u8 = 4;
+
+pub const boot_phase_change_reason_boot: u8 = 0;
+pub const boot_phase_change_reason_command: u8 = 1;
+pub const boot_phase_change_reason_runtime_tick: u8 = 2;
+pub const boot_phase_change_reason_panic: u8 = 3;
+pub const boot_phase_change_reason_reset: u8 = 4;
+
+pub const result_ok: i16 = 0;
+pub const result_invalid_argument: i16 = -22;
+pub const result_not_supported: i16 = -38;
+pub const result_no_space: i16 = -28;
+pub const result_not_found: i16 = -2;
+pub const result_conflict: i16 = -17;
+
+pub const scheduler_state_disabled: u8 = 0;
+pub const scheduler_state_enabled: u8 = 1;
+pub const scheduler_policy_round_robin: u8 = 0;
+pub const scheduler_policy_priority: u8 = 1;
+pub const ap_ownership_policy_round_robin: u8 = 0;
+pub const ap_ownership_policy_priority: u8 = 1;
+
+pub const task_state_unused: u8 = 0;
+pub const task_state_ready: u8 = 1;
+pub const task_state_running: u8 = 2;
+pub const task_state_completed: u8 = 3;
+pub const task_state_terminated: u8 = 4;
+pub const task_state_faulted: u8 = 5;
+pub const task_state_waiting: u8 = 6;
+
+pub const allocation_state_unused: u8 = 0;
+pub const allocation_state_active: u8 = 1;
+
+pub const syscall_state_disabled: u8 = 0;
+pub const syscall_state_enabled: u8 = 1;
+
+pub const syscall_entry_state_unused: u8 = 0;
+pub const syscall_entry_state_registered: u8 = 1;
+pub const syscall_entry_flag_blocked: u8 = 1 << 0;
+
+pub const timer_state_disabled: u8 = 0;
+pub const timer_state_enabled: u8 = 1;
+
+pub const timer_entry_state_unused: u8 = 0;
+pub const timer_entry_state_armed: u8 = 1;
+pub const timer_entry_state_fired: u8 = 2;
+pub const timer_entry_state_canceled: u8 = 3;
+pub const timer_entry_flag_periodic: u16 = 1 << 0;
+
+pub const wake_reason_timer: u8 = 1;
+pub const wake_reason_interrupt: u8 = 2;
+pub const wake_reason_manual: u8 = 3;
+
+pub const wait_interrupt_any_vector: u16 = 0xFFFF;
+
+pub const interrupt_mask_profile_none: u8 = 0;
+pub const interrupt_mask_profile_external_all: u8 = 1;
+pub const interrupt_mask_profile_external_high: u8 = 2;
+pub const interrupt_mask_profile_custom: u8 = 255;
+
+pub const console_backend_host_buffer: u8 = 0;
+pub const console_backend_vga_text: u8 = 1;
+pub const console_backend_linear_framebuffer: u8 = 2;
+pub const display_backend_none: u8 = 0;
+pub const display_backend_bga: u8 = 1;
+pub const display_backend_virtio_gpu: u8 = 2;
+pub const display_controller_none: u8 = 0;
+pub const display_controller_bochs_bga: u8 = 1;
+pub const display_controller_virtio_gpu: u8 = 2;
+pub const display_connector_none: u8 = 0;
+pub const display_connector_virtual: u8 = 1;
+pub const display_connector_displayport: u8 = 2;
+pub const display_connector_hdmi: u8 = 3;
+pub const display_connector_embedded_displayport: u8 = 4;
+pub const display_interface_none: u8 = 0;
+pub const display_interface_undefined: u8 = 1;
+pub const display_interface_dvi: u8 = 2;
+pub const display_interface_hdmi_a: u8 = 3;
+pub const display_interface_hdmi_b: u8 = 4;
+pub const display_interface_mddi: u8 = 5;
+pub const display_interface_displayport: u8 = 6;
+pub const display_capability_digital_input: u16 = 1 << 0;
+pub const display_capability_preferred_timing: u16 = 1 << 1;
+pub const display_capability_cea_extension: u16 = 1 << 2;
+pub const display_capability_displayid_extension: u16 = 1 << 3;
+pub const display_capability_hdmi_vendor_data: u16 = 1 << 4;
+pub const display_capability_basic_audio: u16 = 1 << 5;
+pub const display_capability_underscan: u16 = 1 << 6;
+pub const display_capability_ycbcr444: u16 = 1 << 7;
+pub const display_capability_ycbcr422: u16 = 1 << 8;
+pub const acpi_flag_has_xsdt: u32 = 1 << 0;
+pub const acpi_flag_has_fadt: u32 = 1 << 1;
+pub const acpi_flag_has_madt: u32 = 1 << 2;
+pub const acpi_flag_live_low_memory: u32 = 1 << 3;
+pub const acpi_flag_synthetic_image: u32 = 1 << 4;
+pub const ethernet_backend_none: u8 = 0;
+pub const ethernet_backend_rtl8139: u8 = 1;
+pub const ethernet_backend_e1000: u8 = 2;
+pub const ethernet_backend_virtio_net: u8 = 3;
+pub const storage_backend_ram_disk: u8 = 1;
+pub const storage_backend_ata_pio: u8 = 2;
+pub const storage_backend_virtio_block: u8 = 3;
+pub const storage_filesystem_kind_unknown: u8 = 0;
+pub const storage_filesystem_kind_zarfs: u8 = 1;
+pub const storage_filesystem_kind_tmpfs: u8 = 2;
+pub const storage_filesystem_kind_virtual: u8 = 3;
+pub const storage_filesystem_kind_ext2: u8 = 4;
+pub const storage_filesystem_kind_fat32: u8 = 5;
+pub const input_modifier_shift: u8 = 1 << 0;
+pub const input_modifier_ctrl: u8 = 1 << 1;
+pub const input_modifier_alt: u8 = 1 << 2;
+
+pub const BaremetalStatus = extern struct {
+    magic: u32,
+    api_version: u16,
+    mode: u8,
+    reserved0: u8,
+    ticks: u64,
+    last_health_code: u16,
+    reserved1: u16,
+    feature_flags: u32,
+    panic_count: u32,
+    command_seq_ack: u32,
+    last_command_opcode: u16,
+    last_command_result: i16,
+    tick_batch_hint: u32,
+};
+
+pub const BaremetalCommand = extern struct {
+    magic: u32,
+    api_version: u16,
+    opcode: u16,
+    seq: u32,
+    arg0: u64,
+    arg1: u64,
+};
+
+pub const BaremetalKernelInfo = extern struct {
+    magic: u32,
+    api_version: u16,
+    pointer_width_bytes: u8,
+    endianness: u8, // 1 = little endian
+    abi_flags: u32,
+    status_size: u32,
+    command_size: u32,
+};
+
+pub const BaremetalBootDiagnostics = extern struct {
+    magic: u32,
+    api_version: u16,
+    phase: u8,
+    reserved0: u8,
+    boot_seq: u32,
+    last_command_seq: u32,
+    last_command_tick: u64,
+    last_tick_observed: u64,
+    stack_pointer_snapshot: u64,
+    phase_changes: u32,
+    reserved1: u32,
+};
+
+pub const BaremetalConsoleState = extern struct {
+    magic: u32,
+    api_version: u16,
+    cols: u16,
+    rows: u16,
+    cursor_row: u16,
+    cursor_col: u16,
+    attribute: u8,
+    backend: u8,
+    reserved0: u16,
+    write_count: u32,
+    scroll_count: u32,
+    clear_count: u32,
+};
+
+pub const BaremetalFramebufferState = extern struct {
+    magic: u32,
+    api_version: u16,
+    width: u16,
+    height: u16,
+    cols: u16,
+    rows: u16,
+    pitch: u32,
+    framebuffer_bytes: u32,
+    framebuffer_addr: u64,
+    bytes_per_pixel: u8,
+    backend: u8,
+    hardware_backed: u8,
+    reserved0: u8,
+    write_count: u32,
+    clear_count: u32,
+    present_count: u32,
+    cell_width: u8,
+    cell_height: u8,
+    reserved1: [2]u8,
+    fg_color: u32,
+    bg_color: u32,
+    display_vendor_id: u16,
+    display_device_id: u16,
+    display_pci_bus: u8,
+    display_pci_device: u8,
+    display_pci_function: u8,
+    supported_mode_count: u8,
+    current_mode_index: u8,
+    reserved2: [3]u8,
+};
+
+pub const BaremetalDisplayOutputState = extern struct {
+    magic: u32,
+    api_version: u16,
+    backend: u8,
+    controller: u8,
+    connector_type: u8,
+    hardware_backed: u8,
+    connected: u8,
+    edid_present: u8,
+    scanout_count: u8,
+    active_scanout: u8,
+    pci_bus: u8,
+    pci_device: u8,
+    pci_function: u8,
+    reserved0: u8,
+    vendor_id: u16,
+    device_id: u16,
+    current_width: u16,
+    current_height: u16,
+    preferred_width: u16,
+    preferred_height: u16,
+    physical_width_mm: u16,
+    physical_height_mm: u16,
+    manufacturer_id: u16,
+    product_code: u16,
+    serial_number: u32,
+    edid_length: u16,
+    capability_flags: u16,
+};
+
+pub const BaremetalAcpiState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    revision: u8,
+    oem_id: [6]u8,
+    table_count: u16,
+    lapic_count: u16,
+    ioapic_count: u16,
+    sci_interrupt: u16,
+    pm_timer_block: u32,
+    flags: u32,
+    rsdp_addr: u64,
+    rsdt_addr: u64,
+    xsdt_addr: u64,
+    fadt_addr: u64,
+    madt_addr: u64,
+};
+
+pub const BaremetalCpuTopologyState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    supports_smp: u8,
+    cpu_count: u16,
+    exported_count: u16,
+    enabled_count: u16,
+    ioapic_count: u16,
+    lapic_addr_override_count: u16,
+    reserved0: u16,
+    madt_flags: u32,
+    local_apic_addr: u64,
+    madt_addr: u64,
+};
+
+pub const BaremetalCpuTopologyEntry = extern struct {
+    processor_uid: u8,
+    apic_id: u8,
+    enabled: u8,
+    reserved0: u8,
+    flags: u32,
+};
+
+pub const BaremetalLapicState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    apic_supported: u8,
+    enabled: u8,
+    x2apic_supported: u8,
+    bootstrap_processor: u8,
+    topology_present: u8,
+    supports_smp: u8,
+    reserved0: u8,
+    requested_cpu_count: u16,
+    logical_processor_count: u16,
+    current_apic_id: u32,
+    cpuid_apic_id: u32,
+    version: u32,
+    spurious_vector: u32,
+    timer_lvt: u32,
+    error_lvt: u32,
+    apic_base_msr: u64,
+    local_apic_addr: u64,
+};
+
+pub const BaremetalIoApicState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    acpi_present: u8,
+    enabled: u8,
+    reserved0: [3]u8,
+    ioapic_count: u16,
+    selected_index: u16,
+    redirection_entry_count: u16,
+    reserved1: u16,
+    ioapic_id: u32,
+    version: u32,
+    arbitration_id: u32,
+    gsi_base: u32,
+    reserved2: [4]u8,
+    mmio_addr: u64,
+};
+
+pub const BaremetalPicState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    remapped: u8,
+    slave_present: u8,
+    auto_eoi: u8,
+    master_offset: u8,
+    slave_offset: u8,
+    master_mask: u8,
+    slave_mask: u8,
+    master_irr: u8,
+    slave_irr: u8,
+    master_isr: u8,
+    slave_isr: u8,
+    control_mask_profile: u8,
+    last_masked_vector: u8,
+    reserved0: [2]u8,
+    hardware_masked_irq_count: u16,
+    reserved1: u16,
+    control_masked_count: u32,
+    control_ignored_count: u64,
+};
+
+pub const BaremetalPitState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    counter_changed: u8,
+    channel: u8,
+    reserved0: [3]u8,
+    data_port: u16,
+    command_port: u16,
+    first_count: u16,
+    second_count: u16,
+    delta: u16,
+    sample_attempts: u16,
+    base_frequency_hz: u32,
+    latch_command: u32,
+};
+
+pub const BaremetalPmTimerState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    monotonic: u8,
+    width_bits: u8,
+    reserved0: u8,
+    port: u32,
+    first_tick: u32,
+    second_tick: u32,
+    delta: u32,
+    sample_attempts: u16,
+    reserved1: u16,
+    mask: u32,
+};
+
+pub const BaremetalApStartupState = extern struct {
+    magic: u32,
+    api_version: u16,
+    supported: u8,
+    attempted: u8,
+    started: u8,
+    halted: u8,
+    last_stage: u8,
+    reserved0: [2]u8,
+    startup_vector: u8,
+    reserved1: [3]u8,
+    trampoline_phys: u32,
+    bsp_apic_id: u32,
+    target_apic_id: u32,
+    reported_apic_id: u32,
+    startup_count: u32,
+    lapic_addr: u32,
+    requested_cpu_count: u16,
+    logical_processor_count: u16,
+    command_seq: u32,
+    response_seq: u32,
+    heartbeat_count: u32,
+    ping_count: u32,
+    warm_reset_programmed: u8,
+    reserved2: [3]u8,
+    warm_reset_vector_segment: u16,
+    warm_reset_vector_offset: u16,
+    init_ipi_count: u32,
+    startup_ipi_count: u32,
+    last_delivery_status: u32,
+    last_accept_status: u32,
+    command_value: u32,
+    task_count: u32,
+    work_count: u32,
+    last_work_value: u32,
+    work_accumulator: u32,
+    batch_count: u32,
+    last_batch_count: u32,
+    last_batch_accumulator: u32,
+};
+
+pub const BaremetalApMultiState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    exported_count: u8,
+    run_count: u16,
+    started_count: u16,
+    halted_count: u16,
+    requested_cpu_count: u16,
+    logical_processor_count: u16,
+    reserved0: u16,
+    bsp_apic_id: u32,
+    last_target_apic_id: u32,
+    last_reported_apic_id: u32,
+    total_task_count: u32,
+    total_batch_count: u32,
+    total_accumulator: u32,
+};
+
+pub const BaremetalApMultiEntry = extern struct {
+    target_apic_id: u32,
+    reported_apic_id: u32,
+    task_count: u32,
+    batch_count: u32,
+    last_batch_count: u32,
+    last_batch_accumulator: u32,
+    heartbeat_count: u32,
+    ping_count: u32,
+    started: u8,
+    halted: u8,
+    last_stage: u8,
+    reserved0: u8,
+};
+
+pub const BaremetalApSlotState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    exported_count: u8,
+    active_count: u16,
+    started_count: u16,
+    halted_count: u16,
+    requested_cpu_count: u16,
+    logical_processor_count: u16,
+    reserved0: u16,
+    bsp_apic_id: u32,
+    total_task_count: u32,
+    total_batch_count: u32,
+    total_accumulator: u32,
+};
+
+pub const BaremetalApSlotEntry = extern struct {
+    target_apic_id: u32,
+    reported_apic_id: u32,
+    command_seq: u32,
+    response_seq: u32,
+    heartbeat_count: u32,
+    ping_count: u32,
+    task_count: u32,
+    batch_count: u32,
+    last_batch_count: u32,
+    last_batch_accumulator: u32,
+    work_count: u32,
+    last_work_value: u32,
+    work_accumulator: u32,
+    started: u8,
+    halted: u8,
+    last_stage: u8,
+    slot_index: u8,
+};
+
+pub const BaremetalApOwnershipState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    policy: u8,
+    exported_count: u8,
+    active_count: u8,
+    peak_active_slot_count: u8,
+    last_round_active_slot_count: u8,
+    requested_cpu_count: u16,
+    logical_processor_count: u16,
+    reserved0: u16,
+    bsp_apic_id: u32,
+    total_owned_task_count: u32,
+    total_dispatch_count: u32,
+    total_accumulator: u32,
+    dispatch_round_count: u32,
+    last_round_owned_task_count: u32,
+    last_round_dispatch_count: u32,
+    last_round_accumulator: u32,
+    total_redistributed_task_count: u32,
+    last_redistributed_task_count: u32,
+    last_start_slot_index: u32,
+};
+
+pub const BaremetalApOwnershipEntry = extern struct {
+    target_apic_id: u32,
+    dispatch_count: u32,
+    owned_task_count: u32,
+    total_owned_task_count: u32,
+    redistributed_task_count: u32,
+    total_redistributed_task_count: u32,
+    last_task_id: u32,
+    last_priority: u32,
+    last_budget_ticks: u32,
+    last_batch_accumulator: u32,
+    total_accumulator: u32,
+    started: u8,
+    halted: u8,
+    slot_index: u8,
+    reserved0: u8,
+};
+
+pub const BaremetalApFailoverState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    policy: u8,
+    retired_slot_event_count: u8,
+    active_count: u8,
+    peak_active_slot_count: u8,
+    last_round_active_slot_count: u8,
+    last_retired_slot_index: u8,
+    reserved0: [3]u8,
+    total_owned_task_count: u32,
+    total_dispatch_count: u32,
+    total_accumulator: u32,
+    dispatch_round_count: u32,
+    total_redistributed_task_count: u32,
+    last_redistributed_task_count: u32,
+    total_failed_over_task_count: u32,
+    last_failed_over_task_count: u32,
+};
+
+pub const BaremetalApBackfillState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    policy: u8,
+    exported_count: u8,
+    active_count: u8,
+    peak_active_slot_count: u8,
+    last_round_active_slot_count: u8,
+    requested_cpu_count: u16,
+    logical_processor_count: u16,
+    reserved0: u16,
+    bsp_apic_id: u32,
+    total_owned_task_count: u32,
+    total_dispatch_count: u32,
+    total_accumulator: u32,
+    dispatch_round_count: u32,
+    total_redistributed_task_count: u32,
+    last_redistributed_task_count: u32,
+    total_backfilled_task_count: u32,
+    last_backfilled_task_count: u32,
+    total_terminated_task_count: u32,
+    last_terminated_task_count: u32,
+    total_backfill_round_count: u32,
+    last_start_slot_index: u32,
+};
+
+pub const BaremetalApBackfillEntry = extern struct {
+    target_apic_id: u32,
+    dispatch_count: u32,
+    owned_task_count: u32,
+    total_owned_task_count: u32,
+    redistributed_task_count: u32,
+    total_redistributed_task_count: u32,
+    backfilled_task_count: u32,
+    total_backfilled_task_count: u32,
+    last_task_id: u32,
+    last_priority: u32,
+    last_budget_ticks: u32,
+    last_batch_accumulator: u32,
+    total_accumulator: u32,
+    started: u8,
+    halted: u8,
+    slot_index: u8,
+    reserved0: u8,
+};
+
+pub const BaremetalApWindowState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    policy: u8,
+    exported_count: u8,
+    active_count: u8,
+    peak_active_slot_count: u8,
+    last_round_active_slot_count: u8,
+    requested_cpu_count: u16,
+    logical_processor_count: u16,
+    reserved0: u16,
+    bsp_apic_id: u32,
+    total_window_task_count: u32,
+    total_dispatch_count: u32,
+    total_accumulator: u32,
+    dispatch_round_count: u32,
+    last_round_window_task_count: u32,
+    total_deferred_task_count: u32,
+    last_deferred_task_count: u32,
+    window_task_budget: u32,
+    task_cursor: u32,
+    wrap_count: u32,
+    last_start_slot_index: u32,
+};
+
+pub const BaremetalApWindowEntry = extern struct {
+    target_apic_id: u32,
+    dispatch_count: u32,
+    window_task_count: u32,
+    total_window_task_count: u32,
+    last_task_id: u32,
+    last_priority: u32,
+    last_budget_ticks: u32,
+    last_batch_accumulator: u32,
+    total_accumulator: u32,
+    started: u8,
+    halted: u8,
+    slot_index: u8,
+    reserved0: u8,
+};
+
+pub const BaremetalApFairnessState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    policy: u8,
+    exported_count: u8,
+    active_count: u8,
+    peak_active_slot_count: u8,
+    last_round_active_slot_count: u8,
+    requested_cpu_count: u16,
+    logical_processor_count: u16,
+    reserved0: u16,
+    bsp_apic_id: u32,
+    total_drained_task_count: u32,
+    total_dispatch_count: u32,
+    total_accumulator: u32,
+    drain_round_count: u32,
+    last_round_drained_task_count: u32,
+    initial_pending_task_count: u32,
+    last_pending_task_count: u32,
+    peak_pending_task_count: u32,
+    drain_task_budget: u32,
+    final_task_cursor: u32,
+    wrap_count: u32,
+    last_start_slot_index: u32,
+    min_slot_task_count: u32,
+    max_slot_task_count: u32,
+    task_balance_gap: u32,
+};
+
+pub const BaremetalApFairnessEntry = extern struct {
+    target_apic_id: u32,
+    dispatch_count: u32,
+    drained_task_count: u32,
+    total_drained_task_count: u32,
+    last_task_id: u32,
+    last_priority: u32,
+    last_budget_ticks: u32,
+    last_batch_accumulator: u32,
+    total_accumulator: u32,
+    started: u8,
+    halted: u8,
+    slot_index: u8,
+    reserved0: u8,
+};
+
+pub const BaremetalApRebalanceState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    policy: u8,
+    exported_count: u8,
+    active_count: u8,
+    peak_active_slot_count: u8,
+    last_round_active_slot_count: u8,
+    requested_cpu_count: u16,
+    logical_processor_count: u16,
+    reserved0: u16,
+    bsp_apic_id: u32,
+    total_rebalanced_task_count: u32,
+    total_dispatch_count: u32,
+    total_accumulator: u32,
+    drain_round_count: u32,
+    last_round_rebalanced_task_count: u32,
+    initial_pending_task_count: u32,
+    last_pending_task_count: u32,
+    peak_pending_task_count: u32,
+    rebalance_task_budget: u32,
+    initial_min_slot_task_count: u32,
+    initial_max_slot_task_count: u32,
+    initial_task_balance_gap: u32,
+    final_min_slot_task_count: u32,
+    final_max_slot_task_count: u32,
+    final_task_balance_gap: u32,
+    total_compensated_task_count: u32,
+    last_round_compensated_task_count: u32,
+    last_start_slot_index: u32,
+};
+
+pub const BaremetalApRebalanceEntry = extern struct {
+    target_apic_id: u32,
+    dispatch_count: u32,
+    rebalanced_task_count: u32,
+    total_rebalanced_task_count: u32,
+    seed_task_count: u32,
+    final_task_count: u32,
+    last_task_id: u32,
+    last_priority: u32,
+    last_budget_ticks: u32,
+    last_batch_accumulator: u32,
+    total_accumulator: u32,
+    compensated_task_count: u32,
+    total_compensated_task_count: u32,
+    started: u8,
+    halted: u8,
+    slot_index: u8,
+    reserved0: u8,
+};
+
+pub const BaremetalApDebtState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    policy: u8,
+    exported_count: u8,
+    active_count: u8,
+    peak_active_slot_count: u8,
+    last_round_active_slot_count: u8,
+    requested_cpu_count: u16,
+    logical_processor_count: u16,
+    reserved0: u16,
+    bsp_apic_id: u32,
+    total_debt_task_count: u32,
+    total_dispatch_count: u32,
+    total_accumulator: u32,
+    drain_round_count: u32,
+    last_round_debt_task_count: u32,
+    initial_pending_task_count: u32,
+    last_pending_task_count: u32,
+    peak_pending_task_count: u32,
+    debt_task_budget: u32,
+    initial_min_slot_task_count: u32,
+    initial_max_slot_task_count: u32,
+    initial_task_balance_gap: u32,
+    final_min_slot_task_count: u32,
+    final_max_slot_task_count: u32,
+    final_task_balance_gap: u32,
+    initial_total_debt: u32,
+    remaining_total_debt: u32,
+    total_compensated_task_count: u32,
+    last_round_compensated_task_count: u32,
+    last_start_slot_index: u32,
+};
+
+pub const BaremetalApDebtEntry = extern struct {
+    target_apic_id: u32,
+    dispatch_count: u32,
+    debt_task_count: u32,
+    total_debt_task_count: u32,
+    seed_task_count: u32,
+    final_task_count: u32,
+    initial_debt: u32,
+    remaining_debt: u32,
+    last_task_id: u32,
+    last_priority: u32,
+    last_budget_ticks: u32,
+    last_batch_accumulator: u32,
+    total_accumulator: u32,
+    compensated_task_count: u32,
+    total_compensated_task_count: u32,
+    started: u8,
+    halted: u8,
+    slot_index: u8,
+    reserved0: u8,
+};
+
+pub const BaremetalApAdmissionState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    policy: u8,
+    exported_count: u8,
+    active_count: u8,
+    peak_active_slot_count: u8,
+    last_round_active_slot_count: u8,
+    requested_cpu_count: u16,
+    logical_processor_count: u16,
+    reserved0: u16,
+    bsp_apic_id: u32,
+    total_admitted_task_count: u32,
+    total_debt_task_count: u32,
+    total_dispatch_count: u32,
+    total_accumulator: u32,
+    drain_round_count: u32,
+    last_round_admitted_task_count: u32,
+    last_round_debt_task_count: u32,
+    initial_pending_task_count: u32,
+    last_pending_task_count: u32,
+    peak_pending_task_count: u32,
+    task_budget: u32,
+    initial_min_slot_task_count: u32,
+    initial_max_slot_task_count: u32,
+    initial_task_balance_gap: u32,
+    final_min_slot_task_count: u32,
+    final_max_slot_task_count: u32,
+    final_task_balance_gap: u32,
+    initial_total_debt: u32,
+    remaining_total_debt: u32,
+    total_compensated_task_count: u32,
+    last_round_compensated_task_count: u32,
+    last_start_slot_index: u32,
+};
+
+pub const BaremetalApAdmissionEntry = extern struct {
+    target_apic_id: u32,
+    dispatch_count: u32,
+    admission_task_count: u32,
+    total_admitted_task_count: u32,
+    debt_task_count: u32,
+    total_debt_task_count: u32,
+    seed_task_count: u32,
+    final_task_count: u32,
+    initial_debt: u32,
+    remaining_debt: u32,
+    last_task_id: u32,
+    last_priority: u32,
+    last_budget_ticks: u32,
+    last_batch_accumulator: u32,
+    total_accumulator: u32,
+    compensated_task_count: u32,
+    total_compensated_task_count: u32,
+    started: u8,
+    halted: u8,
+    slot_index: u8,
+    reserved0: u8,
+};
+
+pub const BaremetalApAgingState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    policy: u8,
+    exported_count: u8,
+    active_count: u8,
+    peak_active_slot_count: u8,
+    last_round_active_slot_count: u8,
+    requested_cpu_count: u16,
+    logical_processor_count: u16,
+    reserved0: u16,
+    bsp_apic_id: u32,
+    total_waiting_task_count: u32,
+    total_debt_task_count: u32,
+    total_dispatch_count: u32,
+    total_accumulator: u32,
+    drain_round_count: u32,
+    aging_round_count: u32,
+    last_round_waiting_task_count: u32,
+    last_round_debt_task_count: u32,
+    initial_pending_task_count: u32,
+    last_pending_task_count: u32,
+    peak_pending_task_count: u32,
+    task_budget: u32,
+    aging_step: u32,
+    initial_min_slot_task_count: u32,
+    initial_max_slot_task_count: u32,
+    initial_task_balance_gap: u32,
+    final_min_slot_task_count: u32,
+    final_max_slot_task_count: u32,
+    final_task_balance_gap: u32,
+    initial_total_debt: u32,
+    remaining_total_debt: u32,
+    total_compensated_task_count: u32,
+    last_round_compensated_task_count: u32,
+    total_aged_task_count: u32,
+    last_round_aged_task_count: u32,
+    total_promoted_task_count: u32,
+    peak_effective_priority: u32,
+    last_start_slot_index: u32,
+};
+
+pub const BaremetalApAgingEntry = extern struct {
+    target_apic_id: u32,
+    dispatch_count: u32,
+    waiting_task_count: u32,
+    total_waiting_task_count: u32,
+    debt_task_count: u32,
+    total_debt_task_count: u32,
+    seed_task_count: u32,
+    final_task_count: u32,
+    initial_debt: u32,
+    remaining_debt: u32,
+    last_task_id: u32,
+    last_priority: u32,
+    last_effective_priority: u32,
+    peak_effective_priority: u32,
+    last_budget_ticks: u32,
+    last_batch_accumulator: u32,
+    total_accumulator: u32,
+    compensated_task_count: u32,
+    total_compensated_task_count: u32,
+    aged_task_count: u32,
+    total_aged_task_count: u32,
+    started: u8,
+    halted: u8,
+    slot_index: u8,
+    reserved0: u8,
+};
+
+pub const BaremetalApFairshareState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    policy: u8,
+    exported_count: u8,
+    active_count: u8,
+    peak_active_slot_count: u8,
+    last_round_active_slot_count: u8,
+    requested_cpu_count: u16,
+    logical_processor_count: u16,
+    reserved0: u16,
+    bsp_apic_id: u32,
+    total_waiting_task_count: u32,
+    total_debt_task_count: u32,
+    total_dispatch_count: u32,
+    total_accumulator: u32,
+    drain_round_count: u32,
+    aging_round_count: u32,
+    fairshare_round_count: u32,
+    last_round_waiting_task_count: u32,
+    last_round_debt_task_count: u32,
+    last_round_fairshare_task_count: u32,
+    initial_pending_task_count: u32,
+    last_pending_task_count: u32,
+    peak_pending_task_count: u32,
+    task_budget: u32,
+    aging_step: u32,
+    initial_min_slot_task_count: u32,
+    initial_max_slot_task_count: u32,
+    initial_task_balance_gap: u32,
+    final_min_slot_task_count: u32,
+    final_max_slot_task_count: u32,
+    final_task_balance_gap: u32,
+    initial_total_debt: u32,
+    remaining_total_debt: u32,
+    total_compensated_task_count: u32,
+    last_round_compensated_task_count: u32,
+    total_aged_task_count: u32,
+    last_round_aged_task_count: u32,
+    total_promoted_task_count: u32,
+    total_fairshare_task_count: u32,
+    peak_effective_priority: u32,
+    last_start_slot_index: u32,
+};
+
+pub const BaremetalApFairshareEntry = extern struct {
+    target_apic_id: u32,
+    dispatch_count: u32,
+    waiting_task_count: u32,
+    total_waiting_task_count: u32,
+    debt_task_count: u32,
+    total_debt_task_count: u32,
+    fairshare_task_count: u32,
+    total_fairshare_task_count: u32,
+    seed_task_count: u32,
+    final_task_count: u32,
+    initial_debt: u32,
+    remaining_debt: u32,
+    last_task_id: u32,
+    last_priority: u32,
+    last_effective_priority: u32,
+    peak_effective_priority: u32,
+    last_budget_ticks: u32,
+    last_batch_accumulator: u32,
+    total_accumulator: u32,
+    compensated_task_count: u32,
+    total_compensated_task_count: u32,
+    aged_task_count: u32,
+    total_aged_task_count: u32,
+    started: u8,
+    halted: u8,
+    slot_index: u8,
+    reserved0: u8,
+};
+
+pub const BaremetalApQuotaState = extern struct {
+    magic: u32,
+    api_version: u16,
+    present: u8,
+    policy: u8,
+    exported_count: u8,
+    active_count: u8,
+    peak_active_slot_count: u8,
+    last_round_active_slot_count: u8,
+    requested_cpu_count: u16,
+    logical_processor_count: u16,
+    reserved0: u16,
+    bsp_apic_id: u32,
+    total_waiting_task_count: u32,
+    total_debt_task_count: u32,
+    total_dispatch_count: u32,
+    total_accumulator: u32,
+    drain_round_count: u32,
+    aging_round_count: u32,
+    quota_round_count: u32,
+    last_round_waiting_task_count: u32,
+    last_round_debt_task_count: u32,
+    last_round_quota_task_count: u32,
+    initial_pending_task_count: u32,
+    last_pending_task_count: u32,
+    peak_pending_task_count: u32,
+    task_budget: u32,
+    aging_step: u32,
+    quota_budget_total: u32,
+    initial_min_slot_task_count: u32,
+    initial_max_slot_task_count: u32,
+    initial_task_balance_gap: u32,
+    final_min_slot_task_count: u32,
+    final_max_slot_task_count: u32,
+    final_task_balance_gap: u32,
+    initial_total_debt: u32,
+    remaining_total_debt: u32,
+    total_compensated_task_count: u32,
+    last_round_compensated_task_count: u32,
+    total_aged_task_count: u32,
+    last_round_aged_task_count: u32,
+    total_promoted_task_count: u32,
+    total_quota_task_count: u32,
+    peak_effective_priority: u32,
+    last_start_slot_index: u32,
+};
+
+pub const BaremetalApQuotaEntry = extern struct {
+    target_apic_id: u32,
+    dispatch_count: u32,
+    waiting_task_count: u32,
+    total_waiting_task_count: u32,
+    debt_task_count: u32,
+    total_debt_task_count: u32,
+    quota_task_count: u32,
+    total_quota_task_count: u32,
+    seed_task_count: u32,
+    final_task_count: u32,
+    configured_quota: u32,
+    remaining_quota: u32,
+    initial_debt: u32,
+    remaining_debt: u32,
+    last_task_id: u32,
+    last_priority: u32,
+    last_effective_priority: u32,
+    peak_effective_priority: u32,
+    last_budget_ticks: u32,
+    last_batch_accumulator: u32,
+    total_accumulator: u32,
+    compensated_task_count: u32,
+    total_compensated_task_count: u32,
+    aged_task_count: u32,
+    total_aged_task_count: u32,
+    started: u8,
+    halted: u8,
+    slot_index: u8,
+    reserved0: u8,
+};
+
+pub const BaremetalDisplayOutputEntry = extern struct {
+    connected: u8,
+    scanout_index: u8,
+    connector_type: u8,
+    edid_present: u8,
+    current_width: u16,
+    current_height: u16,
+    preferred_width: u16,
+    preferred_height: u16,
+    physical_width_mm: u16,
+    physical_height_mm: u16,
+    manufacturer_id: u16,
+    product_code: u16,
+    capability_flags: u16,
+    edid_length: u16,
+    serial_number: u32,
+};
+
+pub const BaremetalDisplayModeInfo = extern struct {
+    width: u16,
+    height: u16,
+    refresh_hz: u16,
+};
+
+pub const BaremetalStorageState = extern struct {
+    magic: u32,
+    api_version: u16,
+    backend: u8,
+    mounted: u8,
+    block_size: u32,
+    block_count: u32,
+    read_ops: u32,
+    write_ops: u32,
+    flush_ops: u32,
+    last_lba: u32,
+    last_block_count: u32,
+    dirty: u8,
+    reserved0: [3]u8,
+    bytes_read: u64,
+    bytes_written: u64,
+};
+
+pub const BaremetalStoragePartitionInfo = extern struct {
+    scheme: u8,
+    reserved0: [3]u8,
+    start_lba: u32,
+    sector_count: u32,
+};
+
+pub const BaremetalStorageBackendInfo = extern struct {
+    backend: u8,
+    available: u8,
+    selected: u8,
+    mounted: u8,
+    filesystem_kind: u8,
+    preferred_order: u8,
+    partition_count: u8,
+    reserved0: u8,
+    selected_partition: i16,
+    reserved1: [2]u8,
+    block_size: u32,
+    block_count: u32,
+    logical_base_lba: u32,
+    name_len: u8,
+    reserved2: [3]u8,
+    name: [24]u8,
+};
+
+pub const BaremetalMountInfo = extern struct {
+    name_len: u8,
+    reserved0: [7]u8,
+    target_len: u16,
+    reserved1: [6]u8,
+    modified_tick: u64,
+    name: [32]u8,
+    target: [224]u8,
+};
+
+pub const BaremetalEthernetState = extern struct {
+    magic: u32,
+    api_version: u16,
+    backend: u8,
+    initialized: u8,
+    hardware_backed: u8,
+    tx_enabled: u8,
+    rx_enabled: u8,
+    loopback_enabled: u8,
+    link_up: u8,
+    pci_bus: u8,
+    pci_device: u8,
+    pci_function: u8,
+    irq_line: u8,
+    reserved0: [3]u8,
+    io_base: u32,
+    tx_packets: u32,
+    rx_packets: u32,
+    tx_errors: u32,
+    rx_errors: u32,
+    rx_overflows: u32,
+    last_tx_len: u32,
+    last_rx_len: u32,
+    last_tx_status: u32,
+    last_rx_status: u32,
+    tx_index: u8,
+    reserved1: [3]u8,
+    mac: [6]u8,
+    reserved2: [2]u8,
+    rx_consumer_offset: u32,
+};
+
+pub const BaremetalToolLayoutState = extern struct {
+    magic: u32,
+    api_version: u16,
+    slot_count: u16,
+    formatted: u8,
+    reserved0: [3]u8,
+    superblock_lba: u32,
+    slot_table_lba: u32,
+    slot_data_lba: u32,
+    slot_block_capacity: u32,
+    format_count: u32,
+    write_count: u32,
+    clear_count: u32,
+};
+
+pub const BaremetalToolSlot = extern struct {
+    slot_id: u32,
+    start_lba: u32,
+    block_capacity: u32,
+    block_count: u32,
+    byte_len: u32,
+    flags: u32,
+    checksum: u32,
+    reserved0: u32,
+    last_write_tick: u64,
+};
+
+pub const filesystem_kind_directory: u8 = 1;
+pub const filesystem_kind_file: u8 = 2;
+
+pub const BaremetalFilesystemState = extern struct {
+    magic: u32,
+    api_version: u16,
+    max_entries: u16,
+    formatted: u8,
+    mounted: u8,
+    dirty: u8,
+    active_backend: u8,
+    superblock_lba: u32,
+    entry_table_lba: u32,
+    entry_table_block_count: u32,
+    data_lba: u32,
+    used_entries: u16,
+    dir_entries: u16,
+    file_entries: u16,
+    reserved0: u16,
+    format_count: u32,
+    create_dir_count: u32,
+    write_count: u32,
+    read_count: u32,
+    stat_count: u32,
+    last_entry_id: u32,
+    last_data_lba: u32,
+    reserved1: u32,
+    last_modified_tick: u64,
+};
+
+pub const BaremetalFilesystemEntry = extern struct {
+    entry_id: u32,
+    path_len: u16,
+    kind: u8,
+    flags: u8,
+    start_lba: u32,
+    block_count: u32,
+    byte_len: u32,
+    checksum: u32,
+    modified_tick: u64,
+    // 224 bytes keeps the full entry at 256 bytes total.
+    path: [224]u8,
+};
+
+pub const BaremetalKeyboardState = extern struct {
+    magic: u32,
+    api_version: u16,
+    connected: u8,
+    modifiers: u8,
+    queue_len: u16,
+    queue_overflow: u16,
+    event_count: u32,
+    key_down_count: u32,
+    key_up_count: u32,
+    last_scancode: u8,
+    last_pressed: u8,
+    reserved0: [2]u8,
+    last_keycode: u16,
+    reserved1: u16,
+    last_tick: u64,
+};
+
+pub const BaremetalKeyboardEvent = extern struct {
+    seq: u32,
+    scancode: u8,
+    pressed: u8,
+    modifiers: u8,
+    reserved0: u8,
+    keycode: u16,
+    reserved1: u16,
+    tick: u64,
+    interrupt_seq: u32,
+    reserved2: u32,
+};
+
+pub const BaremetalMouseState = extern struct {
+    magic: u32,
+    api_version: u16,
+    connected: u8,
+    reserved0: u8,
+    queue_len: u16,
+    queue_overflow: u16,
+    packet_count: u32,
+    last_buttons: u8,
+    reserved1: [3]u8,
+    accum_x: i32,
+    accum_y: i32,
+    last_dx: i16,
+    last_dy: i16,
+    last_tick: u64,
+};
+
+pub const BaremetalMousePacket = extern struct {
+    seq: u32,
+    buttons: u8,
+    reserved0: u8,
+    dx: i16,
+    dy: i16,
+    tick: u64,
+    interrupt_seq: u32,
+};
+
+pub const BaremetalCommandEvent = extern struct {
+    seq: u32,
+    opcode: u16,
+    result: i16,
+    tick: u64,
+    arg0: u64,
+    arg1: u64,
+};
+
+pub const BaremetalHealthEvent = extern struct {
+    seq: u32,
+    health_code: u16,
+    mode: u8,
+    reserved0: u8,
+    tick: u64,
+    command_seq_ack: u32,
+    reserved1: u32,
+};
+
+pub const BaremetalModeEvent = extern struct {
+    seq: u32,
+    previous_mode: u8,
+    new_mode: u8,
+    reason: u8,
+    reserved0: u8,
+    tick: u64,
+    command_seq_ack: u32,
+    reserved1: u32,
+};
+
+pub const BaremetalBootPhaseEvent = extern struct {
+    seq: u32,
+    previous_phase: u8,
+    new_phase: u8,
+    reason: u8,
+    reserved0: u8,
+    tick: u64,
+    command_seq_ack: u32,
+    reserved1: u32,
+};
+
+pub const BaremetalCommandResultCounters = extern struct {
+    ok_count: u32,
+    invalid_argument_count: u32,
+    not_supported_count: u32,
+    other_error_count: u32,
+    total_count: u32,
+    reserved0: u32,
+    last_result: i16,
+    reserved1: u16,
+    last_opcode: u16,
+    reserved2: u16,
+    last_seq: u32,
+};
+
+pub const BaremetalSchedulerState = extern struct {
+    enabled: u8,
+    task_count: u8,
+    running_slot: u8,
+    reserved0: u8,
+    next_task_id: u32,
+    dispatch_count: u64,
+    last_dispatch_tick: u64,
+    timeslice_ticks: u32,
+    default_budget_ticks: u32,
+    ready_scans: u32,
+    reserved1: u32,
+};
+
+pub const BaremetalTask = extern struct {
+    task_id: u32,
+    state: u8,
+    priority: u8,
+    reserved0: u16,
+    run_count: u32,
+    budget_ticks: u32,
+    budget_remaining: u32,
+    created_tick: u64,
+    last_run_tick: u64,
+};
+
+pub const BaremetalAllocatorState = extern struct {
+    heap_base: u64,
+    heap_size: u64,
+    page_size: u32,
+    total_pages: u32,
+    free_pages: u32,
+    allocation_count: u32,
+    alloc_ops: u32,
+    free_ops: u32,
+    bytes_in_use: u64,
+    peak_bytes_in_use: u64,
+    last_alloc_ptr: u64,
+    last_alloc_size: u64,
+    last_free_ptr: u64,
+    last_free_size: u64,
+};
+
+pub const boot_memory_magic: u32 = 0x4D454D42;
+pub const boot_memory_source_none: u8 = 0;
+pub const boot_memory_source_multiboot2: u8 = 1;
+pub const boot_memory_source_cmos_fallback: u8 = 2;
+
+pub const boot_memory_flag_has_multiboot_magic: u32 = 1 << 0;
+pub const boot_memory_flag_has_basic_meminfo: u32 = 1 << 1;
+pub const boot_memory_flag_has_memory_map: u32 = 1 << 2;
+pub const boot_memory_flag_heap_configured: u32 = 1 << 3;
+pub const boot_memory_flag_heap_capped_1g: u32 = 1 << 4;
+pub const boot_memory_flag_from_firmware_loader: u32 = 1 << 5;
+pub const boot_memory_flag_regions_synthesized: u32 = 1 << 6;
+pub const boot_memory_flag_has_region_entries: u32 = 1 << 7;
+
+pub const boot_memory_region_type_available: u32 = 1;
+
+pub const boot_memory_region_flag_usable: u32 = 1 << 0;
+pub const boot_memory_region_flag_clipped: u32 = 1 << 1;
+pub const boot_memory_region_flag_synthesized: u32 = 1 << 2;
+
+pub const BaremetalBootMemoryState = extern struct {
+    magic: u32,
+    api_version: u16,
+    source: u8,
+    reserved0: u8,
+    flags: u32,
+    mem_lower_kib: u32,
+    mem_upper_kib: u32,
+    total_bytes: u64,
+    usable_bytes: u64,
+    heap_base: u64,
+    heap_limit: u64,
+    heap_size: u64,
+    mmap_entry_count: u32,
+    usable_region_count: u32,
+    largest_usable_base: u64,
+    largest_usable_size: u64,
+    region_entry_count: u32,
+    reserved1: u32,
+};
+
+pub const BaremetalBootMemoryRegion = extern struct {
+    base: u64,
+    size: u64,
+    entry_type: u32,
+    flags: u32,
+};
+
+pub const BaremetalAllocationRecord = extern struct {
+    ptr: u64,
+    size_bytes: u64,
+    page_start: u32,
+    page_len: u32,
+    state: u8,
+    reserved0: [7]u8,
+    created_tick: u64,
+    last_used_tick: u64,
+};
+
+pub const BaremetalSyscallState = extern struct {
+    enabled: u8,
+    entry_count: u8,
+    reserved0: u16,
+    last_syscall_id: u32,
+    dispatch_count: u64,
+    last_invoke_tick: u64,
+    last_result: i64,
+};
+
+pub const BaremetalSyscallEntry = extern struct {
+    syscall_id: u32,
+    state: u8,
+    flags: u8,
+    reserved0: u16,
+    handler_token: u64,
+    invoke_count: u64,
+    last_arg: u64,
+    last_result: i64,
+};
+
+pub const BaremetalTimerState = extern struct {
+    enabled: u8,
+    timer_count: u8,
+    pending_wake_count: u16,
+    next_timer_id: u32,
+    dispatch_count: u64,
+    last_dispatch_tick: u64,
+    last_interrupt_count: u64,
+    last_wake_tick: u64,
+    tick_quantum: u32,
+    reserved0: u32,
+};
+
+pub const BaremetalTimerEntry = extern struct {
+    timer_id: u32,
+    task_id: u32,
+    state: u8,
+    reason: u8,
+    flags: u16,
+    period_ticks: u32,
+    next_fire_tick: u64,
+    fire_count: u64,
+    last_fire_tick: u64,
+};
+
+pub const BaremetalWakeEvent = extern struct {
+    seq: u32,
+    task_id: u32,
+    timer_id: u32,
+    reason: u8,
+    vector: u8,
+    reserved0: u16,
+    tick: u64,
+    interrupt_count: u64,
+};
+
+pub const BaremetalWakeQueueSummary = extern struct {
+    len: u32,
+    overflow_count: u32,
+    reason_timer_count: u32,
+    reason_interrupt_count: u32,
+    reason_manual_count: u32,
+    nonzero_vector_count: u32,
+    stale_count: u32,
+    reserved0: u32,
+    oldest_tick: u64,
+    newest_tick: u64,
+};
+
+pub const BaremetalWakeQueueAgeBuckets = extern struct {
+    current_tick: u64,
+    quantum_ticks: u64,
+    stale_count: u32,
+    stale_older_than_quantum_count: u32,
+    future_count: u32,
+    reserved0: u32,
+};
+
+pub fn defaultFeatureFlags() u32 {
+    return feature_os_hosted_runtime |
+        feature_baremetal_runtime |
+        feature_lightpanda_bridge_policy |
+        feature_memory_edge_contracts |
+        feature_command_mailbox |
+        feature_multiboot2_header |
+        feature_kernel_info_export |
+        feature_descriptor_tables_export |
+        feature_interrupt_stub_export |
+        feature_interrupt_mailbox_control |
+        feature_interrupt_state_export |
+        feature_descriptor_load_export |
+        feature_exception_telemetry_export |
+        feature_exception_code_payload_export |
+        feature_exception_history_export |
+        feature_interrupt_history_export |
+        feature_vector_counters_export |
+        feature_boot_diagnostics_export |
+        feature_command_history_export |
+        feature_health_history_export |
+        feature_mode_history_export |
+        feature_boot_phase_history_export |
+        feature_command_result_counters_export |
+        feature_scheduler_export |
+        feature_allocator_export |
+        feature_syscall_table_export |
+        feature_timer_export |
+        feature_wake_queue_export |
+        feature_syscall_abi_v2 |
+        feature_interrupt_mask_export |
+        feature_console_export |
+        feature_storage_export;
+}
+
+pub fn defaultAbiFlags() u32 {
+    return kernel_abi_multiboot2 |
+        kernel_abi_command_mailbox |
+        kernel_abi_panic_counter |
+        kernel_abi_tick_batch |
+        kernel_abi_descriptor_tables |
+        kernel_abi_interrupt_stub |
+        kernel_abi_interrupt_mailbox |
+        kernel_abi_interrupt_state |
+        kernel_abi_descriptor_load |
+        kernel_abi_exception_telemetry |
+        kernel_abi_exception_payload |
+        kernel_abi_exception_history |
+        kernel_abi_interrupt_history |
+        kernel_abi_vector_counters |
+        kernel_abi_boot_diagnostics |
+        kernel_abi_command_history |
+        kernel_abi_health_history |
+        kernel_abi_mode_history |
+        kernel_abi_boot_phase_history |
+        kernel_abi_command_result_counters |
+        kernel_abi_scheduler |
+        kernel_abi_allocator |
+        kernel_abi_syscall_table |
+        kernel_abi_timer |
+        kernel_abi_wake_queue |
+        kernel_abi_syscall_abi_v2 |
+        kernel_abi_interrupt_mask |
+        kernel_abi_console |
+        kernel_abi_storage;
+}
+
+pub fn modeIsValid(mode: u8) bool {
+    return mode == mode_booting or mode == mode_running or mode == mode_panicked;
+}
+
+pub fn bootPhaseIsValid(phase: u8) bool {
+    return phase == boot_phase_preinit or
+        phase == boot_phase_init or
+        phase == boot_phase_runtime or
+        phase == boot_phase_panicked;
+}
+
+pub fn schedulerPolicyIsValid(policy: u8) bool {
+    return policy == scheduler_policy_round_robin or policy == scheduler_policy_priority;
+}
+
+pub fn wakeReasonIsValid(reason: u8) bool {
+    return reason == wake_reason_timer or reason == wake_reason_interrupt or reason == wake_reason_manual;
+}
+
+pub fn interruptMaskProfileIsValid(profile: u8) bool {
+    return profile == interrupt_mask_profile_none or
+        profile == interrupt_mask_profile_external_all or
+        profile == interrupt_mask_profile_external_high;
+}
+
+test "baremetal abi layout contract stays stable" {
+    try std.testing.expectEqual(@as(usize, 0), @offsetOf(BaremetalStatus, "magic"));
+    try std.testing.expectEqual(@as(usize, 4), @offsetOf(BaremetalStatus, "api_version"));
+    try std.testing.expectEqual(@as(usize, 8), @offsetOf(BaremetalStatus, "ticks"));
+    try std.testing.expectEqual(@as(usize, 16), @offsetOf(BaremetalStatus, "last_health_code"));
+    try std.testing.expectEqual(@as(usize, 20), @offsetOf(BaremetalStatus, "feature_flags"));
+    try std.testing.expectEqual(@as(usize, 24), @offsetOf(BaremetalStatus, "panic_count"));
+    try std.testing.expectEqual(@as(usize, 28), @offsetOf(BaremetalStatus, "command_seq_ack"));
+    try std.testing.expectEqual(@as(usize, 32), @offsetOf(BaremetalStatus, "last_command_opcode"));
+    try std.testing.expectEqual(@as(usize, 34), @offsetOf(BaremetalStatus, "last_command_result"));
+    try std.testing.expectEqual(@as(usize, 36), @offsetOf(BaremetalStatus, "tick_batch_hint"));
+    try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalStatus));
+}
+
+test "baremetal kernel info size contract stays stable" {
+    try std.testing.expectEqual(@as(usize, 20), @sizeOf(BaremetalKernelInfo));
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalCommand));
+    try std.testing.expectEqual(@as(usize, 48), @sizeOf(BaremetalBootDiagnostics));
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalConsoleState));
+    try std.testing.expectEqual(@as(usize, 56), @sizeOf(BaremetalStorageState));
+    try std.testing.expectEqual(@as(usize, 12), @sizeOf(BaremetalStoragePartitionInfo));
+    try std.testing.expectEqual(@as(usize, 52), @sizeOf(BaremetalStorageBackendInfo));
+    try std.testing.expectEqual(@as(usize, 280), @sizeOf(BaremetalMountInfo));
+    try std.testing.expectEqual(@as(usize, 76), @sizeOf(BaremetalEthernetState));
+    try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalToolLayoutState));
+    try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalToolSlot));
+    try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalKeyboardState));
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalKeyboardEvent));
+    try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalMouseState));
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalMousePacket));
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalCommandEvent));
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(BaremetalHealthEvent));
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(BaremetalModeEvent));
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(BaremetalBootPhaseEvent));
+    try std.testing.expectEqual(@as(usize, 36), @sizeOf(BaremetalCommandResultCounters));
+    try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalSchedulerState));
+    try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalTask));
+    try std.testing.expectEqual(@as(usize, 88), @sizeOf(BaremetalAllocatorState));
+    try std.testing.expectEqual(@as(usize, 96), @sizeOf(BaremetalBootMemoryState));
+    try std.testing.expectEqual(@as(usize, 0), @offsetOf(BaremetalBootMemoryState, "magic"));
+    try std.testing.expectEqual(@as(usize, 4), @offsetOf(BaremetalBootMemoryState, "api_version"));
+    try std.testing.expectEqual(@as(usize, 6), @offsetOf(BaremetalBootMemoryState, "source"));
+    try std.testing.expectEqual(@as(usize, 8), @offsetOf(BaremetalBootMemoryState, "flags"));
+    try std.testing.expectEqual(@as(usize, 12), @offsetOf(BaremetalBootMemoryState, "mem_lower_kib"));
+    try std.testing.expectEqual(@as(usize, 16), @offsetOf(BaremetalBootMemoryState, "mem_upper_kib"));
+    try std.testing.expectEqual(@as(usize, 24), @offsetOf(BaremetalBootMemoryState, "total_bytes"));
+    try std.testing.expectEqual(@as(usize, 32), @offsetOf(BaremetalBootMemoryState, "usable_bytes"));
+    try std.testing.expectEqual(@as(usize, 40), @offsetOf(BaremetalBootMemoryState, "heap_base"));
+    try std.testing.expectEqual(@as(usize, 48), @offsetOf(BaremetalBootMemoryState, "heap_limit"));
+    try std.testing.expectEqual(@as(usize, 56), @offsetOf(BaremetalBootMemoryState, "heap_size"));
+    try std.testing.expectEqual(@as(usize, 64), @offsetOf(BaremetalBootMemoryState, "mmap_entry_count"));
+    try std.testing.expectEqual(@as(usize, 68), @offsetOf(BaremetalBootMemoryState, "usable_region_count"));
+    try std.testing.expectEqual(@as(usize, 72), @offsetOf(BaremetalBootMemoryState, "largest_usable_base"));
+    try std.testing.expectEqual(@as(usize, 80), @offsetOf(BaremetalBootMemoryState, "largest_usable_size"));
+    try std.testing.expectEqual(@as(usize, 88), @offsetOf(BaremetalBootMemoryState, "region_entry_count"));
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(BaremetalBootMemoryRegion));
+    try std.testing.expectEqual(@as(usize, 48), @sizeOf(BaremetalAllocationRecord));
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalSyscallState));
+    try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalSyscallEntry));
+    try std.testing.expectEqual(@as(usize, 48), @sizeOf(BaremetalTimerState));
+    try std.testing.expectEqual(@as(usize, 40), @sizeOf(BaremetalTimerEntry));
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalWakeEvent));
+    try std.testing.expectEqual(@as(usize, 48), @sizeOf(BaremetalWakeQueueSummary));
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalWakeQueueAgeBuckets));
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(BaremetalPitState));
+    try std.testing.expectEqual(@as(usize, 36), @sizeOf(BaremetalPmTimerState));
+}
+
+test "baremetal mode helper validates supported modes" {
+    try std.testing.expect(modeIsValid(mode_booting));
+    try std.testing.expect(modeIsValid(mode_running));
+    try std.testing.expect(modeIsValid(mode_panicked));
+    try std.testing.expect(!modeIsValid(2));
+}
+
+test "baremetal boot phase helper validates supported phases" {
+    try std.testing.expect(bootPhaseIsValid(boot_phase_preinit));
+    try std.testing.expect(bootPhaseIsValid(boot_phase_init));
+    try std.testing.expect(bootPhaseIsValid(boot_phase_runtime));
+    try std.testing.expect(bootPhaseIsValid(boot_phase_panicked));
+    try std.testing.expect(!bootPhaseIsValid(3));
+}
+
+test "baremetal scheduler policy helper validates supported policies" {
+    try std.testing.expect(schedulerPolicyIsValid(scheduler_policy_round_robin));
+    try std.testing.expect(schedulerPolicyIsValid(scheduler_policy_priority));
+    try std.testing.expect(!schedulerPolicyIsValid(2));
+}
+
+test "baremetal wake reason helper validates supported reasons" {
+    try std.testing.expect(wakeReasonIsValid(wake_reason_timer));
+    try std.testing.expect(wakeReasonIsValid(wake_reason_interrupt));
+    try std.testing.expect(wakeReasonIsValid(wake_reason_manual));
+    try std.testing.expect(!wakeReasonIsValid(0));
+    try std.testing.expect(!wakeReasonIsValid(4));
+}
+
+test "baremetal interrupt mask profile helper validates supported profiles" {
+    try std.testing.expect(interruptMaskProfileIsValid(interrupt_mask_profile_none));
+    try std.testing.expect(interruptMaskProfileIsValid(interrupt_mask_profile_external_all));
+    try std.testing.expect(interruptMaskProfileIsValid(interrupt_mask_profile_external_high));
+    try std.testing.expect(!interruptMaskProfileIsValid(3));
+    try std.testing.expect(!interruptMaskProfileIsValid(interrupt_mask_profile_custom));
+}

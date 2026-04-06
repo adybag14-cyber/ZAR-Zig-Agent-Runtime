@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: GPL-2.0-only
+param(
+    [switch] $SkipBuild
+)
+
+$ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
+$probe = Join-Path $PSScriptRoot "baremetal-qemu-task-resume-interrupt-timeout-probe-check.ps1"
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
+
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_TASK_RESUME_INTERRUPT_TIMEOUT_PROBE=skipped\\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_TASK_RESUME_INTERRUPT_TIMEOUT_WAIT_CLEAR_PROBE' `
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_TASK_RESUME_INTERRUPT_TIMEOUT_WAIT_CLEAR_PROBE_SOURCE' `
+    -SkippedSourceValue 'baremetal-qemu-task-resume-interrupt-timeout-probe-check.ps1' `
+    -FailureLabel 'task-resume interrupt-timeout' `
+    -EchoOnSuccess:$false `
+    -EchoOnSkip:$true `
+    -EchoOnFailure:$true `
+    -TrimEchoText:$true `
+    -EmitSkippedSourceReceipt:$true
+$probeText = $probeState.Text
+
+    throw "Underlying task-resume interrupt-timeout probe failed with exit code $probeExitCode"
+}
+
+$taskState = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_TASK_RESUME_INTERRUPT_TIMEOUT_PROBE_TASK0_STATE'
+$waitKind = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_TASK_RESUME_INTERRUPT_TIMEOUT_PROBE_WAIT_KIND0'
+$waitVector = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_TASK_RESUME_INTERRUPT_TIMEOUT_PROBE_WAIT_VECTOR0'
+$waitTimeout = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_TASK_RESUME_INTERRUPT_TIMEOUT_PROBE_WAIT_TIMEOUT0'
+$timerEntryCount = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_TASK_RESUME_INTERRUPT_TIMEOUT_PROBE_TIMER_ENTRY_COUNT'
+$timerPendingWakeCount = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_TASK_RESUME_INTERRUPT_TIMEOUT_PROBE_TIMER_PENDING_WAKE_COUNT'
+$timerNextTimerId = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_TASK_RESUME_INTERRUPT_TIMEOUT_PROBE_TIMER_NEXT_TIMER_ID'
+
+if ($null -in @($taskState, $waitKind, $waitVector, $waitTimeout, $timerEntryCount, $timerPendingWakeCount, $timerNextTimerId)) {
+    throw 'Missing expected task-resume interrupt-timeout wait-clear fields in probe output.'
+}
+if ($taskState -ne 1) { throw "Expected TASK0_STATE=1 after resume. got $taskState" }
+if ($waitKind -ne 0) { throw "Expected WAIT_KIND0=0 after resume. got $waitKind" }
+if ($waitVector -ne 0) { throw "Expected WAIT_VECTOR0=0 after resume. got $waitVector" }
+if ($waitTimeout -ne 0) { throw "Expected WAIT_TIMEOUT0=0 after resume. got $waitTimeout" }
+if ($timerEntryCount -ne 0) { throw "Expected TIMER_ENTRY_COUNT=0 after resume. got $timerEntryCount" }
+if ($timerPendingWakeCount -ne 1) { throw "Expected TIMER_PENDING_WAKE_COUNT=1 after resume. got $timerPendingWakeCount" }
+if ($timerNextTimerId -ne 1) { throw "Expected TIMER_NEXT_TIMER_ID=1 after resume. got $timerNextTimerId" }
+
+Write-Output 'BAREMETAL_QEMU_TASK_RESUME_INTERRUPT_TIMEOUT_WAIT_CLEAR_PROBE=pass'
+Write-Output 'BAREMETAL_QEMU_TASK_RESUME_INTERRUPT_TIMEOUT_WAIT_CLEAR_PROBE_SOURCE=baremetal-qemu-task-resume-interrupt-timeout-probe-check.ps1'
+Write-Output "TASK0_STATE=$taskState"
+Write-Output "WAIT_KIND0=$waitKind"
+Write-Output "WAIT_VECTOR0=$waitVector"
+Write-Output "WAIT_TIMEOUT0=$waitTimeout"
+Write-Output "TIMER_ENTRY_COUNT=$timerEntryCount"
+Write-Output "TIMER_PENDING_WAKE_COUNT=$timerPendingWakeCount"
+Write-Output "TIMER_NEXT_TIMER_ID=$timerNextTimerId"
