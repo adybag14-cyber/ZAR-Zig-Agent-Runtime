@@ -62,8 +62,8 @@ function Invoke-WrapperProbe {
         [switch] $SkipBuild,
         [Parameter(Mandatory = $true)][string] $SkippedPattern,
         [Parameter(Mandatory = $true)][string] $SkippedReceipt,
-        [Parameter(Mandatory = $true)][string] $SkippedSourceReceipt,
-        [Parameter(Mandatory = $true)][string] $SkippedSourceValue,
+        [string] $SkippedSourceReceipt = '',
+        [string] $SkippedSourceValue = '',
         [Parameter(Mandatory = $true)][string] $FailureLabel,
         [hashtable] $InvokeArgs = @{},
         [bool] $EchoOnSuccess = $true,
@@ -84,7 +84,9 @@ function Invoke-WrapperProbe {
     if (Test-WrapperSkipped -ProbeText $probeText -SkippedPattern $SkippedPattern) {
         if ($EchoOnSkip -and $hasEchoText) { Write-Output $echoText }
         Write-Output ("{0}=skipped" -f $SkippedReceipt)
-        if ($EmitSkippedSourceReceipt) { Write-Output ("{0}={1}" -f $SkippedSourceReceipt, $SkippedSourceValue) }
+        if ($EmitSkippedSourceReceipt -and -not [string]::IsNullOrWhiteSpace($SkippedSourceReceipt)) {
+            Write-Output ("{0}={1}" -f $SkippedSourceReceipt, $SkippedSourceValue)
+        }
         exit 0
     }
     if ($probeExitCode -ne 0) {
