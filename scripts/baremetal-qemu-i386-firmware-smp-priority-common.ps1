@@ -125,10 +125,10 @@ Remove-PathIfPresent $debugLogPath
 Remove-PathIfPresent $firmwareImage
 Remove-PathIfPresent $firmwareMetadata
 
-powershell -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\build-i386-firmware-image.ps1') `
-    -ArtifactPath $artifact `
-    -OutputImagePath $firmwareImage `
-    -OutputMetadataPath $firmwareMetadata
+    & (Join-Path $repo 'scripts\build-i386-firmware-image.ps1') `
+        -ArtifactPath $artifact `
+        -OutputImagePath $firmwareImage `
+        -OutputMetadataPath $firmwareMetadata
 if ($LASTEXITCODE -ne 0) {
     throw "i386 firmware image build failed with exit code $LASTEXITCODE"
 }

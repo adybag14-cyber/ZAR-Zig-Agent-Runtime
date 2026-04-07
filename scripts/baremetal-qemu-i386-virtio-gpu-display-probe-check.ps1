@@ -176,20 +176,9 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { throw "zig build baremetal-i386 virtio-gpu display probe failed with exit code $LASTEXITCODE" }
 }
 
-$artifactCandidates = @(
-    (Join-Path $buildPrefix 'bin\openclaw-zig-baremetal-i386.elf'),
-    (Join-Path $repo 'zig-out\bin\openclaw-zig-baremetal-i386.elf'),
-    (Join-Path $repo 'zig-out\openclaw-zig-baremetal-i386.elf'),
-    (Join-Path $repo 'zig-out/openclaw-zig-baremetal-i386.elf')
-)
-$artifact = $null
-foreach ($candidate in $artifactCandidates) {
-    if (Test-Path $candidate) {
-        $artifact = (Resolve-Path $candidate).Path
-        break
-    }
-}
-if ($null -eq $artifact) { throw 'i386 virtio-gpu display artifact not found after build.' }
+$artifact = Join-Path $buildPrefix 'bin\openclaw-zig-baremetal-i386.elf'
+if (-not (Test-Path $artifact)) { throw "i386 virtio-gpu display artifact not found at expected path: $artifact" }
+$artifact = (Resolve-Path $artifact).Path
 
 $symbolOutput = & $nm $artifact
 if ($LASTEXITCODE -ne 0 -or $null -eq $symbolOutput -or $symbolOutput.Count -eq 0) {
@@ -354,10 +343,10 @@ try {
         "-gdb", "tcp::$GdbPort"
         "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"
     )
-    $qemuProcess = Start-Process -FilePath $qemu -ArgumentList $qemuArgs -PassThru -RedirectStandardOutput $qemuStdout -RedirectStandardError $qemuStderr -WindowStyle Hidden
+    $qemuProcess = Start-Process -FilePath $qemu -ArgumentList $qemuArgs -PassThru -RedirectStandardOutput $qemuStdout -RedirectStandardError $qemuStderr
     Start-Sleep -Milliseconds 600
 
-    $gdbProcess = Start-Process -FilePath $gdb -ArgumentList @("-q", "-x", $gdbScript) -PassThru -RedirectStandardOutput $gdbStdout -RedirectStandardError $gdbStderr -WindowStyle Hidden
+    $gdbProcess = Start-Process -FilePath $gdb -ArgumentList @("-q", "-x", $gdbScript) -PassThru -RedirectStandardOutput $gdbStdout -RedirectStandardError $gdbStderr
     if (-not $gdbProcess.WaitForExit($TimeoutSeconds * 1000)) {
         $gdbTimedOut = $true
         try { $gdbProcess.Kill() } catch {}

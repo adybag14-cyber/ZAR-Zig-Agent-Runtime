@@ -16,7 +16,7 @@ $env:OPENCLAW_ZIG_HTTP_PORT = "$port"
 $stdoutLog = Join-Path $repo "tmp_smoke_docker_stdout.log"
 $stderrLog = Join-Path $repo "tmp_smoke_docker_stderr.log"
 Remove-Item $stdoutLog,$stderrLog -ErrorAction SilentlyContinue
-$proc = Start-Process -FilePath $exe -ArgumentList @("--serve") -WorkingDirectory $repo -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
+$proc = Start-Process -FilePath $exe -ArgumentList @("--serve") -WorkingDirectory $repo -PassThru -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
 
 $ready = $false
 for ($i = 0; $i -lt 60; $i++) {

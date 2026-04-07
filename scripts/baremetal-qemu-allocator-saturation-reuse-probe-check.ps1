@@ -492,7 +492,7 @@ $gdbContent = $gdbTemplate.
 $gdbContent | Set-Content -Path $gdbScript -Encoding Ascii
 
 $qemuArgs = @('-machine','q35,accel=tcg','-cpu','qemu64','-m','256M','-display','none','-serial','none','-monitor','none','-no-reboot','-kernel',$artifact,'-S','-gdb',"tcp:127.0.0.1:$GdbPort")
-$qemuProcess = Start-Process -FilePath $qemu -ArgumentList $qemuArgs -RedirectStandardOutput $qemuStdout -RedirectStandardError $qemuStderr -WindowStyle Hidden -PassThru
+$qemuProcess = Start-Process -FilePath $qemu -ArgumentList $qemuArgs -RedirectStandardOutput $qemuStdout -RedirectStandardError $qemuStderr -PassThru
 try {
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     $gdbConnected = $false
@@ -630,7 +630,6 @@ finally {
     if ($qemuProcess -and -not $qemuProcess.HasExited) { Stop-Process -Id $qemuProcess.Id -Force -ErrorAction SilentlyContinue; try { $qemuProcess.WaitForExit(2000) | Out-Null } catch {} }
     Remove-PathWithRetry $gdbScript
 }
-
 
 
 

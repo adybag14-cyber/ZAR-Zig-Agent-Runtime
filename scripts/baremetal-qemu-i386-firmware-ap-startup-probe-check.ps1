@@ -120,7 +120,7 @@ Remove-PathIfPresent $debugLogPath
 Remove-PathIfPresent $firmwareImage
 Remove-PathIfPresent $firmwareMetadata
 
-powershell -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\build-i386-firmware-image.ps1') `
+& (Join-Path $repo 'scripts\build-i386-firmware-image.ps1') `
     -ArtifactPath $artifact `
     -OutputImagePath $firmwareImage `
     -OutputMetadataPath $firmwareMetadata

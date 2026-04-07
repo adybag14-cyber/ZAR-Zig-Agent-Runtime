@@ -452,7 +452,7 @@ try {
         throw "Timed out waiting for QEMU GDB server on port $GdbPort"
     }
 
-    $gdbProc = Start-Process -FilePath $gdb -ArgumentList @("--batch", "-x", $gdbScript) -WorkingDirectory $repo -RedirectStandardOutput $gdbStdout -RedirectStandardError $gdbStderr -PassThru -WindowStyle Hidden
+    $gdbProc = Start-Process -FilePath $gdb -ArgumentList @("--batch", "-x", $gdbScript) -WorkingDirectory $repo -RedirectStandardOutput $gdbStdout -RedirectStandardError $gdbStderr -PassThru
     if (-not $gdbProc.WaitForExit($TimeoutSeconds * 1000)) {
         try { $gdbProc.Kill() } catch {}
         throw "allocator-free-failure probe gdb timed out after $TimeoutSeconds seconds"
@@ -574,4 +574,3 @@ Write-Output "REALLOC_FREE_PAGES=$reallocFreePages"
 Write-Output "REALLOC_COUNT=$reallocCount"
 Write-Output "REALLOC_LAST_ALLOC_PTR=$reallocLastAllocPtr"
 Write-Output "REALLOC_LAST_ALLOC_SIZE=$reallocLastAllocSize"
-
