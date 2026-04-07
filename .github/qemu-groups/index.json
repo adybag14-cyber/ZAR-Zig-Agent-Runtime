@@ -1,7 +1,7 @@
 [
   {
     "id": "qemu-x64-runtime-tools",
-    "stepCount": 5
+    "stepCount": 4
   },
   {
     "id": "qemu-i386-core",
@@ -28,44 +28,48 @@
     "stepCount": 4
   },
   {
-    "id": "qemu-mailbox",
-    "stepCount": 20
+    "id": "qemu-shared-descriptor-history-ps2",
+    "stepCount": 89
   },
   {
     "id": "qemu-feature-flags",
     "stepCount": 6
   },
   {
-    "id": "qemu-descriptor-bootdiag",
-    "stepCount": 25
-  },
-  {
-    "id": "qemu-ps2",
-    "stepCount": 6
-  },
-  {
     "id": "qemu-history-counters",
-    "stepCount": 84
+    "stepCount": 26
+  },
+  {
+    "id": "qemu-shared-mailbox-command-loop",
+    "stepCount": 22
+  },
+  {
+    "id": "qemu-shared-scheduler-panic",
+    "stepCount": 57
   },
   {
     "id": "qemu-scheduler",
-    "stepCount": 64
+    "stepCount": 24
   },
   {
-    "id": "qemu-timer-periodic-manual",
-    "stepCount": 83
-  },
-  {
-    "id": "qemu-task-panic",
-    "stepCount": 55
+    "id": "qemu-wake-queue",
+    "stepCount": 84
   },
   {
     "id": "qemu-interrupt",
     "stepCount": 84
   },
   {
-    "id": "qemu-wake-queue",
-    "stepCount": 84
+    "id": "qemu-shared-timer-reset-mixed-task",
+    "stepCount": 16
+  },
+  {
+    "id": "qemu-timer-periodic-manual",
+    "stepCount": 74
+  },
+  {
+    "id": "qemu-task-panic",
+    "stepCount": 30
   },
   {
     "id": "qemu-allocator-syscall",

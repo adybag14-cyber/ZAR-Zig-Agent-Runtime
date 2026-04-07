@@ -1,0 +1,230 @@
+[
+  {
+    "name": "Bare-metal QEMU scheduler probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler config-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-config-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler task-shape probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-task-shape-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler progress telemetry probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-progress-telemetry-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler mailbox-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-mailbox-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler timeslice update probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-timeslice-update-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler timeslice baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-timeslice-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler timeslice update-4 probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-timeslice-update-4-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler timeslice update-2 probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-timeslice-update-2-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler timeslice invalid-zero preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-timeslice-invalid-zero-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler timeslice final task-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-timeslice-final-task-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler disable enable probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-disable-enable-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler disable-enable baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-disable-enable-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler disable-enable disabled-freeze probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-disable-enable-disabled-freeze-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler disable-enable idle-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-disable-enable-idle-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler disable-enable resume probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-disable-enable-resume-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler disable-enable final task-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-disable-enable-final-task-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler reset probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-reset-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler reset baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-reset-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler reset collapse probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-reset-collapse-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler reset id-restart probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-reset-id-restart-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler reset defaults-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-reset-defaults-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler reset final task-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-reset-final-task-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler reset mixed-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-reset-mixed-state-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler reset mixed-state baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-reset-mixed-state-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler reset mixed-state post-reset collapse probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-reset-mixed-state-post-reset-collapse-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler reset mixed-state preserved-config probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-reset-mixed-state-preserved-config-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler reset mixed-state idle-stability probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-reset-mixed-state-idle-stability-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler reset mixed-state rearm-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-reset-mixed-state-rearm-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler reset wake-clear probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-reset-wake-clear-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler reset timer-clear probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-reset-timer-clear-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler reset config-preservation probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-reset-config-preservation-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler policy switch probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-policy-switch-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler policy-switch rr-baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-policy-switch-rr-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler policy-switch priority-dominance probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-policy-switch-priority-dominance-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler policy-switch reprioritize-low probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-policy-switch-reprioritize-low-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler policy-switch rr-return probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-policy-switch-rr-return-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU scheduler policy-switch invalid-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-scheduler-policy-switch-invalid-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU active-task terminate probe (optional)",
+    "run": "./scripts/baremetal-qemu-active-task-terminate-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU active-task terminate baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-active-task-terminate-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU active-task terminate failover probe (optional)",
+    "run": "./scripts/baremetal-qemu-active-task-terminate-failover-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU active-task terminate repeat-idempotent probe (optional)",
+    "run": "./scripts/baremetal-qemu-active-task-terminate-repeat-idempotent-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU active-task terminate survivor-progress probe (optional)",
+    "run": "./scripts/baremetal-qemu-active-task-terminate-survivor-progress-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU active-task terminate final-collapse probe (optional)",
+    "run": "./scripts/baremetal-qemu-active-task-terminate-final-collapse-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU panic recovery probe (optional)",
+    "run": "./scripts/baremetal-qemu-panic-recovery-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU panic-recovery baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-panic-recovery-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU panic-recovery freeze-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-panic-recovery-freeze-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU panic-recovery idle-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-panic-recovery-idle-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU panic-recovery mode-recovery probe (optional)",
+    "run": "./scripts/baremetal-qemu-panic-recovery-mode-recovery-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU panic-recovery final-task-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-panic-recovery-final-task-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU panic wake recovery probe (optional)",
+    "run": "./scripts/baremetal-qemu-panic-wake-recovery-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU panic-wake baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-panic-wake-recovery-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU panic-wake freeze-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-panic-wake-recovery-freeze-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU panic-wake preserved-wakes probe (optional)",
+    "run": "./scripts/baremetal-qemu-panic-wake-recovery-preserved-wakes-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU panic-wake mode-recovery probe (optional)",
+    "run": "./scripts/baremetal-qemu-panic-wake-recovery-mode-recovery-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU panic-wake final-task-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-panic-wake-recovery-final-task-state-probe-check.ps1 -SkipBuild"
+  }
+]

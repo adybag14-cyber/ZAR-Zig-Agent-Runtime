@@ -19,6 +19,8 @@ if ($null -eq $steps -or $steps.Count -eq 0) {
     throw "QEMU manifest is empty: $manifestPath"
 }
 
+$pwshPath = (Get-Command pwsh -ErrorAction Stop).Path
+
 Push-Location $repoRoot
 try {
     $index = 0
@@ -27,9 +29,13 @@ try {
         Write-Output "::group::[$Group $index/$($steps.Count)] $($step.name)"
         try {
             $LASTEXITCODE = 0
-            & ([scriptblock]::Create($step.run))
-            if ($LASTEXITCODE -ne 0) {
-                throw "Command exited with code ${LASTEXITCODE}: $($step.run)"
+            $stepOutput = & $pwshPath -NoLogo -NoProfile -Command $step.run 2>&1
+            $stepExitCode = $LASTEXITCODE
+            if ($null -ne $stepOutput) {
+                $stepOutput | Write-Output
+            }
+            if ($stepExitCode -ne 0) {
+                throw "Command exited with code ${stepExitCode}: $($step.run)"
             }
         }
         catch {

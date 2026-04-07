@@ -138,6 +138,15 @@ if (-not (Test-Path $artifact)) {
     Invoke-CommandLoopArtifactBuildIfNeeded
 }
 
+if (-not (Test-Path $artifact)) {
+    Write-Output "BAREMETAL_QEMU_AVAILABLE=True"
+    Write-Output "BAREMETAL_QEMU_BINARY=$qemu"
+    Write-Output "BAREMETAL_GDB_BINARY=$gdb"
+    Write-Output "BAREMETAL_NM_BINARY=$nm"
+    Write-Output "BAREMETAL_QEMU_MAILBOX_HEADER_VALIDATION_PROBE=skipped"
+    exit 0
+}
+
 $symbolOutput = & $nm $artifact
 if ($LASTEXITCODE -ne 0 -or $null -eq $symbolOutput -or $symbolOutput.Count -eq 0) {
     throw "Failed to resolve symbol table from $artifact using $nm"

@@ -1,0 +1,66 @@
+[
+  {
+    "name": "Bare-metal QEMU timer reset recovery probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-reset-recovery-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer reset recovery baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-reset-recovery-baseline-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer reset recovery post-reset collapse probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-reset-recovery-post-reset-collapse-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer reset recovery wait-isolation probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-reset-recovery-wait-isolation-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer reset recovery manual-wake payload probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-reset-recovery-manual-wake-payload-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer reset recovery interrupt-rearm probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-reset-recovery-interrupt-rearm-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer-reset wait-kind isolation probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-reset-wait-kind-isolation-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer-reset pure-wait recovery probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-reset-pure-wait-recovery-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer-reset timeout-interrupt recovery probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-reset-timeout-interrupt-recovery-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU task terminate mixed-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-task-terminate-mixed-state-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU task terminate mixed-state survivor probe (optional)",
+    "run": "./scripts/baremetal-qemu-task-terminate-mixed-state-survivor-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU task terminate mixed-state baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-task-terminate-mixed-state-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU task terminate mixed-state target-clear probe (optional)",
+    "run": "./scripts/baremetal-qemu-task-terminate-mixed-state-target-clear-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU task terminate mixed-state survivor-wake probe (optional)",
+    "run": "./scripts/baremetal-qemu-task-terminate-mixed-state-survivor-wake-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU task terminate mixed-state wait-clear probe (optional)",
+    "run": "./scripts/baremetal-qemu-task-terminate-mixed-state-wait-clear-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU task terminate mixed-state idle-stability probe (optional)",
+    "run": "./scripts/baremetal-qemu-task-terminate-mixed-state-idle-stability-probe-check.ps1 -SkipBuild"
+  }
+]
