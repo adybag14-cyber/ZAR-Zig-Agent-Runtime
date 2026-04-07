@@ -108,6 +108,8 @@ if ($null -eq $clang) {
 }
 
 $optionsPath = Join-Path $releaseDir 'qemu-virtio-block-installer-probe-options.zig'
+$rootModulePath = (Join-Path $repo "src/baremetal_main.zig").Replace('\\', '/')
+$optionsModulePath = $optionsPath.Replace('\\', '/')
 $mainObj = Join-Path $releaseDir 'openclaw-zig-baremetal-main-virtio-block-installer-probe.o'
 $bootObj = Join-Path $releaseDir 'openclaw-zig-pvh-boot-virtio-block-installer-probe.o'
 $artifact = Join-Path $releaseDir 'openclaw-zig-baremetal-pvh-virtio-block-installer-probe.elf'
@@ -171,8 +173,8 @@ pub const tool_runtime_probe: bool = false;
         -target x86_64-freestanding-none `
         -mcpu baseline `
         --dep build_options `
-        "-Mroot=$repo\src\baremetal_main.zig" `
-        "-Mbuild_options=$optionsPath" `
+        "-Mroot=$rootModulePath" `
+        "-Mbuild_options=$optionsModulePath" `
         --cache-dir "$zigLocalCacheDir" `
         --global-cache-dir "$zigGlobalCacheDir" `
         --name 'openclaw-zig-baremetal-main-virtio-block-installer-probe' `

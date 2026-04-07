@@ -190,6 +190,8 @@ if ($null -eq $clang -or $null -eq $lld -or $null -eq $compilerRt) {
 if ($GdbPort -le 0) { $GdbPort = Resolve-FreeTcpPort }
 
 $optionsPath = Join-Path $releaseDir "qemu-allocator-syscall-reset-probe-options.zig"
+$rootModulePath = (Join-Path $repo "src/baremetal_main.zig").Replace('\\', '/')
+$optionsModulePath = $optionsPath.Replace('\\', '/')
 $mainObj = Join-Path $releaseDir "openclaw-zig-baremetal-main-allocator-syscall-reset-probe.o"
 $bootObj = Join-Path $releaseDir "openclaw-zig-pvh-boot-allocator-syscall-reset-probe.o"
 $artifact = Join-Path $releaseDir "openclaw-zig-baremetal-pvh-allocator-syscall-reset-probe.elf"
@@ -209,7 +211,7 @@ if (-not $SkipBuild) {
 @"
 pub const qemu_smoke: bool = false;`r`npub const console_probe_banner: bool = false;
 "@ | Set-Content -Path $optionsPath -Encoding Ascii
-    & $zig build-obj -fno-strip -fsingle-threaded -ODebug -target x86_64-freestanding-none -mcpu baseline --dep build_options "-Mroot=$repo\src\baremetal_main.zig" "-Mbuild_options=$optionsPath" --cache-dir "$zigLocalCacheDir" --global-cache-dir "$zigGlobalCacheDir" --name "openclaw-zig-baremetal-main-allocator-syscall-reset-probe" "-femit-bin=$mainObj"
+    & $zig build-obj -fno-strip -fsingle-threaded -ODebug -target x86_64-freestanding-none -mcpu baseline --dep build_options "-Mroot=$rootModulePath" "-Mbuild_options=$optionsModulePath" --cache-dir "$zigLocalCacheDir" --global-cache-dir "$zigGlobalCacheDir" --name "openclaw-zig-baremetal-main-allocator-syscall-reset-probe" "-femit-bin=$mainObj"
     if ($LASTEXITCODE -ne 0) { throw "zig build-obj for allocator-syscall-reset probe runtime failed with exit code $LASTEXITCODE" }
     & $clang -c -target x86_64-unknown-elf $bootSource -o $bootObj
     if ($LASTEXITCODE -ne 0) { throw "clang assemble for allocator-syscall-reset probe PVH shim failed with exit code $LASTEXITCODE" }

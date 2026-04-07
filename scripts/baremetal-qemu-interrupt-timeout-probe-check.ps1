@@ -323,6 +323,8 @@ if ($null -eq $clang -or $null -eq $lld -or $null -eq $compilerRt) {
 }
 
 $optionsPath = Join-Path $releaseDir "qemu-interrupt-timeout-probe-options.zig"
+$rootModulePath = (Join-Path $repo "src/baremetal_main.zig").Replace('\\', '/')
+$optionsModulePath = $optionsPath.Replace('\\', '/')
 $mainObj = Join-Path $releaseDir "openclaw-zig-baremetal-main-interrupt-timeout-probe.o"
 $bootObj = Join-Path $releaseDir "openclaw-zig-pvh-boot-interrupt-timeout-probe.o"
 $artifact = Join-Path $releaseDir "openclaw-zig-baremetal-pvh-interrupt-timeout-probe.elf"
@@ -349,8 +351,8 @@ pub const qemu_smoke: bool = false;`r`npub const console_probe_banner: bool = fa
         -target x86_64-freestanding-none `
         -mcpu baseline `
         --dep build_options `
-        "-Mroot=$repo\src\baremetal_main.zig" `
-        "-Mbuild_options=$optionsPath" `
+        "-Mroot=$rootModulePath" `
+        "-Mbuild_options=$optionsModulePath" `
         --cache-dir "$zigLocalCacheDir" `
         --global-cache-dir "$zigGlobalCacheDir" `
         --name "openclaw-zig-baremetal-main-interrupt-timeout-probe" `

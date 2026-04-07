@@ -250,6 +250,8 @@ if ($GdbPort -le 0) {
 }
 
 $optionsPath = Join-Path $releaseDir "qemu-timer-pressure-options.zig"
+$rootModulePath = (Join-Path $repo "src/baremetal_main.zig").Replace('\\', '/')
+$optionsModulePath = $optionsPath.Replace('\\', '/')
 $mainObj = Join-Path $releaseDir "openclaw-zig-baremetal-main-timer-pressure.o"
 $bootObj = Join-Path $releaseDir "openclaw-zig-pvh-boot-timer-pressure.o"
 $artifact = Join-Path $releaseDir "openclaw-zig-baremetal-pvh-timer-pressure.elf"
@@ -276,8 +278,8 @@ pub const qemu_smoke: bool = false;`r`npub const console_probe_banner: bool = fa
         -target x86_64-freestanding-none `
         -mcpu baseline `
         --dep build_options `
-        "-Mroot=$repo\src\baremetal_main.zig" `
-        "-Mbuild_options=$optionsPath" `
+        "-Mroot=$rootModulePath" `
+        "-Mbuild_options=$optionsModulePath" `
         --cache-dir "$zigLocalCacheDir" `
         --global-cache-dir "$zigGlobalCacheDir" `
         --name "openclaw-zig-baremetal-main-timer-pressure" `

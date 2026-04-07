@@ -233,6 +233,8 @@ if ($null -eq $clang -or $null -eq $lld -or $null -eq $compilerRt) {
 }
 
 $optionsPath = Join-Path $releaseDir 'qemu-virtio-net-dns-probe-options.zig'
+$rootModulePath = (Join-Path $repo "src/baremetal_main.zig").Replace('\\', '/')
+$optionsModulePath = $optionsPath.Replace('\\', '/')
 $mainObj = Join-Path $releaseDir 'openclaw-zig-baremetal-main-virtio-net-dns-probe.o'
 $bootObj = Join-Path $releaseDir 'openclaw-zig-pvh-boot-virtio-net-dns-probe.o'
 $artifact = Join-Path $releaseDir 'openclaw-zig-baremetal-pvh-virtio-net-dns-probe.elf'
@@ -272,8 +274,8 @@ pub const virtio_net_dns_probe: bool = true;
         -target x86_64-freestanding-none `
         -mcpu baseline `
         --dep build_options `
-        "-Mroot=$repo\src\baremetal_main.zig" `
-        "-Mbuild_options=$optionsPath" `
+        "-Mroot=$rootModulePath" `
+        "-Mbuild_options=$optionsModulePath" `
         --cache-dir "$zigLocalCacheDir" `
         --global-cache-dir "$zigGlobalCacheDir" `
         --name 'openclaw-zig-baremetal-main-virtio-net-dns-probe' `

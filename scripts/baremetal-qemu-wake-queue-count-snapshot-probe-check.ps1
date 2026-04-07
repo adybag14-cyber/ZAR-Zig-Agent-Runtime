@@ -332,6 +332,8 @@ if ($null -eq $clang -or $null -eq $lld -or $null -eq $compilerRt) {
 }
 
 $optionsPath = Join-Path $releaseDir "qemu-wake-queue-count-snapshot-probe-options.zig"
+$rootModulePath = (Join-Path $repo "src/baremetal_main.zig").Replace('\\', '/')
+$optionsModulePath = $optionsPath.Replace('\\', '/')
 $mainObj = Join-Path $releaseDir "openclaw-zig-baremetal-main-wake-queue-count-snapshot-probe.o"
 $bootObj = Join-Path $releaseDir "openclaw-zig-pvh-boot-wake-queue-count-snapshot-probe.o"
 $artifact = Join-Path $releaseDir "openclaw-zig-baremetal-pvh-wake-queue-count-snapshot-probe.elf"
@@ -358,8 +360,8 @@ pub const qemu_smoke: bool = false;`r`npub const console_probe_banner: bool = fa
         -target x86_64-freestanding-none `
         -mcpu baseline `
         --dep build_options `
-        "-Mroot=$repo\src\baremetal_main.zig" `
-        "-Mbuild_options=$optionsPath" `
+        "-Mroot=$rootModulePath" `
+        "-Mbuild_options=$optionsModulePath" `
         --cache-dir "$zigLocalCacheDir" `
         --global-cache-dir "$zigGlobalCacheDir" `
         --name "openclaw-zig-baremetal-main-wake-queue-count-snapshot-probe" `

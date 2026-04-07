@@ -203,6 +203,8 @@ if ($null -eq $clang -or $null -eq $lld -or $null -eq $compilerRt) {
 if ($GdbPort -le 0) { $GdbPort = Resolve-FreeTcpPort }
 
 $optionsPath = Join-Path $releaseDir "qemu-virtio-gpu-display-probe-options.zig"
+$rootModulePath = (Join-Path $repo "src/baremetal_main.zig").Replace('\\', '/')
+$optionsModulePath = $optionsPath.Replace('\\', '/')
 $mainObj = Join-Path $releaseDir "openclaw-zig-baremetal-main-virtio-gpu-display-probe.o"
 $bootObj = Join-Path $releaseDir "openclaw-zig-pvh-boot-virtio-gpu-display-probe.o"
 $artifact = Join-Path $releaseDir "openclaw-zig-baremetal-pvh-virtio-gpu-display-probe.elf"
@@ -238,7 +240,7 @@ pub const tool_exec_probe: bool = false;
 pub const rtl8139_gateway_probe: bool = false;
 "@ | Set-Content -Path $optionsPath -Encoding Ascii
 
-    & $zig build-obj -fno-strip -fsingle-threaded -ODebug -target x86_64-freestanding-none -mcpu baseline --dep build_options "-Mroot=$repo\src\baremetal_main.zig" "-Mbuild_options=$optionsPath" --cache-dir "$zigLocalCacheDir" --global-cache-dir "$zigGlobalCacheDir" --name "openclaw-zig-baremetal-main-virtio-gpu-display-probe" "-femit-bin=$mainObj"
+    & $zig build-obj -fno-strip -fsingle-threaded -ODebug -target x86_64-freestanding-none -mcpu baseline --dep build_options "-Mroot=$rootModulePath" "-Mbuild_options=$optionsModulePath" --cache-dir "$zigLocalCacheDir" --global-cache-dir "$zigGlobalCacheDir" --name "openclaw-zig-baremetal-main-virtio-gpu-display-probe" "-femit-bin=$mainObj"
     if ($LASTEXITCODE -ne 0) { throw "zig build-obj for virtio-gpu display probe runtime failed with exit code $LASTEXITCODE" }
 
     & $clang -c -target x86_64-unknown-elf $bootSource -o $bootObj

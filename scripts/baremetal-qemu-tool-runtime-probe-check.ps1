@@ -181,6 +181,8 @@ if ($null -eq $clang -or $null -eq $lld -or $null -eq $compilerRt) {
 }
 
 $optionsPath = Join-Path $releaseDir 'qemu-tool-runtime-probe-options.zig'
+$rootModulePath = (Join-Path $repo "src/baremetal_main.zig").Replace('\\', '/')
+$optionsModulePath = $optionsPath.Replace('\\', '/')
 $mainObj = Join-Path $releaseDir 'openclaw-zig-baremetal-main-tool-runtime-probe.o'
 $bootObj = Join-Path $releaseDir 'openclaw-zig-pvh-boot-tool-runtime-probe.o'
 $artifact = Join-Path $releaseDir 'openclaw-zig-baremetal-pvh-tool-runtime-probe.elf'
@@ -216,8 +218,8 @@ pub const tool_runtime_probe: bool = true;
         -target x86_64-freestanding-none `
         -mcpu baseline `
         --dep build_options `
-        "-Mroot=$repo\src\baremetal_main.zig" `
-        "-Mbuild_options=$optionsPath" `
+        "-Mroot=$rootModulePath" `
+        "-Mbuild_options=$optionsModulePath" `
         --cache-dir "$zigLocalCacheDir" `
         --global-cache-dir "$zigGlobalCacheDir" `
         --name 'openclaw-zig-baremetal-main-tool-runtime-probe' `
