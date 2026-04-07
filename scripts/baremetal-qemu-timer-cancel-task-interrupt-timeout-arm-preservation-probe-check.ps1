@@ -17,15 +17,7 @@ function Extract-IntValue {
     return [int64]::Parse($match.Groups[1].Value)
 }
 
-$probeState = Invoke-WrapperProbe `
-    -ProbePath $probe `
-    -SkipBuild:$SkipBuild `
-    -SkippedPattern '(?m)^BAREMETAL_QEMU_TIMER_CANCEL_TASK_INTERRUPT_TIMEOUT_PROBE=skipped\r?$' `
-    -SkippedReceipt 'BAREMETAL_QEMU_TIMER_CANCEL_TASK_INTERRUPT_TIMEOUT_ARM_PRESERVATION_PROBE' `
-    -SkippedSourceReceipt '__RECEIPT___SOURCE' `r`n    -SkippedSourceValue '__PROBE__' `r`n    -EmitSkippedSourceReceipt:$true `r`n    -FailureLabel 'timer-cancel-task interrupt-timeout' `
-    -EchoOnSuccess:$true `
-    -EchoOnSkip:$true `
-    -EchoOnFailure:$true `
+$probeState = Invoke-WrapperProbe -ProbePath $probe -SkipBuild:$SkipBuild -SkippedPattern '(?m)^BAREMETAL_QEMU_TIMER_CANCEL_TASK_INTERRUPT_TIMEOUT_PROBE=skipped\r?$' -SkippedReceipt 'BAREMETAL_QEMU_TIMER_CANCEL_TASK_INTERRUPT_TIMEOUT_ARM_PRESERVATION_PROBE' -SkippedSourceReceipt '__RECEIPT___SOURCE' -SkippedSourceValue '__PROBE__' -EmitSkippedSourceReceipt:$true -FailureLabel 'timer-cancel-task interrupt-timeout' -EchoOnSuccess:$true -EchoOnSkip:$true -EchoOnFailure:$true
 $probeText = $probeState.Text
 $armedTick = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_TIMER_CANCEL_TASK_INTERRUPT_TIMEOUT_PROBE_ARMED_TICK'
 $armedTask0State = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_TIMER_CANCEL_TASK_INTERRUPT_TIMEOUT_PROBE_ARMED_TASK0_STATE'
