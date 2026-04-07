@@ -189,7 +189,7 @@ jobs:
 
       - name: Bare-metal QEMU smoke check (optional)
         shell: pwsh
-        run: ./scripts/baremetal-qemu-smoke-check.ps1 -SkipBuild
+        run: ./scripts/baremetal-qemu-smoke-check.ps1
 
       - name: Bare-metal QEMU i386 smoke check (optional)
         shell: pwsh

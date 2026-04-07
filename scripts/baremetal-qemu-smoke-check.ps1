@@ -7,6 +7,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$releaseDir = Join-Path $repo "release"
 
 function Resolve-ZigExecutable {
     $defaultWindowsZig = "C:\Users\Ady\Documents\toolchains\zig-master\current\zig.exe"
@@ -49,7 +50,63 @@ function Resolve-QemuExecutable {
     return $null
 }
 
+function Read-TaskResultOrEmpty {
+    param([System.Threading.Tasks.Task[string]] $Task)
+    try {
+        return $Task.GetAwaiter().GetResult()
+    } catch {
+        return ""
+    }
+}
+
+function Write-QemuLogs {
+    param(
+        [string] $Stdout,
+        [string] $Stderr,
+        [string] $StdoutPath,
+        [string] $StderrPath
+    )
+    Set-Content -Path $StdoutPath -Value $Stdout -Encoding Ascii
+    Set-Content -Path $StderrPath -Value $Stderr -Encoding Ascii
+}
+
+function Get-LogTail {
+    param([string] $Path)
+    if (-not (Test-Path $Path)) {
+        return ""
+    }
+    return (Get-Content -Path $Path -Tail 40 -ErrorAction SilentlyContinue) -join "`n"
+}
+
+function Invoke-PvhSmokeFallback {
+    param(
+        [string] $Reason,
+        [string] $StdoutPath,
+        [string] $StderrPath,
+        [string] $Artifact
+    )
+
+    $pvhScript = Join-Path $PSScriptRoot "baremetal-qemu-smoke-pvh-check.ps1"
+    if (-not (Test-Path $pvhScript)) {
+        return $false
+    }
+
+    Write-Output "BAREMETAL_QEMU_SMOKE_FALLBACK=pvh"
+    Write-Output "BAREMETAL_QEMU_SMOKE_FALLBACK_REASON=$Reason"
+    Write-Output "BAREMETAL_QEMU_ARTIFACT=$Artifact"
+    Write-Output "BAREMETAL_QEMU_STDOUT_LOG=$StdoutPath"
+    Write-Output "BAREMETAL_QEMU_STDERR_LOG=$StderrPath"
+    & $pvhScript -TimeoutSeconds $TimeoutSeconds
+    return $true
+}
+
 Set-Location $repo
+$scriptStem = [System.IO.Path]::GetFileNameWithoutExtension($PSCommandPath)
+$buildPrefix = Join-Path $repo ("zig-out\" + $scriptStem)
+$env:ZIG_LOCAL_CACHE_DIR = Join-Path $repo (".zig-cache-" + $scriptStem)
+$env:ZIG_GLOBAL_CACHE_DIR = Join-Path $repo (".zig-global-cache-" + $scriptStem)
+New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+New-Item -ItemType Directory -Force -Path $buildPrefix | Out-Null
 $zig = Resolve-ZigExecutable
 $qemu = Resolve-QemuExecutable
 
@@ -63,33 +120,23 @@ $expectedExitCode = 85 # isa-debug-exit returns (code << 1) | 1, where code=0x2A
 
 if (-not $SkipBuild) {
     # Keep the QEMU smoke artifact on the non-crashing ReleaseFast path used for release packaging.
-    & $zig build baremetal -Doptimize=ReleaseFast -Dbaremetal-qemu-smoke=true --summary all
+    & $zig build baremetal -Doptimize=ReleaseFast -Dbaremetal-qemu-smoke=true --prefix $buildPrefix --summary all
     if ($LASTEXITCODE -ne 0) {
         throw "zig build baremetal -Doptimize=ReleaseFast -Dbaremetal-qemu-smoke=true failed with exit code $LASTEXITCODE"
     }
 }
 
-$artifactCandidates = @(
-    (Join-Path $repo "zig-out\bin\openclaw-zig-baremetal.elf"),
-    (Join-Path $repo "zig-out/openclaw-zig-baremetal.elf"),
-    (Join-Path $repo "zig-out\openclaw-zig-baremetal.elf"),
-    (Join-Path $repo "zig-out/bin/openclaw-zig-baremetal.elf")
-)
-
-$artifact = $null
-foreach ($candidate in $artifactCandidates) {
-    if (Test-Path $candidate) {
-        $artifact = (Resolve-Path $candidate).Path
-        break
-    }
-}
+$artifact = Join-Path $buildPrefix "bin\openclaw-zig-baremetal.elf"
 if ($null -eq $artifact) {
     throw "Bare-metal artifact not found after build."
 }
+if (-not (Test-Path $artifact)) {
+    throw "Bare-metal QEMU smoke artifact not found at expected path: $artifact"
+}
+$artifact = (Resolve-Path $artifact).Path
 
-$stdoutPath = Join-Path $repo "release\qemu-smoke-stdout.log"
-$stderrPath = Join-Path $repo "release\qemu-smoke-stderr.log"
-New-Item -ItemType Directory -Force -Path (Split-Path -Parent $stdoutPath) | Out-Null
+$stdoutPath = Join-Path $releaseDir "qemu-smoke-stdout.log"
+$stderrPath = Join-Path $releaseDir "qemu-smoke-stderr.log"
 if (Test-Path $stdoutPath) { Remove-Item -Force $stdoutPath }
 if (Test-Path $stderrPath) { Remove-Item -Force $stderrPath }
 
@@ -124,24 +171,26 @@ $stderrTask = $proc.StandardError.ReadToEndAsync()
 
 if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
     try { $proc.Kill($true) } catch {}
-    throw "QEMU bare-metal smoke timed out after $TimeoutSeconds seconds."
+    $null = $proc.WaitForExit()
+    $stdout = Read-TaskResultOrEmpty $stdoutTask
+    $stderr = Read-TaskResultOrEmpty $stderrTask
+    Write-QemuLogs -Stdout $stdout -Stderr $stderr -StdoutPath $stdoutPath -StderrPath $stderrPath
+    if (Invoke-PvhSmokeFallback -Reason "timeout" -StdoutPath $stdoutPath -StderrPath $stderrPath -Artifact $artifact) {
+        return
+    }
+    $stderrTail = Get-LogTail $stderrPath
+    throw "QEMU bare-metal smoke timed out after $TimeoutSeconds seconds.`n$stderrTail"
 }
 
 $proc.WaitForExit()
-$stdout = $stdoutTask.GetAwaiter().GetResult()
-$stderr = $stderrTask.GetAwaiter().GetResult()
-Set-Content -Path $stdoutPath -Value $stdout -Encoding Ascii
-Set-Content -Path $stderrPath -Value $stderr -Encoding Ascii
+$stdout = Read-TaskResultOrEmpty $stdoutTask
+$stderr = Read-TaskResultOrEmpty $stderrTask
+Write-QemuLogs -Stdout $stdout -Stderr $stderr -StdoutPath $stdoutPath -StderrPath $stderrPath
 $exitCode = $proc.ExitCode
 if ($exitCode -ne $expectedExitCode) {
-    $stderrTail = ""
-    if (Test-Path $stderrPath) {
-        $stderrTail = (Get-Content -Path $stderrPath -Tail 40 -ErrorAction SilentlyContinue) -join "`n"
-    }
+    $stderrTail = Get-LogTail $stderrPath
     if ($stderrTail -match "without PVH ELF Note") {
-        $pvhScript = Join-Path $PSScriptRoot "baremetal-qemu-smoke-pvh-check.ps1"
-        if (Test-Path $pvhScript) {
-            & $pvhScript -SkipBuild:$SkipBuild -TimeoutSeconds $TimeoutSeconds
+        if (Invoke-PvhSmokeFallback -Reason "missing-pvh-note" -StdoutPath $stdoutPath -StderrPath $stderrPath -Artifact $artifact) {
             return
         }
     }
@@ -151,6 +200,8 @@ if ($exitCode -ne $expectedExitCode) {
 Write-Output "BAREMETAL_QEMU_AVAILABLE=True"
 Write-Output "BAREMETAL_QEMU_BINARY=$qemu"
 Write-Output "BAREMETAL_QEMU_ARTIFACT=$artifact"
+Write-Output "BAREMETAL_QEMU_STDOUT_LOG=$stdoutPath"
+Write-Output "BAREMETAL_QEMU_STDERR_LOG=$stderrPath"
 Write-Output "BAREMETAL_QEMU_EXPECTED_EXIT_CODE=$expectedExitCode"
 Write-Output "BAREMETAL_QEMU_EXIT_CODE=$exitCode"
 Write-Output "BAREMETAL_QEMU_SMOKE=pass"

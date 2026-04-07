@@ -194,11 +194,25 @@ jobs:
               printf '%s=MISSING\n' "${tool}"
             fi
           done
+          COMPILER_RT_PATH=""
+          for cache_root in "${ZIG_GLOBAL_CACHE_DIR}" "${ZIG_LOCAL_CACHE_DIR}"; do
+            if [[ -d "${cache_root}/o" ]]; then
+              COMPILER_RT_PATH="$(find "${cache_root}/o" -name libcompiler_rt.a -print -quit 2>/dev/null || true)"
+            fi
+            if [[ -n "${COMPILER_RT_PATH}" ]]; then
+              break
+            fi
+          done
+          if [[ -n "${COMPILER_RT_PATH}" ]]; then
+            printf 'libcompiler_rt.a=%s\n' "${COMPILER_RT_PATH}"
+          else
+            printf 'libcompiler_rt.a=MISSING\n'
+          fi
           pwsh -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion'
 
       - name: Bare-metal QEMU smoke check (optional)
         shell: pwsh
-        run: ./scripts/baremetal-qemu-smoke-check.ps1 -SkipBuild
+        run: ./scripts/baremetal-qemu-smoke-check.ps1
 
       - name: Bare-metal QEMU i386 smoke check (optional)
         shell: pwsh
