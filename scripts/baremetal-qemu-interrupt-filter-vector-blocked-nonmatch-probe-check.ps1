@@ -8,15 +8,7 @@ $ErrorActionPreference = "Stop"
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-interrupt-filter-probe-check.ps1"
 if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
-$probeState = Invoke-WrapperProbe `
-    -ProbePath $probe 
-    -SkipBuild:$SkipBuild 
-    -SkippedPattern '(?m)^BAREMETAL_QEMU_INTERRUPT_FILTER_PROBE=skipped\r?$' 
-    -SkippedReceipt 'BAREMETAL_QEMU_INTERRUPT_FILTER_VECTOR_BLOCKED_NONMATCH_PROBE' 
-    -SkippedSourceReceipt 'BAREMETAL_QEMU_INTERRUPT_FILTER_VECTOR_BLOCKED_NONMATCH_PROBE_SOURCE' 
-    -SkippedSourceValue 'baremetal-qemu-interrupt-filter-probe-check.ps1' 
-    -FailureLabel 'interrupt-filter' 
-    -EmitSkippedSourceReceipt:$true
+$probeState = Invoke-WrapperProbe -ProbePath $probe -SkipBuild:$SkipBuild -SkippedPattern '(?m)^BAREMETAL_QEMU_INTERRUPT_FILTER_PROBE=skipped\r?$' -SkippedReceipt 'BAREMETAL_QEMU_INTERRUPT_FILTER_VECTOR_BLOCKED_NONMATCH_PROBE' -SkippedSourceReceipt 'BAREMETAL_QEMU_INTERRUPT_FILTER_VECTOR_BLOCKED_NONMATCH_PROBE_SOURCE' -SkippedSourceValue 'baremetal-qemu-interrupt-filter-probe-check.ps1' -FailureLabel 'interrupt-filter' -EmitSkippedSourceReceipt:$true
 $probeText = $probeState.Text
 vecWaitCount = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_INTERRUPT_FILTER_VEC_WAIT_COUNT_BEFORE_MATCH'
 $vecWaitKind = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_INTERRUPT_FILTER_VEC_WAIT_KIND_BEFORE_MATCH'

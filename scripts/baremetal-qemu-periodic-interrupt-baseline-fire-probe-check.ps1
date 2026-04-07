@@ -8,15 +8,7 @@ $ErrorActionPreference = "Stop"
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-periodic-interrupt-probe-check.ps1"
 if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
-$probeState = Invoke-WrapperProbe `
-    -ProbePath $probe 
-    -SkipBuild:$SkipBuild 
-    -SkippedPattern '(?m)^BAREMETAL_QEMU_PERIODIC_INTERRUPT_PROBE=skipped\r?$' 
-    -SkippedReceipt 'BAREMETAL_QEMU_PERIODIC_INTERRUPT_BASELINE_FIRE_PROBE' 
-    -SkippedSourceReceipt 'BAREMETAL_QEMU_PERIODIC_INTERRUPT_BASELINE_FIRE_PROBE_SOURCE' 
-    -SkippedSourceValue 'baremetal-qemu-periodic-interrupt-probe-check.ps1' 
-    -FailureLabel 'periodic-interrupt' 
-    -EmitSkippedSourceReceipt:$true
+$probeState = Invoke-WrapperProbe -ProbePath $probe -SkipBuild:$SkipBuild -SkippedPattern '(?m)^BAREMETAL_QEMU_PERIODIC_INTERRUPT_PROBE=skipped\r?$' -SkippedReceipt 'BAREMETAL_QEMU_PERIODIC_INTERRUPT_BASELINE_FIRE_PROBE' -SkippedSourceReceipt 'BAREMETAL_QEMU_PERIODIC_INTERRUPT_BASELINE_FIRE_PROBE_SOURCE' -SkippedSourceValue 'baremetal-qemu-periodic-interrupt-probe-check.ps1' -FailureLabel 'periodic-interrupt' -EmitSkippedSourceReceipt:$true
 $probeText = $probeState.Text
 $firstFireCount = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_PERIODIC_INTERRUPT_PROBE_FIRST_FIRE_COUNT'
 $firstWakeCount = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_PERIODIC_INTERRUPT_PROBE_FIRST_WAKE_COUNT'

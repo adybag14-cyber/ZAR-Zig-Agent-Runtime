@@ -8,14 +8,7 @@ $ErrorActionPreference = "Stop"
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-command-health-history-probe-check.ps1"
 if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
-$probeState = Invoke-WrapperProbe `
-    -ProbePath $probe 
-    -SkipBuild:$SkipBuild 
-    -SkippedPattern '(?m)^BAREMETAL_QEMU_COMMAND_HEALTH_HISTORY_PROBE=skipped\r?$' 
-    -SkippedReceipt 'BAREMETAL_QEMU_COMMAND_HEALTH_HISTORY_HEALTH_PAYLOADS_PROBE' 
-    -SkippedSourceReceipt 'BAREMETAL_QEMU_COMMAND_HEALTH_HISTORY_HEALTH_PAYLOADS_PROBE_SOURCE' 
-    -SkippedSourceValue 'baremetal-qemu-command-health-history-probe-check.ps1' 
-    -FailureLabel 'command-health history'
+$probeState = Invoke-WrapperProbe -ProbePath $probe -SkipBuild:$SkipBuild -SkippedPattern '(?m)^BAREMETAL_QEMU_COMMAND_HEALTH_HISTORY_PROBE=skipped\r?$' -SkippedReceipt 'BAREMETAL_QEMU_COMMAND_HEALTH_HISTORY_HEALTH_PAYLOADS_PROBE' -SkippedSourceReceipt 'BAREMETAL_QEMU_COMMAND_HEALTH_HISTORY_HEALTH_PAYLOADS_PROBE_SOURCE' -SkippedSourceValue 'baremetal-qemu-command-health-history-probe-check.ps1' -FailureLabel 'command-health history'
 $probeText = $probeState.Text
 firstSeq = Extract-IntValue -Text $probeText -Name 'HEALTH_HISTORY_FIRST_SEQ'
 $firstCode = Extract-IntValue -Text $probeText -Name 'HEALTH_HISTORY_FIRST_CODE'

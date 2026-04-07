@@ -11,15 +11,7 @@ $probe = Join-Path $PSScriptRoot "baremetal-qemu-mailbox-seq-wraparound-probe-ch
 if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
 $invoke = @{ TimeoutSeconds = $TimeoutSeconds; GdbPort = $GdbPort }
-$probeState = Invoke-WrapperProbe `
-    -ProbePath $probe 
-    -SkipBuild:$SkipBuild 
-    -SkippedPattern '(?m)^BAREMETAL_QEMU_MAILBOX_SEQ_WRAPAROUND_PROBE=skipped\r?$' 
-    -SkippedReceipt 'BAREMETAL_QEMU_MAILBOX_SEQ_WRAPAROUND_POST_WRAP_MAILBOX_STATE_PROBE' 
-    -SkippedSourceReceipt 'BAREMETAL_QEMU_MAILBOX_SEQ_WRAPAROUND_POST_WRAP_MAILBOX_STATE_PROBE_SOURCE' 
-    -SkippedSourceValue 'baremetal-qemu-mailbox-seq-wraparound-probe-check.ps1' 
-    -FailureLabel 'mailbox seq-wraparound' 
-    -InvokeArgs $invoke
+$probeState = Invoke-WrapperProbe -ProbePath $probe -SkipBuild:$SkipBuild -SkippedPattern '(?m)^BAREMETAL_QEMU_MAILBOX_SEQ_WRAPAROUND_PROBE=skipped\r?$' -SkippedReceipt 'BAREMETAL_QEMU_MAILBOX_SEQ_WRAPAROUND_POST_WRAP_MAILBOX_STATE_PROBE' -SkippedSourceReceipt 'BAREMETAL_QEMU_MAILBOX_SEQ_WRAPAROUND_POST_WRAP_MAILBOX_STATE_PROBE_SOURCE' -SkippedSourceValue 'baremetal-qemu-mailbox-seq-wraparound-probe-check.ps1' -FailureLabel 'mailbox seq-wraparound' -InvokeArgs $invoke
 $probeText = $probeState.Text
 $ticks = Extract-IntValue -Text $probeText -Name 'TICKS'
 $mailboxSeq = Extract-IntValue -Text $probeText -Name 'MAILBOX_SEQ'

@@ -8,15 +8,7 @@ $ErrorActionPreference = "Stop"
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-interrupt-filter-probe-check.ps1"
 if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
-$probeState = Invoke-WrapperProbe `
-    -ProbePath $probe 
-    -SkipBuild:$SkipBuild 
-    -SkippedPattern '(?m)^BAREMETAL_QEMU_INTERRUPT_FILTER_PROBE=skipped\r?$' 
-    -SkippedReceipt 'BAREMETAL_QEMU_INTERRUPT_FILTER_ANY_WAKE_PAYLOAD_PROBE' 
-    -SkippedSourceReceipt 'BAREMETAL_QEMU_INTERRUPT_FILTER_ANY_WAKE_PAYLOAD_PROBE_SOURCE' 
-    -SkippedSourceValue 'baremetal-qemu-interrupt-filter-probe-check.ps1' 
-    -FailureLabel 'interrupt-filter' 
-    -EmitSkippedSourceReceipt:$true
+$probeState = Invoke-WrapperProbe -ProbePath $probe -SkipBuild:$SkipBuild -SkippedPattern '(?m)^BAREMETAL_QEMU_INTERRUPT_FILTER_PROBE=skipped\r?$' -SkippedReceipt 'BAREMETAL_QEMU_INTERRUPT_FILTER_ANY_WAKE_PAYLOAD_PROBE' -SkippedSourceReceipt 'BAREMETAL_QEMU_INTERRUPT_FILTER_ANY_WAKE_PAYLOAD_PROBE_SOURCE' -SkippedSourceValue 'baremetal-qemu-interrupt-filter-probe-check.ps1' -FailureLabel 'interrupt-filter' -EmitSkippedSourceReceipt:$true
 $probeText = $probeState.Text
 task0Id = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_INTERRUPT_FILTER_TASK0_ID'
 $anyWakeSeq = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_INTERRUPT_FILTER_ANY_WAKE_SEQ'
