@@ -15,6 +15,7 @@ $helper = Join-Path $PSScriptRoot 'baremetal-qemu-i386-firmware-smp-priority-com
     -ProbeLabel 'smp priority fanout probe' `
     -BuildFlag 'baremetal-i386-smp-priority-fanout-probe' `
     -ProbeCode 0x72 `
+    -SmpCpuCount 5 `
     -ReceiptKey 'BAREMETAL_I386_FIRMWARE_SMP_PRIORITY_FANOUT_PROBE' `
     -QemuCodeReceiptKey 'BAREMETAL_I386_QEMU_FIRMWARE_SMP_PRIORITY_FANOUT_PROBE_CODE' `
     -QemuDebugReceiptKey 'BAREMETAL_I386_QEMU_FIRMWARE_SMP_PRIORITY_FANOUT_PROBE_DEBUG'

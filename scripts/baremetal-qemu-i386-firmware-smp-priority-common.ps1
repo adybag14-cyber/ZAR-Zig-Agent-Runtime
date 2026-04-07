@@ -8,6 +8,7 @@ param(
     [Parameter(Mandatory = $true)][string] $ProbeLabel,
     [Parameter(Mandatory = $true)][string] $BuildFlag,
     [Parameter(Mandatory = $true)][int] $ProbeCode,
+    [Parameter(Mandatory = $true)][int] $SmpCpuCount,
     [Parameter(Mandatory = $true)][string] $ReceiptKey,
     [Parameter(Mandatory = $true)][string] $QemuCodeReceiptKey,
     [Parameter(Mandatory = $true)][string] $QemuDebugReceiptKey
@@ -85,7 +86,7 @@ if ($null -eq $qemu) {
 }
 
 $expectedExitCodes = @{
-    (($ProbeCode * 2) + 1) = $ProbeCode
+    (((($ProbeCode * 2) + 1) -band 0xFF)) = $ProbeCode
 }
 
 if (-not $SkipBuild) {
@@ -95,23 +96,11 @@ if (-not $SkipBuild) {
     }
 }
 
-$artifactCandidates = @(
-    (Join-Path $buildPrefix "bin\openclaw-zig-baremetal-i386.elf"),
-    (Join-Path $repo "zig-out\bin\openclaw-zig-baremetal-i386.elf"),
-    (Join-Path $repo "zig-out/openclaw-zig-baremetal-i386.elf"),
-    (Join-Path $repo "zig-out\openclaw-zig-baremetal-i386.elf")
-)
-
-$artifact = $null
-foreach ($candidate in $artifactCandidates) {
-    if (Test-Path $candidate) {
-        $artifact = (Resolve-Path $candidate).Path
-        break
-    }
-}
-if ($null -eq $artifact) {
+$artifact = Join-Path $buildPrefix "bin\openclaw-zig-baremetal-i386.elf"
+if (-not (Test-Path $artifact)) {
     throw "i386 bare-metal firmware $ProbeLabel artifact not found after build."
 }
+$artifact = (Resolve-Path $artifact).Path
 
 $firmwareImage = Join-Path $releaseDir ("qemu-i386-firmware-{0}-{1}m.img" -f $ProbeSlug, $MemoryMiB)
 $firmwareMetadata = Join-Path $releaseDir ("qemu-i386-firmware-{0}-{1}m.meta.txt" -f $ProbeSlug, $MemoryMiB)
@@ -136,7 +125,7 @@ if ($LASTEXITCODE -ne 0) {
 $qemuArgs = @(
     "-M", "q35,accel=tcg",
     "-m", ("{0}M" -f $MemoryMiB),
-    "-smp", "5",
+    "-smp", $SmpCpuCount.ToString(),
     "-drive", ("format=raw,file={0},if=ide,index=0" -f $firmwareImage),
     "-boot", "c",
     "-display", "none",
@@ -207,6 +196,7 @@ Write-Output "BAREMETAL_I386_QEMU_ARTIFACT=$artifact"
 Write-Output "BAREMETAL_I386_QEMU_FIRMWARE_IMAGE=$firmwareImage"
 Write-Output "BAREMETAL_I386_QEMU_FIRMWARE_METADATA=$firmwareMetadata"
 Write-Output "BAREMETAL_I386_QEMU_MEMORY_MIB=$MemoryMiB"
+Write-Output "BAREMETAL_I386_QEMU_SMP_CPU_COUNT=$SmpCpuCount"
 Write-Output ("BAREMETAL_I386_QEMU_EXPECTED_EXIT_CODES={0}" -f (($expectedExitCodes.Keys | Sort-Object) -join ","))
 Write-Output "BAREMETAL_I386_QEMU_EXIT_CODE=$exitCode"
 Write-Output ("{0}=0x{1:X2}" -f $QemuCodeReceiptKey, $observedProbeCode)

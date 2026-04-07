@@ -15,6 +15,7 @@ $helper = Join-Path $PSScriptRoot 'baremetal-qemu-i386-firmware-smp-priority-com
     -ProbeLabel 'smp priority reprioritization probe' `
     -BuildFlag 'baremetal-i386-smp-priority-reprioritization-probe' `
     -ProbeCode 0x82 `
+    -SmpCpuCount 5 `
     -ReceiptKey 'BAREMETAL_I386_FIRMWARE_SMP_PRIORITY_REPRIORITIZATION_PROBE' `
     -QemuCodeReceiptKey 'BAREMETAL_I386_QEMU_FIRMWARE_SMP_PRIORITY_REPRIORITIZATION_PROBE_CODE' `
     -QemuDebugReceiptKey 'BAREMETAL_I386_QEMU_FIRMWARE_SMP_PRIORITY_REPRIORITIZATION_PROBE_DEBUG'

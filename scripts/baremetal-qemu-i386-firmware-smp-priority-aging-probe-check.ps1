@@ -15,6 +15,7 @@ $helper = Join-Path $PSScriptRoot 'baremetal-qemu-i386-firmware-smp-priority-com
     -ProbeLabel 'smp priority aging probe' `
     -BuildFlag 'baremetal-i386-smp-priority-aging-probe' `
     -ProbeCode 0x98 `
+    -SmpCpuCount 5 `
     -ReceiptKey 'BAREMETAL_I386_FIRMWARE_SMP_PRIORITY_AGING_PROBE' `
     -QemuCodeReceiptKey 'BAREMETAL_I386_QEMU_FIRMWARE_SMP_PRIORITY_AGING_PROBE_CODE' `
     -QemuDebugReceiptKey 'BAREMETAL_I386_QEMU_FIRMWARE_SMP_PRIORITY_AGING_PROBE_DEBUG'

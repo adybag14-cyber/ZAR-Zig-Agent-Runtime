@@ -15,6 +15,7 @@ $helper = Join-Path $PSScriptRoot 'baremetal-qemu-i386-firmware-smp-priority-com
     -ProbeLabel 'smp priority rotation probe' `
     -BuildFlag 'baremetal-i386-smp-priority-rotation-probe' `
     -ProbeCode 0x73 `
+    -SmpCpuCount 4 `
     -ReceiptKey 'BAREMETAL_I386_FIRMWARE_SMP_PRIORITY_ROTATION_PROBE' `
     -QemuCodeReceiptKey 'BAREMETAL_I386_QEMU_FIRMWARE_SMP_PRIORITY_ROTATION_PROBE_CODE' `
     -QemuDebugReceiptKey 'BAREMETAL_I386_QEMU_FIRMWARE_SMP_PRIORITY_ROTATION_PROBE_DEBUG'

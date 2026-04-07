@@ -15,6 +15,7 @@ $helper = Join-Path $PSScriptRoot 'baremetal-qemu-i386-firmware-smp-priority-com
     -ProbeLabel 'smp priority failover probe' `
     -BuildFlag 'baremetal-i386-smp-priority-failover-probe' `
     -ProbeCode 0x83 `
+    -SmpCpuCount 5 `
     -ReceiptKey 'BAREMETAL_I386_FIRMWARE_SMP_PRIORITY_FAILOVER_PROBE' `
     -QemuCodeReceiptKey 'BAREMETAL_I386_QEMU_FIRMWARE_SMP_PRIORITY_FAILOVER_PROBE_CODE' `
     -QemuDebugReceiptKey 'BAREMETAL_I386_QEMU_FIRMWARE_SMP_PRIORITY_FAILOVER_PROBE_DEBUG'

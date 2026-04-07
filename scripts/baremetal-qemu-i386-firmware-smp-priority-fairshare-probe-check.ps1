@@ -15,6 +15,7 @@ $helper = Join-Path $PSScriptRoot 'baremetal-qemu-i386-firmware-smp-priority-com
     -ProbeLabel 'smp priority fairshare probe' `
     -BuildFlag 'baremetal-i386-smp-priority-fairshare-probe' `
     -ProbeCode 0x99 `
+    -SmpCpuCount 5 `
     -ReceiptKey 'BAREMETAL_I386_FIRMWARE_SMP_PRIORITY_FAIRSHARE_PROBE' `
     -QemuCodeReceiptKey 'BAREMETAL_I386_QEMU_FIRMWARE_SMP_PRIORITY_FAIRSHARE_PROBE_CODE' `
     -QemuDebugReceiptKey 'BAREMETAL_I386_QEMU_FIRMWARE_SMP_PRIORITY_FAIRSHARE_PROBE_DEBUG'
