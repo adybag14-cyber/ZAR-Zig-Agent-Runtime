@@ -70,10 +70,9 @@ function Remove-PathIfPresent {
 Set-Location (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $repo = (Get-Location).Path
 $releaseDir = Join-Path $repo "release"
-$variantStem = "{0}-{1}m" -f $ScriptStem, $MemoryMiB
-$buildPrefix = Join-Path $repo ("zig-out\" + $variantStem)
-$env:ZIG_LOCAL_CACHE_DIR = Join-Path $repo (".zig-cache-" + $variantStem)
-$env:ZIG_GLOBAL_CACHE_DIR = Join-Path $repo (".zig-global-cache-" + $variantStem)
+$buildPrefix = Join-Path $repo ("zig-out\" + $ScriptStem)
+$env:ZIG_LOCAL_CACHE_DIR = Join-Path $repo (".zig-cache-" + $ScriptStem)
+$env:ZIG_GLOBAL_CACHE_DIR = Join-Path $repo (".zig-global-cache-" + $ScriptStem)
 New-Item -ItemType Directory -Force -Path $buildPrefix | Out-Null
 New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
 
