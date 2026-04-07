@@ -286,6 +286,11 @@ $statusAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[d
 $commandMailboxAddress = Resolve-SymbolAddress -SymbolLines $symbolOutput -Pattern '\s[dDbB]\sbaremetal_main\.command_mailbox$' -SymbolName "baremetal_main.command_mailbox"
 $artifactForGdb = $artifact.Replace('\', '/')
 
+if (Test-Path $gdbStdout) { Remove-Item -Force $gdbStdout }
+if (Test-Path $gdbStderr) { Remove-Item -Force $gdbStderr }
+if (Test-Path $qemuStdout) { Remove-Item -Force $qemuStdout }
+if (Test-Path $qemuStderr) { Remove-Item -Force $qemuStderr }
+
 @"
 set pagination off
 set confirm off
@@ -392,7 +397,11 @@ try {
     if (-not $gdbProc.WaitForExit($TimeoutSeconds * 1000)) {
         $timedOut = $true
         try { Stop-Process -Id $gdbProc.Id -Force -ErrorAction SilentlyContinue } catch {}
-        throw "GDB timed out after $TimeoutSeconds seconds"
+        $timeoutStdout = if (Test-Path $gdbStdout) { Get-Content -Raw $gdbStdout } else { "" }
+        $timeoutStderr = if (Test-Path $gdbStderr) { Get-Content -Raw $gdbStderr } else { "" }
+        $timeoutQemuStdout = if (Test-Path $qemuStdout) { Get-Content -Raw $qemuStdout } else { "" }
+        $timeoutQemuStderr = if (Test-Path $qemuStderr) { Get-Content -Raw $qemuStderr } else { "" }
+        throw "GDB timed out after $TimeoutSeconds seconds`nGDB_STDOUT_PATH=$gdbStdout`nGDB_STDOUT:`n$timeoutStdout`nGDB_STDERR_PATH=$gdbStderr`nGDB_STDERR:`n$timeoutStderr`nQEMU_STDOUT_PATH=$qemuStdout`nQEMU_STDOUT:`n$timeoutQemuStdout`nQEMU_STDERR_PATH=$qemuStderr`nQEMU_STDERR:`n$timeoutQemuStderr"
     }
     $gdbProc.Refresh()
     $gdbExitCode = if ($null -eq $gdbProc.ExitCode) { 0 } else { [int]$gdbProc.ExitCode }
@@ -491,4 +500,3 @@ foreach ($entry in $stageExpectedInts) {
     }
     Write-Output "BAREMETAL_QEMU_FEATURE_FLAGS_TICK_BATCH_${label}=$actual"
 }
-

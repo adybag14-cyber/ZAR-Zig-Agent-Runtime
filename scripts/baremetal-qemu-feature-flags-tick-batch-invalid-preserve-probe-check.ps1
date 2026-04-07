@@ -13,7 +13,7 @@ if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 $invoke = @{ TimeoutSeconds = $TimeoutSeconds; GdbPort = $GdbPort }
 $probeState = Invoke-WrapperProbe -ProbePath $probe -SkipBuild:$SkipBuild -SkippedPattern '(?m)^BAREMETAL_QEMU_FEATURE_FLAGS_TICK_BATCH_PROBE=skipped\r?$' -SkippedReceipt 'BAREMETAL_QEMU_FEATURE_FLAGS_TICK_BATCH_INVALID_PRESERVE_PROBE' -SkippedSourceReceipt 'BAREMETAL_QEMU_FEATURE_FLAGS_TICK_BATCH_INVALID_PRESERVE_PROBE_SOURCE' -SkippedSourceValue 'baremetal-qemu-feature-flags-tick-batch-probe-check.ps1' -FailureLabel 'feature-flags/tick-batch' -InvokeArgs $invoke
 $probeText = $probeState.Text
-expected = @{
+$expected = @{
     'BAREMETAL_QEMU_FEATURE_FLAGS_TICK_BATCH_STAGE3_ACK' = 3
     'BAREMETAL_QEMU_FEATURE_FLAGS_TICK_BATCH_STAGE3_LAST_OPCODE' = 6
     'BAREMETAL_QEMU_FEATURE_FLAGS_TICK_BATCH_STAGE3_LAST_RESULT' = -22

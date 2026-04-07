@@ -28,8 +28,19 @@ try {
         $index += 1
         Write-Output "::group::[$Group $index/$($steps.Count)] $($step.name)"
         try {
+            $stepCommand = @"
+`$ErrorActionPreference = 'Stop'
+`$ProgressPreference = 'SilentlyContinue'
+try {
+$($step.run)
+}
+catch {
+    Write-Error (`$_ | Out-String)
+    exit 1
+}
+"@
             $LASTEXITCODE = 0
-            $stepOutput = & $pwshPath -NoLogo -NoProfile -Command $step.run 2>&1
+            $stepOutput = & $pwshPath -NoLogo -NoProfile -Command $stepCommand 2>&1
             $stepExitCode = $LASTEXITCODE
             if ($null -ne $stepOutput) {
                 $stepOutput | Write-Output

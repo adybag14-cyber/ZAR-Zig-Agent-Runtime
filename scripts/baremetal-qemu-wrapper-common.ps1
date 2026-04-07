@@ -56,6 +56,42 @@ function Test-WrapperSkipped {
     return $false
 }
 
+function Invoke-ProbeScriptProcess {
+    param(
+        [Parameter(Mandatory = $true)][string] $ProbePath,
+        [switch] $SkipBuild,
+        [hashtable] $InvokeArgs = @{}
+    )
+
+    $pwshPath = (Get-Command pwsh -ErrorAction Stop).Path
+    $argList = @('-NoLogo', '-NoProfile', '-File', $ProbePath)
+
+    foreach ($key in $InvokeArgs.Keys) {
+        $value = $InvokeArgs[$key]
+        if ($null -eq $value) { continue }
+        if ($value -is [switch] -or $value -is [bool]) {
+            if ([bool]$value) {
+                $argList += "-$key"
+            }
+            continue
+        }
+        $argList += "-$key"
+        $argList += [string]$value
+    }
+
+    if ($SkipBuild) {
+        $argList += '-SkipBuild'
+    }
+
+    $probeOutput = & $pwshPath @argList 2>&1
+    $probeExitCode = $LASTEXITCODE
+
+    return @{
+        Output = $probeOutput
+        ExitCode = $probeExitCode
+    }
+}
+
 function Invoke-WrapperProbe {
     param(
         [Parameter(Mandatory = $true)][string] $ProbePath,
@@ -73,11 +109,9 @@ function Invoke-WrapperProbe {
         [bool] $EmitSkippedSourceReceipt = $true
     )
 
-    $callArgs = @{}
-    foreach ($key in $InvokeArgs.Keys) { $callArgs[$key] = $InvokeArgs[$key] }
-    if ($SkipBuild) { $callArgs.SkipBuild = $true }
-    $probeOutput = & $ProbePath @callArgs 2>&1
-    $probeExitCode = $LASTEXITCODE
+    $probeState = Invoke-ProbeScriptProcess -ProbePath $ProbePath -SkipBuild:$SkipBuild -InvokeArgs $InvokeArgs
+    $probeOutput = $probeState.Output
+    $probeExitCode = $probeState.ExitCode
     $probeText = ($probeOutput | Out-String)
     $echoText = if ($TrimEchoText) { $probeText.TrimEnd() } else { $probeText }
     $hasEchoText = -not [string]::IsNullOrWhiteSpace($echoText)
