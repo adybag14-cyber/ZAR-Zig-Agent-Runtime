@@ -4,28 +4,28 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-command-result-counters-probe-check.ps1"
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
 function Extract-IntValue {
     param([string] $Text, [string] $Name)
-    $pattern = '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)$'
+    $pattern = '(?m)^\{0}=(-?\d+)$' -f $Name
     $match = [regex]::Match($Text, $pattern)
     if (-not $match.Success) { return $null }
     return [int64]::Parse($match.Groups[1].Value)
 }
 
-$probeOutput = if ($SkipBuild) { & $probe -SkipBuild 2>&1 } else { & $probe 2>&1 }
-$probeExitCode = $LASTEXITCODE
-$probeText = ($probeOutput | Out-String)
-$probeOutput | Write-Output
-if ($probeText -match 'BAREMETAL_QEMU_COMMAND_RESULT_COUNTERS_PROBE=skipped') {
-    Write-Output "BAREMETAL_QEMU_RESET_COMMAND_RESULT_PRESERVE_RUNTIME_PROBE=skipped"
-    exit 0
-}
-if ($probeExitCode -ne 0) {
-    throw "Underlying command-result probe failed with exit code $probeExitCode"
-}
-
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_COMMAND_RESULT_COUNTERS_PROBE=skipped\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_RESET_COMMAND_RESULT_PRESERVE_RUNTIME_PROBE' `
+    -FailureLabel 'command-result' `
+    -EchoOnSuccess:$true `
+    -EchoOnSkip:$true `
+    -EchoOnFailure:$true
+$probeText = $probeState.Text
 $postMode = Extract-IntValue -Text $probeText -Name "POST_MODE"
 $postHealthCode = Extract-IntValue -Text $probeText -Name "POST_HEALTH_CODE"
 $postCounterTotal = Extract-IntValue -Text $probeText -Name "POST_COUNTER_TOTAL"

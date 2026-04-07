@@ -4,28 +4,19 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-allocator-saturation-reuse-probe-check.ps1"
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
-function Extract-IntValue {
-    param([string] $Text, [string] $Name)
-    $pattern = '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$'
-    $match = [regex]::Match($Text, $pattern)
-    if (-not $match.Success) { return $null }
-    return [int64]::Parse($match.Groups[1].Value)
-}
-
-$probeOutput = if ($SkipBuild) { & $probe -SkipBuild 2>&1 } else { & $probe 2>&1 }
-$probeExitCode = $LASTEXITCODE
-$probeText = ($probeOutput | Out-String)
-$probeOutput | Write-Output
-if ($probeText -match 'BAREMETAL_QEMU_ALLOCATOR_SATURATION_REUSE_PROBE=skipped') {
-    Write-Output 'BAREMETAL_QEMU_ALLOCATOR_SATURATION_REUSE_NO_SPACE_PRESERVE_PROBE=skipped'
-    exit 0
-}
-if ($probeExitCode -ne 0) {
-    throw "Underlying allocator saturation-reuse probe failed with exit code $probeExitCode"
-}
-$preFreeLastAllocPtr = Extract-IntValue -Text $probeText -Name 'PRE_FREE_LAST_ALLOC_PTR'
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_ALLOCATOR_SATURATION_REUSE_PROBE=skipped\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_ALLOCATOR_SATURATION_REUSE_NO_SPACE_PRESERVE_PROBE' `
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_ALLOCATOR_SATURATION_REUSE_NO_SPACE_PRESERVE_PROBE_SOURCE' `
+    -SkippedSourceValue 'baremetal-qemu-allocator-saturation-reuse-probe-check.ps1' `
+    -FailureLabel 'allocator saturation-reuse'
+$probeText = $probeState.Text
 $preFreeReuseRecordPtr = Extract-IntValue -Text $probeText -Name 'PRE_FREE_REUSE_RECORD_PTR'
 $preFreeReuseRecordPageStart = Extract-IntValue -Text $probeText -Name 'PRE_FREE_REUSE_RECORD_PAGE_START'
 $preFreeLastRecordPtr = Extract-IntValue -Text $probeText -Name 'PRE_FREE_LAST_RECORD_PTR'

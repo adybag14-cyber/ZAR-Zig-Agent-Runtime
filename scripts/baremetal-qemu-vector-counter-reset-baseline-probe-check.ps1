@@ -4,27 +4,28 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-vector-counter-reset-probe-check.ps1"
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
+
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_VECTOR_COUNTER_RESET_PROBE=skipped\\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_VECTOR_COUNTER_RESET_BASELINE_PROBE' `
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_VECTOR_COUNTER_RESET_BASELINE_PROBE_SOURCE' `
+    -SkippedSourceValue 'baremetal-qemu-vector-counter-reset-probe-check.ps1' `
+    -FailureLabel 'vector-counter-reset'
+$probeText = $probeState.Text
 
 function Extract-IntValue {
     param([string] $Text, [string] $Name)
-    $pattern = '(?m)^' + [regex]::Escape($Name) + '=(.+)\r?$'
+    $pattern = '(?m)^' + [regex]::Escape($Name) + '=(.+)\\r?$'
     $match = [regex]::Match($Text, $pattern)
     if (-not $match.Success) { return $null }
     return $match.Groups[1].Value.Trim()
 }
 
-$probeOutput = if ($SkipBuild) { & $probe -SkipBuild 2>&1 } else { & $probe 2>&1 }
-$probeExitCode = $LASTEXITCODE
-$probeText = ($probeOutput | Out-String)
-$probeOutput | Write-Output
-if ($probeText -match 'BAREMETAL_QEMU_VECTOR_COUNTER_RESET_PROBE=skipped') {
-    Write-Output "BAREMETAL_QEMU_VECTOR_COUNTER_RESET_BASELINE_PROBE=skipped"
-    exit 0
-}
-if ($probeExitCode -ne 0) {
-    throw "Underlying vector-counter-reset probe failed with exit code $probeExitCode"
-}
 
 $artifact = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_VECTOR_COUNTER_RESET_ARTIFACT'
 $startAddr = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_VECTOR_COUNTER_RESET_START_ADDR'

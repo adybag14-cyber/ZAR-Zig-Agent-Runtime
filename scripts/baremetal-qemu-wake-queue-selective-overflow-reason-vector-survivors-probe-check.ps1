@@ -4,27 +4,22 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-wake-queue-selective-overflow-probe-check.ps1"
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
-function Extract-IntValue {
-    param([string] $Text, [string] $Name)
-    $pattern = '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$'
-    $match = [regex]::Match($Text, $pattern)
-    if (-not $match.Success) { return $null }
-    return [int64]::Parse($match.Groups[1].Value)
-}
+$invoke = @{ TimeoutSeconds = 90 }
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_WAKE_QUEUE_SELECTIVE_OVERFLOW_PROBE=skipped\\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_WAKE_QUEUE_SELECTIVE_OVERFLOW_REASON_VECTOR_SURVIVORS_PROBE' `
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_WAKE_QUEUE_SELECTIVE_OVERFLOW_REASON_VECTOR_SURVIVORS_PROBE_SOURCE' `
+    -SkippedSourceValue 'baremetal-qemu-wake-queue-selective-overflow-probe-check.ps1' `
+    -FailureLabel 'wake-queue selective overflow' `
+    -InvokeArgs $invoke
+$probeText = $probeState.Text
 
-$probeOutput = if ($SkipBuild) { & $probe -SkipBuild -TimeoutSeconds 90 2>&1 } else { & $probe -TimeoutSeconds 90 2>&1 }
-$probeExitCode = $LASTEXITCODE
-$probeText = ($probeOutput | Out-String)
-$probeOutput | Write-Output
-if ($probeText -match 'BAREMETAL_QEMU_WAKE_QUEUE_SELECTIVE_OVERFLOW_PROBE=skipped') {
-    Write-Output 'BAREMETAL_QEMU_WAKE_QUEUE_SELECTIVE_OVERFLOW_REASON_VECTOR_SURVIVORS_PROBE=skipped'
-    exit 0
-}
-if ($probeExitCode -ne 0) {
-    throw "Underlying wake-queue-selective-overflow probe failed with exit code $probeExitCode"
-}
 
 $ack = Extract-IntValue -Text $probeText -Name 'ACK'
 $lastOpcode = Extract-IntValue -Text $probeText -Name 'LAST_OPCODE'

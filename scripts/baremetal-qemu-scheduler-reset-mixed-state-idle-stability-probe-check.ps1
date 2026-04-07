@@ -4,27 +4,23 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'baremetal-qemu-wrapper-common.ps1')
 $probe = Join-Path $PSScriptRoot 'baremetal-qemu-scheduler-reset-mixed-state-probe-check.ps1'
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
-function Extract-IntValue {
-    param([string] $Text, [string] $Name)
-    $match = [regex]::Match($Text, '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$')
-    if (-not $match.Success) { return $null }
-    return [int64]::Parse($match.Groups[1].Value)
-}
-
-$probeOutput = if ($SkipBuild) { & $probe -SkipBuild 2>&1 } else { & $probe 2>&1 }
-$probeExitCode = $LASTEXITCODE
-$probeText = ($probeOutput | Out-String)
-if ($probeText -match '(?m)^BAREMETAL_QEMU_SCHEDULER_RESET_MIXED_STATE_PROBE=skipped\r?$') {
-    if ($probeText) { Write-Output $probeText.TrimEnd() }
-    Write-Output 'BAREMETAL_QEMU_SCHEDULER_RESET_MIXED_STATE_IDLE_STABILITY_PROBE=skipped'
-    exit 0
-}
-if ($probeExitCode -ne 0) {
-    if ($probeText) { Write-Output $probeText.TrimEnd() }
-    throw "Underlying scheduler-reset mixed-state probe failed with exit code $probeExitCode"
-}
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_SCHEDULER_RESET_MIXED_STATE_PROBE=skipped\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_SCHEDULER_RESET_MIXED_STATE_IDLE_STABILITY_PROBE' `
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_SCHEDULER_RESET_MIXED_STATE_IDLE_STABILITY_PROBE_SOURCE' `
+    -SkippedSourceValue 'baremetal-qemu-scheduler-reset-mixed-state-probe-check.ps1' `
+    -FailureLabel 'scheduler-reset mixed-state' `
+    -EchoOnSuccess:$false `
+    -EchoOnSkip:$true `
+    -EchoOnFailure:$true `
+    -TrimEchoText:$true
+$probeText = $probeState.Text
 
 $afterIdleWakeCount = Extract-IntValue -Text $probeText -Name 'AFTER_IDLE_WAKE_COUNT'
 $afterIdleTimerCount = Extract-IntValue -Text $probeText -Name 'AFTER_IDLE_TIMER_COUNT'

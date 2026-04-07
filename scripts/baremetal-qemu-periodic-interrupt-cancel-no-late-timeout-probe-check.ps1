@@ -4,31 +4,20 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-periodic-interrupt-probe-check.ps1"
-$timerCancelTaskOpcode = 52
-$waitConditionNone = 0
-$postDeadlineSlackTicks = 2
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
-function Extract-IntValue {
-    param([string] $Text, [string] $Name)
-    $match = [regex]::Match($Text, '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$')
-    if (-not $match.Success) { return $null }
-    return [int64]::Parse($match.Groups[1].Value)
-}
-
-$probeOutput = if ($SkipBuild) { & $probe -SkipBuild 2>&1 } else { & $probe 2>&1 }
-$probeExitCode = $LASTEXITCODE
-$probeText = ($probeOutput | Out-String)
-$probeOutput | Write-Output
-if ($probeText -match '(?m)^BAREMETAL_QEMU_PERIODIC_INTERRUPT_PROBE=skipped\r?$') {
-    Write-Output 'BAREMETAL_QEMU_PERIODIC_INTERRUPT_CANCEL_NO_LATE_TIMEOUT_PROBE=skipped'
-    Write-Output 'BAREMETAL_QEMU_PERIODIC_INTERRUPT_CANCEL_NO_LATE_TIMEOUT_PROBE_SOURCE=baremetal-qemu-periodic-interrupt-probe-check.ps1'
-    exit 0
-}
-if ($probeExitCode -ne 0) {
-    throw "Underlying periodic-interrupt probe failed with exit code $probeExitCode"
-}
-
+$probeState = Invoke-WrapperProbe 
+    -ProbePath $probe 
+    -SkipBuild:$SkipBuild 
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_PERIODIC_INTERRUPT_PROBE=skipped\r?$' 
+    -SkippedReceipt 'BAREMETAL_QEMU_PERIODIC_INTERRUPT_CANCEL_NO_LATE_TIMEOUT_PROBE' 
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_PERIODIC_INTERRUPT_CANCEL_NO_LATE_TIMEOUT_PROBE_SOURCE' 
+    -SkippedSourceValue 'baremetal-qemu-periodic-interrupt-probe-check.ps1' 
+    -FailureLabel 'periodic-interrupt' 
+    -EmitSkippedSourceReceipt:$true
+$probeText = $probeState.Text
 $lastOpcode = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_PERIODIC_INTERRUPT_PROBE_LAST_OPCODE'
 $lastResult = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_PERIODIC_INTERRUPT_PROBE_LAST_RESULT'
 $timerEntryCount = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_PERIODIC_INTERRUPT_PROBE_TIMER_ENTRY_COUNT'

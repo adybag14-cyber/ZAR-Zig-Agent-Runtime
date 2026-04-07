@@ -4,27 +4,18 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-interrupt-mask-control-probe-check.ps1"
 
-function Extract-IntValue {
-    param([string] $Text, [string] $Name)
-    $match = [regex]::Match($Text, '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$')
-    if (-not $match.Success) { return $null }
-    return [int64]::Parse($match.Groups[1].Value)
-}
-
-$probeOutput = if ($SkipBuild) { & $probe -SkipBuild 2>&1 } else { & $probe 2>&1 }
-$probeExitCode = $LASTEXITCODE
-$probeText = ($probeOutput | Out-String)
-$probeOutput | Write-Output
-if ($probeText -match '(?m)^BAREMETAL_QEMU_INTERRUPT_MASK_CONTROL_PROBE=skipped\r?$') {
-    Write-Output 'BAREMETAL_QEMU_INTERRUPT_MASK_CONTROL_INVALID_PRESERVE_PROBE=skipped'
-    Write-Output 'BAREMETAL_QEMU_INTERRUPT_MASK_CONTROL_INVALID_PRESERVE_PROBE_SOURCE=baremetal-qemu-interrupt-mask-control-probe-check.ps1'
-    exit 0
-}
-if ($probeExitCode -ne 0) {
-    throw "Underlying interrupt-mask-control probe failed with exit code $probeExitCode"
-}
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_INTERRUPT_MASK_CONTROL_PROBE=skipped\\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_INTERRUPT_MASK_CONTROL_INVALID_PRESERVE_PROBE' `
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_INTERRUPT_MASK_CONTROL_INVALID_PRESERVE_PROBE_SOURCE' `
+    -SkippedSourceValue 'baremetal-qemu-interrupt-mask-control-probe-check.ps1' `
+    -FailureLabel 'interrupt-mask-control'
+$probeText = $probeState.Text
 
 $invalidVectorResult = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_INTERRUPT_MASK_CONTROL_PROBE_INVALID_VECTOR_RESULT'
 $invalidVectorProfile = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_INTERRUPT_MASK_CONTROL_PROBE_INVALID_VECTOR_CURRENT_PROFILE'

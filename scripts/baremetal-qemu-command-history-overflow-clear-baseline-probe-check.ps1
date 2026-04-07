@@ -5,25 +5,26 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'baremetal-qemu-wrapper-common.ps1')
 $probe = Join-Path $PSScriptRoot 'baremetal-qemu-command-history-overflow-clear-probe-check.ps1'
 if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
 $invoke = @{ TimeoutSeconds = $TimeoutSeconds }
-if ($SkipBuild) { $invoke.SkipBuild = $true }
-
-$output = & $probe @invoke 2>&1
-$exitCode = $LASTEXITCODE
-$outputText = ($output | Out-String)
-if ($outputText -match '(?m)^BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_PROBE=skipped\r?$') {
-    if ($outputText) { Write-Output $outputText.TrimEnd() }
-    Write-Output 'BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_BASELINE_PROBE=skipped'
-    Write-Output 'BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_BASELINE_PROBE_SOURCE=baremetal-qemu-command-history-overflow-clear-probe-check.ps1'
-    exit 0
-}
-if ($exitCode -ne 0) {
-    if ($outputText) { Write-Output $outputText.TrimEnd() }
-    throw "Command-history overflow/clear prerequisite probe failed with exit code $exitCode"
-}
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_PROBE=skipped\\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_BASELINE_PROBE' `
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_BASELINE_PROBE_SOURCE' `
+    -SkippedSourceValue 'baremetal-qemu-command-history-overflow-clear-probe-check.ps1' `
+    -FailureLabel 'Command-history overflow/clear' `
+    -EchoOnSuccess:$false `
+    -EchoOnSkip:$true `
+    -EchoOnFailure:$true `
+    -TrimEchoText:$true `
+    -EmitSkippedSourceReceipt:$true `
+    -InvokeArgs $invoke
+$outputText = $probeState.Text
 
 foreach ($name in @(
     'BAREMETAL_QEMU_COMMAND_HISTORY_OVERFLOW_CLEAR_PROBE',

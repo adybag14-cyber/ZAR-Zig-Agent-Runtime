@@ -4,28 +4,20 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-timer-pressure-probe-check.ps1"
-$skipToken = 'BAREMETAL_QEMU_TIMER_PRESSURE_CANCEL_COLLAPSE_PROBE=skipped'
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
-function Extract-IntValue {
-    param([string] $Text, [string] $Name)
-    $pattern = '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$'
-    $match = [regex]::Match($Text, $pattern)
-    if (-not $match.Success) { return $null }
-    return [int64]::Parse($match.Groups[1].Value)
-}
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_TIMER_PRESSURE_PROBE=skipped\\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_TIMER_PRESSURE_CANCEL_COLLAPSE_PROBE' `
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_TIMER_PRESSURE_CANCEL_COLLAPSE_PROBE_SOURCE' `
+    -SkippedSourceValue 'baremetal-qemu-timer-pressure-probe-check.ps1' `
+    -FailureLabel 'timer-pressure'
+$probeText = $probeState.Text
 
-$probeOutput = if ($SkipBuild) { & $probe -SkipBuild 2>&1 } else { & $probe 2>&1 }
-$probeExitCode = $LASTEXITCODE
-$probeText = ($probeOutput | Out-String)
-$probeOutput | Write-Output
-if ($probeText -match 'BAREMETAL_QEMU_TIMER_PRESSURE_PROBE=skipped') {
-    Write-Output $skipToken
-    exit 0
-}
-if ($probeExitCode -ne 0) {
-    throw "Underlying timer-pressure probe failed with exit code $probeExitCode"
-}
 
 $taskCapacity = Extract-IntValue -Text $probeText -Name 'TASK_CAPACITY'
 $reuseSlotIndex = Extract-IntValue -Text $probeText -Name 'REUSE_SLOT_INDEX'
