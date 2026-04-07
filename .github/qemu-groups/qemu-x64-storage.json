@@ -1,0 +1,34 @@
+[
+  {
+    "name": "Bare-metal QEMU ATA storage probe (optional)",
+    "run": "./scripts/baremetal-qemu-ata-storage-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU ATA GPT installer probe (optional)",
+    "run": "./scripts/baremetal-qemu-ata-gpt-installer-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU virtio-block probe (optional)",
+    "run": "./scripts/baremetal-qemu-virtio-block-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU virtio-block installer probe (optional)",
+    "run": "./scripts/baremetal-qemu-virtio-block-installer-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU virtio-block mount probe (optional)",
+    "run": "./scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU virtio-block mount control probe (optional)",
+    "run": "./scripts/baremetal-qemu-virtio-block-mount-control-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU virtio-block ext2 mount probe (optional)",
+    "run": "./scripts/baremetal-qemu-virtio-block-ext2-mount-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU virtio-block fat32 mount probe (optional)",
+    "run": "./scripts/baremetal-qemu-virtio-block-fat32-mount-probe-check.ps1"
+  }
+]

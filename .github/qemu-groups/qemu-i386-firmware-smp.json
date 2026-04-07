@@ -1,0 +1,170 @@
+[
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP work probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-work-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP work probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-work-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP batch probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-batch-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP batch probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-batch-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP multi probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-multi-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP multi probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-multi-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP concurrent probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-concurrent-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP concurrent probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-concurrent-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP owned probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-owned-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP owned probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-owned-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP redistribution probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-redistribution-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP redistribution probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-redistribution-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority rotation probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-rotation-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority rotation probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-rotation-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority fanout probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-fanout-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority fanout probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-fanout-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority saturation probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-saturation-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority saturation probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-saturation-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority reprioritization probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-reprioritization-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority reprioritization probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-reprioritization-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority failover probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-failover-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority failover probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-failover-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority backfill probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-backfill-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority backfill probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-backfill-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority window probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-window-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority window probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-window-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority fairness probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-fairness-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority fairness probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-fairness-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority rebalance probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-rebalance-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority rebalance probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-rebalance-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority debt probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-debt-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority debt probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-debt-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority admission probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-admission-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority admission probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-admission-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority aging probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-aging-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority aging probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-aging-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority fairshare probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-fairshare-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority fairshare probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-fairshare-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority quota probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-quota-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware SMP priority quota probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-smp-priority-quota-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  }
+]

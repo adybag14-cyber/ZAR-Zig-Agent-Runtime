@@ -161,1112 +161,9 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-i386-smoke-check.ps1
 
-      - name: Install optional bare-metal runner prerequisites (Linux)
-        if: runner.os == 'Linux'
+      - name: Bare-metal QEMU families run in parallel jobs
         shell: bash
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 gdb binutils nasm clang lld
-          PWSH_BIN="$(command -v pwsh || true)"
-          if [[ -z "${PWSH_BIN}" ]]; then
-            echo "pwsh is not available on PATH"
-            exit 1
-          fi
-          if ! command -v powershell >/dev/null 2>&1; then
-            sudo ln -sf "${PWSH_BIN}" /usr/local/bin/powershell
-          fi
-          if ! command -v powershell.exe >/dev/null 2>&1; then
-            sudo ln -sf "${PWSH_BIN}" /usr/local/bin/powershell.exe
-          fi
-
-      - name: Report optional bare-metal runner prerequisites (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          for tool in pwsh powershell powershell.exe qemu-system-x86_64 qemu-system-i386 gdb nm readelf nasm clang lld; do
-            if command -v "${tool}" >/dev/null 2>&1; then
-              printf '%s=%s\n' "${tool}" "$(command -v "${tool}")"
-            else
-              printf '%s=MISSING\n' "${tool}"
-            fi
-          done
-          COMPILER_RT_PATH=""
-          for cache_root in "${ZIG_GLOBAL_CACHE_DIR}" "${ZIG_LOCAL_CACHE_DIR}"; do
-            if [[ -d "${cache_root}/o" ]]; then
-              COMPILER_RT_PATH="$(find "${cache_root}/o" -name libcompiler_rt.a -print -quit 2>/dev/null || true)"
-            fi
-            if [[ -n "${COMPILER_RT_PATH}" ]]; then
-              break
-            fi
-          done
-          if [[ -n "${COMPILER_RT_PATH}" ]]; then
-            printf 'libcompiler_rt.a=%s\n' "${COMPILER_RT_PATH}"
-          else
-            printf 'libcompiler_rt.a=MISSING\n'
-          fi
-          pwsh -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion'
-
-      - name: Bare-metal QEMU smoke check (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-smoke-check.ps1
-
-      - name: Bare-metal QEMU i386 smoke check (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-smoke-check.ps1
-
-      - name: Bare-metal QEMU i386 platform probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-platform-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 platform probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-platform-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 firmware platform probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-platform-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 firmware platform probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-platform-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 firmware AP-startup probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-ap-startup-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 firmware AP-startup probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-ap-startup-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 firmware SMP work probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-work-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 firmware SMP work probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-work-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 firmware SMP batch probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-batch-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 firmware SMP batch probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-batch-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 firmware SMP multi probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-multi-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 firmware SMP multi probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-multi-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 firmware SMP concurrent probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-concurrent-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 firmware SMP concurrent probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-concurrent-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 firmware SMP owned probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-owned-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 firmware SMP owned probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-owned-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 firmware SMP redistribution probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-redistribution-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 firmware SMP redistribution probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-redistribution-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 firmware SMP priority probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 firmware SMP priority probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 firmware SMP priority rotation probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-rotation-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 firmware SMP priority rotation probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-rotation-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 firmware SMP priority fanout probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-fanout-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 firmware SMP priority fanout probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-fanout-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 firmware SMP priority saturation probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-saturation-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 firmware SMP priority saturation probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-saturation-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 firmware SMP priority reprioritization probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-reprioritization-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 firmware SMP priority reprioritization probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-reprioritization-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-      - name: Bare-metal QEMU i386 firmware SMP priority failover probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-failover-probe-check.ps1
-      - name: Bare-metal QEMU i386 firmware SMP priority failover probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-failover-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-      - name: Bare-metal QEMU i386 firmware SMP priority backfill probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-backfill-probe-check.ps1
-      - name: Bare-metal QEMU i386 firmware SMP priority backfill probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-backfill-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-      - name: Bare-metal QEMU i386 firmware SMP priority window probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-window-probe-check.ps1
-      - name: Bare-metal QEMU i386 firmware SMP priority window probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-window-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-      - name: Bare-metal QEMU i386 firmware SMP priority fairness probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-fairness-probe-check.ps1
-      - name: Bare-metal QEMU i386 firmware SMP priority fairness probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-fairness-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-      - name: Bare-metal QEMU i386 firmware SMP priority rebalance probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-rebalance-probe-check.ps1
-      - name: Bare-metal QEMU i386 firmware SMP priority rebalance probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-rebalance-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 firmware SMP priority debt probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-debt-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 firmware SMP priority debt probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-debt-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 firmware SMP priority admission probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-admission-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 firmware SMP priority admission probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-admission-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 firmware SMP priority aging probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-aging-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 firmware SMP priority aging probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-aging-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 firmware SMP priority fairshare probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-fairshare-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 firmware SMP priority fairshare probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-fairshare-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 firmware SMP priority quota probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-quota-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 firmware SMP priority quota probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-firmware-smp-priority-quota-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 SMP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-smp-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 ATA storage probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-ata-storage-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 ATA storage probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-ata-storage-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 E1000 probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-e1000-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 RTL8139 probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-rtl8139-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 VGA console probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-vga-console-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 E1000 ARP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-e1000-arp-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 E1000 IPv4 probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-e1000-ipv4-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 E1000 UDP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-e1000-udp-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 E1000 TCP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-e1000-tcp-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 framebuffer console probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-framebuffer-console-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 virtio-gpu display probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-virtio-gpu-display-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 E1000 DHCP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-e1000-dhcp-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 E1000 DNS probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-e1000-dns-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 E1000 HTTP POST probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-e1000-http-post-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 E1000 HTTPS POST probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-e1000-https-post-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 E1000 tool-service probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-e1000-tool-service-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 E1000 full-stack probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-e1000-full-stack-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 E1000 full-stack probe 1GiB (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-e1000-full-stack-probe-check.ps1 -MemoryMiB 1024 -SkipBuild
-
-      - name: Bare-metal QEMU i386 RTL8139 ARP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-rtl8139-arp-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 RTL8139 IPv4 probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-rtl8139-ipv4-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 RTL8139 UDP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-rtl8139-udp-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 RTL8139 TCP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-rtl8139-tcp-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 RTL8139 runtime-service probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-rtl8139-runtime-service-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 RTL8139 DHCP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-rtl8139-dhcp-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 RTL8139 DNS probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-rtl8139-dns-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 RTL8139 HTTP POST probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-rtl8139-http-post-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 RTL8139 HTTPS POST probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-rtl8139-https-post-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 RTL8139 gateway probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-rtl8139-gateway-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 RTL8139 full-stack probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-rtl8139-full-stack-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 virtio-net probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-virtio-net-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 virtio-net ARP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-virtio-net-arp-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 virtio-net IPv4 probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-virtio-net-ipv4-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 virtio-net UDP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-virtio-net-udp-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 virtio-net TCP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-virtio-net-tcp-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 virtio-net DHCP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-virtio-net-dhcp-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 virtio-net DNS probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-virtio-net-dns-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 virtio-net HTTP POST probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-virtio-net-http-post-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 virtio-net HTTPS POST probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-virtio-net-https-post-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 virtio-net tool-service probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-virtio-net-tool-service-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 virtio-block probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-virtio-block-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 virtio-block installer probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-virtio-block-installer-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 virtio-block mount probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-virtio-block-mount-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 virtio-block ext2 mount probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-virtio-block-ext2-mount-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 virtio-block fat32 mount probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-virtio-block-fat32-mount-probe-check.ps1
-
-      - name: Bare-metal QEMU i386 virtio-block mount control probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-i386-virtio-block-mount-control-probe-check.ps1
-
-      - name: Bare-metal QEMU runtime probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-runtime-oc-tick-check.ps1
-
-      - name: Bare-metal QEMU command-loop probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-command-loop-check.ps1
-
-      - name: Bare-metal QEMU ATA storage probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-ata-storage-probe-check.ps1
-
-      - name: Bare-metal QEMU ATA GPT installer probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-ata-gpt-installer-probe-check.ps1
-
-      - name: Bare-metal QEMU virtio-block probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-virtio-block-probe-check.ps1
-
-      - name: Bare-metal QEMU virtio-block installer probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-virtio-block-installer-probe-check.ps1
-
-      - name: Bare-metal QEMU virtio-block mount probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-virtio-block-mount-probe-check.ps1
-
-      - name: Bare-metal QEMU virtio-block mount control probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-virtio-block-mount-control-probe-check.ps1
-
-      - name: Bare-metal QEMU virtio-block ext2 mount probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-virtio-block-ext2-mount-probe-check.ps1
-
-      - name: Bare-metal QEMU virtio-block fat32 mount probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-virtio-block-fat32-mount-probe-check.ps1
-
-      - name: Bare-metal QEMU virtio-net probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-virtio-net-probe-check.ps1
-
-      - name: Bare-metal QEMU virtio-net ARP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-virtio-net-arp-probe-check.ps1
-
-      - name: Bare-metal QEMU virtio-net IPv4 probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-virtio-net-ipv4-probe-check.ps1
-
-      - name: Bare-metal QEMU virtio-net UDP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-virtio-net-udp-probe-check.ps1
-
-      - name: Bare-metal QEMU virtio-net DHCP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-virtio-net-dhcp-probe-check.ps1
-
-      - name: Bare-metal QEMU virtio-net DNS probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-virtio-net-dns-probe-check.ps1
-
-      - name: Bare-metal QEMU virtio-net TCP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-virtio-net-tcp-probe-check.ps1
-
-      - name: Bare-metal QEMU virtio-net tool-service probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-virtio-net-tool-service-probe-check.ps1
-
-      - name: Bare-metal QEMU virtio-net HTTP POST probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-virtio-net-http-post-probe-check.ps1
-
-      - name: Bare-metal QEMU virtio-net HTTPS POST probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-virtio-net-https-post-probe-check.ps1
-
-      - name: Bare-metal QEMU RTL8139 probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-rtl8139-probe-check.ps1
-
-      - name: Bare-metal QEMU E1000 probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-e1000-probe-check.ps1
-
-      - name: Bare-metal QEMU E1000 ARP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-e1000-arp-probe-check.ps1
-
-      - name: Bare-metal QEMU E1000 IPv4 probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-e1000-ipv4-probe-check.ps1
-
-      - name: Bare-metal QEMU E1000 UDP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-e1000-udp-probe-check.ps1
-
-      - name: Bare-metal QEMU E1000 TCP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-e1000-tcp-probe-check.ps1
-
-      - name: Bare-metal QEMU E1000 DHCP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-e1000-dhcp-probe-check.ps1
-
-      - name: Bare-metal QEMU E1000 DNS probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-e1000-dns-probe-check.ps1
-
-      - name: Bare-metal QEMU E1000 tool-service probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1
-
-      - name: Bare-metal QEMU E1000 HTTP POST probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-e1000-http-post-probe-check.ps1
-
-      - name: Bare-metal QEMU E1000 HTTPS POST probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-e1000-https-post-probe-check.ps1
-
-      - name: Bare-metal QEMU RTL8139 ARP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1
-
-      - name: Bare-metal QEMU RTL8139 IPv4 probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1
-
-      - name: Bare-metal QEMU RTL8139 UDP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1
-
-      - name: Bare-metal QEMU RTL8139 TCP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1
-
-      - name: Bare-metal QEMU RTL8139 runtime service probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-rtl8139-runtime-service-probe-check.ps1
-
-      - name: Bare-metal QEMU RTL8139 DHCP probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-rtl8139-dhcp-probe-check.ps1
-
-      - name: Bare-metal QEMU RTL8139 DNS probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-rtl8139-dns-probe-check.ps1
-
-      - name: Bare-metal QEMU RTL8139 gateway probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-rtl8139-gateway-probe-check.ps1
-
-      - name: Bare-metal QEMU tool exec probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-tool-exec-probe-check.ps1
-
-      - name: Bare-metal QEMU tool runtime probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-tool-runtime-probe-check.ps1
-
-      - name: Bare-metal QEMU framebuffer console probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-framebuffer-console-probe-check.ps1
-
-      - name: Bare-metal QEMU framebuffer console hires probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-framebuffer-console-probe-check.ps1 -ModeWidth 1024 -ModeHeight 768
-
-      - name: Bare-metal QEMU framebuffer console widescreen probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-framebuffer-console-probe-check.ps1 -ModeWidth 1280 -ModeHeight 720
-
-      - name: Bare-metal QEMU virtio-gpu display probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-virtio-gpu-display-probe-check.ps1
-
-      - name: Bare-metal QEMU mailbox header validation probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mailbox-header-validation-probe-check.ps1
-
-      - name: Bare-metal QEMU mailbox stale-seq probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mailbox-stale-seq-probe-check.ps1
-
-      - name: Bare-metal QEMU mailbox seq-wraparound probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mailbox-seq-wraparound-probe-check.ps1
-
-      - name: Bare-metal QEMU mailbox invalid-magic preserve-state probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mailbox-invalid-magic-preserve-state-probe-check.ps1
-
-      - name: Bare-metal QEMU mailbox invalid-api-version preserve-state probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mailbox-invalid-api-version-preserve-state-probe-check.ps1
-
-      - name: Bare-metal QEMU mailbox header ack-sequence probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mailbox-header-ack-sequence-probe-check.ps1
-
-      - name: Bare-metal QEMU mailbox header tick-batch recovery probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mailbox-header-tick-batch-recovery-probe-check.ps1
-
-      - name: Bare-metal QEMU mailbox valid recovery probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mailbox-valid-recovery-probe-check.ps1
-
-      - name: Bare-metal QEMU mailbox stale-seq preserve-state probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mailbox-stale-seq-preserve-state-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mailbox stale-seq baseline probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mailbox-stale-seq-baseline-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mailbox stale-seq first-state probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mailbox-stale-seq-first-state-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mailbox stale-seq stale-preserve probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mailbox-stale-seq-stale-preserve-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mailbox stale-seq fresh-recovery state probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mailbox-stale-seq-fresh-recovery-state-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mailbox stale-seq final mailbox state probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mailbox-stale-seq-final-mailbox-state-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mailbox seq-wraparound recovery probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mailbox-seq-wraparound-recovery-probe-check.ps1
-
-      - name: Bare-metal QEMU mailbox seq-wraparound baseline probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mailbox-seq-wraparound-baseline-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mailbox seq-wraparound pre-wrap state probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mailbox-seq-wraparound-pre-wrap-state-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mailbox seq-wraparound pre-wrap mailbox sequence probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mailbox-seq-wraparound-pre-wrap-mailbox-sequence-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mailbox seq-wraparound post-wrap state probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mailbox-seq-wraparound-post-wrap-state-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mailbox seq-wraparound post-wrap mailbox state probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mailbox-seq-wraparound-post-wrap-mailbox-state-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU feature flags tick batch probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-feature-flags-tick-batch-probe-check.ps1
-
-      - name: Bare-metal QEMU feature-flags tick-batch baseline probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-feature-flags-tick-batch-baseline-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU feature-flags tick-batch valid-update probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-feature-flags-tick-batch-valid-update-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU feature-flags tick-batch invalid-preserve probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-feature-flags-tick-batch-invalid-preserve-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU feature-flags tick-batch mailbox-state probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-feature-flags-tick-batch-mailbox-state-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU feature-flags tick-batch state-preserve probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-feature-flags-tick-batch-state-preserve-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU descriptor bootdiag probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-descriptor-bootdiag-probe-check.ps1
-      - name: Bare-metal QEMU descriptor bootdiag baseline probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-descriptor-bootdiag-baseline-probe-check.ps1 -SkipBuild
-      - name: Bare-metal QEMU descriptor bootdiag reset-capture probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-descriptor-bootdiag-reset-capture-probe-check.ps1 -SkipBuild
-      - name: Bare-metal QEMU descriptor bootdiag set-init probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-descriptor-bootdiag-set-init-probe-check.ps1 -SkipBuild
-      - name: Bare-metal QEMU descriptor bootdiag invalid-phase probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-descriptor-bootdiag-invalid-phase-probe-check.ps1 -SkipBuild
-      - name: Bare-metal QEMU descriptor bootdiag final-state probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-descriptor-bootdiag-final-state-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU PS/2 input probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-ps2-input-probe-check.ps1
-
-      - name: Bare-metal QEMU PS/2 input baseline probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-ps2-input-baseline-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU PS/2 keyboard event payload probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-ps2-keyboard-event-payload-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU PS/2 keyboard modifier queue probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-ps2-keyboard-modifier-queue-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU PS/2 mouse accumulator state probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-ps2-mouse-accumulator-state-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU PS/2 mouse packet payload probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-ps2-mouse-packet-payload-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU bootdiag history clear probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-bootdiag-history-clear-probe-check.ps1
-
-      - name: Bare-metal QEMU bootdiag history clear baseline probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-bootdiag-history-clear-baseline-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU bootdiag history clear pre-reset payloads probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-bootdiag-history-clear-pre-reset-payloads-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU bootdiag history clear post-reset state probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-bootdiag-history-clear-post-reset-state-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU bootdiag history clear command-event probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-bootdiag-history-clear-command-event-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU bootdiag history clear health-preserve probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-bootdiag-history-clear-health-preserve-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU reset-bootdiag preserve-state probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-reset-bootdiag-preserve-state-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU clear-command-history preserve-health probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-clear-command-history-preserve-health-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU clear-health-history preserve-command probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-clear-health-history-preserve-command-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU descriptor table content probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-descriptor-table-content-probe-check.ps1
-
-      - name: Bare-metal QEMU descriptor table content baseline probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-descriptor-table-content-baseline-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU descriptor table content pointer metadata probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-descriptor-table-content-pointer-metadata-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU descriptor table content GDT entry fields probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-descriptor-table-content-gdt-entry-fields-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU descriptor table content IDT entry fields probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-descriptor-table-content-idt-entry-fields-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU descriptor table content interrupt stub mailbox probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-descriptor-table-content-interrupt-stub-mailbox-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU descriptor dispatch probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-descriptor-dispatch-probe-check.ps1
-
-      - name: Bare-metal QEMU descriptor dispatch baseline probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-descriptor-dispatch-baseline-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU descriptor dispatch telemetry probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-descriptor-dispatch-telemetry-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU descriptor dispatch aggregate-state probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-descriptor-dispatch-aggregate-state-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU descriptor dispatch interrupt-history probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-descriptor-dispatch-interrupt-history-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU descriptor dispatch exception-history-mailbox probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-descriptor-dispatch-exception-history-mailbox-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU vector counter reset probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-vector-counter-reset-probe-check.ps1
-
-      - name: Bare-metal QEMU vector counter reset baseline probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-vector-counter-reset-baseline-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU vector counter reset dirty aggregate probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-vector-counter-reset-dirty-aggregate-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU vector counter reset dirty vector table probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-vector-counter-reset-dirty-vector-table-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU reset vector counters preserve aggregate probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-reset-vector-counters-preserve-aggregate-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU reset vector counters preserve last vector probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-reset-vector-counters-preserve-last-vector-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU vector counter reset zeroed tables probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-vector-counter-reset-zeroed-tables-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU vector counter reset mailbox state probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-vector-counter-reset-mailbox-state-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU vector history overflow probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-vector-history-overflow-probe-check.ps1
-
-      - name: Bare-metal QEMU vector history overflow baseline probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-vector-history-overflow-baseline-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU vector history overflow interrupt-overflow probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-vector-history-overflow-interrupt-overflow-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU vector history overflow exception-overflow probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-vector-history-overflow-exception-overflow-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU vector history overflow vector-telemetry probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-vector-history-overflow-vector-telemetry-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU vector history overflow mailbox-state probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-vector-history-overflow-mailbox-state-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU vector history clear probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-vector-history-clear-probe-check.ps1
-
-      - name: Bare-metal QEMU vector history clear baseline probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-vector-history-clear-baseline-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU vector history clear pre-interrupt payloads probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-vector-history-clear-pre-interrupt-payloads-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU vector history clear pre-exception payload probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-vector-history-clear-pre-exception-payload-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU vector history clear interrupt-reset preserve probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-vector-history-clear-interrupt-reset-preserve-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU vector history clear exception-reset final-state probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-vector-history-clear-exception-reset-final-state-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU reset-interrupt-counters preserve-history probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-reset-interrupt-counters-preserve-history-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU reset-exception-counters preserve-history probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-reset-exception-counters-preserve-history-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU clear-interrupt-history preserve-exception probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-clear-interrupt-history-preserve-exception-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU reset-vector-counters preserve-aggregate probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-reset-vector-counters-preserve-aggregate-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU reset-vector-counters preserve-last-vector probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-reset-vector-counters-preserve-last-vector-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU command-health history probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-command-health-history-probe-check.ps1
-
-      - name: Bare-metal QEMU command-health history baseline probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-command-health-history-baseline-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU command-health history command-shape probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-command-health-history-command-shape-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU command-health history command-payloads probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-command-health-history-command-payloads-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU command-health history health-shape probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-command-health-history-health-shape-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU command-health history health-payloads probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-command-health-history-health-payloads-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU command-history overflow clear probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-command-history-overflow-clear-probe-check.ps1
-
-      - name: Bare-metal QEMU health-history overflow clear probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-health-history-overflow-clear-probe-check.ps1
-
-      - name: Bare-metal QEMU health-history overflow clear baseline probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-health-history-overflow-clear-baseline-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU health-history overflow clear overflow-window probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-health-history-overflow-clear-overflow-window-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU health-history overflow clear overflow-payloads probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-health-history-overflow-clear-overflow-payloads-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU health-history overflow clear clear-event probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-health-history-overflow-clear-clear-event-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU health-history overflow clear command-preserve probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-health-history-overflow-clear-command-preserve-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mode/boot-phase history probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-boot-phase-history-probe-check.ps1
-
-      - name: Bare-metal QEMU mode/boot-phase history baseline probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-boot-phase-history-baseline-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mode/boot-phase history mode-semantics probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-boot-phase-history-mode-semantics-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mode/boot-phase history boot-semantics probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-boot-phase-history-boot-semantics-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mode/boot-phase history mode-overflow-window probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-boot-phase-history-mode-overflow-window-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mode/boot-phase history boot-overflow-window probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-boot-phase-history-boot-overflow-window-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mode/boot-phase setter probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-boot-phase-setter-probe-check.ps1
-
-      - name: Bare-metal QEMU mode/boot-phase setter baseline probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-boot-phase-setter-baseline-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mode/boot-phase setter boot-noop-invalid probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-boot-phase-setter-boot-noop-invalid-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mode/boot-phase setter mode-invalid probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-boot-phase-setter-mode-invalid-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mode/boot-phase setter mode-history probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-boot-phase-setter-mode-history-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mode/boot-phase setter boot-history probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-boot-phase-setter-boot-history-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mode/boot-phase history clear probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-boot-phase-history-clear-probe-check.ps1
-
-      - name: Bare-metal QEMU mode/boot-phase history clear baseline probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-boot-phase-history-clear-baseline-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mode/boot-phase history clear pre-semantics probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-boot-phase-history-clear-pre-semantics-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mode/boot-phase history clear mode-collapse preserve-boot probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-boot-phase-history-clear-mode-collapse-preserve-boot-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mode/boot-phase history clear boot-collapse probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-boot-phase-history-clear-boot-collapse-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mode/boot-phase history clear restart-semantics probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-boot-phase-history-clear-restart-semantics-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mode-history overflow clear probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-history-overflow-clear-probe-check.ps1
-
-      - name: Bare-metal QEMU mode-history overflow clear baseline probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-history-overflow-clear-baseline-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mode-history overflow clear overflow-window probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-history-overflow-clear-overflow-window-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mode-history overflow clear overflow-payloads probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-history-overflow-clear-overflow-payloads-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mode-history overflow clear collapse probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-history-overflow-clear-clear-collapse-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU mode-history overflow clear restart-event probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-mode-history-overflow-clear-restart-event-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU boot-phase-history overflow clear probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-boot-phase-history-overflow-clear-probe-check.ps1
-
-      - name: Bare-metal QEMU boot-phase-history overflow clear baseline probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-boot-phase-history-overflow-clear-baseline-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU boot-phase-history overflow clear overflow-window probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-boot-phase-history-overflow-clear-overflow-window-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU boot-phase-history overflow clear overflow-payloads probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-boot-phase-history-overflow-clear-overflow-payloads-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU boot-phase-history overflow clear clear-collapse probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-boot-phase-history-overflow-clear-clear-collapse-probe-check.ps1 -SkipBuild
-
-      - name: Bare-metal QEMU boot-phase-history overflow clear restart-event probe (optional)
-        shell: pwsh
-        run: ./scripts/baremetal-qemu-boot-phase-history-overflow-clear-restart-event-probe-check.ps1 -SkipBuild
-
+        run: echo "Bare-metal QEMU coverage moved to the baremetal-qemu-groups matrix job."
       - name: Runtime smoke check (serve + rpc)
         shell: pwsh
         run: ./scripts/runtime-smoke-check.ps1 -SkipBuild
@@ -3079,6 +1976,140 @@ jobs:
       - name: Bare-metal QEMU interrupt mask exception final-state probe (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-interrupt-mask-exception-final-state-probe-check.ps1 -SkipBuild
+
+  qemu-group-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.groups.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load bare-metal QEMU group matrix
+        id: groups
+        shell: pwsh
+        run: |
+          $groups = Get-Content .github/qemu-groups/index.json -Raw | ConvertFrom-Json
+          $matrix = @{
+            include = @(
+              $groups | ForEach-Object {
+                @{
+                  id = $_.id
+                  step_count = $_.stepCount
+                }
+              }
+            )
+          } | ConvertTo-Json -Compress -Depth 6
+          "matrix=$matrix" >> $env:GITHUB_OUTPUT
+
+  baremetal-qemu-groups:
+    name: baremetal-qemu (${{ matrix.id }})
+    needs: qemu-group-matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache
+      ZIG_LOCAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix: ${{ fromJson(needs.qemu-group-matrix.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Zig (0.16.0-dev.2736+3b515fbed) primary
+        id: setup_zig_primary
+        continue-on-error: true
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0-dev.2736+3b515fbed
+          use-cache: true
+
+      - name: Setup Zig (0.16.0-dev.2736+3b515fbed) mirror fallback
+        id: setup_zig_mirror_mach
+        if: steps.setup_zig_primary.outcome == 'failure'
+        continue-on-error: true
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0-dev.2736+3b515fbed
+          mirror: https://pkg.machengine.org/zig
+          use-cache: true
+
+      - name: Setup Zig (0.16.0-dev.2736+3b515fbed) mirror fallback (ziglang.org)
+        if: steps.setup_zig_primary.outcome == 'failure' && steps.setup_zig_mirror_mach.outcome == 'failure'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0-dev.2736+3b515fbed
+          mirror: https://ziglang.org/builds
+          use-cache: true
+
+      - name: Export pinned Zig for bare-metal QEMU group
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIG_BIN="$(command -v zig)"
+          echo "OPENCLAW_ZIG_BIN=${ZIG_BIN}" >> "$GITHUB_ENV"
+          echo "BAREMETAL_ZIG_BIN=${ZIG_BIN}" >> "$GITHUB_ENV"
+
+      - name: Bare-metal Zig version
+        shell: pwsh
+        run: |
+          Write-Output "BAREMETAL_ZIG_BIN=$env:BAREMETAL_ZIG_BIN"
+          & $env:OPENCLAW_ZIG_BIN version
+
+      - name: Install optional bare-metal runner prerequisites (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 gdb binutils nasm clang lld
+          PWSH_BIN="$(command -v pwsh || true)"
+          if [[ -z "${PWSH_BIN}" ]]; then
+            echo "pwsh is not available on PATH"
+            exit 1
+          fi
+          if ! command -v powershell >/dev/null 2>&1; then
+            sudo ln -sf "${PWSH_BIN}" /usr/local/bin/powershell
+          fi
+          if ! command -v powershell.exe >/dev/null 2>&1; then
+            sudo ln -sf "${PWSH_BIN}" /usr/local/bin/powershell.exe
+          fi
+
+      - name: Report optional bare-metal runner prerequisites (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          for tool in pwsh powershell powershell.exe qemu-system-x86_64 qemu-system-i386 gdb nm readelf nasm clang lld; do
+            if command -v "${tool}" >/dev/null 2>&1; then
+              printf '%s=%s\n' "${tool}" "$(command -v "${tool}")"
+            else
+              printf '%s=MISSING\n' "${tool}"
+            fi
+          done
+          COMPILER_RT_PATH=""
+          for cache_root in "${ZIG_GLOBAL_CACHE_DIR}" "${ZIG_LOCAL_CACHE_DIR}"; do
+            if [[ -d "${cache_root}/o" ]]; then
+              COMPILER_RT_PATH="$(find "${cache_root}/o" -name libcompiler_rt.a -print -quit 2>/dev/null || true)"
+            fi
+            if [[ -n "${COMPILER_RT_PATH}" ]]; then
+              break
+            fi
+          done
+          if [[ -n "${COMPILER_RT_PATH}" ]]; then
+            printf 'libcompiler_rt.a=%s\n' "${COMPILER_RT_PATH}"
+          else
+            printf 'libcompiler_rt.a=MISSING\n'
+          fi
+          pwsh -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion'
+
+      - name: Execute bare-metal QEMU family group (${{ matrix.step_count }} steps)
+        shell: pwsh
+        run: ./scripts/run-baremetal-qemu-ci-group.ps1 -Group '${{ matrix.id }}'
 
   cross-targets:
     runs-on: ubuntu-latest

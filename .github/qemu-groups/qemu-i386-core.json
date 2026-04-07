@@ -1,0 +1,34 @@
+[
+  {
+    "name": "Bare-metal QEMU i386 smoke check (optional)",
+    "run": "./scripts/baremetal-qemu-i386-smoke-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 platform probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-platform-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 platform probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-platform-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware platform probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-platform-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware platform probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-platform-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware AP-startup probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-ap-startup-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU i386 firmware AP-startup probe 1GiB (optional)",
+    "run": "./scripts/baremetal-qemu-i386-firmware-ap-startup-probe-check.ps1 -MemoryMiB 1024 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU i386 SMP probe (optional)",
+    "run": "./scripts/baremetal-qemu-i386-smp-probe-check.ps1"
+  }
+]

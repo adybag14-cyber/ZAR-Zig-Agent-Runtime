@@ -1,0 +1,338 @@
+[
+  {
+    "name": "Bare-metal QEMU wake queue selective probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-selective-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue selective baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-selective-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue selective reason-drain probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-selective-reason-drain-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue selective vector-drain probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-selective-vector-drain-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue selective reason-vector-drain probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-selective-reason-vector-drain-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue selective before-tick final probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-selective-before-tick-final-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue selective overflow probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-selective-overflow-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue selective overflow baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-selective-overflow-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue selective overflow vector-drain probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-selective-overflow-vector-drain-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue selective overflow vector-survivors probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-selective-overflow-vector-survivors-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue selective overflow reason-vector-drain probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-selective-overflow-reason-vector-drain-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue selective overflow reason-vector-survivors probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-selective-overflow-reason-vector-survivors-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue before tick overflow probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-before-tick-overflow-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue before tick overflow baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-before-tick-overflow-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue before tick overflow first-cutoff probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-before-tick-overflow-first-cutoff-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue before tick overflow first-survivor-window probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-before-tick-overflow-first-survivor-window-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue before tick overflow second-cutoff probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-before-tick-overflow-second-cutoff-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue before tick overflow final-empty-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-before-tick-overflow-final-empty-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue before tick probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-before-tick-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue before tick baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-before-tick-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue before tick first-cutoff probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-before-tick-first-cutoff-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue before tick bounded-drain probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-before-tick-bounded-drain-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue before tick notfound probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-before-tick-notfound-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue before tick notfound-preserve-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-before-tick-notfound-preserve-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue reason overflow probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-reason-overflow-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue reason-overflow baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-reason-overflow-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue reason-overflow manual-drain probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-reason-overflow-manual-drain-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue reason-overflow manual-survivors probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-reason-overflow-manual-survivors-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue reason-overflow interrupt-drain probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-reason-overflow-interrupt-drain-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue reason-overflow interrupt-survivors probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-reason-overflow-interrupt-survivors-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue reason pop probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-reason-pop-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue reason-pop baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-reason-pop-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue reason-pop first-match probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-reason-pop-first-match-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue reason-pop survivor-order probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-reason-pop-survivor-order-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue reason-pop invalid-reason probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-reason-pop-invalid-reason-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue reason-pop invalid-preserve-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-reason-pop-invalid-preserve-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue FIFO probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-fifo-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue FIFO baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-fifo-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue FIFO first-pop probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-fifo-first-pop-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue FIFO survivor probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-fifo-survivor-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue FIFO drain-empty probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-fifo-drain-empty-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue FIFO notfound-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-fifo-notfound-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue summary age probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-summary-age-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue summary/age baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-summary-age-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue summary/age pre-summary probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-summary-age-pre-summary-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue summary/age pre-age probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-summary-age-pre-age-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue summary/age post-summary probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-summary-age-post-summary-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue summary/age post-age probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-summary-age-post-age-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue count snapshot probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-count-snapshot-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue count-snapshot baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-count-snapshot-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue count-snapshot query1 probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-count-snapshot-query1-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue count-snapshot query2 probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-count-snapshot-query2-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue count-snapshot query3 probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-count-snapshot-query3-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue count-snapshot nonmutating-read probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-count-snapshot-nonmutating-read-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue batch pop probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-batch-pop-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue batch-pop overflow-baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-batch-pop-overflow-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue batch-pop survivor-pair probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-batch-pop-survivor-pair-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue batch-pop single-survivor probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-batch-pop-single-survivor-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue batch-pop drain-empty probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-batch-pop-drain-empty-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue batch-pop refill-reuse probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-batch-pop-refill-reuse-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue vector pop probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-vector-pop-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue vector-pop baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-vector-pop-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue vector-pop first-match probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-vector-pop-first-match-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue vector-pop survivor-order probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-vector-pop-survivor-order-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue vector-pop invalid-vector probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-vector-pop-invalid-vector-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue vector-pop invalid-preserve-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-vector-pop-invalid-preserve-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue reason-vector pop probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-reason-vector-pop-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue reason-vector pop baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-reason-vector-pop-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue reason-vector pop first-match probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-reason-vector-pop-first-match-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue reason-vector pop survivor-order probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-reason-vector-pop-survivor-order-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue reason-vector pop invalid-pair probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-reason-vector-pop-invalid-pair-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue reason-vector pop invalid-preserve-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-reason-vector-pop-invalid-preserve-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue overflow probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-overflow-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue overflow baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-overflow-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue overflow shape probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-overflow-shape-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue overflow oldest-entry probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-overflow-oldest-entry-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue overflow newest-entry probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-overflow-newest-entry-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue overflow mailbox-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-overflow-mailbox-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue clear probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-clear-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue clear baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-clear-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue clear collapse probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-clear-collapse-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue clear pending-reset probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-clear-pending-reset-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue clear reuse-shape probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-clear-reuse-shape-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU wake queue clear reuse-payload probe (optional)",
+    "run": "./scripts/baremetal-qemu-wake-queue-clear-reuse-payload-probe-check.ps1 -SkipBuild"
+  }
+]

@@ -1,0 +1,338 @@
+[
+  {
+    "name": "Bare-metal QEMU interrupt timeout probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt timeout arm-preservation probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-arm-preservation-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt timeout interrupt-wake-payload probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-interrupt-wake-payload-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt timeout wait-clear probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-wait-clear-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt timeout no-stale-timer probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-no-stale-timer-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt timeout telemetry-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-telemetry-preserve-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt manual wake probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-manual-wake-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt manual wake baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-manual-wake-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt manual wake wait-clear probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-manual-wake-wait-clear-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt manual wake manual-wake-payload probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-manual-wake-manual-wake-payload-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt manual wake no-second-wake probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-manual-wake-no-second-wake-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt manual wake telemetry-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-manual-wake-telemetry-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt timeout manual wake probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-manual-wake-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt timeout manual wake arm-preservation probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-manual-wake-arm-preservation-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt timeout manual wake queue-delivery probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-manual-wake-queue-delivery-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt timeout manual wake wait-clear probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-manual-wake-wait-clear-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt timeout manual wake no-stale-timer probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-manual-wake-no-stale-timer-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt timeout manual wake telemetry-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-manual-wake-telemetry-preserve-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt timeout timer probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-timer-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt timeout timer arm-preservation probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-timer-arm-preservation-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt timeout timer deadline-blocked probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-timer-deadline-blocked-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt timeout timer wake-payload probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-timer-wake-payload-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt timeout timer no-duplicate-wake probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-timer-no-duplicate-wake-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt timeout timer telemetry-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-timer-telemetry-preserve-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU masked interrupt timeout probe (optional)",
+    "run": "./scripts/baremetal-qemu-masked-interrupt-timeout-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU masked interrupt-timeout mask-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-masked-interrupt-timeout-mask-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU masked interrupt-timeout no-wake probe (optional)",
+    "run": "./scripts/baremetal-qemu-masked-interrupt-timeout-no-wake-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU masked interrupt-timeout wait-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-masked-interrupt-timeout-wait-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU masked interrupt-timeout timer-fallback probe (optional)",
+    "run": "./scripts/baremetal-qemu-masked-interrupt-timeout-timer-fallback-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU masked interrupt-timeout telemetry-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-masked-interrupt-timeout-telemetry-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt timeout clamp probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-clamp-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt-timeout clamp baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-clamp-baseline-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt-timeout clamp arm-preservation probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-clamp-arm-preservation-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt-timeout clamp saturated-boundary probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-clamp-saturated-boundary-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt-timeout clamp wake-payload probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-clamp-wake-payload-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt-timeout clamp final-telemetry probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-clamp-final-telemetry-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt filter probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-filter-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt filter any baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-filter-any-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt filter any wake payload probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-filter-any-wake-payload-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt filter vector blocked nonmatch probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-filter-vector-blocked-nonmatch-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt filter vector match wake payload probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-filter-vector-match-wake-payload-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt filter invalid vector preserve-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-filter-invalid-vector-preserve-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt-timeout disable-enable probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-disable-enable-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt-timeout disable-enable arm-preservation probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-disable-enable-arm-preservation-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt-timeout disable-enable deadline-hold probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-disable-enable-deadline-hold-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt-timeout disable-enable paused-window probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-disable-enable-paused-window-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt-timeout disable-enable deferred-timer-wake probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-disable-enable-deferred-timer-wake-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt-timeout disable-enable telemetry-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-disable-enable-telemetry-preserve-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt-timeout disable-reenable timer probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-disable-reenable-timer-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt-timeout disable-interrupt probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt-timeout disable-interrupt immediate-wake probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-immediate-wake-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt-timeout disable-interrupt timeout-clear probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-timeout-clear-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt-timeout disable-interrupt disabled-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-disabled-state-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt-timeout disable-interrupt reenable-no-stale-timer probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-reenable-no-stale-timer-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt-timeout disable-interrupt telemetry-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-telemetry-preserve-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt-timeout disable-interrupt recovery probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-timeout-disable-interrupt-recovery-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask profile probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-profile-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask profile external-all probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-profile-external-all-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask profile unmask-recovery probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-profile-unmask-recovery-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask profile custom-profile probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-profile-custom-profile-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask profile reset-ignored-counts probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-profile-reset-ignored-counts-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask control probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-control-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask control baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-control-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask control unmask-delivery probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-control-unmask-delivery-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask control invalid-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-control-invalid-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask control reset-ignored probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-control-reset-ignored-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask control final-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-control-final-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask clear-all recovery probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask clear-all recovery baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask clear-all recovery clear-collapse probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-clear-collapse-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask clear-all recovery wake-delivery probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-wake-delivery-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask clear-all recovery history-payload probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-history-payload-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask clear-all recovery mailbox-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-clear-all-recovery-mailbox-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask custom-profile preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-custom-profile-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask invalid-input preserve-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-invalid-input-preserve-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask reset-ignored preserve-mask probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-reset-ignored-preserve-mask-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask profile boundary probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-profile-boundary-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask profile none-clear-all probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-profile-none-clear-all-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask exception probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-exception-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask exception baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-exception-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask exception masked-interrupt blocked probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-exception-masked-interrupt-blocked-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask exception-delivery probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-exception-delivery-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask exception history-capture probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-exception-history-capture-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU interrupt mask exception final-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-interrupt-mask-exception-final-state-probe-check.ps1 -SkipBuild"
+  }
+]

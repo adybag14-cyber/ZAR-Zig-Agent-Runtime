@@ -1,0 +1,22 @@
+[
+  {
+    "name": "Bare-metal QEMU smoke check (optional)",
+    "run": "./scripts/baremetal-qemu-smoke-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU runtime probe (optional)",
+    "run": "./scripts/baremetal-qemu-runtime-oc-tick-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU command-loop probe (optional)",
+    "run": "./scripts/baremetal-qemu-command-loop-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU tool exec probe (optional)",
+    "run": "./scripts/baremetal-qemu-tool-exec-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU tool runtime probe (optional)",
+    "run": "./scripts/baremetal-qemu-tool-runtime-probe-check.ps1"
+  }
+]

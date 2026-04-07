@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Bare-metal QEMU feature flags tick batch probe (optional)",
+    "run": "./scripts/baremetal-qemu-feature-flags-tick-batch-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU feature-flags tick-batch baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-feature-flags-tick-batch-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU feature-flags tick-batch valid-update probe (optional)",
+    "run": "./scripts/baremetal-qemu-feature-flags-tick-batch-valid-update-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU feature-flags tick-batch invalid-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-feature-flags-tick-batch-invalid-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU feature-flags tick-batch mailbox-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-feature-flags-tick-batch-mailbox-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU feature-flags tick-batch state-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-feature-flags-tick-batch-state-preserve-probe-check.ps1 -SkipBuild"
+  }
+]

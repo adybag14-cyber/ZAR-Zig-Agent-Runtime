@@ -1,0 +1,334 @@
+[
+  {
+    "name": "Bare-metal QEMU timer wake probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-wake-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer wake baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-wake-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer wake task-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-wake-task-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer wake timer-telemetry probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-wake-timer-telemetry-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer wake wake-payload probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-wake-wake-payload-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer wake mailbox-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-wake-mailbox-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer quantum probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-quantum-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer quantum baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-quantum-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer quantum boundary probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-quantum-boundary-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer quantum preboundary blocked probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-quantum-preboundary-blocked-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer quantum wake payload probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-quantum-wake-payload-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer quantum final state probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-quantum-final-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer cancel task probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-cancel-task-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer cancel task baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-cancel-task-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer cancel task cancel-collapse probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-cancel-task-cancel-collapse-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer cancel task canceled-entry preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-cancel-task-canceled-entry-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer cancel task second-cancel notfound probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-cancel-task-second-cancel-notfound-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer cancel task zero-wake telemetry probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-cancel-task-zero-wake-telemetry-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer cancel task interrupt-timeout probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer cancel task interrupt-timeout interrupt-recovery probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-interrupt-recovery-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer cancel task interrupt-timeout arm-preservation probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-arm-preservation-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer cancel task interrupt-timeout cancel-clear probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-cancel-clear-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer cancel task interrupt-timeout no-stale-timeout probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-no-stale-timeout-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer cancel task interrupt-timeout telemetry-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-cancel-task-interrupt-timeout-telemetry-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer cancel probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-cancel-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer cancel baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-cancel-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer cancel collapse probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-cancel-cancel-collapse-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer cancel canceled-entry preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-cancel-canceled-entry-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer cancel second-cancel notfound probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-cancel-second-cancel-notfound-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer cancel zero-wake telemetry probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-cancel-zero-wake-telemetry-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer pressure probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-pressure-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer pressure baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-pressure-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer pressure cancel-collapse probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-pressure-cancel-collapse-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer pressure reuse-slot probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-pressure-reuse-slot-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer pressure reuse-next-fire probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-pressure-reuse-next-fire-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer pressure quiet-telemetry probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-pressure-quiet-telemetry-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer reset recovery probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-reset-recovery-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer reset recovery baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-reset-recovery-baseline-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer reset recovery post-reset collapse probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-reset-recovery-post-reset-collapse-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer reset recovery wait-isolation probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-reset-recovery-wait-isolation-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer reset recovery manual-wake payload probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-reset-recovery-manual-wake-payload-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer reset recovery interrupt-rearm probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-reset-recovery-interrupt-rearm-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU periodic timer probe (optional)",
+    "run": "./scripts/baremetal-qemu-periodic-timer-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU periodic timer baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-periodic-timer-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU periodic timer first-fire probe (optional)",
+    "run": "./scripts/baremetal-qemu-periodic-timer-first-fire-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU periodic timer paused-window probe (optional)",
+    "run": "./scripts/baremetal-qemu-periodic-timer-paused-window-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU periodic timer resumed-cadence probe (optional)",
+    "run": "./scripts/baremetal-qemu-periodic-timer-resumed-cadence-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU periodic timer telemetry-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-periodic-timer-telemetry-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU periodic timer clamp probe (optional)",
+    "run": "./scripts/baremetal-qemu-periodic-timer-clamp-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU periodic timer clamp baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-periodic-timer-clamp-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU periodic timer clamp first-fire probe (optional)",
+    "run": "./scripts/baremetal-qemu-periodic-timer-clamp-first-fire-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU periodic timer clamp saturated-rearm probe (optional)",
+    "run": "./scripts/baremetal-qemu-periodic-timer-clamp-saturated-rearm-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU periodic timer clamp post-wrap hold probe (optional)",
+    "run": "./scripts/baremetal-qemu-periodic-timer-clamp-post-wrap-hold-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU periodic timer clamp telemetry-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-periodic-timer-clamp-telemetry-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU periodic interrupt probe (optional)",
+    "run": "./scripts/baremetal-qemu-periodic-interrupt-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU periodic interrupt baseline fire probe (optional)",
+    "run": "./scripts/baremetal-qemu-periodic-interrupt-baseline-fire-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU periodic interrupt interrupt-wake-payload probe (optional)",
+    "run": "./scripts/baremetal-qemu-periodic-interrupt-interrupt-wake-payload-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU periodic interrupt periodic-cadence probe (optional)",
+    "run": "./scripts/baremetal-qemu-periodic-interrupt-periodic-cadence-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU periodic interrupt cancel-no-late-timeout probe (optional)",
+    "run": "./scripts/baremetal-qemu-periodic-interrupt-cancel-no-late-timeout-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU periodic interrupt telemetry-ordering probe (optional)",
+    "run": "./scripts/baremetal-qemu-periodic-interrupt-telemetry-ordering-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU timer-disable interrupt probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-disable-interrupt-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer-disable interrupt immediate-wake probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-disable-interrupt-immediate-wake-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer-disable interrupt arm-preservation probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-disable-interrupt-arm-preservation-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer-disable interrupt paused-window probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-disable-interrupt-paused-window-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer-disable interrupt deferred-timer-wake probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-disable-interrupt-deferred-timer-wake-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer-disable interrupt telemetry-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-disable-interrupt-telemetry-preserve-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer-disable reenable probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-disable-reenable-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer-disable paused-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-disable-paused-state-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer-disable reenable one-shot recovery probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-disable-reenable-oneshot-recovery-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer-disable reenable arm-preservation probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-disable-reenable-arm-preservation-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer-disable reenable deadline-hold probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-disable-reenable-deadline-hold-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer-disable reenable deferred-wake-order probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-disable-reenable-deferred-wake-order-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer-disable reenable wake-payload probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-disable-reenable-wake-payload-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer-disable reenable dispatch-drain probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-disable-reenable-dispatch-drain-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer-reset wait-kind isolation probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-reset-wait-kind-isolation-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer-reset pure-wait recovery probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-reset-pure-wait-recovery-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU timer-reset timeout-interrupt recovery probe (optional)",
+    "run": "./scripts/baremetal-qemu-timer-reset-timeout-interrupt-recovery-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU manual wait interrupt probe (optional)",
+    "run": "./scripts/baremetal-qemu-manual-wait-interrupt-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU manual wait interrupt baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-manual-wait-interrupt-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU manual wait interrupt wait-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-manual-wait-interrupt-wait-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU manual wait interrupt interrupt-no-wake probe (optional)",
+    "run": "./scripts/baremetal-qemu-manual-wait-interrupt-interrupt-no-wake-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU manual wait interrupt manual-wake payload probe (optional)",
+    "run": "./scripts/baremetal-qemu-manual-wait-interrupt-manual-wake-payload-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU manual wait interrupt final-telemetry probe (optional)",
+    "run": "./scripts/baremetal-qemu-manual-wait-interrupt-final-telemetry-probe-check.ps1 -SkipBuild"
+  }
+]

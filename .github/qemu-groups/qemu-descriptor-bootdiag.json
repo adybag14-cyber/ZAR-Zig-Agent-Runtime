@@ -1,0 +1,102 @@
+[
+  {
+    "name": "Bare-metal QEMU descriptor bootdiag probe (optional)",
+    "run": "./scripts/baremetal-qemu-descriptor-bootdiag-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU descriptor bootdiag baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-descriptor-bootdiag-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU descriptor bootdiag reset-capture probe (optional)",
+    "run": "./scripts/baremetal-qemu-descriptor-bootdiag-reset-capture-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU descriptor bootdiag set-init probe (optional)",
+    "run": "./scripts/baremetal-qemu-descriptor-bootdiag-set-init-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU descriptor bootdiag invalid-phase probe (optional)",
+    "run": "./scripts/baremetal-qemu-descriptor-bootdiag-invalid-phase-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU descriptor bootdiag final-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-descriptor-bootdiag-final-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU bootdiag history clear probe (optional)",
+    "run": "./scripts/baremetal-qemu-bootdiag-history-clear-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU bootdiag history clear baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-bootdiag-history-clear-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU bootdiag history clear pre-reset payloads probe (optional)",
+    "run": "./scripts/baremetal-qemu-bootdiag-history-clear-pre-reset-payloads-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU bootdiag history clear post-reset state probe (optional)",
+    "run": "./scripts/baremetal-qemu-bootdiag-history-clear-post-reset-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU bootdiag history clear command-event probe (optional)",
+    "run": "./scripts/baremetal-qemu-bootdiag-history-clear-command-event-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU bootdiag history clear health-preserve probe (optional)",
+    "run": "./scripts/baremetal-qemu-bootdiag-history-clear-health-preserve-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU reset-bootdiag preserve-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-reset-bootdiag-preserve-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU descriptor table content probe (optional)",
+    "run": "./scripts/baremetal-qemu-descriptor-table-content-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU descriptor table content baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-descriptor-table-content-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU descriptor table content pointer metadata probe (optional)",
+    "run": "./scripts/baremetal-qemu-descriptor-table-content-pointer-metadata-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU descriptor table content GDT entry fields probe (optional)",
+    "run": "./scripts/baremetal-qemu-descriptor-table-content-gdt-entry-fields-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU descriptor table content IDT entry fields probe (optional)",
+    "run": "./scripts/baremetal-qemu-descriptor-table-content-idt-entry-fields-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU descriptor table content interrupt stub mailbox probe (optional)",
+    "run": "./scripts/baremetal-qemu-descriptor-table-content-interrupt-stub-mailbox-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU descriptor dispatch probe (optional)",
+    "run": "./scripts/baremetal-qemu-descriptor-dispatch-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU descriptor dispatch baseline probe (optional)",
+    "run": "./scripts/baremetal-qemu-descriptor-dispatch-baseline-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU descriptor dispatch telemetry probe (optional)",
+    "run": "./scripts/baremetal-qemu-descriptor-dispatch-telemetry-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU descriptor dispatch aggregate-state probe (optional)",
+    "run": "./scripts/baremetal-qemu-descriptor-dispatch-aggregate-state-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU descriptor dispatch interrupt-history probe (optional)",
+    "run": "./scripts/baremetal-qemu-descriptor-dispatch-interrupt-history-probe-check.ps1 -SkipBuild"
+  },
+  {
+    "name": "Bare-metal QEMU descriptor dispatch exception-history-mailbox probe (optional)",
+    "run": "./scripts/baremetal-qemu-descriptor-dispatch-exception-history-mailbox-probe-check.ps1 -SkipBuild"
+  }
+]

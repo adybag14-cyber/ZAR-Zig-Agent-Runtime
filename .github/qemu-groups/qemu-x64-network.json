@@ -1,0 +1,118 @@
+[
+  {
+    "name": "Bare-metal QEMU virtio-net probe (optional)",
+    "run": "./scripts/baremetal-qemu-virtio-net-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU virtio-net ARP probe (optional)",
+    "run": "./scripts/baremetal-qemu-virtio-net-arp-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU virtio-net IPv4 probe (optional)",
+    "run": "./scripts/baremetal-qemu-virtio-net-ipv4-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU virtio-net UDP probe (optional)",
+    "run": "./scripts/baremetal-qemu-virtio-net-udp-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU virtio-net DHCP probe (optional)",
+    "run": "./scripts/baremetal-qemu-virtio-net-dhcp-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU virtio-net DNS probe (optional)",
+    "run": "./scripts/baremetal-qemu-virtio-net-dns-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU virtio-net TCP probe (optional)",
+    "run": "./scripts/baremetal-qemu-virtio-net-tcp-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU virtio-net tool-service probe (optional)",
+    "run": "./scripts/baremetal-qemu-virtio-net-tool-service-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU virtio-net HTTP POST probe (optional)",
+    "run": "./scripts/baremetal-qemu-virtio-net-http-post-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU virtio-net HTTPS POST probe (optional)",
+    "run": "./scripts/baremetal-qemu-virtio-net-https-post-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU RTL8139 probe (optional)",
+    "run": "./scripts/baremetal-qemu-rtl8139-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU E1000 probe (optional)",
+    "run": "./scripts/baremetal-qemu-e1000-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU E1000 ARP probe (optional)",
+    "run": "./scripts/baremetal-qemu-e1000-arp-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU E1000 IPv4 probe (optional)",
+    "run": "./scripts/baremetal-qemu-e1000-ipv4-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU E1000 UDP probe (optional)",
+    "run": "./scripts/baremetal-qemu-e1000-udp-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU E1000 TCP probe (optional)",
+    "run": "./scripts/baremetal-qemu-e1000-tcp-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU E1000 DHCP probe (optional)",
+    "run": "./scripts/baremetal-qemu-e1000-dhcp-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU E1000 DNS probe (optional)",
+    "run": "./scripts/baremetal-qemu-e1000-dns-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU E1000 tool-service probe (optional)",
+    "run": "./scripts/baremetal-qemu-e1000-tool-service-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU E1000 HTTP POST probe (optional)",
+    "run": "./scripts/baremetal-qemu-e1000-http-post-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU E1000 HTTPS POST probe (optional)",
+    "run": "./scripts/baremetal-qemu-e1000-https-post-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU RTL8139 ARP probe (optional)",
+    "run": "./scripts/baremetal-qemu-rtl8139-arp-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU RTL8139 IPv4 probe (optional)",
+    "run": "./scripts/baremetal-qemu-rtl8139-ipv4-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU RTL8139 UDP probe (optional)",
+    "run": "./scripts/baremetal-qemu-rtl8139-udp-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU RTL8139 TCP probe (optional)",
+    "run": "./scripts/baremetal-qemu-rtl8139-tcp-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU RTL8139 runtime service probe (optional)",
+    "run": "./scripts/baremetal-qemu-rtl8139-runtime-service-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU RTL8139 DHCP probe (optional)",
+    "run": "./scripts/baremetal-qemu-rtl8139-dhcp-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU RTL8139 DNS probe (optional)",
+    "run": "./scripts/baremetal-qemu-rtl8139-dns-probe-check.ps1"
+  },
+  {
+    "name": "Bare-metal QEMU RTL8139 gateway probe (optional)",
+    "run": "./scripts/baremetal-qemu-rtl8139-gateway-probe-check.ps1"
+  }
+]
