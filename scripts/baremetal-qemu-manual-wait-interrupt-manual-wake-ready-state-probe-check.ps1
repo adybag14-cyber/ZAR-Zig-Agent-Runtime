@@ -4,27 +4,30 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-manual-wait-interrupt-probe-check.ps1"
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
 function Extract-IntValue {
     param([string] $Text, [string] $Name)
-    $match = [regex]::Match($Text, '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$')
+    $match = [regex]::Match($Text, '(?m)^' + [regex]::Escape($Name) + '=(-?\\d+)\\r?$')
     if (-not $match.Success) { return $null }
     return [int64]::Parse($match.Groups[1].Value)
 }
 
-$probeOutput = if ($SkipBuild) { & $probe -SkipBuild 2>&1 } else { & $probe 2>&1 }
-$probeExitCode = $LASTEXITCODE
-$probeText = ($probeOutput | Out-String)
-$probeOutput | Write-Output
-if ($probeText -match '(?m)^BAREMETAL_QEMU_MANUAL_WAIT_INTERRUPT_PROBE=skipped\r?$') {
-    Write-Output 'BAREMETAL_QEMU_MANUAL_WAIT_INTERRUPT_MANUAL_WAKE_READY_STATE_PROBE=skipped'
-    Write-Output 'BAREMETAL_QEMU_MANUAL_WAIT_INTERRUPT_MANUAL_WAKE_READY_STATE_PROBE_SOURCE=baremetal-qemu-manual-wait-interrupt-probe-check.ps1'
-    exit 0
-}
-if ($probeExitCode -ne 0) {
-    throw "Underlying manual-wait interrupt probe failed with exit code $probeExitCode"
-}
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_MANUAL_WAIT_INTERRUPT_PROBE=skipped\\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_MANUAL_WAIT_INTERRUPT_MANUAL_WAKE_READY_STATE_PROBE' `
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_MANUAL_WAIT_INTERRUPT_MANUAL_WAKE_READY_STATE_PROBE_SOURCE' `
+    -SkippedSourceValue 'baremetal-qemu-manual-wait-interrupt-probe-check.ps1' `
+    -FailureLabel 'manual-wait interrupt' `
+    -EchoOnSuccess:$true `
+    -EchoOnSkip:$true `
+    -EchoOnFailure:$true `
+    -EmitSkippedSourceReceipt:$true
+$probeText = $probeState.Text
 
 $ack = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_MANUAL_WAIT_INTERRUPT_ACK'
 $lastOpcode = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_MANUAL_WAIT_INTERRUPT_LAST_OPCODE'

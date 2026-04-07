@@ -6,32 +6,20 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-interrupt-mask-profile-probe-check.ps1"
 if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
-function Extract-IntValue {
-    param([string] $Text, [string] $Name)
-    $match = [regex]::Match($Text, '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$')
-    if (-not $match.Success) { return $null }
-    return [int64]::Parse($match.Groups[1].Value)
-}
-
-$invoke = @{ TimeoutSeconds = $TimeoutSeconds; GdbPort = $GdbPort }
-if ($SkipBuild) { $invoke.SkipBuild = $true }
-
-$probeOutput = & $probe @invoke 2>&1
-$probeExitCode = $LASTEXITCODE
-$probeText = ($probeOutput | Out-String)
-if ($probeText -match '(?m)^BAREMETAL_QEMU_INTERRUPT_MASK_PROFILE_PROBE=skipped\r?$') {
-    if ($probeText) { Write-Output $probeText.TrimEnd() }
-    Write-Output 'BAREMETAL_QEMU_INTERRUPT_MASK_PROFILE_UNMASK_RECOVERY_PROBE=skipped'
-    Write-Output 'BAREMETAL_QEMU_INTERRUPT_MASK_PROFILE_UNMASK_RECOVERY_PROBE_SOURCE=baremetal-qemu-interrupt-mask-profile-probe-check.ps1'
-    exit 0
-}
-if ($probeExitCode -ne 0) {
-    if ($probeText) { Write-Output $probeText.TrimEnd() }
-    throw "Underlying interrupt-mask-profile probe failed with exit code $probeExitCode"
-}
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_INTERRUPT_MASK_PROFILE_PROBE=skipped\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_INTERRUPT_MASK_PROFILE_UNMASK_RECOVERY_PROBE' `
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_INTERRUPT_MASK_PROFILE_UNMASK_RECOVERY_PROBE_SOURCE' `
+    -SkippedSourceValue 'baremetal-qemu-interrupt-mask-profile-probe-check.ps1' `
+    -FailureLabel 'Interrupt mask profile prerequisite' `
+    -InvokeArgs @{ TimeoutSeconds = $TimeoutSeconds; GdbPort = $GdbPort }
+$probeText = $probeState.Text
 
 $task0State = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_INTERRUPT_MASK_PROFILE_PROBE_UNMASK_TASK0_STATE'
 $wakeQueueCount = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_INTERRUPT_MASK_PROFILE_PROBE_UNMASK_WAKE_QUEUE_COUNT'

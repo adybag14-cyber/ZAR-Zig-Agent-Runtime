@@ -4,27 +4,28 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-descriptor-dispatch-probe-check.ps1"
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
+
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_DESCRIPTOR_DISPATCH_PROBE=skipped\\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_DESCRIPTOR_DISPATCH_BASELINE_PROBE' `
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_DESCRIPTOR_DISPATCH_BASELINE_PROBE_SOURCE' `
+    -SkippedSourceValue 'baremetal-qemu-descriptor-dispatch-probe-check.ps1' `
+    -FailureLabel 'descriptor-dispatch'
+$probeText = $probeState.Text
 
 function Extract-Value {
     param([string] $Text, [string] $Name)
-    $pattern = '(?m)^' + [regex]::Escape($Name) + '=(.+)\r?$'
+    $pattern = '(?m)^' + [regex]::Escape($Name) + '=(.+)\\r?$'
     $match = [regex]::Match($Text, $pattern)
     if (-not $match.Success) { return $null }
     return $match.Groups[1].Value.Trim()
 }
 
-$probeOutput = if ($SkipBuild) { & $probe -SkipBuild 2>&1 } else { & $probe 2>&1 }
-$probeExitCode = $LASTEXITCODE
-$probeText = ($probeOutput | Out-String)
-$probeOutput | Write-Output
-if ($probeText -match 'BAREMETAL_QEMU_DESCRIPTOR_DISPATCH_PROBE=skipped') {
-    Write-Output 'BAREMETAL_QEMU_DESCRIPTOR_DISPATCH_BASELINE_PROBE=skipped'
-    exit 0
-}
-if ($probeExitCode -ne 0) {
-    throw "Underlying descriptor-dispatch probe failed with exit code $probeExitCode"
-}
 
 $artifact = Extract-Value -Text $probeText -Name 'BAREMETAL_QEMU_ARTIFACT'
 $startAddr = Extract-Value -Text $probeText -Name 'BAREMETAL_QEMU_DESCRIPTOR_DISPATCH_PROBE_START_ADDR'

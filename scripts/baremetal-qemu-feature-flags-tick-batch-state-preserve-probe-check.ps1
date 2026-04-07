@@ -6,32 +6,22 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-feature-flags-tick-batch-probe-check.ps1"
-
-function Extract-IntValue {
-    param([string] $Text, [string] $Name)
-    $pattern = '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$'
-    $match = [regex]::Match($Text, $pattern)
-    if (-not $match.Success) { return $null }
-    return [int64]::Parse($match.Groups[1].Value)
-}
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
 $invoke = @{ TimeoutSeconds = $TimeoutSeconds; GdbPort = $GdbPort }
-if ($SkipBuild) { $invoke.SkipBuild = $true }
-
-$probeOutput = & $probe @invoke 2>&1
-$probeExitCode = $LASTEXITCODE
-$probeText = ($probeOutput | Out-String)
-$probeOutput | Write-Output
-if ($probeText -match '(?m)^BAREMETAL_QEMU_FEATURE_FLAGS_TICK_BATCH_PROBE=skipped\r?$') {
-    Write-Output 'BAREMETAL_QEMU_FEATURE_FLAGS_TICK_BATCH_STATE_PRESERVE_PROBE=skipped'
-    exit 0
-}
-if ($probeExitCode -ne 0) {
-    throw "Underlying feature-flags/tick-batch probe failed with exit code $probeExitCode"
-}
-
-$expected = @{
+$probeState = Invoke-WrapperProbe 
+    -ProbePath $probe 
+    -SkipBuild:$SkipBuild 
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_FEATURE_FLAGS_TICK_BATCH_PROBE=skipped\r?$' 
+    -SkippedReceipt 'BAREMETAL_QEMU_FEATURE_FLAGS_TICK_BATCH_STATE_PRESERVE_PROBE' 
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_FEATURE_FLAGS_TICK_BATCH_STATE_PRESERVE_PROBE_SOURCE' 
+    -SkippedSourceValue 'baremetal-qemu-feature-flags-tick-batch-probe-check.ps1' 
+    -FailureLabel 'feature-flags/tick-batch' 
+    -InvokeArgs $invoke
+$probeText = $probeState.Text
+expected = @{
     'BAREMETAL_QEMU_FEATURE_FLAGS_TICK_BATCH_LAST_RESULT' = -22
     'BAREMETAL_QEMU_FEATURE_FLAGS_TICK_BATCH_TICKS' = 9
     'BAREMETAL_QEMU_FEATURE_FLAGS_TICK_BATCH_FEATURE_FLAGS' = 2774181210

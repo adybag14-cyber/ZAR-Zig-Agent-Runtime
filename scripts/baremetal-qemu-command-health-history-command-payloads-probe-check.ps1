@@ -4,29 +4,20 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-command-health-history-probe-check.ps1"
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
-function Extract-IntValue {
-    param([string] $Text, [string] $Name)
-    $pattern = '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$'
-    $match = [regex]::Match($Text, $pattern)
-    if (-not $match.Success) { return $null }
-    return [int64]::Parse($match.Groups[1].Value)
-}
-
-$probeOutput = if ($SkipBuild) { & $probe -SkipBuild 2>&1 } else { & $probe 2>&1 }
-$probeExitCode = $LASTEXITCODE
-$probeText = ($probeOutput | Out-String)
-$probeOutput | Write-Output
-if ($probeText -match 'BAREMETAL_QEMU_COMMAND_HEALTH_HISTORY_PROBE=skipped') {
-    Write-Output 'BAREMETAL_QEMU_COMMAND_HEALTH_HISTORY_COMMAND_PAYLOADS_PROBE=skipped'
-    exit 0
-}
-if ($probeExitCode -ne 0) {
-    throw "Underlying command-health history probe failed with exit code $probeExitCode"
-}
-
-$firstSeq = Extract-IntValue -Text $probeText -Name 'COMMAND_HISTORY_FIRST_SEQ'
+$probeState = Invoke-WrapperProbe 
+    -ProbePath $probe 
+    -SkipBuild:$SkipBuild 
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_COMMAND_HEALTH_HISTORY_PROBE=skipped\r?$' 
+    -SkippedReceipt 'BAREMETAL_QEMU_COMMAND_HEALTH_HISTORY_COMMAND_PAYLOADS_PROBE' 
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_COMMAND_HEALTH_HISTORY_COMMAND_PAYLOADS_PROBE_SOURCE' 
+    -SkippedSourceValue 'baremetal-qemu-command-health-history-probe-check.ps1' 
+    -FailureLabel 'command-health history'
+$probeText = $probeState.Text
+firstSeq = Extract-IntValue -Text $probeText -Name 'COMMAND_HISTORY_FIRST_SEQ'
 $firstArg0 = Extract-IntValue -Text $probeText -Name 'COMMAND_HISTORY_FIRST_ARG0'
 $lastSeq = Extract-IntValue -Text $probeText -Name 'COMMAND_HISTORY_LAST_SEQ'
 $lastArg0 = Extract-IntValue -Text $probeText -Name 'COMMAND_HISTORY_LAST_ARG0'

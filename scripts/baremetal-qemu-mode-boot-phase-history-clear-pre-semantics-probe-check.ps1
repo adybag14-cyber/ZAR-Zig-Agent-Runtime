@@ -6,32 +6,27 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'baremetal-qemu-wrapper-common.ps1')
 $probe = Join-Path $PSScriptRoot 'baremetal-qemu-mode-boot-phase-history-clear-probe-check.ps1'
 if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
-function Extract-IntValue {
-    param([string] $Text, [string] $Name)
-    $match = [regex]::Match($Text, '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$')
-    if (-not $match.Success) { return $null }
-    return [int64]::Parse($match.Groups[1].Value)
-}
-
 $invoke = @{ TimeoutSeconds = $TimeoutSeconds }
 if ($GdbPort -gt 0) { $invoke.GdbPort = $GdbPort }
-if ($SkipBuild) { $invoke.SkipBuild = $true }
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_MODE_BOOT_PHASE_HISTORY_CLEAR_PROBE=skipped\\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_MODE_BOOT_PHASE_HISTORY_CLEAR_PRE_SEMANTICS_PROBE' `
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_MODE_BOOT_PHASE_HISTORY_CLEAR_PRE_SEMANTICS_PROBE_SOURCE' `
+    -SkippedSourceValue 'baremetal-qemu-mode-boot-phase-history-clear-probe-check.ps1' `
+    -FailureLabel 'Mode/boot-phase history clear' `
+    -EchoOnSuccess:$true `
+    -EchoOnSkip:$true `
+    -EchoOnFailure:$true `
+    -EmitSkippedSourceReceipt:$true `
+    -InvokeArgs $invoke
+$outputText = $probeState.Text
 
-$output = & $probe @invoke 2>&1
-$exitCode = $LASTEXITCODE
-$outputText = ($output | Out-String)
-$output | Write-Output
-if ($outputText -match '(?m)^BAREMETAL_QEMU_MODE_BOOT_PHASE_HISTORY_CLEAR_PROBE=skipped\r?$') {
-    Write-Output 'BAREMETAL_QEMU_MODE_BOOT_PHASE_HISTORY_CLEAR_PRE_SEMANTICS_PROBE=skipped'
-    Write-Output 'BAREMETAL_QEMU_MODE_BOOT_PHASE_HISTORY_CLEAR_PRE_SEMANTICS_PROBE_SOURCE=baremetal-qemu-mode-boot-phase-history-clear-probe-check.ps1'
-    exit 0
-}
-if ($exitCode -ne 0) {
-    throw "Mode/boot-phase history clear prerequisite probe failed with exit code $exitCode"
-}
 
 $expected = [ordered]@{
     'PRE_MODE_LEN' = 3

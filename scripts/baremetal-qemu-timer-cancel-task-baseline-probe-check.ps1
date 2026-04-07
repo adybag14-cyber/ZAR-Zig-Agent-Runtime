@@ -4,28 +4,27 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-timer-cancel-task-probe-check.ps1"
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
 function Extract-IntValue {
     param([string] $Text, [string] $Name)
-    $pattern = '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$'
-    $match = [regex]::Match($Text, $pattern)
+    $match = [regex]::Match($Text, '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$')
     if (-not $match.Success) { return $null }
     return [int64]::Parse($match.Groups[1].Value)
 }
 
-$probeOutput = if ($SkipBuild) { & $probe -SkipBuild 2>&1 } else { & $probe 2>&1 }
-$probeExitCode = $LASTEXITCODE
-$probeText = ($probeOutput | Out-String)
-$probeOutput | Write-Output
-if ($probeText -match 'BAREMETAL_QEMU_TIMER_CANCEL_TASK_PROBE=skipped') {
-    Write-Output 'BAREMETAL_QEMU_TIMER_CANCEL_TASK_BASELINE_PROBE=skipped'
-    exit 0
-}
-if ($probeExitCode -ne 0) {
-    throw "Underlying timer-cancel-task probe failed with exit code $probeExitCode"
-}
-
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_TIMER_CANCEL_TASK_PROBE=skipped\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_TIMER_CANCEL_TASK_BASELINE_PROBE' `
+    -FailureLabel 'timer-cancel-task' `
+    -EchoOnSuccess:$true `
+    -EchoOnSkip:$true `
+    -EchoOnFailure:$true `
+$probeText = $probeState.Text
 $taskId = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_TIMER_CANCEL_TASK_PROBE_TASK0_ID'
 $taskPriority = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_TIMER_CANCEL_TASK_PROBE_TASK0_PRIORITY'
 $taskBudget = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_TIMER_CANCEL_TASK_PROBE_TASK0_BUDGET'

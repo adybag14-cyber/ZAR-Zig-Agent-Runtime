@@ -4,28 +4,20 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-wake-queue-before-tick-probe-check.ps1"
-$skipToken = 'BAREMETAL_QEMU_WAKE_QUEUE_BEFORE_TICK_BOUNDED_DRAIN_PROBE=skipped'
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
-function Extract-IntValue {
-    param([string] $Text, [string] $Name)
-    $pattern = '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$'
-    $match = [regex]::Match($Text, $pattern)
-    if (-not $match.Success) { return $null }
-    return [int64]::Parse($match.Groups[1].Value)
-}
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_WAKE_QUEUE_BEFORE_TICK_PROBE=skipped\\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_WAKE_QUEUE_BEFORE_TICK_BOUNDED_DRAIN_PROBE' `
+    -SkippedSourceReceipt 'BAREMETAL_QEMU_WAKE_QUEUE_BEFORE_TICK_BOUNDED_DRAIN_PROBE_SOURCE' `
+    -SkippedSourceValue 'baremetal-qemu-wake-queue-before-tick-probe-check.ps1' `
+    -FailureLabel 'wake-queue before-tick'
+$probeText = $probeState.Text
 
-$probeOutput = if ($SkipBuild) { & $probe -SkipBuild 2>&1 } else { & $probe 2>&1 }
-$probeExitCode = $LASTEXITCODE
-$probeText = ($probeOutput | Out-String)
-$probeOutput | Write-Output
-if ($probeText -match 'BAREMETAL_QEMU_WAKE_QUEUE_BEFORE_TICK_PROBE=skipped') {
-    Write-Output $skipToken
-    exit 0
-}
-if ($probeExitCode -ne 0) {
-    throw "Underlying wake-queue before-tick probe failed with exit code $probeExitCode"
-}
 
 $task4Id = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_WAKE_QUEUE_BEFORE_TICK_TASK4_ID'
 $preTick3 = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_WAKE_QUEUE_BEFORE_TICK_PRE_TICK3'

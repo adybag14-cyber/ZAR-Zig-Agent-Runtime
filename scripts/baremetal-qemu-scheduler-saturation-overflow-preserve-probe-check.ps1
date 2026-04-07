@@ -4,26 +4,20 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-scheduler-saturation-probe-check.ps1"
-$skipToken = 'BAREMETAL_QEMU_SCHEDULER_SATURATION_OVERFLOW_PRESERVE_PROBE=skipped'
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
-function Get-Int([string] $name) {
-    $match = [regex]::Match($probeText, '(?m)^' + [regex]::Escape($name) + '=(-?\d+)\r?$')
-    if (-not $match.Success) { throw "Missing $name" }
-    return [int64]::Parse($match.Groups[1].Value)
-}
-
-$probeOutput = if ($SkipBuild) { & $probe -SkipBuild 2>&1 } else { & $probe 2>&1 }
-$probeExitCode = $LASTEXITCODE
-$probeText = ($probeOutput | Out-String)
-$probeOutput | Write-Output
-if ($probeText -match 'BAREMETAL_QEMU_SCHEDULER_SATURATION_PROBE=skipped') {
-    Write-Output $skipToken
-    exit 0
-}
-if ($probeExitCode -ne 0) {
-    throw "Underlying scheduler saturation probe failed with exit code $probeExitCode"
-}
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_SCHEDULER_SATURATION_PROBE=skipped\\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_SCHEDULER_SATURATION_OVERFLOW_PRESERVE_PROBE' `
+    -FailureLabel 'scheduler saturation' `
+    -EchoOnSuccess:$true `
+    -EchoOnSkip:$true `
+    -EchoOnFailure:$true
+$probeText = $probeState.Text
 
 $overflowResult = Get-Int "BAREMETAL_QEMU_SCHEDULER_SATURATION_OVERFLOW_RESULT"
 $overflowTaskCount = Get-Int "BAREMETAL_QEMU_SCHEDULER_SATURATION_OVERFLOW_TASK_COUNT"

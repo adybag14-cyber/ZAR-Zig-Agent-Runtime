@@ -4,27 +4,28 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-reset-counters-probe-check.ps1"
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
 function Extract-IntValue {
     param([string] $Text, [string] $Name)
-    $pattern = '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)$'
+    $pattern = '(?m)^' + [regex]::Escape($Name) + '=(-?\\d+)$'
     $match = [regex]::Match($Text, $pattern)
     if (-not $match.Success) { return $null }
     return [int64]::Parse($match.Groups[1].Value)
 }
 
-$probeOutput = if ($SkipBuild) { & $probe -SkipBuild 2>&1 } else { & $probe 2>&1 }
-$probeExitCode = $LASTEXITCODE
-$probeText = ($probeOutput | Out-String)
-$probeOutput | Write-Output
-if ($probeText -match 'BAREMETAL_QEMU_RESET_COUNTERS_PROBE=skipped') {
-    Write-Output 'BAREMETAL_QEMU_RESET_COUNTERS_SUBSYSTEM_RESET_PROBE=skipped'
-    exit 0
-}
-if ($probeExitCode -ne 0) {
-    throw "Underlying reset-counters probe failed with exit code $probeExitCode"
-}
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_RESET_COUNTERS_PROBE=skipped\\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_RESET_COUNTERS_SUBSYSTEM_RESET_PROBE' `
+    -FailureLabel 'reset-counters' `
+    -EchoOnSuccess:$true `
+    -EchoOnSkip:$true `
+    -EchoOnFailure:$true
+$probeText = $probeState.Text
 
 $preSchedulerTaskCount = Extract-IntValue -Text $probeText -Name "PRE_SCHEDULER_TASK_COUNT"
 $preAllocatorAllocationCount = Extract-IntValue -Text $probeText -Name "PRE_ALLOCATOR_ALLOCATION_COUNT"

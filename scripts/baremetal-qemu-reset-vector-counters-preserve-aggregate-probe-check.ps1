@@ -4,28 +4,28 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "baremetal-qemu-wrapper-common.ps1")
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-vector-counter-reset-probe-check.ps1"
+if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
 function Extract-IntValue {
     param([string] $Text, [string] $Name)
-    $pattern = '(?m)^' + [regex]::Escape($Name) + '=(-?\d+)\r?$'
+    $pattern = '(?m)^\{0}=(-?\d+)\r?$' -f $Name
     $match = [regex]::Match($Text, $pattern)
     if (-not $match.Success) { return $null }
     return [int64]::Parse($match.Groups[1].Value)
 }
 
-$probeOutput = if ($SkipBuild) { & $probe -SkipBuild 2>&1 } else { & $probe 2>&1 }
-$probeExitCode = $LASTEXITCODE
-$probeText = ($probeOutput | Out-String)
-$probeOutput | Write-Output
-if ($probeText -match 'BAREMETAL_QEMU_VECTOR_COUNTER_RESET_PROBE=skipped') {
-    Write-Output "BAREMETAL_QEMU_RESET_VECTOR_COUNTERS_PRESERVE_AGGREGATE_PROBE=skipped"
-    exit 0
-}
-if ($probeExitCode -ne 0) {
-    throw "Underlying vector-counter-reset probe failed with exit code $probeExitCode"
-}
-
+$probeState = Invoke-WrapperProbe `
+    -ProbePath $probe `
+    -SkipBuild:$SkipBuild `
+    -SkippedPattern '(?m)^BAREMETAL_QEMU_VECTOR_COUNTER_RESET_PROBE=skipped\r?$' `
+    -SkippedReceipt 'BAREMETAL_QEMU_RESET_VECTOR_COUNTERS_PRESERVE_AGGREGATE_PROBE' `
+    -FailureLabel 'vector-counter-reset' `
+    -EchoOnSuccess:$true `
+    -EchoOnSkip:$true `
+    -EchoOnFailure:$true
+$probeText = $probeState.Text
 $preInterruptCount = Extract-IntValue -Text $probeText -Name "BAREMETAL_QEMU_VECTOR_COUNTER_RESET_PRE_INTERRUPT_COUNT"
 $preExceptionCount = Extract-IntValue -Text $probeText -Name "BAREMETAL_QEMU_VECTOR_COUNTER_RESET_PRE_EXCEPTION_COUNT"
 $postInterruptCount = Extract-IntValue -Text $probeText -Name "BAREMETAL_QEMU_VECTOR_COUNTER_RESET_POST_INTERRUPT_COUNT"
