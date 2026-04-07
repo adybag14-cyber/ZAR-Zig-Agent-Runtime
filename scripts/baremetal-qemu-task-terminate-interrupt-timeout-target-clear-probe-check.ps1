@@ -23,9 +23,6 @@ $probeState = Invoke-WrapperProbe `
     -EmitSkippedSourceReceipt:$true
 $probeText = $probeState.Text
 
-    throw "Underlying task-terminate interrupt-timeout probe failed with exit code $probeExitCode"
-}
-
 $postTaskCount = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_TASK_TERMINATE_INTERRUPT_TIMEOUT_PROBE_POST_TASK_COUNT'
 $postTask0State = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_TASK_TERMINATE_INTERRUPT_TIMEOUT_PROBE_POST_TASK0_STATE'
 $postWaitKind0 = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_TASK_TERMINATE_INTERRUPT_TIMEOUT_PROBE_POST_WAIT_KIND0'

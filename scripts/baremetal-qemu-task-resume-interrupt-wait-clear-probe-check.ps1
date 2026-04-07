@@ -23,9 +23,6 @@ $probeState = Invoke-WrapperProbe `
     -EmitSkippedSourceReceipt:$true
 $probeText = $probeState.Text
 
-    throw "Underlying task-resume interrupt probe failed with exit code $probeExitCode"
-}
-
 $task0State = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_TASK_RESUME_INTERRUPT_PROBE_TASK0_STATE'
 $waitKind = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_TASK_RESUME_INTERRUPT_PROBE_WAIT_KIND0'
 $waitVector = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_TASK_RESUME_INTERRUPT_PROBE_WAIT_VECTOR0'

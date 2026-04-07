@@ -23,9 +23,6 @@ $probeState = Invoke-WrapperProbe `
     -EmitSkippedSourceReceipt:$true
 $probeText = $probeState.Text
 
-    throw "Underlying task-resume timer-clear probe failed with exit code $probeExitCode"
-}
-
 $TASK_ID = Extract-IntValue -Text $probeText -Name 'TASK_ID'
 $PRE_TASK_STATE = Extract-IntValue -Text $probeText -Name 'PRE_TASK_STATE'
 $PRE_TIMER_COUNT = Extract-IntValue -Text $probeText -Name 'PRE_TIMER_COUNT'

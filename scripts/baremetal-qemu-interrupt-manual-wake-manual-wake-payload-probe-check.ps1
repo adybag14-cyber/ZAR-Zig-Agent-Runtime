@@ -10,8 +10,6 @@ if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
 $probeState = Invoke-WrapperProbe -ProbePath $probe -SkipBuild:$SkipBuild -SkippedPattern '(?m)^BAREMETAL_QEMU_INTERRUPT_MANUAL_WAKE_PROBE=skipped\r?$' -SkippedReceipt 'BAREMETAL_QEMU_INTERRUPT_MANUAL_WAKE_MANUAL_WAKE_PAYLOAD_PROBE' -SkippedSourceReceipt 'BAREMETAL_QEMU_INTERRUPT_MANUAL_WAKE_MANUAL_WAKE_PAYLOAD_PROBE_SOURCE' -SkippedSourceValue 'baremetal-qemu-interrupt-manual-wake-probe-check.ps1' -FailureLabel 'interrupt-manual-wake' -EchoOnSuccess:$false -EchoOnSkip:$true -EchoOnFailure:$true -TrimEchoText:$true -EmitSkippedSourceReceipt:$true
 $probeText = $probeState.Text
-    throw "Underlying interrupt-manual-wake probe failed with exit code $probeExitCode"
-}
 $wakeQueueCount = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_INTERRUPT_MANUAL_WAKE_PROBE_WAKE_QUEUE_COUNT'
 $wake0Seq = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_INTERRUPT_MANUAL_WAKE_PROBE_WAKE0_SEQ'
 $wake0TaskId = Extract-IntValue -Text $probeText -Name 'BAREMETAL_QEMU_INTERRUPT_MANUAL_WAKE_PROBE_WAKE0_TASK_ID'
