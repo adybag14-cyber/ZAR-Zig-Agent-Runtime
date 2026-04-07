@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 $probe = Join-Path $PSScriptRoot "baremetal-qemu-interrupt-manual-wake-probe-check.ps1"
 if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
-$probeState = Invoke-WrapperProbe 
+$probeState = Invoke-WrapperProbe `
     -ProbePath $probe 
     -SkipBuild:$SkipBuild 
     -SkippedPattern '(?m)^BAREMETAL_QEMU_INTERRUPT_MANUAL_WAKE_PROBE=skipped\r?$' 

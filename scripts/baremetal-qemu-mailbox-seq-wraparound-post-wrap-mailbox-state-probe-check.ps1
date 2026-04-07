@@ -11,7 +11,7 @@ $probe = Join-Path $PSScriptRoot "baremetal-qemu-mailbox-seq-wraparound-probe-ch
 if (-not (Test-Path $probe)) { throw "Prerequisite probe not found: $probe" }
 
 $invoke = @{ TimeoutSeconds = $TimeoutSeconds; GdbPort = $GdbPort }
-$probeState = Invoke-WrapperProbe 
+$probeState = Invoke-WrapperProbe `
     -ProbePath $probe 
     -SkipBuild:$SkipBuild 
     -SkippedPattern '(?m)^BAREMETAL_QEMU_MAILBOX_SEQ_WRAPAROUND_PROBE=skipped\r?$' 
