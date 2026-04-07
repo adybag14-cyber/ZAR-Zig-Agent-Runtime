@@ -21,11 +21,15 @@ $probeState = Invoke-WrapperProbe `
     -FailureLabel 'mailbox stale-seq' `
     -InvokeArgs $invoke
 $probeText = $probeState.Text
+$rawText = Get-RawProbeText `
+    -ProbeText $probeText `
+    -PathFieldName 'BAREMETAL_QEMU_MAILBOX_STALE_SEQ_GDB_STDOUT' `
+    -MissingMessage 'Missing mailbox stale-seq GDB stdout log path.'
 
-$ticks = Extract-IntValue -Text $probeText -Name 'TICKS'
-$mailboxSeq = Extract-IntValue -Text $probeText -Name 'MAILBOX_SEQ'
-$replayLastOpcode = Extract-IntValue -Text $probeText -Name 'REPLAY_LAST_OPCODE'
-$replayLastResult = Extract-IntValue -Text $probeText -Name 'REPLAY_LAST_RESULT'
+$ticks = Extract-Field -BroadText $probeText -RawText $rawText -Name 'TICKS'
+$mailboxSeq = Extract-Field -BroadText $probeText -RawText $rawText -Name 'MAILBOX_SEQ'
+$replayLastOpcode = Extract-Field -BroadText $probeText -RawText $rawText -Name 'REPLAY_LAST_OPCODE'
+$replayLastResult = Extract-Field -BroadText $probeText -RawText $rawText -Name 'REPLAY_LAST_RESULT'
 if ($null -eq $ticks) { throw 'Missing output value for TICKS' }
 if ($null -eq $mailboxSeq) { throw 'Missing output value for MAILBOX_SEQ' }
 if ($null -eq $replayLastOpcode) { throw 'Missing output value for REPLAY_LAST_OPCODE' }

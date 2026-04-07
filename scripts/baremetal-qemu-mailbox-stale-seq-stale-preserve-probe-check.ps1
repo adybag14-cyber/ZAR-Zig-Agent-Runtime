@@ -21,6 +21,10 @@ $probeState = Invoke-WrapperProbe `
     -FailureLabel 'mailbox stale-seq' `
     -InvokeArgs $invoke
 $probeText = $probeState.Text
+$rawText = Get-RawProbeText `
+    -ProbeText $probeText `
+    -PathFieldName 'BAREMETAL_QEMU_MAILBOX_STALE_SEQ_GDB_STDOUT' `
+    -MissingMessage 'Missing mailbox stale-seq GDB stdout log path.'
 
 $expected = @{
     'STALE_ACK' = 1
@@ -30,7 +34,7 @@ $expected = @{
     'STALE_MAILBOX_SEQ' = 1
 }
 foreach ($entry in $expected.GetEnumerator()) {
-    $actual = Extract-IntValue -Text $probeText -Name $entry.Key
+    $actual = Extract-Field -BroadText $probeText -RawText $rawText -Name $entry.Key
     if ($null -eq $actual) { throw "Missing output value for $($entry.Key)" }
     if ($actual -ne $entry.Value) { throw "Unexpected $($entry.Key): got $actual expected $($entry.Value)" }
 }

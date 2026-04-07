@@ -27,6 +27,21 @@ function Extract-Field {
     return Extract-IntValue -Text $RawText -Name $Name
 }
 
+function Get-RawProbeText {
+    param(
+        [string] $ProbeText,
+        [string] $PathFieldName,
+        [string] $MissingMessage
+    )
+
+    $rawPath = Extract-Value -Text $ProbeText -Name $PathFieldName
+    if ([string]::IsNullOrWhiteSpace($rawPath) -or -not (Test-Path $rawPath)) {
+        throw $MissingMessage
+    }
+
+    return Get-Content -Raw $rawPath
+}
+
 function Invoke-WrapperProbe {
     param(
         [Parameter(Mandatory = $true)][string] $ProbePath,
