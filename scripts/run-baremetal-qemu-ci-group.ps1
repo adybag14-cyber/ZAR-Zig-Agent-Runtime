@@ -35,7 +35,7 @@ try {
 $($step.run)
 }
 catch {
-    Write-Error (`$_ | Out-String)
+    Write-Output (`$_ | Out-String)
     exit 1
 }
 "@

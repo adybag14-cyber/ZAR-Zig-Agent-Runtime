@@ -302,30 +302,25 @@ break *0x$startAddress
 commands
 silent
 printf "HIT_START\n"
+set *(unsigned char*)(0x$statusAddress+$statusModeOffset) = $modeRunning
+set *(unsigned long long*)(0x$statusAddress+$statusTicksOffset) = 0
+set *(unsigned short*)(0x$statusAddress+$statusLastHealthCodeOffset) = 200
+set *(unsigned int*)(0x$statusAddress+$statusFeatureFlagsOffset) = 0
+set *(unsigned int*)(0x$statusAddress+$statusPanicCountOffset) = 0
+set *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset) = 0
+set *(unsigned short*)(0x$statusAddress+$statusLastCommandOpcodeOffset) = 0
+set *(short*)(0x$statusAddress+$statusLastCommandResultOffset) = 0
+set *(unsigned int*)(0x$statusAddress+$statusTickBatchHintOffset) = 1
+set *(unsigned short*)(0x$commandMailboxAddress+$commandOpcodeOffset) = $setFeatureFlagsOpcode
+set *(unsigned int*)(0x$commandMailboxAddress+$commandSeqOffset) = 1
+set *(unsigned long long*)(0x$commandMailboxAddress+$commandArg0Offset) = $featureFlagsValue
+set *(unsigned long long*)(0x$commandMailboxAddress+$commandArg1Offset) = 0
+set `$stage = 1
 continue
 end
 break *0x$spinPauseAddress
 commands
 silent
-if `$stage == 0
-  if *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset) == 0
-    set *(unsigned char*)(0x$statusAddress+$statusModeOffset) = $modeRunning
-    set *(unsigned long long*)(0x$statusAddress+$statusTicksOffset) = 0
-    set *(unsigned short*)(0x$statusAddress+$statusLastHealthCodeOffset) = 200
-    set *(unsigned int*)(0x$statusAddress+$statusFeatureFlagsOffset) = 0
-    set *(unsigned int*)(0x$statusAddress+$statusPanicCountOffset) = 0
-    set *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset) = 0
-    set *(unsigned short*)(0x$statusAddress+$statusLastCommandOpcodeOffset) = 0
-    set *(short*)(0x$statusAddress+$statusLastCommandResultOffset) = 0
-    set *(unsigned int*)(0x$statusAddress+$statusTickBatchHintOffset) = 1
-    set *(unsigned short*)(0x$commandMailboxAddress+$commandOpcodeOffset) = $setFeatureFlagsOpcode
-    set *(unsigned int*)(0x$commandMailboxAddress+$commandSeqOffset) = 1
-    set *(unsigned long long*)(0x$commandMailboxAddress+$commandArg0Offset) = $featureFlagsValue
-    set *(unsigned long long*)(0x$commandMailboxAddress+$commandArg1Offset) = 0
-    set `$stage = 1
-  end
-  continue
-end
 if `$stage == 1
   if *(unsigned int*)(0x$statusAddress+$statusCommandSeqAckOffset) == 1 && *(unsigned int*)(0x$statusAddress+$statusFeatureFlagsOffset) == $featureFlagsValue && *(unsigned int*)(0x$statusAddress+$statusTickBatchHintOffset) == 1 && *(unsigned long long*)(0x$statusAddress+$statusTicksOffset) == 1
     printf "AFTER_STAGE1_FEATURE_FLAGS\n"
