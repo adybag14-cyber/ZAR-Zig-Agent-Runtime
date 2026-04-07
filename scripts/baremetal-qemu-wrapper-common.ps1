@@ -42,6 +42,20 @@ function Get-RawProbeText {
     return Get-Content -Raw $rawPath
 }
 
+function Test-WrapperSkipped {
+    param(
+        [string] $ProbeText,
+        [string] $SkippedPattern
+    )
+
+    if ($ProbeText -match $SkippedPattern) { return $true }
+
+    $normalizedPattern = $SkippedPattern.Replace('\\r', '\r').Replace('\\n', '\n')
+    if ($normalizedPattern -ne $SkippedPattern -and $ProbeText -match $normalizedPattern) { return $true }
+
+    return $false
+}
+
 function Invoke-WrapperProbe {
     param(
         [Parameter(Mandatory = $true)][string] $ProbePath,
@@ -67,7 +81,7 @@ function Invoke-WrapperProbe {
     $probeText = ($probeOutput | Out-String)
     $echoText = if ($TrimEchoText) { $probeText.TrimEnd() } else { $probeText }
     $hasEchoText = -not [string]::IsNullOrWhiteSpace($echoText)
-    if ($probeText -match $SkippedPattern) {
+    if (Test-WrapperSkipped -ProbeText $probeText -SkippedPattern $SkippedPattern) {
         if ($EchoOnSkip -and $hasEchoText) { Write-Output $echoText }
         Write-Output ("{0}=skipped" -f $SkippedReceipt)
         if ($EmitSkippedSourceReceipt) { Write-Output ("{0}={1}" -f $SkippedSourceReceipt, $SkippedSourceValue) }
