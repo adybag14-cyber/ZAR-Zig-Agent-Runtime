@@ -161,6 +161,41 @@ jobs:
         shell: pwsh
         run: ./scripts/baremetal-i386-smoke-check.ps1
 
+      - name: Install optional bare-metal runner prerequisites (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 gdb binutils nasm clang lld
+          PWSH_BIN="$(command -v pwsh || true)"
+          if [[ -z "${PWSH_BIN}" ]]; then
+            echo "pwsh is not available on PATH"
+            exit 1
+          fi
+          if ! command -v powershell >/dev/null 2>&1; then
+            sudo ln -sf "${PWSH_BIN}" /usr/local/bin/powershell
+          fi
+          if ! command -v powershell.exe >/dev/null 2>&1; then
+            sudo ln -sf "${PWSH_BIN}" /usr/local/bin/powershell.exe
+          fi
+
+      - name: Report optional bare-metal runner prerequisites (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          for tool in pwsh powershell powershell.exe qemu-system-x86_64 qemu-system-i386 gdb nm readelf nasm clang lld; do
+            if command -v "${tool}" >/dev/null 2>&1; then
+              printf '%s=%s\n' "${tool}" "$(command -v "${tool}")"
+            else
+              printf '%s=MISSING\n' "${tool}"
+            fi
+          done
+          pwsh -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion'
+
       - name: Bare-metal QEMU smoke check (optional)
         shell: pwsh
         run: ./scripts/baremetal-qemu-smoke-check.ps1 -SkipBuild
